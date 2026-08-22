@@ -324,7 +324,7 @@ git commit -m "feat: build leakage-safe feature store"
 - Produces: `expanding_window_forecasts(matrix, model_specs, minimum_training_quarters, seed) -> tuple[predictions, run_metadata]`
 - Produces: `evaluate_forecasts(predictions) -> pd.DataFrame`
 
-- [ ] **Step 1: Write failing seasonal-baseline, fold-boundary, metric, and contribution tests**
+- [x] **Step 1: Write failing seasonal-baseline, fold-boundary, metric, and contribution tests**
 
 ```python
 def test_expanding_folds_never_train_on_test_or_future_rows(feature_matrix):
@@ -337,11 +337,11 @@ def test_linear_contributions_sum_to_prediction_adjustment(fitted_linear, row):
     assert sum(explanation.contributions.values()) + explanation.intercept == pytest.approx(explanation.prediction)
 ```
 
-- [ ] **Step 2: Verify failures**
+- [x] **Step 2: Verify failures**
 
 Run: `pytest tests/unit/test_baselines.py tests/unit/test_model_validation.py tests/unit/test_model_metrics.py -q`
 
-- [ ] **Step 3: Implement seasonal/history baselines, OLS, Ridge, Elastic Net, gradient boosting, fold-local preprocessing, and sample gates**
+- [x] **Step 3: Implement seasonal/history baselines, OLS, Ridge, Elastic Net, gradient boosting, fold-local preprocessing, and sample gates**
 
 ```python
 def expanding_window_forecasts(
@@ -359,11 +359,11 @@ def expanding_window_forecasts(
     return pd.DataFrame(predictions), runs
 ```
 
-- [ ] **Step 4: Implement ablations, intervals, confidence components, coefficients, and permutation importance**
+- [x] **Step 4: Implement ablations, intervals, confidence components, coefficients, and permutation importance**
 
 Run: `pytest tests/unit/test_baselines.py tests/unit/test_model_validation.py tests/unit/test_model_metrics.py tests/integration/test_training_pipeline.py -q`
 
-- [ ] **Step 5: Commit forecasting pipeline**
+- [x] **Step 5: Commit forecasting pipeline**
 
 ```bash
 git add src/models tests

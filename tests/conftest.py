@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
+import pandas as pd
 import pytest
 
 
@@ -21,3 +23,33 @@ def project_root(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     return tmp_path
+
+
+@pytest.fixture
+def model_matrix():
+    rows = []
+    dates = pd.date_range("2018-02-01", periods=20, freq="QE")
+    for index, cutoff in enumerate(dates):
+        for company_index, company in enumerate(("SBUX", "MCD")):
+            baseline = 100 + company_index * 50 + index * 2
+            attention = 10 + index + company_index
+            actual = baseline * (1 + attention / 1000)
+            rows.append(
+                {
+                    "company_id": company,
+                    "fiscal_quarter": f"{2018 + index // 4}Q{index % 4 + 1}",
+                    "forecast_cutoff_date": cutoff.date(),
+                    "horizon_days": 7,
+                    "actual_revenue": actual,
+                    "revenue_year_ago": baseline - 8,
+                    "revenue_level_lag1": baseline - 2,
+                    "revenue_qoq_log_growth_lag1": np.log(baseline / (baseline - 2)),
+                    "revenue_yoy_log_growth_lag1": np.log(baseline / (baseline - 8)),
+                    "seasonal_quarter": index % 4 + 1,
+                    "wikipedia_pageviews_trailing_mean": attention,
+                    "wikipedia_pageviews_momentum": index / 100,
+                    "macro_RSAFS_level": 500 + index,
+                    "actual_acceleration": 1 if index % 2 else -1,
+                }
+            )
+    return pd.DataFrame(rows)
