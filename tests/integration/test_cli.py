@@ -26,11 +26,6 @@ def test_demo_command_runs_without_api_keys(tmp_path, monkeypatch):
         "src.cli.generate_research_report",
         lambda database, path: path,
     )
-    monkeypatch.setattr(
-        "src.cli.generate_resume_bullets",
-        lambda database, path: path,
-    )
-
     result = CliRunner().invoke(
         app,
         ["demo", "--project-root", str(root), "--database-url", database_url],

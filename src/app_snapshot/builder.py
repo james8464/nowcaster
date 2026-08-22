@@ -24,7 +24,7 @@ from src.app_snapshot.models import (
 )
 from src.config.settings import Settings
 from src.database.engine import Database
-from src.reporting.recruiter import recruiter_statistics
+from src.reporting.summary import research_statistics
 from src.utils.provenance import git_commit
 
 
@@ -474,7 +474,7 @@ def _pipeline_runs(database: Database) -> list[PipelineRunSnapshot]:
 
 
 def build_app_snapshot(database: Database, settings: Settings) -> AppSnapshot:
-    statistics = recruiter_statistics(database)
+    statistics = research_statistics(database)
     instruments = _instruments(database)
     earnings = _earnings(database)
     signals = _signals(database)

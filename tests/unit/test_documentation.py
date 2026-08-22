@@ -29,7 +29,6 @@ def test_native_documentation_and_visual_evidence_exist():
         "docs/macos_app.md",
         "docs/privacy.md",
         "docs/data_dictionary.md",
-        "docs/interview_guide.md",
         "scripts/capture_macos_app.swift",
     ):
         assert (root / path).is_file(), path

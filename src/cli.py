@@ -10,7 +10,6 @@ from src.app_snapshot import build_app_snapshot, write_snapshot_atomic
 from src.config.settings import Settings
 from src.database.engine import Database
 from src.demo import DEMO_STAGES, demo_pipeline, live_pipeline, run_demo
-from src.reporting.recruiter import generate_resume_bullets
 from src.reporting.research_report import generate_research_report
 from src.utils.logging import configure_logging
 
@@ -69,7 +68,6 @@ def demo(
         raise typer.Exit(code=1)
     database = Database.from_url(settings.database_url)
     generate_research_report(database, settings.project_root / "reports" / "latest_research_report.md")
-    generate_resume_bullets(database, settings.project_root / "reports" / "resume_bullets.md")
     typer.echo(f"Demo complete. {summary.concise_message}")
 
 
@@ -146,7 +144,7 @@ def report(
     mode: Annotated[str, typer.Option()] = "demo",
     output_dir: Annotated[Path | None, typer.Option(file_okay=False)] = None,
 ) -> None:
-    """Generate the measured research note and resume bullets."""
+    """Generate the measured research note."""
     settings = _load_settings(project_root, database_url, mode)
     database = Database.from_url(settings.database_url)
     database.initialize()
@@ -157,8 +155,7 @@ def report(
             raise typer.Exit(code=1)
     destination = output_dir or settings.project_root / "reports"
     report_path = generate_research_report(database, destination / "latest_research_report.md")
-    bullet_path = generate_resume_bullets(database, destination / "resume_bullets.md")
-    typer.echo(f"Generated {report_path} and {bullet_path}")
+    typer.echo(f"Generated {report_path}")
 
 
 @app.command("export-app-snapshot")

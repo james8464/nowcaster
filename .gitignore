@@ -17,7 +17,6 @@ __pycache__/
 .ruff_cache/
 .coverage
 htmlcov/
-.ipynb_checkpoints/
 .DS_Store
 build/
 *.dSYM/

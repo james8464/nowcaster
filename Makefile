@@ -2,7 +2,7 @@ PYTHON ?= python3
 VENV ?= .venv
 PIP_INDEX ?= https://pypi.org/simple
 
-.PHONY: setup test lint init-db fetch features train backtest dashboard dashboard-smoke report demo clean-generated sync-macos-snapshot macos-build macos-test macos-app macos-open macos-ui-test macos-screenshots release-archive
+.PHONY: setup test lint init-db fetch features train backtest report demo clean-generated sync-macos-snapshot macos-build macos-test macos-app macos-open macos-ui-test macos-screenshots release-archive
 setup:
 	uv venv --python 3.13 $(VENV)
 	uv pip install --python $(VENV)/bin/python --index-url $(PIP_INDEX) -e '.[dev]'
@@ -31,12 +31,6 @@ train:
 backtest:
 	$(VENV)/bin/python -m src.cli backtest --mode demo
 
-dashboard:
-	$(VENV)/bin/streamlit run dashboard/app.py
-
-dashboard-smoke:
-	$(VENV)/bin/python scripts/dashboard_smoke.py
-
 report:
 	$(VENV)/bin/python -m src.cli report --mode demo
 
@@ -47,7 +41,7 @@ sync-macos-snapshot:
 	$(VENV)/bin/python -m src.cli export-app-snapshot --output macos/Nowcaster/Sources/NowcasterApp/Resources/Fixtures/nowcaster-snapshot.json
 
 clean-generated:
-	rm -f data/nowcaster.duckdb data/test.duckdb data/app/nowcaster-snapshot.json reports/latest_research_report.md reports/resume_bullets.md
+	rm -f data/nowcaster.duckdb data/test.duckdb data/app/nowcaster-snapshot.json reports/latest_research_report.md
 
 macos-build:
 	cd macos/Nowcaster && swift build

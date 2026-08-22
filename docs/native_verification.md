@@ -8,7 +8,7 @@
 - Snapshot schema: `1`
 - Snapshot mode: `demo_real_snapshot`
 - Bundled snapshot SHA-256: `c415ce2dabea2b6cfed92454a25b3da64dbbf23ceb90721e755988fab8357c42`
-- Release archive SHA-256: `02b2a5d428884f53b3581c92bfe37d65c594c0ec48a1f30158f496d29f11755e`
+- Release archive SHA-256: `8e1d85e0dd07c5f95e385eb038576b7ca86eafd0359e68762eb65c75fb47a071`
 
 The snapshot revision is the committed engine code that generated the artifact. Documentation and the generated fixture are committed afterward without changing that engine.
 
@@ -18,13 +18,12 @@ The generated database, app snapshot, and reports were removed before the author
 
 | Check | Evidence |
 |---|---|
-| Ruff | 149 files formatted; static checks passed |
-| Python | 123 tests passed; 87% statement coverage |
+| Ruff | 125 files formatted; static checks passed |
+| Python | 118 tests passed; 87% statement coverage |
 | Demo pipeline | 12 stages run; 0 reused; 0 failed |
 | Swift | 18 Swift Testing cases plus 1 XCTest passed |
 | Native assembly | Release build completed; ad-hoc code signature verified |
 | UI smoke | Signed app launched and exposed a real Nowcaster window |
-| Legacy migration smoke | Streamlit health endpoint returned `ok` |
 | Property list | `plutil` reported `OK` |
 | Screenshot matrix | 18 captures: all eight destinations light/dark plus two narrow layouts |
 
@@ -39,7 +38,6 @@ make sync-macos-snapshot
 make macos-test
 make macos-app
 make macos-ui-test
-make dashboard-smoke
 make macos-screenshots
 make release-archive
 codesign --verify --deep --strict build/Nowcaster.app

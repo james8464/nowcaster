@@ -4,7 +4,7 @@ from pathlib import Path
 
 from src.database.engine import Database
 from src.reporting.case_study import render_case_study, select_case_study
-from src.reporting.recruiter import recruiter_statistics
+from src.reporting.summary import research_statistics
 
 REQUIRED_REPORT_SECTIONS = (
     "Executive Summary",
@@ -36,7 +36,7 @@ def _result_sentence(improvement: float | None) -> str:
 
 def generate_research_report(database: Database, output_path: Path) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    metrics = recruiter_statistics(database)
+    metrics = research_statistics(database)
     improvement = metrics["forecast_mae_improvement"]
     incremental = metrics["alternative_incremental_mae_improvement"]
     event_spread = metrics["event_spread"]
@@ -152,7 +152,7 @@ def generate_research_report(database: Database, output_path: Path) -> Path:
         ),
         (
             "Conclusion",
-            "This platform is a reproducible research and interview artifact. It demonstrates point-in-time data "
+            "This platform is a reproducible research application. It demonstrates point-in-time data "
             "engineering and honest out-of-sample evaluation; it does not establish a profitable trading strategy.",
         ),
     ]

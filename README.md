@@ -1,37 +1,126 @@
 # Nowcaster for macOS
 
-Nowcaster is a native SwiftUI research workstation for monitoring equities and crypto, reviewing evidence-ranked long/short research postures, and auditing leakage-resistant backtests. It is a decision-support application—not an order router, signal-selling service, or promise of profit.
+Nowcaster is a native Mac app for learning how a computer can study stocks and cryptocurrencies without pretending that it can predict the future.
 
-The app is built with SwiftUI, Swift Charts, and native macOS navigation. It contains no browser shell, WebView, JavaScript frontend, account login, or brokerage integration. A local Python research engine produces a versioned JSON snapshot that the app reads without running a server.
+It collects historical market and company information, asks models what that information might have suggested at the time, and then checks those ideas against what happened later. The app presents the result as a **research posture**—long, short, or abstain—along with the evidence, risks, and historical test results behind it.
+
+Nowcaster is a research and education tool. It is not a brokerage, does not place trades, cannot guarantee profit, and is not investment advice.
 
 ![Nowcaster Today view](docs/images/macos/today-light.png)
 
-## What it does
+## What problem does it solve?
 
-- Monitors SBUX, MCD, COST, BTC-USD, and ETH-USD from bundled, checksum-verified public snapshots.
-- Shows research postures only when declared evidence gates clear; otherwise it abstains.
-- Keeps confidence, calibrated direction, catalyst, invalidation, and eligibility separate.
-- Forecasts equity revenue from point-in-time fundamentals and public attention data.
-- Researches crypto direction in a separate, shifted-feature ensemble—never by applying an earnings model to crypto.
-- Exposes development and final-test results, costs, lag, drawdown, stability, sensitivity, and data quality.
-- Rebuilds local research through a shell-free `Process` runner and preserves the last-known-good snapshot on failure.
+Financial markets produce far more information than a person can comfortably compare by hand. A company publishes sales figures, its share price moves, public attention changes, and the broader market may be rising or falling at the same time.
 
-## Measured bundled results
+Nowcaster brings those pieces into one place and helps answer four questions:
 
-These are frozen demo measurements through 22 August 2026, not selected live claims.
+1. What information was actually available on a given date?
+2. Did a model see a positive, negative, or unclear setup?
+3. Would similar historical signals have survived realistic costs and delays?
+4. Is the evidence strong and stable enough to study further?
 
-| Research system | Status | Development Sharpe | Final-test Sharpe | Full Sharpe | Trades | Full max drawdown |
-|---|---|---:|---:|---:|---:|---:|
-| BTC-USD calibrated ensemble | Research only | 0.769 | 0.571 | 0.691 | 173 | -26.1% |
-| ETH-USD calibrated ensemble | Not ready | 0.152 | 0.593 | 0.258 | 57 | -16.8% |
+The app deliberately shows **abstain**, **research only**, or **not ready** when the evidence is weak. Doing nothing is a valid result.
 
-BTC remains research-only because fewer than 75% of subperiods were profitable. ETH fails the declared promotion gates, including sample size and development performance. The equity event study is also research-only: the bundled three-company universe uses a seasonal expectation proxy—not Wall Street consensus—and its [0,+3] abnormal-return top-minus-bottom spread is about -0.04%.
+## A beginner's guide to the language
 
-Historical performance can be overfit and may not persist. Confidence is evidence quality, not a probability of profit. This software is educational research and not investment advice.
+| Term | Plain-English meaning |
+|---|---|
+| **Stock** | A small ownership share in a company. |
+| **Cryptocurrency** | A digitally traded asset such as Bitcoin or Ether. It is usually more volatile than a large-company stock. |
+| **Long** | A view that an asset may rise. A normal purchase is a long position. |
+| **Short** | A view that an asset may fall. Real short selling involves borrowing and has special costs and risks. |
+| **Signal** | A model's research output. It is a clue to investigate, not an instruction to trade. |
+| **Confidence** | How complete and consistent the supporting evidence is. It is not the probability of making money. |
+| **Backtest** | A historical simulation that asks how a fixed set of rules would have behaved in the past. |
+| **Out of sample** | Data kept away from the model while it was being designed, then used as a more honest final exam. |
+| **Sharpe ratio** | A rough comparison of return with volatility. Higher is generally better, but a good historical value can disappear in live markets. |
+| **Drawdown** | The fall from a portfolio's previous high to a later low. It helps show how painful a strategy could have been. |
+| **Nowcast** | An estimate of something happening now or soon, made before the final official number is known. |
 
-## Build and run
+## How it works
 
-Requirements: macOS 15 or later, Xcode Command Line Tools, and Python 3.11–3.13. The bundled demo needs no API keys.
+```mermaid
+flowchart LR
+    A[Historical public data] --> B[Check dates and data quality]
+    B --> C[Build only information known at that time]
+    C --> D[Train and compare models]
+    D --> E[Simulate later trades with costs and delays]
+    E --> F[Export a checked snapshot]
+    F --> G[Show evidence in the macOS app]
+```
+
+### 1. Collect historical evidence
+
+The bundled demo uses frozen public snapshots for three companies—Starbucks (`SBUX`), McDonald's (`MCD`), and Costco (`COST`)—plus Bitcoin (`BTC-USD`) and Ether (`ETH-USD`). It also includes broad-market and sector prices for comparison.
+
+Company filings come from SEC data. Public-attention features come from Wikimedia page views. Price snapshots are stored with checksums so the same demo can be reproduced later.
+
+### 2. Re-create what was knowable at the time
+
+This is one of the most important safeguards. A model studying 2022 must not accidentally see a figure published in 2023. Nowcaster records when an input became available and shifts market features so future information cannot leak backward.
+
+### 3. Produce separate stock and crypto research
+
+Stocks and cryptocurrencies behave differently, so they use separate research paths:
+
+- The stock models estimate company revenue before an earnings event and compare it with a simple historical expectation.
+- The crypto models study lagged price, trend, volatility, and market-regime information.
+
+The bundled stock expectation is a seasonal historical proxy. It is **not Wall Street consensus**.
+
+### 4. Backtest the rules
+
+Nowcaster walks forward through time instead of randomly mixing old and new observations. It reserves the final 20% of crypto history as an isolated test period and models a one-bar execution delay, trading costs, slippage, short-borrow costs, exposure limits, and volatility targeting.
+
+The tests also look for unstable subperiods, excessive drawdowns, sensitivity to higher costs, and results that may simply be statistical luck. A backtest is still only a simulation; it cannot recreate liquidity, exchange failures, taxes, capacity, or human behaviour perfectly.
+
+### 5. Explain the result in the Mac app
+
+The Python engine writes one validated JSON snapshot. The SwiftUI app reads that file directly, so there is no WebView, JavaScript frontend, account server, or background website.
+
+The app keeps the last known good snapshot if a refresh fails. It never stores brokerage credentials or sends an order.
+
+## What you can explore in the app
+
+- **Today** — a plain overview of the current research snapshot and its warnings.
+- **Markets** — the stock and crypto instruments included in the research universe.
+- **Earnings** — historical company events and revenue forecasts.
+- **Signals** — long, short, and abstain postures with supporting and invalidating evidence.
+- **Backtests** — returns, risk, drawdowns, costs, and development versus final-test results.
+- **Model Lab** — model comparisons, calibration, and diagnostic information.
+- **Data Quality** — missing, late, or invalid information that could weaken a result.
+- **Pipeline Runs** — the steps used to rebuild the local research snapshot.
+
+A sensible beginner workflow is: start on **Today**, open one signal, read its invalidation evidence, and only then look at its backtest. Avoid judging a model from its headline return alone.
+
+## What the bundled results currently say
+
+These are frozen demo results through 22 August 2026. They are included to demonstrate the evaluation process, not to advertise a trading system.
+
+| Research system | App status | Development Sharpe | Final-test Sharpe | Total trades | Worst drawdown |
+|---|---|---:|---:|---:|---:|
+| BTC-USD calibrated ensemble | Research only | 0.769 | 0.571 | 173 | -26.1% |
+| ETH-USD calibrated ensemble | Not ready | 0.152 | 0.593 | 57 | -16.8% |
+
+In plain language:
+
+- Bitcoin produced an interesting historical result, but it was not profitable consistently enough across subperiods to pass the promotion rules.
+- Ether's development result and sample size were too weak, even though its smaller final period was positive.
+- The stock event study is also research only. Its small three-company demo did not establish a dependable edge.
+
+No bundled strategy is considered ready for real-money decisions. Historical patterns can be overfit and can stop working.
+
+## Install and run
+
+### Open a built copy
+
+Download `Nowcaster-macOS.zip` from the repository's Releases or Actions artifacts, unzip it, then Control-click `Nowcaster.app` and choose **Open** if macOS warns about an unnotarized local build.
+
+The app requires macOS 15 or later. Locally created builds are ad-hoc signed unless Apple Developer signing credentials are supplied.
+
+### Build it from source
+
+You need macOS 15 or later, Xcode Command Line Tools, Python 3.11–3.13, and `uv`.
 
 ```bash
 xcode-select --install
@@ -44,62 +133,45 @@ make macos-app
 open build/Nowcaster.app
 ```
 
-`build/Nowcaster.app` is ad-hoc signed for local use. macOS may require Control-click → Open for an unsigned download. Release workflows support optional Developer ID signing and notarization when repository secrets are configured.
+The demo is deterministic and needs no API keys. `make demo` builds the local DuckDB database, runs the research stages, and exports the snapshot used by the Mac app.
 
-## Verification commands
+## Useful developer commands
 
 ```bash
-make lint               # Ruff formatting and static analysis
-make test               # Python suite
-make demo               # deterministic engine run and native snapshot export
-make sync-macos-snapshot # refresh the checked-in first-launch snapshot
-make macos-test         # Swift model, decoding, security, and accessibility tests
-make macos-ui-test      # launch the signed app and verify a real window
-make macos-screenshots  # all primary screens, light/dark, plus narrow layouts
-make release-archive    # app ZIP and SHA-256 checksum
+make lint                # Check Python formatting and common mistakes
+make test                # Run the Python test suite
+make demo                # Rebuild the bundled research demo
+make report              # Write a measured research note
+make sync-macos-snapshot # Refresh the app's checked-in first-launch data
+make macos-test          # Run Swift model and app tests
+make macos-app           # Assemble build/Nowcaster.app
+make macos-ui-test       # Launch the app and verify a real native window
+make macos-screenshots   # Capture the primary native views
+make release-archive     # Build the app ZIP and SHA-256 checksum
 ```
 
-The legacy Streamlit dashboard remains only as a deprecated research-migration aid via `make dashboard`; it is not the product runtime.
-
-## Architecture
-
-```mermaid
-flowchart LR
-    A[SEC / Wikimedia / adjusted prices] --> B[Checksums + validation]
-    B --> C[(DuckDB research store)]
-    C --> D[Point-in-time equity engine]
-    C --> E[Shifted-feature crypto engine]
-    D --> F[Purged walk-forward backtests]
-    E --> F
-    F --> G[Versioned atomic JSON snapshot]
-    G --> H[Native SwiftUI macOS app]
-```
-
-The two runtimes share a strict snapshot contract. No HTTP service is required. See [architecture](docs/architecture.md), [methodology](docs/methodology.md), [backtest protocol](docs/backtest_protocol.md), [macOS guide](docs/macos_app.md), [privacy](docs/privacy.md), and [data dictionary](docs/data_dictionary.md).
-
-## Data and research caveats
-
-| Source | Use | Point-in-time treatment | Limitation |
-|---|---|---|---|
-| SEC EDGAR Company Facts | Reported equity fundamentals | Filing date is availability date | Filing date proxies event timing |
-| Wikimedia Analytics | Public-attention features | Explicit publication lag | Noisy and non-causal |
-| Yahoo chart endpoint snapshots | Adjusted equity/crypto prices | Frozen files, dates, and SHA-256 | Unofficial endpoint; no SLA |
-| User CSV / optional API | Historical expectations | Latest revision at or before cutoff | Bundled demo has no real consensus |
-
-Users are responsible for provider terms and production data licensing. The application stores no brokerage credentials and never places orders.
-
-## Project map
+## Project layout
 
 ```text
-macos/Nowcaster/    native SwiftUI application and tests
-src/                ingestion, features, modelling, backtests, snapshot export
-config/             typed research and universe configuration
-data/demo/          frozen real public source snapshots and manifests
-data/app/           generated native application snapshot
-docs/               architecture, methodology, operations, privacy, screenshots
-tests/              unit, integration, leakage, CLI, and documentation tests
-.github/workflows/  macOS CI and checksumed release packaging
-dashboard/          deprecated Streamlit research fallback
+macos/Nowcaster/    native SwiftUI app and Swift tests
+src/                data ingestion, models, backtests, and snapshot export
+config/             market universe, features, and model settings
+data/demo/          frozen public source snapshots and checksum manifests
+docs/               architecture, methodology, privacy, and native screenshots
+tests/              Python unit, integration, leakage, and pipeline tests
+scripts/            native app build and visual-verification tools
+.github/workflows/  continuous integration and macOS release packaging
 ```
 
-This standalone project was originally developed inside a downloaded GS Quant source tree. It can optionally cross-check returns with `gs_quant`, but it is not affiliated with or endorsed by Goldman Sachs.
+For deeper technical detail, see the [architecture](docs/architecture.md), [methodology](docs/methodology.md), [backtest protocol](docs/backtest_protocol.md), [data dictionary](docs/data_dictionary.md), [macOS guide](docs/macos_app.md), [privacy policy](docs/privacy.md), and [verification record](docs/native_verification.md).
+
+## Data, privacy, and limitations
+
+- The bundled demo is historical and is not a real-time market feed.
+- Public data can be missing, revised, delayed, or wrong.
+- Yahoo chart data comes from an unofficial endpoint with no service guarantee.
+- Users are responsible for data-provider terms and production data licences.
+- The app does not collect personal information, connect to a broker, or store brokerage credentials.
+- Short selling, leverage, crypto trading, and derivatives can lose more money or move faster than a beginner expects.
+
+This standalone project was originally developed inside a downloaded GS Quant source tree and can optionally cross-check a small return calculation with the open-source `gs_quant` package. Nowcaster is not affiliated with or endorsed by Goldman Sachs.

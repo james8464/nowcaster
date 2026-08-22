@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from src.database.engine import Database
 
 
@@ -72,7 +70,7 @@ def _event_spread(database: Database) -> float | None:
     return float(top.mean() - bottom.mean())
 
 
-def recruiter_statistics(database: Database) -> dict[str, int | float | None]:
+def research_statistics(database: Database) -> dict[str, int | float | None]:
     return {
         "companies": int(database.scalar("select count(distinct company_id) from financials_quarterly") or 0),
         "company_quarters": int(database.scalar("select count(*) from financials_quarterly") or 0),
@@ -89,56 +87,3 @@ def recruiter_statistics(database: Database) -> dict[str, int | float | None]:
         "alternative_incremental_mae_improvement": _alternative_incremental_improvement(database),
         "event_spread": _event_spread(database),
     }
-
-
-def generate_resume_bullets(database: Database, output_path: Path) -> Path:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    metrics = recruiter_statistics(database)
-    if not metrics["companies"] or not metrics["historical_forecasts"]:
-        text = (
-            "# Resume bullets\n\n"
-            "Not generated: the database contains insufficient measured research outputs. "
-            "Run the complete pipeline before using quantitative claims.\n"
-        )
-        output_path.write_text(text, encoding="utf-8")
-        return output_path
-    improvement = metrics["alternative_incremental_mae_improvement"]
-    if improvement is None:
-        accuracy_bullet = (
-            "- Evaluated expanding-window revenue forecasts against seasonal baselines; no matched MAE comparison "
-            "was available."
-        )
-    elif improvement >= 0:
-        accuracy_bullet = (
-            f"- Reduced matched out-of-sample revenue forecast MAE by {improvement:.1%} versus a fundamentals-only "
-            "Ridge model by adding point-in-time attention signals."
-        )
-    else:
-        accuracy_bullet = (
-            f"- Measured an {abs(improvement):.1%} deterioration in matched out-of-sample MAE after adding attention "
-            "signals to a fundamentals-only Ridge model, documenting the negative result and model-risk controls."
-        )
-    spread = metrics["event_spread"]
-    spread_text = f"; measured top-minus-bottom abnormal-return spread of {spread:.2%}" if spread is not None else ""
-    text = "\n".join(
-        [
-            "# Resume bullet alternatives",
-            "",
-            (
-                f"- Built a Python/DuckDB point-in-time research pipeline across {metrics['companies']} companies and "
-                f"{metrics['company_quarters']} company-quarters, processing {metrics['alternative_observations']:,} "
-                "daily public alternative-data observations."
-            ),
-            "",
-            accuracy_bullet,
-            "",
-            (
-                f"- Produced {metrics['historical_forecasts']:,} expanding-window forecasts and backtested "
-                f"{metrics['backtest_observations']:,} earnings-event observations{spread_text}, with transaction-cost "
-                "and statistical-robustness caveats."
-            ),
-            "",
-        ]
-    )
-    output_path.write_text(text, encoding="utf-8")
-    return output_path
