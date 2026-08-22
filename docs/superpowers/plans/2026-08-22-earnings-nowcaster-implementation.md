@@ -603,7 +603,7 @@ git commit -m "feat: generate evidence-backed research artifacts"
 - Produces: cached read-only functions in `dashboard.data` returning typed view frames
 - Produces: Streamlit application at `dashboard/app.py`
 
-- [ ] **Step 1: Write failing dashboard query-contract and empty-state tests**
+- [x] **Step 1: Write failing dashboard query-contract and empty-state tests**
 
 ```python
 def test_overview_view_exposes_mode_freshness_and_sample_counts(demo_db):
@@ -613,11 +613,11 @@ def test_overview_view_exposes_mode_freshness_and_sample_counts(demo_db):
     assert view.historical_forecast_count > 0
 ```
 
-- [ ] **Step 2: Verify failures**
+- [x] **Step 2: Verify failures**
 
 Run: `pytest tests/unit/test_dashboard_data.py -q`
 
-- [ ] **Step 3: Implement shared institutional visual system, mode badges, filters, empty/error states, and six pages**
+- [x] **Step 3: Implement shared institutional visual system, mode badges, filters, empty/error states, and six pages**
 
 ```python
 @st.cache_data(show_spinner=False)
@@ -626,11 +626,11 @@ def load_forecast_monitor(database_url: str, horizon: int) -> pd.DataFrame:
     return db.frame(FORECAST_MONITOR_QUERY, {"horizon": horizon}).sort_values("absolute_variant", ascending=False)
 ```
 
-- [ ] **Step 4: Start Streamlit headlessly and run dashboard smoke tests**
+- [x] **Step 4: Start Streamlit headlessly and run dashboard smoke tests**
 
 Run: `pytest tests/unit/test_dashboard_data.py tests/integration/test_dashboard_smoke.py -q && streamlit run dashboard/app.py --server.headless true --server.port 8511`
 
-- [ ] **Step 5: Commit dashboard**
+- [x] **Step 5: Commit dashboard**
 
 ```bash
 git add dashboard tests
