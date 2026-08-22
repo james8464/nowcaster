@@ -57,7 +57,7 @@ class ExecutionAssumptions:
     participation_rate: float = 1.0
     short_borrow_available: bool = True
     flatten_at_session_end: bool = False
-    session_label: Callable[[Mapping[str, Any]], object | None] | None = None
+    session_close: Callable[[Mapping[str, Any]], object | None] | None = None
 
     def __post_init__(self) -> None:
         if self.latency < timedelta(0):
@@ -66,8 +66,8 @@ class ExecutionAssumptions:
             raise ValueError("tick_size and lot_size must be positive")
         if not 0 < self.participation_rate <= 1:
             raise ValueError("participation_rate must be in (0, 1]")
-        if self.flatten_at_session_end and self.session_label is None:
-            raise ValueError("session flattening requires an injected session_label callback")
+        if self.flatten_at_session_end and self.session_close is None:
+            raise ValueError("session flattening requires an injected session_close callback")
 
 
 @dataclass(frozen=True, slots=True)
@@ -256,16 +256,36 @@ def _make_fill(
     )
 
 
-def _session_ends(bars: pd.DataFrame, index: int, assumptions: ExecutionAssumptions) -> bool:
-    if assumptions.session_label is None:
+def _is_session_close(bar: pd.Series, assumptions: ExecutionAssumptions) -> bool:
+    if assumptions.session_close is None:
         return False
-    current = bars.iloc[index]
-    symbol = str(current["symbol"])
-    later = bars.iloc[index + 1 :]
-    next_symbol_bar = later[later["symbol"] == symbol]
-    if next_symbol_bar.empty:
+    declared = assumptions.session_close(bar)
+    if declared is None or pd.isna(declared):
         return False
-    return assumptions.session_label(current) != assumptions.session_label(next_symbol_bar.iloc[0])
+    timestamp = pd.Timestamp(declared)
+    if timestamp.tzinfo is None:
+        raise ValueError("injected session close timestamps must be timezone-aware")
+    return timestamp.tz_convert("UTC") == pd.Timestamp(bar["close_timestamp"])
+
+
+def _close_limit(order: OrderIntent, position: float) -> tuple[float, str | None]:
+    if order.position_effect != "close":
+        return float("inf"), None
+    reducible = position if order.side == "sell" else -position
+    if reducible > 1e-12:
+        return reducible, None
+    if order.order_type in {"protective_stop", "target", "bracket_exit"}:
+        return 0.0, "stale_protective_exit"
+    return 0.0, "close_side_does_not_reduce_position"
+
+
+def _session_rejection(bar: pd.Series, reason: str) -> OrderRejection:
+    return OrderRejection(
+        order_id=f"session-flatten:{bar['symbol']}:{bar['close_timestamp']}",
+        strategy_id="session_flatten",
+        symbol=str(bar["symbol"]),
+        reason=reason,
+    )
 
 
 def run_execution(
@@ -274,11 +294,18 @@ def run_execution(
     assumptions: ExecutionAssumptions,
     *,
     initial_positions: Mapping[str, float] | None = None,
+    initial_used_capacity: Mapping[tuple[str, pd.Timestamp], float] | None = None,
 ) -> ExecutionResult:
     ordered_bars = _validated_bars(bars)
     positions = {str(symbol).upper(): float(quantity) for symbol, quantity in (initial_positions or {}).items()}
     if any(not math.isfinite(quantity) for quantity in positions.values()):
         raise ValueError("initial positions must be finite")
+    used_capacity_by_bar = {
+        (str(symbol).upper(), pd.Timestamp(timestamp).tz_convert("UTC")): float(quantity)
+        for (symbol, timestamp), quantity in (initial_used_capacity or {}).items()
+    }
+    if any(quantity < 0 or not math.isfinite(quantity) for quantity in used_capacity_by_bar.values()):
+        raise ValueError("initial used capacity must be finite and non-negative")
     pending: list[_PendingOrder] = []
     rejections: list[OrderRejection] = []
     for order in sorted(orders, key=lambda item: (item.decision_timestamp, item.order_id)):
@@ -295,10 +322,14 @@ def run_execution(
             pending.append(_PendingOrder(order, rounded))
 
     fills: list[Fill] = []
-    for index, bar in ordered_bars.iterrows():
+    for _index, bar in ordered_bars.iterrows():
+        at_session_close = assumptions.flatten_at_session_end and _is_session_close(bar, assumptions)
         if bool(bar.get("halted", False)) or float(bar["volume"]) <= 0:
+            if at_session_close and abs(positions.get(str(bar["symbol"]), 0.0)) > 1e-12:
+                rejections.append(_session_rejection(bar, "session_close_bar_not_actionable"))
             continue
-        used_capacity = 0.0
+        capacity_key = (str(bar["symbol"]), pd.Timestamp(bar["open_timestamp"]))
+        used_capacity = used_capacity_by_bar.get(capacity_key, 0.0)
         for item in list(pending):
             order = item.order
             if order.symbol != str(bar["symbol"]):
@@ -309,6 +340,12 @@ def run_execution(
             if pd.Timestamp(bar["close_timestamp"]) <= order.decision_timestamp:
                 continue
             item.saw_eligible_bar = True
+            position = positions.get(order.symbol, 0.0)
+            close_limit, close_rejection = _close_limit(order, position)
+            if close_rejection is not None:
+                rejections.append(OrderRejection(order.order_id, order.strategy_id, order.symbol, close_rejection))
+                pending.remove(item)
+                continue
             triggered = _trigger_price(order, bar)
             if triggered is None:
                 continue
@@ -316,24 +353,39 @@ def run_execution(
                 max(float(bar["volume"]) * assumptions.participation_rate - used_capacity, 0.0),
                 assumptions.lot_size,
             )
-            quantity = min(item.rounded_quantity, capacity)
+            quantity = min(item.rounded_quantity, capacity, close_limit)
             if quantity <= 0:
                 continue
-            position = positions.get(order.symbol, 0.0)
-            if order.side == "sell" and position - quantity < -1e-12 and not assumptions.short_borrow_available:
-                rejections.append(
-                    OrderRejection(order.order_id, order.strategy_id, order.symbol, "short_borrow_unavailable")
-                )
-                pending.remove(item)
-                continue
+            remainder_reason: str | None = None
+            if (
+                order.side == "sell"
+                and order.position_effect != "close"
+                and position - quantity < -1e-12
+                and not assumptions.short_borrow_available
+            ):
+                quantity = min(quantity, max(position, 0.0))
+                remainder_reason = "short_borrow_unavailable"
+                if quantity <= 0:
+                    rejections.append(OrderRejection(order.order_id, order.strategy_id, order.symbol, remainder_reason))
+                    pending.remove(item)
+                    continue
             raw_price, reason = triggered
             fill = _make_fill(order, bar, assumptions, quantity, raw_price, reason)
             fills.append(fill)
             positions[order.symbol] = positions.get(order.symbol, 0.0) + quantity * (1 if order.side == "buy" else -1)
             used_capacity += quantity
             pending.remove(item)
+            if remainder_reason is not None:
+                rejections.append(OrderRejection(order.order_id, order.strategy_id, order.symbol, remainder_reason))
+            elif order.position_effect == "close" and quantity + 1e-12 < item.rounded_quantity:
+                rejection_reason = (
+                    "close_quantity_exceeds_position"
+                    if close_limit <= capacity
+                    else "close_quantity_exceeds_position_capacity"
+                )
+                rejections.append(OrderRejection(order.order_id, order.strategy_id, order.symbol, rejection_reason))
 
-        if assumptions.flatten_at_session_end and _session_ends(ordered_bars, index, assumptions):
+        if at_session_close:
             symbol = str(bar["symbol"])
             quantity = positions.get(symbol, 0.0)
             if abs(quantity) > 1e-12:
@@ -348,18 +400,28 @@ def run_execution(
                     order_type="timed_exit",
                     position_effect="close",
                 )
+                capacity = _round_quantity(
+                    max(float(bar["volume"]) * assumptions.participation_rate - used_capacity, 0.0),
+                    assumptions.lot_size,
+                )
+                executable = min(abs(quantity), capacity)
+                if executable <= 0:
+                    rejections.append(_session_rejection(bar, "session_close_bar_not_actionable"))
+                    continue
                 fill = _make_fill(
                     flatten,
                     bar,
                     assumptions,
-                    abs(quantity),
+                    executable,
                     float(bar["close"]),
                     "scheduled_session_flatten",
                     execution_timestamp=pd.Timestamp(bar["close_timestamp"]),
                     order_type="session_flatten",
                 )
                 fills.append(fill)
-                positions[symbol] = 0.0
+                positions[symbol] += executable * (1 if side == "buy" else -1)
+                if executable + 1e-12 < abs(quantity):
+                    rejections.append(_session_rejection(bar, "close_quantity_exceeds_position_capacity"))
 
     for item in pending:
         reason = (

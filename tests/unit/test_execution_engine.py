@@ -192,30 +192,45 @@ def test_funding_and_borrow_costs_use_signed_funding_and_short_notional() -> Non
     assert short.total == 0.2
 
 
-def test_last_bar_of_an_injected_session_flattens_the_open_position() -> None:
-    bars = _bars().iloc[:4].copy()
-    bars["session"] = ["A", "A", "B", "B"]
-    order = OrderIntent(
-        order_id="entry",
-        strategy_id="trend",
-        symbol="XYZ",
-        decision_timestamp=pd.Timestamp("2026-08-21 10:00:30", tz="UTC"),
-        side="buy",
-        quantity=2,
-    )
+def test_causally_declared_final_session_bar_flattens_through_participation_cap() -> None:
+    bars = _bars().iloc[[1]].copy()
+    bars["volume"] = 2.0
+    bars["session_close_timestamp"] = bars["close_timestamp"]
     assumptions = ExecutionAssumptions(
         flatten_at_session_end=True,
-        session_label=lambda row: str(row["session"]),
+        participation_rate=0.5,
+        session_close=lambda row: pd.Timestamp(row["session_close_timestamp"]),
     )
 
-    result = run_execution(bars, [order], assumptions)
+    result = run_execution(bars, [], assumptions, initial_positions={"XYZ": 2})
 
-    assert [fill.order_type for fill in result.fills] == ["market", "session_flatten"]
-    assert result.fills[1].side == "sell"
-    assert result.fills[1].quantity == 2
-    assert result.fills[1].price == 101.5
-    assert result.fills[1].execution_timestamp == pd.Timestamp("2026-08-21 10:02", tz="UTC")
-    assert result.positions == {"XYZ": 0.0}
+    assert len(result.fills) == 1
+    assert result.fills[0].order_type == "session_flatten"
+    assert result.fills[0].side == "sell"
+    assert result.fills[0].quantity == 1
+    assert result.fills[0].status == "partial"
+    assert result.fills[0].price == 101.5
+    assert result.fills[0].execution_timestamp == pd.Timestamp("2026-08-21 10:02", tz="UTC")
+    assert result.positions == {"XYZ": 1.0}
+    assert result.rejections[0].reason == "close_quantity_exceeds_position_capacity"
+
+
+def test_session_close_does_not_use_a_future_session_transition_and_halt_rejects_flatten() -> None:
+    bars = _bars().iloc[:3].copy()
+    bars["session"] = ["A", "A", "B"]
+    bars["session_close_timestamp"] = pd.Series(pd.NaT, index=bars.index, dtype="datetime64[ns, UTC]")
+    bars.loc[bars.index[1], "session_close_timestamp"] = bars.loc[bars.index[1], "close_timestamp"]
+    bars.loc[bars.index[1], "halted"] = True
+    assumptions = ExecutionAssumptions(
+        flatten_at_session_end=True,
+        session_close=lambda row: row["session_close_timestamp"],
+    )
+
+    result = run_execution(bars, [], assumptions, initial_positions={"XYZ": 2})
+
+    assert not result.fills
+    assert result.positions == {"XYZ": 2.0}
+    assert result.rejections[0].reason == "session_close_bar_not_actionable"
 
 
 def test_same_bar_stop_target_collision_uses_documented_adverse_ordering() -> None:
@@ -232,7 +247,7 @@ def test_same_bar_stop_target_collision_uses_documented_adverse_ordering() -> No
         position_effect="close",
     )
 
-    result = run_execution(_bars(), [order], ExecutionAssumptions())
+    result = run_execution(_bars(), [order], ExecutionAssumptions(), initial_positions={"XYZ": 2})
 
     fill = result.fills[0]
     assert fill.price == 99
@@ -252,7 +267,96 @@ def test_untouched_trigger_is_not_silently_filled() -> None:
         position_effect="close",
     )
 
-    result = run_execution(_bars(), [order], ExecutionAssumptions())
+    result = run_execution(_bars(), [order], ExecutionAssumptions(), initial_positions={"XYZ": 1})
 
     assert not result.fills
     assert result.rejections[0].reason == "trigger_not_reached"
+
+
+def test_oversized_close_fills_only_reducible_position_and_rejects_remainder() -> None:
+    order = OrderIntent(
+        order_id="oversized-close",
+        strategy_id="trend",
+        symbol="XYZ",
+        decision_timestamp=pd.Timestamp("2026-08-21 10:01", tz="UTC"),
+        side="sell",
+        quantity=5,
+        position_effect="close",
+    )
+
+    result = run_execution(
+        _bars(),
+        [order],
+        ExecutionAssumptions(short_borrow_available=False),
+        initial_positions={"XYZ": 2},
+    )
+
+    assert result.fills[0].quantity == 2
+    assert result.fills[0].status == "partial"
+    assert result.positions == {"XYZ": 0.0}
+    assert result.rejections[0].reason == "close_quantity_exceeds_position"
+
+
+def test_wrong_side_close_is_rejected_without_increasing_position() -> None:
+    order = OrderIntent(
+        order_id="wrong-side",
+        strategy_id="trend",
+        symbol="XYZ",
+        decision_timestamp=pd.Timestamp("2026-08-21 10:01", tz="UTC"),
+        side="buy",
+        quantity=1,
+        position_effect="close",
+    )
+
+    result = run_execution(_bars(), [order], ExecutionAssumptions(), initial_positions={"XYZ": 2})
+
+    assert not result.fills
+    assert result.positions == {"XYZ": 2.0}
+    assert result.rejections[0].reason == "close_side_does_not_reduce_position"
+
+
+def test_auto_sell_closes_available_long_before_rejecting_unborrowable_remainder() -> None:
+    order = OrderIntent(
+        order_id="crossing-sell",
+        strategy_id="trend",
+        symbol="XYZ",
+        decision_timestamp=pd.Timestamp("2026-08-21 10:01", tz="UTC"),
+        side="sell",
+        quantity=5,
+    )
+
+    result = run_execution(
+        _bars(),
+        [order],
+        ExecutionAssumptions(short_borrow_available=False),
+        initial_positions={"XYZ": 2},
+    )
+
+    assert result.fills[0].quantity == 2
+    assert result.positions == {"XYZ": 0.0}
+    assert result.rejections[0].reason == "short_borrow_unavailable"
+
+
+def test_second_protective_exit_is_cancelled_after_first_exit_flattens_position() -> None:
+    orders = [
+        OrderIntent(
+            order_id=order_id,
+            strategy_id="trend",
+            symbol="XYZ",
+            decision_timestamp=pd.Timestamp("2026-08-21 10:03", tz="UTC"),
+            side="sell",
+            quantity=2,
+            order_type="bracket_exit",
+            stop_price=99,
+            target_price=105,
+            position_effect="close",
+        )
+        for order_id in ("first", "stale")
+    ]
+
+    result = run_execution(_bars(), orders, ExecutionAssumptions(), initial_positions={"XYZ": 2})
+
+    assert [fill.order_id for fill in result.fills] == ["first"]
+    assert result.positions == {"XYZ": 0.0}
+    assert result.rejections[0].order_id == "stale"
+    assert result.rejections[0].reason == "stale_protective_exit"

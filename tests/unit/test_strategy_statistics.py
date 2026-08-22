@@ -5,6 +5,9 @@ import math
 import pandas as pd
 import pytest
 
+from src.backtest.costs import CostAssumptions
+from src.backtest.execution import ExecutionAssumptions
+from src.backtest.intraday import RiskLimits, run_intraday_backtest
 from src.backtest.robustness import (
     cscv_probability_of_backtest_overfitting,
     deflated_sharpe_probability,
@@ -27,10 +30,39 @@ def test_seeded_circular_block_bootstrap_has_literal_interval_and_probability() 
 
 
 def test_deflated_sharpe_uses_observations_moments_and_actual_trial_count() -> None:
-    result = deflated_sharpe_probability(0.8, observations=25, trials=4, skew=0, kurtosis=3)
+    result = deflated_sharpe_probability(
+        0.8,
+        observations=25,
+        trial_sharpes=[0.1, 0.2, 0.3, 0.4],
+        skew=0,
+        kurtosis=3,
+    )
 
-    assert result == pytest.approx(0.9963042863677345)
-    assert deflated_sharpe_probability(0.8, observations=25, trials=40, skew=0, kurtosis=3) < result
+    # Independent literal: sample variance=1/60, expected maximum=0.13582847254166247,
+    # PSR z-score=2.8320369087423507 under the Bailey-Lopez de Prado adjustment.
+    assert result == pytest.approx(0.9976873745271267)
+    assert (
+        deflated_sharpe_probability(
+            0.8,
+            observations=25,
+            trial_sharpes=[-0.4, 0.0, 0.4, 0.8],
+            skew=0,
+            kurtosis=3,
+        )
+        < result
+    )
+
+
+def test_deflated_sharpe_rejects_a_trial_count_that_disagrees_with_observed_trials() -> None:
+    with pytest.raises(ValueError, match="trial count"):
+        deflated_sharpe_probability(
+            0.8,
+            observations=25,
+            trial_sharpes=[0.1, 0.2, 0.3, 0.4],
+            trials=40,
+            skew=0,
+            kurtosis=3,
+        )
 
 
 def test_cscv_pbo_selects_in_sample_winner_then_ranks_it_out_of_sample() -> None:
@@ -94,4 +126,46 @@ def test_doubled_cost_survival_reprices_each_return_before_compounding() -> None
 
     assert result.base_cumulative_return == pytest.approx(0.0246)
     assert result.doubled_cost_cumulative_return == pytest.approx(0.0044)
+    assert result.survives is True
+
+
+def test_doubled_cost_survival_accepts_normalized_cost_returns_from_intraday_curve() -> None:
+    opens = pd.date_range("2026-08-21 10:00", periods=2, freq="min", tz="UTC")
+    bars = pd.DataFrame(
+        {
+            "symbol": "AAA",
+            "open_timestamp": opens,
+            "close_timestamp": opens + pd.Timedelta(minutes=1),
+            "available_at": opens + pd.Timedelta(minutes=1),
+            "finalized": True,
+            "open": [100.0, 100.0],
+            "high": [100.0, 110.0],
+            "low": [100.0, 100.0],
+            "close": [100.0, 110.0],
+            "volume": 10_000.0,
+            "halted": False,
+        }
+    )
+    signals = pd.DataFrame(
+        {
+            "strategy_id": ["trend"],
+            "symbol": ["AAA"],
+            "decision_timestamp": [pd.Timestamp("2026-08-21 10:01", tz="UTC")],
+            "data_through": [pd.Timestamp("2026-08-21 10:01", tz="UTC")],
+            "signal": [1],
+            "strength": [0.5],
+        }
+    )
+    backtest = run_intraday_backtest(
+        bars,
+        signals,
+        ExecutionAssumptions(costs=CostAssumptions(taker_fee_bps=100)),
+        RiskLimits(initial_cash=1_000),
+    )
+
+    assert backtest.equity_curve.iloc[-1]["gross_return"] == pytest.approx(0.05)
+    assert backtest.equity_curve.iloc[-1]["cost_return"] == pytest.approx(0.005)
+    result = doubled_cost_survival(backtest.equity_curve)
+    assert result.base_cumulative_return == pytest.approx(0.045)
+    assert result.doubled_cost_cumulative_return == pytest.approx(0.04)
     assert result.survives is True

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import itertools
+import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -107,17 +109,45 @@ def deflated_sharpe_probability(
     sharpe: float,
     *,
     observations: int,
-    trials: int,
+    trials: int | None = None,
+    trial_sharpes: Sequence[float] | None = None,
     skew: float,
     kurtosis: float,
 ) -> float:
-    if observations < 3 or trials <= 0:
+    if observations < 3:
         return 0.0
-    expected_maximum = norm.ppf(1 - 1 / max(trials + 1, 2)) / np.sqrt(observations - 1)
-    variance = (1 - skew * sharpe + ((kurtosis - 1) / 4) * sharpe**2) / (observations - 1)
-    if variance <= 0 or not np.isfinite(variance):
+    if not all(math.isfinite(value) for value in (sharpe, skew, kurtosis)):
         return 0.0
-    return float(np.clip(norm.cdf((sharpe - expected_maximum) / np.sqrt(variance)), 0, 1))
+
+    if trial_sharpes is not None:
+        observed_trials = np.asarray(trial_sharpes, dtype=float)
+        if observed_trials.ndim != 1 or len(observed_trials) < 2 or np.any(~np.isfinite(observed_trials)):
+            raise ValueError("trial Sharpe values must contain at least two finite observations")
+        trial_count = len(observed_trials)
+        if trials is not None and trials != trial_count:
+            raise ValueError("trial count must agree with the observed trial Sharpe values")
+        trial_variance = float(np.var(observed_trials, ddof=1))
+    else:
+        if trials is None or trials <= 0:
+            raise ValueError("observed trial Sharpe values or a positive legacy trial count are required")
+        trial_count = trials
+        # Compatibility for callers that recorded only a count: assume the null
+        # standard error of a Sharpe estimate. New callers should supply trials.
+        trial_variance = 1 / (observations - 1)
+
+    if trial_count == 1 or trial_variance == 0:
+        expected_maximum = 0.0
+    else:
+        euler_mascheroni = 0.5772156649015329
+        expected_maximum = math.sqrt(trial_variance) * (
+            (1 - euler_mascheroni) * norm.ppf(1 - 1 / trial_count)
+            + euler_mascheroni * norm.ppf(1 - 1 / (trial_count * math.e))
+        )
+    denominator_variance = 1 - skew * sharpe + ((kurtosis - 1) / 4) * sharpe**2
+    if denominator_variance <= 0 or not np.isfinite(denominator_variance):
+        return 0.0
+    z_score = (sharpe - expected_maximum) * math.sqrt(observations - 1) / math.sqrt(denominator_variance)
+    return float(np.clip(norm.cdf(z_score), 0, 1))
 
 
 def cscv_probability_of_backtest_overfitting(
@@ -246,11 +276,23 @@ def performance_attribution(
 
 
 def doubled_cost_survival(
-    gross_returns: np.ndarray | list[float],
-    base_costs: np.ndarray | list[float],
+    gross_returns: np.ndarray | list[float] | pd.DataFrame,
+    base_costs: np.ndarray | list[float] | None = None,
 ) -> CostSurvivalResult:
-    gross = np.asarray(gross_returns, dtype=float)
-    costs = np.asarray(base_costs, dtype=float)
+    if isinstance(gross_returns, pd.DataFrame):
+        if base_costs is not None:
+            raise ValueError("base costs must be omitted when an equity curve is supplied")
+        required = {"gross_return", "cost_return"}
+        missing = required - set(gross_returns.columns)
+        if missing:
+            raise ValueError(f"equity curve is missing normalized return columns: {sorted(missing)}")
+        gross = gross_returns["gross_return"].to_numpy(dtype=float)
+        costs = gross_returns["cost_return"].to_numpy(dtype=float)
+    else:
+        if base_costs is None:
+            raise ValueError("normalized base cost returns are required")
+        gross = np.asarray(gross_returns, dtype=float)
+        costs = np.asarray(base_costs, dtype=float)
     if gross.ndim != 1 or costs.ndim != 1 or len(gross) == 0 or len(gross) != len(costs):
         raise ValueError("gross returns and costs must be equally sized non-empty vectors")
     if np.any(~np.isfinite(gross)) or np.any(~np.isfinite(costs)) or np.any(costs < 0):

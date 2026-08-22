@@ -3,8 +3,11 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
+from src.backtest.costs import CostAssumptions
 from src.backtest.execution import ExecutionAssumptions
 from src.backtest.intraday import RiskLimits, run_intraday_backtest
+from src.strategies.library import StrategyContext, generate_signals
+from src.strategies.types import StrategyFamily, StrategySpec
 
 
 def _bars(
@@ -206,3 +209,105 @@ def test_unavailable_borrow_does_not_block_a_long_position_exit() -> None:
 
     assert result.trade_ledger["side"].tolist() == ["buy", "sell"]
     assert result.trade_ledger.iloc[-1]["quantity"] == 5
+
+
+@pytest.mark.parametrize(
+    ("short_borrow_available", "short_bar_volume", "expected_quantity"),
+    [(False, 10_000.0, 0.0), (True, 2.0, 2.0)],
+    ids=["borrow-rejection", "liquidity-rescale"],
+)
+def test_dependent_market_neutral_legs_are_atomically_rejected_or_rescaled(
+    short_borrow_available: bool,
+    short_bar_volume: float,
+    expected_quantity: float,
+) -> None:
+    bars = _bars(("AAA", "BBB"), opens=(100, 100), closes=(100, 100))
+    actionable = bars["open_timestamp"] == pd.Timestamp("2026-08-21 10:01", tz="UTC")
+    bars.loc[actionable & (bars["symbol"] == "BBB"), "volume"] = short_bar_volume
+    signals = pd.DataFrame(
+        [
+            _signal("pairs", "AAA", "2026-08-21 10:01", 1),
+            _signal("pairs", "BBB", "2026-08-21 10:01", -1),
+        ]
+    )
+    risk = RiskLimits(
+        initial_cash=1_000,
+        maximum_gross_exposure=1.0,
+        maximum_net_exposure=0.1,
+        maximum_asset_exposure=0.6,
+        maximum_strategy_exposure=0.6,
+    )
+
+    result = run_intraday_backtest(
+        bars,
+        signals,
+        ExecutionAssumptions(short_borrow_available=short_borrow_available),
+        risk,
+    )
+
+    if expected_quantity == 0:
+        assert result.trade_ledger.empty
+        assert "dependent_leg_not_executable" in result.rejection_ledger["reason"].tolist()
+    else:
+        quantities = result.trade_ledger.set_index("symbol")["quantity"].to_dict()
+        assert quantities == {"AAA": expected_quantity, "BBB": expected_quantity}
+    closing = result.equity_curve.iloc[-1]
+    assert abs(closing["net_exposure"]) <= 0.1
+    assert closing["gross_exposure"] <= 0.6
+
+
+def test_carry_accrues_on_position_held_during_bar_before_session_close_fill() -> None:
+    bars = _bars(opens=(100, 100), closes=(100, 100))
+    bars["session_close_timestamp"] = pd.Series(pd.NaT, index=bars.index, dtype="datetime64[ns, UTC]")
+    last = bars["open_timestamp"] == pd.Timestamp("2026-08-21 10:01", tz="UTC")
+    bars.loc[last, "session_close_timestamp"] = bars.loc[last, "close_timestamp"]
+    assumptions = ExecutionAssumptions(
+        costs=CostAssumptions(funding_bps_per_period=10),
+        flatten_at_session_end=True,
+        session_close=lambda row: row["session_close_timestamp"],
+    )
+    signals = pd.DataFrame([_signal("trend", "AAA", "2026-08-21 10:01", 1)])
+    risk = RiskLimits(
+        initial_cash=1_000,
+        maximum_gross_exposure=0.5,
+        maximum_net_exposure=0.5,
+        maximum_asset_exposure=0.5,
+        maximum_strategy_exposure=0.5,
+    )
+
+    result = run_intraday_backtest(bars, signals, assumptions, risk)
+
+    assert result.trade_ledger["order_type"].tolist() == ["market", "session_flatten"]
+    assert result.equity_curve.iloc[-1]["costs"] == pytest.approx(0.5)
+    assert result.equity_curve.iloc[-1]["equity"] == pytest.approx(999.5)
+
+
+def test_task3_strategy_signal_frame_is_directly_consumable_with_explicit_identity() -> None:
+    bars = _bars(opens=(2, 3, 5, 5), closes=(2, 3, 5, 5))
+    bars.loc[3, ["open_timestamp", "close_timestamp", "available_at"]] += pd.Timedelta(minutes=1)
+    bars["provider"] = "test-provider"
+    bars["feed"] = "test-feed"
+    bars["interval"] = "1m"
+    bars["revision"] = 1
+    spec = StrategySpec(
+        strategy_id="donchian_breakout",
+        family=StrategyFamily.TREND,
+        version="test",
+        intervals=("1m",),
+        warmup_bars=1,
+        parameters={"lookback": 2},
+    )
+    strategy_signals = generate_signals(spec, bars, StrategyContext())
+
+    result = run_intraday_backtest(
+        bars,
+        strategy_signals,
+        ExecutionAssumptions(),
+        RiskLimits(initial_cash=1_000),
+        strategy_id=spec.strategy_id,
+        symbol="AAA",
+    )
+
+    assert result.trade_ledger.iloc[0]["strategy_id"] == "donchian_breakout"
+    assert result.trade_ledger.iloc[0]["symbol"] == "AAA"
+    assert result.trade_ledger.iloc[0]["execution_timestamp"] > strategy_signals.iloc[2]["decision_timestamp"]

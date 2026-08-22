@@ -9,9 +9,9 @@ import pandas as pd
 from src.backtest.costs import calculate_carry_cost
 from src.backtest.execution import (
     ExecutionAssumptions,
+    ExecutionResult,
     Fill,
     OrderIntent,
-    _make_fill,
     _validated_bars,
     run_execution,
 )
@@ -63,7 +63,32 @@ _TRADE_COLUMNS = [field.name for field in Fill.__dataclass_fields__.values()]
 _REJECTION_COLUMNS = ["order_id", "strategy_id", "symbol", "reason"]
 
 
-def _validated_signals(signals: pd.DataFrame) -> pd.DataFrame:
+def adapt_strategy_signal_frame(
+    signals: pd.DataFrame,
+    *,
+    strategy_id: str | None = None,
+    symbol: str | None = None,
+) -> pd.DataFrame:
+    """Attach the identity omitted by Task 3's symbol-local signal contract."""
+
+    result = signals.copy()
+    for column, supplied in (("strategy_id", strategy_id), ("symbol", symbol)):
+        if column not in result:
+            if supplied is None or not supplied.strip():
+                raise ValueError(f"{column} is required for a StrategySignalFrame without that column")
+            result[column] = supplied
+        elif supplied is not None and not (result[column].astype(str) == supplied).all():
+            raise ValueError(f"supplied {column} conflicts with the StrategySignalFrame")
+    return result
+
+
+def _validated_signals(
+    signals: pd.DataFrame,
+    *,
+    strategy_id: str | None = None,
+    symbol: str | None = None,
+) -> pd.DataFrame:
+    signals = adapt_strategy_signal_frame(signals, strategy_id=strategy_id, symbol=symbol)
     required = {"strategy_id", "symbol", "decision_timestamp", "data_through", "signal", "strength"}
     missing = required - set(signals.columns)
     if missing:
@@ -136,57 +161,121 @@ def _cash_change(fill: Fill) -> float:
     return -fill.notional - explicit_cost if fill.side == "buy" else fill.notional - explicit_cost
 
 
-def _affordable_fill(
-    bar: pd.Series,
-    order: OrderIntent,
-    assumptions: ExecutionAssumptions,
+def _lot_floor(quantity: float, lot_size: float) -> float:
+    return float(round(math.floor((quantity + 1e-12) / lot_size) * lot_size, 12))
+
+
+def _scaled_orders(
+    orders: list[OrderIntent],
+    fraction: float,
+    lot_size: float,
+) -> list[OrderIntent]:
+    scaled: list[OrderIntent] = []
+    for order in orders:
+        quantity = _lot_floor(order.quantity * fraction, lot_size)
+        if quantity > 0:
+            scaled.append(replace(order, quantity=quantity))
+    return scaled
+
+
+def _projected_risk_is_valid(
+    execution: ExecutionResult,
+    orders: list[OrderIntent],
     cash: float,
-    position_quantity: float,
-) -> tuple[Fill | None, list[dict[str, object]]]:
+    mark_prices: dict[str, float],
+    risk: RiskLimits,
+) -> tuple[bool, float]:
+    projected_cash = cash + sum(_cash_change(fill) for fill in execution.fills)
+    equity = projected_cash + sum(quantity * mark_prices[symbol] for symbol, quantity in execution.positions.items())
+    if equity <= 0 or projected_cash < -1e-9:
+        return False, projected_cash
+    notionals = {symbol: quantity * mark_prices[symbol] for symbol, quantity in execution.positions.items()}
+    tolerance = 1e-9
+    if sum(abs(value) for value in notionals.values()) / equity > risk.maximum_gross_exposure + tolerance:
+        return False, projected_cash
+    if abs(sum(notionals.values())) / equity > risk.maximum_net_exposure + tolerance:
+        return False, projected_cash
+    if any(abs(value) / equity > risk.maximum_asset_exposure + tolerance for value in notionals.values()):
+        return False, projected_cash
+    strategy_symbols: dict[str, set[str]] = {}
+    for order in orders:
+        strategy_symbols.setdefault(order.strategy_id, set()).add(order.symbol)
+    for symbols in strategy_symbols.values():
+        strategy_gross = sum(abs(notionals.get(symbol, 0.0)) for symbol in symbols) / equity
+        if strategy_gross > risk.maximum_strategy_exposure + tolerance:
+            return False, projected_cash
+    return True, projected_cash
+
+
+def _execute_atomic_batch(
+    bars: pd.DataFrame,
+    orders: list[OrderIntent],
+    assumptions: ExecutionAssumptions,
+    positions: dict[str, float],
+    cash: float,
+    mark_prices: dict[str, float],
+    risk: RiskLimits,
+) -> tuple[tuple[Fill, ...], list[dict[str, object]], dict[str, float], float]:
+    if not orders:
+        return (), [], positions.copy(), cash
     local = replace(
-        assumptions, latency=pd.Timedelta(0).to_pytimedelta(), flatten_at_session_end=False, session_label=None
+        assumptions,
+        latency=pd.Timedelta(0).to_pytimedelta(),
+        flatten_at_session_end=False,
+        session_close=None,
     )
-    quantity = order.quantity
-    rejections: list[dict[str, object]] = []
-    while quantity + 1e-12 >= assumptions.lot_size:
-        candidate = replace(order, quantity=quantity)
-        execution = run_execution(
-            pd.DataFrame([bar]),
-            [candidate],
-            local,
-            initial_positions={order.symbol: position_quantity},
+    preview = run_execution(bars, orders, local, initial_positions=positions)
+    filled_by_order = {fill.order_id: fill.quantity for fill in preview.fills}
+    executable_fraction = min(filled_by_order.get(order.order_id, 0.0) / order.quantity for order in orders)
+    if executable_fraction <= 0:
+        rejected = [asdict(item) for item in preview.rejections]
+        rejected.extend(
+            {
+                "order_id": order.order_id,
+                "strategy_id": order.strategy_id,
+                "symbol": order.symbol,
+                "reason": "dependent_leg_not_executable",
+            }
+            for order in orders
+            if order.order_id in filled_by_order
         )
-        if not execution.fills:
-            rejections.extend(asdict(item) for item in execution.rejections)
-            return None, rejections
-        fill = execution.fills[0]
-        if fill.side != "buy" or -_cash_change(fill) <= cash + 1e-9:
-            return fill, rejections
-        quantity = round(quantity - assumptions.lot_size, 12)
-    rejections.append(
+        return (), rejected, positions.copy(), cash
+
+    fraction = executable_fraction
+    for _attempt in range(100):
+        candidates = _scaled_orders(orders, fraction, assumptions.lot_size)
+        if len(candidates) != len(orders):
+            break
+        execution = run_execution(bars, candidates, local, initial_positions=positions)
+        fully_executable = len(execution.fills) == len(candidates) and all(
+            fill.status == "filled" for fill in execution.fills
+        )
+        valid, projected_cash = _projected_risk_is_valid(execution, candidates, cash, mark_prices, risk)
+        if fully_executable and valid:
+            rejected = []
+            if fraction + 1e-12 < 1:
+                rejected = [
+                    {
+                        "order_id": order.order_id,
+                        "strategy_id": order.strategy_id,
+                        "symbol": order.symbol,
+                        "reason": "dependent_legs_rescaled",
+                    }
+                    for order in orders
+                ]
+            return execution.fills, rejected, execution.positions, projected_cash
+        fraction *= 0.99
+
+    rejected = [
         {
             "order_id": order.order_id,
             "strategy_id": order.strategy_id,
             "symbol": order.symbol,
-            "reason": "insufficient_cash",
+            "reason": "projected_risk_limit",
         }
-    )
-    return None, rejections
-
-
-def _session_end_for_symbol(
-    bars: pd.DataFrame,
-    index: int,
-    assumptions: ExecutionAssumptions,
-) -> bool:
-    if not assumptions.flatten_at_session_end or assumptions.session_label is None:
-        return False
-    row = bars.iloc[index]
-    later = bars.iloc[index + 1 :]
-    next_rows = later[later["symbol"] == row["symbol"]]
-    if next_rows.empty:
-        return False
-    return assumptions.session_label(row) != assumptions.session_label(next_rows.iloc[0])
+        for order in orders
+    ]
+    return (), rejected, positions.copy(), cash
 
 
 def run_intraday_backtest(
@@ -194,9 +283,12 @@ def run_intraday_backtest(
     signals: pd.DataFrame,
     assumptions: ExecutionAssumptions,
     risk: RiskLimits,
+    *,
+    strategy_id: str | None = None,
+    symbol: str | None = None,
 ) -> IntradayBacktestResult:
     ordered_bars = _validated_bars(bars)
-    decisions = _validated_signals(signals)
+    decisions = _validated_signals(signals, strategy_id=strategy_id, symbol=symbol)
     unknown_symbols = set(decisions["symbol"]) - set(ordered_bars["symbol"])
     if unknown_symbols:
         raise ValueError(f"Signals reference symbols without bars: {sorted(unknown_symbols)}")
@@ -245,6 +337,7 @@ def run_intraday_backtest(
         ordered_deltas = sorted(deltas.items(), key=lambda item: (item[1] > 0, item[0]))
         bar_turnover = 0.0
         bar_costs = 0.0
+        orders: list[OrderIntent] = []
         for symbol, delta in ordered_deltas:
             if abs(delta) + 1e-12 < assumptions.lot_size:
                 continue
@@ -257,61 +350,38 @@ def run_intraday_backtest(
                 (decisions["symbol"] == symbol) & decisions.index.isin(consumed), "decision_timestamp"
             ].max()
             decision_timestamp = pd.Timestamp(timestamp if pd.isna(latest_decision) else latest_decision)
-            order = OrderIntent(
-                order_id=f"portfolio:{order_sequence:08d}",
-                strategy_id=strategy_id or "portfolio_rebalance",
-                symbol=symbol,
-                decision_timestamp=decision_timestamp,
-                side=side,
-                quantity=abs(delta),
-                position_effect="open" if side == "sell" and desired_quantities[symbol] < 0 else "auto",
+            orders.append(
+                OrderIntent(
+                    order_id=f"portfolio:{order_sequence:08d}",
+                    strategy_id=strategy_id or "portfolio_rebalance",
+                    symbol=symbol,
+                    decision_timestamp=decision_timestamp,
+                    side=side,
+                    quantity=abs(delta),
+                    position_effect="open" if side == "sell" and desired_quantities[symbol] < 0 else "auto",
+                )
             )
             order_sequence += 1
-            bar = current[current["symbol"] == symbol].iloc[0]
-            fill, rejected = _affordable_fill(bar, order, assumptions, cash, positions.get(symbol, 0.0))
-            rejection_rows.extend(rejected)
-            if fill is None:
-                continue
+
+        batch_fills, batch_rejections, projected_positions, projected_cash = _execute_atomic_batch(
+            current,
+            orders,
+            assumptions,
+            positions,
+            cash,
+            mark_prices,
+            risk,
+        )
+        rejection_rows.extend(batch_rejections)
+        positions = projected_positions
+        cash = projected_cash
+        open_filled_capacity: dict[tuple[str, pd.Timestamp], float] = {}
+        for fill in batch_fills:
             fills.append(fill)
-            cash += _cash_change(fill)
-            positions[symbol] = positions.get(symbol, 0.0) + fill.quantity * (1 if fill.side == "buy" else -1)
             bar_turnover += fill.notional
             bar_costs += fill.total_cost
-
-        for index, bar in current.iterrows():
-            symbol = str(bar["symbol"])
-            if (
-                _session_end_for_symbol(ordered_bars, int(index), assumptions)
-                and abs(positions.get(symbol, 0.0)) > 1e-12
-            ):
-                quantity = positions[symbol]
-                side = "sell" if quantity > 0 else "buy"
-                flatten_order = OrderIntent(
-                    order_id=f"session-flatten:{order_sequence:08d}",
-                    strategy_id="session_flatten",
-                    symbol=symbol,
-                    decision_timestamp=pd.Timestamp(bar["open_timestamp"]),
-                    side=side,
-                    quantity=abs(quantity),
-                    order_type="timed_exit",
-                    position_effect="close",
-                )
-                order_sequence += 1
-                flatten_fill = _make_fill(
-                    flatten_order,
-                    bar,
-                    assumptions,
-                    abs(quantity),
-                    float(bar["close"]),
-                    "scheduled_session_flatten",
-                    execution_timestamp=pd.Timestamp(bar["close_timestamp"]),
-                    order_type="session_flatten",
-                )
-                fills.append(flatten_fill)
-                cash += _cash_change(flatten_fill)
-                positions[symbol] = 0.0
-                bar_turnover += flatten_fill.notional
-                bar_costs += flatten_fill.total_cost
+            key = (fill.symbol, pd.Timestamp(fill.execution_timestamp))
+            open_filled_capacity[key] = open_filled_capacity.get(key, 0.0) + fill.quantity
 
         close_prices = {str(row.symbol): float(row.close) for row in current.itertuples(index=False)}
         last_prices.update(close_prices)
@@ -320,8 +390,27 @@ def run_intraday_backtest(
             carry_total += calculate_carry_cost(quantity, last_prices[symbol], assumptions.costs).total
         cash -= carry_total
         bar_costs += carry_total
+
+        if assumptions.flatten_at_session_end:
+            flatten_execution = run_execution(
+                current,
+                [],
+                replace(assumptions, latency=pd.Timedelta(0).to_pytimedelta()),
+                initial_positions=positions,
+                initial_used_capacity=open_filled_capacity,
+            )
+            rejection_rows.extend(asdict(item) for item in flatten_execution.rejections)
+            positions = flatten_execution.positions
+            for fill in flatten_execution.fills:
+                fills.append(fill)
+                cash += _cash_change(fill)
+                bar_turnover += fill.notional
+                bar_costs += fill.total_cost
+
         equity = cash + sum(quantity * last_prices[symbol] for symbol, quantity in positions.items())
         net_return = equity / prior_equity - 1 if prior_equity else float("nan")
+        cost_return = bar_costs / prior_equity if prior_equity else float("nan")
+        gross_return = net_return + cost_return
         gross_notional = sum(abs(quantity * last_prices[symbol]) for symbol, quantity in positions.items())
         net_notional = sum(quantity * last_prices[symbol] for symbol, quantity in positions.items())
         curve_rows.append(
@@ -330,6 +419,8 @@ def run_intraday_backtest(
                 "cash": cash,
                 "equity": equity,
                 "net_return": net_return,
+                "gross_return": gross_return,
+                "cost_return": cost_return,
                 "gross_exposure": gross_notional / equity if equity else float("nan"),
                 "net_exposure": net_notional / equity if equity else float("nan"),
                 "turnover": bar_turnover / pretrade_equity if pretrade_equity else float("nan"),
@@ -358,4 +449,4 @@ def run_intraday_backtest(
     return IntradayBacktestResult(curve, trade_ledger, rejection_ledger, metrics)
 
 
-__all__ = ["IntradayBacktestResult", "RiskLimits", "run_intraday_backtest"]
+__all__ = ["IntradayBacktestResult", "RiskLimits", "adapt_strategy_signal_frame", "run_intraday_backtest"]
