@@ -1,0 +1,23 @@
+instruments:
+  - symbol: BTC-USD
+    name: Bitcoin / US Dollar
+    asset_class: crypto
+    currency: USD
+    venue: composite
+    horizons: [1, 5, 20]
+    primary_horizon: 5
+    minimum_training_days: 365
+    fee_bps: 10
+    slippage_bps: 5
+    enabled: true
+  - symbol: ETH-USD
+    name: Ether / US Dollar
+    asset_class: crypto
+    currency: USD
+    venue: composite
+    horizons: [1, 5, 20]
+    primary_horizon: 5
+    minimum_training_days: 365
+    fee_bps: 10
+    slippage_bps: 5
+    enabled: true

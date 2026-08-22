@@ -12,6 +12,9 @@ from src.backtest.event_study import run_event_study
 from src.config.settings import Settings
 from src.consensus.proxy import historical_expectation_proxy
 from src.consensus.variant import build_variant_signals
+from src.crypto.features import build_crypto_features
+from src.crypto.models import run_crypto_models
+from src.crypto.pipeline import crypto_feature_rows, crypto_signal_rows
 from src.database.engine import Database
 from src.features.builder import FeatureBuilder, feature_rows
 from src.ingestion.earnings import filing_event_proxy_rows, load_earnings_calendar
@@ -28,9 +31,12 @@ from src.utils.provenance import canonical_hash, git_commit
 DEMO_STAGES = (
     "ingest_fundamentals",
     "ingest_prices",
+    "ingest_crypto",
     "ingest_alternative",
     "build_features",
+    "build_crypto_features",
     "train",
+    "train_crypto",
     "variant",
     "backtest",
 )
@@ -128,6 +134,47 @@ class DemoStages:
             rows.extend(price_rows(frame, source="yahoo_chart_public_snapshot", source_version="snapshot-2026-08-22"))
         return {"market_prices_daily": self.database.insert("market_prices_daily", rows)}
 
+    def ingest_crypto(self) -> dict[str, int]:
+        instruments = [
+            instrument
+            for instrument in self.settings.instruments.instruments
+            if instrument.enabled and instrument.asset_class == "crypto"
+        ]
+        created_at = datetime.now(UTC)
+        instrument_count = self.database.upsert(
+            "instruments",
+            [
+                {
+                    "instrument_id": instrument.symbol,
+                    "symbol": instrument.symbol,
+                    "name": instrument.name,
+                    "asset_class": instrument.asset_class,
+                    "currency": instrument.currency,
+                    "venue": instrument.venue,
+                    "enabled": instrument.enabled,
+                    "configuration": instrument.model_dump(mode="json"),
+                    "created_at": created_at,
+                }
+                for instrument in instruments
+            ],
+        )
+        existing = set(
+            self.database.frame("select distinct symbol from market_prices_daily where symbol like '%-USD'")["symbol"]
+        )
+        rows: list[dict[str, object]] = []
+        for instrument in instruments:
+            if instrument.symbol in existing:
+                continue
+            path = self.demo_root / "crypto" / f"{instrument.symbol}.json"
+            frame = parse_yahoo_chart(path.read_text(encoding="utf-8"))
+            rows.extend(
+                price_rows(frame, source="yahoo_chart_public_snapshot", source_version="snapshot-2026-08-22")
+            )
+        return {
+            "instruments": instrument_count,
+            "market_prices_daily_crypto": self.database.insert("market_prices_daily", rows),
+        }
+
     def ingest_alternative(self) -> dict[str, int]:
         if not self._empty("alternative_data_daily"):
             return {"alternative_data_daily": 0}
@@ -151,6 +198,24 @@ class DemoStages:
         )
         rows = feature_rows(features, source="point_in_time_feature_engine")
         return {"features_quarterly": self.database.insert("features_quarterly", rows)}
+
+    def build_crypto_features(self) -> dict[str, int]:
+        if not self._empty("crypto_features_daily"):
+            return {"crypto_features_daily": 0}
+        rows: list[dict[str, object]] = []
+        for instrument in self.settings.instruments.instruments:
+            if not instrument.enabled or instrument.asset_class != "crypto":
+                continue
+            prices = self.database.frame(
+                """
+                select symbol, trading_date, adjusted_close, volume
+                from market_prices_daily where symbol = :symbol order by trading_date
+                """,
+                {"symbol": instrument.symbol},
+            )
+            frame = build_crypto_features(prices, horizon_days=instrument.primary_horizon)
+            rows.extend(crypto_feature_rows(frame, source_version="daily-shifted-v1"))
+        return {"crypto_features_daily": self.database.insert("crypto_features_daily", rows)}
 
     def train(self) -> dict[str, int]:
         if not self._empty("forecasts"):
@@ -246,6 +311,26 @@ class DemoStages:
             "model_runs": self.database.insert("model_runs", run_rows),
             "forecasts": self.database.insert("forecasts", forecast_rows),
         }
+
+    def train_crypto(self) -> dict[str, int]:
+        if not self._empty("market_signals_daily"):
+            return {"market_signals_daily": 0}
+        rows: list[dict[str, object]] = []
+        for instrument in self.settings.instruments.instruments:
+            if not instrument.enabled or instrument.asset_class != "crypto":
+                continue
+            matrix = self.database.frame(
+                "select * from crypto_features_daily where symbol = :symbol order by decision_date",
+                {"symbol": instrument.symbol},
+            )
+            output = run_crypto_models(
+                matrix,
+                minimum_train=instrument.minimum_training_days,
+                test_size=60,
+                seed=self.settings.model.random_seed,
+            )
+            rows.extend(crypto_signal_rows(output.predictions, source_version="ensemble-v1"))
+        return {"market_signals_daily": self.database.insert("market_signals_daily", rows)}
 
     def variant(self) -> dict[str, int]:
         if not self._empty("variant_signals"):
@@ -424,6 +509,49 @@ class LiveStages(DemoStages):
             )
         ]
         return {"market_prices_daily": self.database.insert("market_prices_daily", rows)}
+
+    def ingest_crypto(self) -> dict[str, int]:
+        instruments = [
+            instrument
+            for instrument in self.settings.instruments.instruments
+            if instrument.enabled and instrument.asset_class == "crypto"
+        ]
+        created_at = datetime.now(UTC)
+        instrument_count = self.database.upsert(
+            "instruments",
+            [
+                {
+                    "instrument_id": instrument.symbol,
+                    "symbol": instrument.symbol,
+                    "name": instrument.name,
+                    "asset_class": instrument.asset_class,
+                    "currency": instrument.currency,
+                    "venue": instrument.venue,
+                    "enabled": True,
+                    "configuration": instrument.model_dump(mode="json"),
+                    "created_at": created_at,
+                }
+                for instrument in instruments
+            ],
+        )
+        provider = YahooChartPriceProvider(self.settings.project_root / "data" / "cache" / "crypto")
+        existing = set(
+            self.database.frame("select distinct symbol from market_prices_daily where symbol like '%-USD'")["symbol"]
+        )
+        rows = [
+            item
+            for instrument in instruments
+            if instrument.symbol not in existing
+            for item in price_rows(
+                provider.fetch(instrument.symbol, date(2014, 1, 1), date.today()),
+                source="yahoo_chart_live_unofficial",
+                source_version="retrieved-live",
+            )
+        ]
+        return {
+            "instruments": instrument_count,
+            "market_prices_daily_crypto": self.database.insert("market_prices_daily", rows),
+        }
 
     def ingest_alternative(self) -> dict[str, int]:
         if not self._empty("alternative_data_daily"):

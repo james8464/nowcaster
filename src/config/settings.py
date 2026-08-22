@@ -77,6 +77,46 @@ class FeatureConfig(BaseModel):
     macro_series: dict[str, str] = {}
 
 
+class InstrumentConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    symbol: str
+    name: str
+    asset_class: Literal["equity", "crypto"]
+    currency: str = "USD"
+    venue: str = "composite"
+    horizons: tuple[int, ...] = (5,)
+    primary_horizon: int = 5
+    minimum_training_days: int = Field(default=365, ge=120)
+    fee_bps: float = Field(default=10, ge=0)
+    slippage_bps: float = Field(default=5, ge=0)
+    enabled: bool = True
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_symbol(cls, value: str) -> str:
+        return value.strip().upper()
+
+    @model_validator(mode="after")
+    def primary_is_configured(self) -> InstrumentConfig:
+        if not self.horizons or any(horizon <= 0 for horizon in self.horizons):
+            raise ValueError("instrument horizons must be positive")
+        if self.primary_horizon not in self.horizons:
+            raise ValueError("primary_horizon must be included in horizons")
+        return self
+
+
+class InstrumentsConfig(BaseModel):
+    instruments: tuple[InstrumentConfig, ...] = ()
+
+    @model_validator(mode="after")
+    def unique_symbols(self) -> InstrumentsConfig:
+        symbols = [instrument.symbol for instrument in self.instruments]
+        if len(symbols) != len(set(symbols)):
+            raise ValueError("instrument symbols must be unique")
+        return self
+
+
 class Settings(BaseModel):
     project_root: Path
     mode: Literal["live", "demo", "test"] = "live"
@@ -88,14 +128,17 @@ class Settings(BaseModel):
     universe: UniverseConfig
     model: ModelConfig
     features: FeatureConfig
+    instruments: InstrumentsConfig = InstrumentsConfig()
 
     @classmethod
     def load(cls, project_root: Path | None = None, *, mode: str | None = None) -> Settings:
         root = (project_root or Path.cwd()).resolve()
         load_dotenv(root / ".env", override=False)
 
-        def read_yaml(name: str) -> dict[str, Any]:
+        def read_yaml(name: str, *, required: bool = True) -> dict[str, Any]:
             path = root / "config" / name
+            if not path.exists() and not required:
+                return {}
             with path.open(encoding="utf-8") as handle:
                 return yaml.safe_load(handle) or {}
 
@@ -112,6 +155,7 @@ class Settings(BaseModel):
             universe=UniverseConfig.model_validate(read_yaml("universe.yaml")),
             model=ModelConfig.model_validate(read_yaml("model.yaml")),
             features=FeatureConfig.model_validate(read_yaml("features.yaml")),
+            instruments=InstrumentsConfig.model_validate(read_yaml("instruments.yaml", required=False)),
         )
 
     def config_hash_payload(self) -> dict[str, Any]:

@@ -40,6 +40,20 @@ companies = Table(
     Column("created_at", DateTime(timezone=True), nullable=False),
 )
 
+instruments = Table(
+    "instruments",
+    metadata,
+    Column("instrument_id", String, primary_key=True),
+    Column("symbol", String, nullable=False, unique=True),
+    Column("name", String, nullable=False),
+    Column("asset_class", String, nullable=False),
+    Column("currency", String, nullable=False),
+    Column("venue", String, nullable=False),
+    Column("enabled", Boolean, nullable=False),
+    Column("configuration", JSON, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+)
+
 financials_quarterly = Table(
     "financials_quarterly",
     metadata,
@@ -111,6 +125,59 @@ market_prices_daily = Table(
     Column("adjustment_status", String, nullable=False),
     *common_columns(),
     UniqueConstraint("symbol", "trading_date", "source", name="uq_market_price"),
+)
+
+crypto_features_daily = Table(
+    "crypto_features_daily",
+    metadata,
+    Column("feature_id", String, primary_key=True),
+    Column("symbol", String, nullable=False),
+    Column("decision_date", Date, nullable=False),
+    Column("data_through_date", Date, nullable=False),
+    Column("execution_date", Date, nullable=False),
+    Column("label_end", Date, nullable=False),
+    Column("horizon_days", Integer, nullable=False),
+    Column("feature_return_1d", Float, nullable=False),
+    Column("feature_return_5d", Float, nullable=False),
+    Column("feature_momentum_20d", Float, nullable=False),
+    Column("feature_trend_20_100", Float, nullable=False),
+    Column("feature_volatility_20d", Float, nullable=False),
+    Column("feature_volatility_60d", Float, nullable=False),
+    Column("feature_volume_zscore_20d", Float, nullable=False),
+    Column("feature_rsi_14d", Float, nullable=False),
+    Column("feature_weekday_sin", Float, nullable=False),
+    Column("feature_weekday_cos", Float, nullable=False),
+    Column("entry_close", Float, nullable=False),
+    Column("exit_close", Float, nullable=False),
+    Column("target_forward_return", Float, nullable=False),
+    Column("target_direction", Integer, nullable=False),
+    *common_columns(),
+    UniqueConstraint("symbol", "decision_date", "horizon_days", name="uq_crypto_feature"),
+)
+
+market_signals_daily = Table(
+    "market_signals_daily",
+    metadata,
+    Column("signal_id", String, primary_key=True),
+    Column("instrument_id", String, nullable=False),
+    Column("symbol", String, nullable=False),
+    Column("asset_class", String, nullable=False),
+    Column("decision_date", Date, nullable=False),
+    Column("data_through_date", Date, nullable=False),
+    Column("execution_date", Date, nullable=False),
+    Column("label_end_date", Date, nullable=False),
+    Column("horizon_days", Integer, nullable=False),
+    Column("model_name", String, nullable=False),
+    Column("posture", String, nullable=False),
+    Column("direction_probability", Float, nullable=False),
+    Column("expected_return", Float, nullable=False),
+    Column("confidence_score", Float, nullable=False),
+    Column("training_samples", Integer, nullable=False),
+    Column("calibration_status", String, nullable=False),
+    Column("status", String, nullable=False),
+    Column("explanation", JSON, nullable=False),
+    *common_columns(),
+    UniqueConstraint("instrument_id", "decision_date", "horizon_days", "model_name", name="uq_market_signal"),
 )
 
 alternative_data_daily = Table(
@@ -302,10 +369,13 @@ TABLES = {table.name: table for table in metadata.tables.values()}
 
 NATURAL_KEYS: dict[str, tuple[str, ...]] = {
     "companies": ("company_id",),
+    "instruments": ("instrument_id",),
     "financials_quarterly": ("company_id", "fiscal_quarter", "accession"),
     "company_kpis": ("company_id", "fiscal_quarter", "kpi_name", "accession"),
     "earnings_calendar": ("company_id", "fiscal_quarter"),
     "market_prices_daily": ("symbol", "trading_date", "source"),
+    "crypto_features_daily": ("symbol", "decision_date", "horizon_days"),
+    "market_signals_daily": ("instrument_id", "decision_date", "horizon_days", "model_name"),
     "alternative_data_daily": ("company_id", "signal", "observation_date", "source"),
     "macro_data": ("series_id", "observation_date", "vintage_date", "source"),
     "features_quarterly": ("company_id", "fiscal_quarter", "horizon_days", "feature_name", "transformation_version"),

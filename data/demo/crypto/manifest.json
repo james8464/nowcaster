@@ -1,0 +1,23 @@
+{
+  "data_mode": "demo_real_snapshot",
+  "retrieved_at": "2026-08-22T00:00:00Z",
+  "provider_note": "Yahoo Finance chart is an unofficial, keyless public endpoint with no service or adjustment guarantee. Bundled files are immutable research snapshots, not licensed exchange feeds.",
+  "files": [
+    {
+      "path": "BTC-USD.json",
+      "source": "Yahoo Finance chart public snapshot",
+      "url": "https://query2.finance.yahoo.com/v8/finance/chart/BTC-USD",
+      "first_observation": "2014-09-17",
+      "last_observation": "2026-08-22",
+      "sha256": "5157f45e6974263855da75a54341cdbabb14d16cfeaaeba152fc27184864064e"
+    },
+    {
+      "path": "ETH-USD.json",
+      "source": "Yahoo Finance chart public snapshot",
+      "url": "https://query2.finance.yahoo.com/v8/finance/chart/ETH-USD",
+      "first_observation": "2017-11-09",
+      "last_observation": "2026-08-22",
+      "sha256": "78eeeb88265dff469cf27b9e9df887dcd88f06c7b21b129b635c1a4df465fed4"
+    }
+  ]
+}

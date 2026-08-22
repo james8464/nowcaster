@@ -217,7 +217,7 @@ git commit -m "feat: calibrate leakage-safe equity forecasts"
 **Interfaces:**
 - Produces: `build_crypto_features(prices) -> DataFrame`, `make_crypto_walk_forward_folds(...)`, `run_crypto_models(...)`, and persisted crypto instruments/signals/backtests.
 
-- [ ] **Step 1: Write failing feature chronology and execution-lag tests**
+- [x] **Step 1: Write failing feature chronology and execution-lag tests**
 
 ```python
 def test_crypto_features_use_only_prior_closes(price_frame):
@@ -232,21 +232,21 @@ def test_crypto_return_is_realized_after_decision(crypto_matrix):
     assert all(fold.training_label_end < fold.test_decision_start for fold in folds)
 ```
 
-- [ ] **Step 2: Verify red**
+- [x] **Step 2: Verify red**
 
 Run: `.venv/bin/pytest tests/unit/test_crypto_features.py tests/unit/test_crypto_models.py tests/integration/test_crypto_pipeline.py -q`
 Expected: missing module failures.
 
-- [ ] **Step 3: Implement separate crypto models and demo snapshots**
+- [x] **Step 3: Implement separate crypto models and demo snapshots**
 
 Parse BTC-USD and ETH-USD adjusted daily prices through the existing price normalizer. Feature every row using shifted inputs. Baselines are flat, 20/100-day trend, and 20-day time-series momentum. Learned models are regularized logistic regression for direction and histogram gradient boosting for forward volatility-adjusted return, each gated by training sample and calibrated only with past predictions.
 
-- [ ] **Step 4: Verify deterministic crypto research output**
+- [x] **Step 4: Verify deterministic crypto research output**
 
 Run: `.venv/bin/pytest tests/unit/test_crypto_features.py tests/unit/test_crypto_models.py tests/integration/test_crypto_pipeline.py -q`
 Expected: PASS with BTC-USD and ETH-USD outputs and no future mutation effect.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add config/instruments.yaml data/demo/crypto src/crypto src/config/settings.py src/demo.py tests
