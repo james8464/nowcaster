@@ -382,7 +382,7 @@ git commit -m "feat: add expanding-window forecasts"
 - Produces: `select_expectation(estimates, cutoff) -> Expectation | None`
 - Produces: `build_variant_signals(forecasts, expectations) -> pd.DataFrame`
 
-- [ ] **Step 1: Write failing as-of selection, proxy-label, z-score, and bucket tests**
+- [x] **Step 1: Write failing as-of selection, proxy-label, z-score, and bucket tests**
 
 ```python
 def test_consensus_selection_never_uses_future_revision(estimates):
@@ -395,11 +395,11 @@ def test_proxy_is_never_labeled_actual(proxy_expectation):
     assert "consensus" not in proxy_expectation.display_label.lower()
 ```
 
-- [ ] **Step 2: Verify failures**
+- [x] **Step 2: Verify failures**
 
 Run: `pytest tests/unit/test_consensus.py tests/unit/test_variant.py -q`
 
-- [ ] **Step 3: Implement validated CSV import, historical-only expectation proxy, cross-sectional z-scores, buckets, and confidence fields**
+- [x] **Step 3: Implement validated CSV import, historical-only expectation proxy, cross-sectional z-scores, buckets, and confidence fields**
 
 ```python
 def build_variant_signals(forecasts: pd.DataFrame, expectations: pd.DataFrame) -> pd.DataFrame:
@@ -416,11 +416,11 @@ def build_variant_signals(forecasts: pd.DataFrame, expectations: pd.DataFrame) -
     return joined
 ```
 
-- [ ] **Step 4: Run integration tests**
+- [x] **Step 4: Run integration tests**
 
 Run: `pytest tests/unit/test_consensus.py tests/unit/test_variant.py tests/integration/test_variant_pipeline.py -q`
 
-- [ ] **Step 5: Commit expectation layer**
+- [x] **Step 5: Commit expectation layer**
 
 ```bash
 git add src/consensus data/demo/consensus_template.csv tests
