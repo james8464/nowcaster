@@ -65,6 +65,12 @@ def test_deflated_sharpe_rejects_a_trial_count_that_disagrees_with_observed_tria
         )
 
 
+@pytest.mark.parametrize("observations", [2, 25])
+def test_deflated_sharpe_rejects_count_only_without_observed_trial_dispersion(observations: int) -> None:
+    with pytest.raises(ValueError, match="observed trial Sharpe"):
+        deflated_sharpe_probability(0.8, observations=observations, trials=4, skew=0, kurtosis=3)
+
+
 def test_cscv_pbo_selects_in_sample_winner_then_ranks_it_out_of_sample() -> None:
     performance = pd.DataFrame(
         {
@@ -168,4 +174,46 @@ def test_doubled_cost_survival_accepts_normalized_cost_returns_from_intraday_cur
     result = doubled_cost_survival(backtest.equity_curve)
     assert result.base_cumulative_return == pytest.approx(0.045)
     assert result.doubled_cost_cumulative_return == pytest.approx(0.04)
+    assert result.survives is True
+
+
+def test_doubled_cost_survival_accepts_signed_funding_receipt_from_real_short_curve() -> None:
+    opens = pd.date_range("2026-08-21 10:00", periods=2, freq="min", tz="UTC")
+    bars = pd.DataFrame(
+        {
+            "symbol": "AAA",
+            "open_timestamp": opens,
+            "close_timestamp": opens + pd.Timedelta(minutes=1),
+            "available_at": opens + pd.Timedelta(minutes=1),
+            "finalized": True,
+            "open": 100.0,
+            "high": 100.0,
+            "low": 100.0,
+            "close": 100.0,
+            "volume": 10_000.0,
+            "halted": False,
+        }
+    )
+    signals = pd.DataFrame(
+        {
+            "strategy_id": ["short_funding"],
+            "symbol": ["AAA"],
+            "decision_timestamp": [pd.Timestamp("2026-08-21 10:01", tz="UTC")],
+            "data_through": [pd.Timestamp("2026-08-21 10:01", tz="UTC")],
+            "signal": [-1],
+            "strength": [0.5],
+        }
+    )
+    backtest = run_intraday_backtest(
+        bars,
+        signals,
+        ExecutionAssumptions(costs=CostAssumptions(funding_bps_per_period=10)),
+        RiskLimits(initial_cash=1_000),
+    )
+
+    assert backtest.equity_curve.iloc[-1]["cost_return"] == pytest.approx(-0.0005)
+    assert backtest.equity_curve.iloc[-1]["gross_return"] == pytest.approx(0, abs=1e-15)
+    result = doubled_cost_survival(backtest.equity_curve)
+    assert result.base_cumulative_return == pytest.approx(0.0005)
+    assert result.doubled_cost_cumulative_return == pytest.approx(0.001)
     assert result.survives is True

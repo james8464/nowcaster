@@ -9,7 +9,7 @@ class ReadinessInputs:
     development_sharpe: float
     final_test_sharpe: float
     probability_positive: float
-    deflated_sharpe_probability: float
+    deflated_sharpe_probability: float | None
     cost_stress_return: float
     subperiod_positive_fraction: float
     maximum_drawdown: float
@@ -38,7 +38,9 @@ def evaluate_readiness(inputs: ReadinessInputs) -> ReadinessAssessment:
             hard_failures.append("Final-test risk-adjusted return is non-positive")
     if inputs.probability_positive < 0.95:
         reasons.append("Block-bootstrap probability of a positive mean is below 95%")
-    if inputs.deflated_sharpe_probability < 0.95:
+    if inputs.deflated_sharpe_probability is None:
+        reasons.append("Deflated Sharpe is unavailable without observed candidate trial Sharpes")
+    elif inputs.deflated_sharpe_probability < 0.95:
         reasons.append("Deflated Sharpe probability is below 95% after trial adjustment")
     if inputs.cost_stress_return <= 0:
         reasons.append("Performance does not survive the declared high-cost stress")

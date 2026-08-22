@@ -13,7 +13,7 @@ from src.backtest.event_study import run_event_study
 from src.backtest.metrics import calculate_backtest_metrics
 from src.backtest.portfolio import simulate_crypto_portfolio
 from src.backtest.readiness import ReadinessInputs, evaluate_readiness
-from src.backtest.robustness import deflated_sharpe_probability, run_block_bootstrap
+from src.backtest.robustness import run_block_bootstrap
 from src.config.settings import Settings
 from src.consensus.proxy import historical_expectation_proxy
 from src.consensus.variant import build_variant_signals
@@ -394,13 +394,8 @@ class DemoStages:
                 samples=1_000,
                 seed=self.settings.model.random_seed,
             )
-            trial_probability = deflated_sharpe_probability(
-                full_metrics.sharpe,
-                observations=len(full_result.curve),
-                trials=12,
-                skew=float(full_result.curve["net_return"].skew()),
-                kurtosis=float(full_result.curve["net_return"].kurtosis() + 3),
-            )
+            trial_probability = None
+            trial_probability_reason = "candidate trial Sharpes are not persisted until Task 5"
             stressed = simulate_crypto_portfolio(
                 eligible_signals,
                 fee_bps=instrument.fee_bps * 2,
@@ -449,8 +444,10 @@ class DemoStages:
                         {
                             "block_bootstrap": bootstrap.__dict__,
                             "deflated_sharpe_probability": trial_probability,
+                            "deflated_sharpe_status": "unavailable",
+                            "deflated_sharpe_reason": trial_probability_reason,
                             "profitable_subperiod_fraction": float((by_year > 0).mean()),
-                            "trials_adjusted": 12,
+                            "trials_adjusted": None,
                         }
                     ),
                     "readiness": readiness.readiness,

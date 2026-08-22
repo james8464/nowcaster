@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import date, timedelta
 
 import pandas as pd
@@ -70,4 +71,12 @@ def test_demo_crypto_backtests_preserve_final_test_and_cost_sensitivity(demo_dat
             """
         )
         == 0
+    )
+    robustness = [json.loads(value) if isinstance(value, str) else value for value in runs["robustness"]]
+    assert all(item["deflated_sharpe_probability"] is None for item in robustness)
+    assert all(item["deflated_sharpe_status"] == "unavailable" for item in robustness)
+    assert all("candidate trial Sharpes" in item["deflated_sharpe_reason"] for item in robustness)
+    assert all(item.get("trials_adjusted") is None for item in robustness)
+    assert all(
+        any("Deflated Sharpe is unavailable" in reason for reason in reasons) for reasons in runs["readiness_reasons"]
     )

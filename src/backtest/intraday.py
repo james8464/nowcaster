@@ -180,7 +180,7 @@ def _scaled_orders(
 
 def _projected_risk_is_valid(
     execution: ExecutionResult,
-    orders: list[OrderIntent],
+    strategy_symbols: dict[str, set[str]],
     cash: float,
     mark_prices: dict[str, float],
     risk: RiskLimits,
@@ -197,9 +197,6 @@ def _projected_risk_is_valid(
         return False, projected_cash
     if any(abs(value) / equity > risk.maximum_asset_exposure + tolerance for value in notionals.values()):
         return False, projected_cash
-    strategy_symbols: dict[str, set[str]] = {}
-    for order in orders:
-        strategy_symbols.setdefault(order.strategy_id, set()).add(order.symbol)
     for symbols in strategy_symbols.values():
         strategy_gross = sum(abs(notionals.get(symbol, 0.0)) for symbol in symbols) / equity
         if strategy_gross > risk.maximum_strategy_exposure + tolerance:
@@ -215,6 +212,7 @@ def _execute_atomic_batch(
     cash: float,
     mark_prices: dict[str, float],
     risk: RiskLimits,
+    strategy_symbols: dict[str, set[str]],
 ) -> tuple[tuple[Fill, ...], list[dict[str, object]], dict[str, float], float]:
     if not orders:
         return (), [], positions.copy(), cash
@@ -250,7 +248,7 @@ def _execute_atomic_batch(
         fully_executable = len(execution.fills) == len(candidates) and all(
             fill.status == "filled" for fill in execution.fills
         )
-        valid, projected_cash = _projected_risk_is_valid(execution, candidates, cash, mark_prices, risk)
+        valid, projected_cash = _projected_risk_is_valid(execution, strategy_symbols, cash, mark_prices, risk)
         if fully_executable and valid:
             rejected = []
             if fraction + 1e-12 < 1:
@@ -278,6 +276,41 @@ def _execute_atomic_batch(
     return (), rejected, positions.copy(), cash
 
 
+def _execute_session_close_batch(
+    bars: pd.DataFrame,
+    assumptions: ExecutionAssumptions,
+    positions: dict[str, float],
+    used_capacity: dict[tuple[str, pd.Timestamp], float],
+    cash: float,
+    mark_prices: dict[str, float],
+    risk: RiskLimits,
+    strategy_symbols: dict[str, set[str]],
+) -> tuple[tuple[Fill, ...], list[dict[str, object]], dict[str, float], float]:
+    execution = run_execution(
+        bars,
+        [],
+        replace(assumptions, latency=pd.Timedelta(0).to_pytimedelta()),
+        initial_positions=positions,
+        initial_used_capacity=used_capacity,
+    )
+    rejected = [asdict(item) for item in execution.rejections]
+    if not execution.fills:
+        return (), rejected, positions.copy(), cash
+    valid, projected_cash = _projected_risk_is_valid(execution, strategy_symbols, cash, mark_prices, risk)
+    if valid:
+        return execution.fills, rejected, execution.positions, projected_cash
+    rejected.extend(
+        {
+            "order_id": fill.order_id,
+            "strategy_id": fill.strategy_id,
+            "symbol": fill.symbol,
+            "reason": "session_close_batch_projected_risk_limit",
+        }
+        for fill in execution.fills
+    )
+    return (), rejected, positions.copy(), cash
+
+
 def run_intraday_backtest(
     bars: pd.DataFrame,
     signals: pd.DataFrame,
@@ -298,6 +331,7 @@ def run_intraday_backtest(
     positions: dict[str, float] = {}
     last_prices: dict[str, float] = {}
     states: dict[tuple[str, str], float] = {}
+    strategy_symbols: dict[str, set[str]] = {}
     consumed: set[int] = set()
     returns: list[float] = []
     fills: list[Fill] = []
@@ -321,7 +355,10 @@ def run_intraday_backtest(
             symbol_bar = current[current["symbol"] == signal["symbol"]]
             if symbol_bar.empty or pd.Timestamp(symbol_bar.iloc[0]["close_timestamp"]) <= signal["decision_timestamp"]:
                 continue
-            states[(str(signal["strategy_id"]), str(signal["symbol"]))] = float(signal["signal"] * signal["strength"])
+            signal_strategy = str(signal["strategy_id"])
+            signal_symbol = str(signal["symbol"])
+            states[(signal_strategy, signal_symbol)] = float(signal["signal"] * signal["strength"])
+            strategy_symbols.setdefault(signal_strategy, set()).add(signal_symbol)
             consumed.add(index)
 
         volatility_estimate, volatility_scale = _volatility_state(returns, risk)
@@ -371,6 +408,7 @@ def run_intraday_backtest(
             cash,
             mark_prices,
             risk,
+            strategy_symbols,
         )
         rejection_rows.extend(batch_rejections)
         positions = projected_positions
@@ -392,18 +430,21 @@ def run_intraday_backtest(
         bar_costs += carry_total
 
         if assumptions.flatten_at_session_end:
-            flatten_execution = run_execution(
+            close_fills, close_rejections, projected_positions, projected_cash = _execute_session_close_batch(
                 current,
-                [],
-                replace(assumptions, latency=pd.Timedelta(0).to_pytimedelta()),
-                initial_positions=positions,
-                initial_used_capacity=open_filled_capacity,
+                assumptions,
+                positions,
+                open_filled_capacity,
+                cash,
+                last_prices,
+                risk,
+                strategy_symbols,
             )
-            rejection_rows.extend(asdict(item) for item in flatten_execution.rejections)
-            positions = flatten_execution.positions
-            for fill in flatten_execution.fills:
+            rejection_rows.extend(close_rejections)
+            positions = projected_positions
+            cash = projected_cash
+            for fill in close_fills:
                 fills.append(fill)
-                cash += _cash_change(fill)
                 bar_turnover += fill.notional
                 bar_costs += fill.total_cost
 

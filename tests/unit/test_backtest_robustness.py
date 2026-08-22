@@ -29,8 +29,11 @@ def test_block_bootstrap_is_deterministic_and_reports_loss_probability() -> None
 
 
 def test_deflated_sharpe_penalizes_many_trials() -> None:
-    few = deflated_sharpe_probability(1.2, observations=250, trials=2, skew=0, kurtosis=3)
-    many = deflated_sharpe_probability(1.2, observations=250, trials=100, skew=0, kurtosis=3)
+    few_trials = np.asarray([-1.0, 1.0])
+    many_trials = np.arange(100, dtype=float)
+    many_trials = (many_trials - many_trials.mean()) / many_trials.std(ddof=1)
+    few = deflated_sharpe_probability(1.2, observations=250, trial_sharpes=few_trials, skew=0, kurtosis=3)
+    many = deflated_sharpe_probability(1.2, observations=250, trial_sharpes=many_trials, skew=0, kurtosis=3)
     assert 0 <= many <= few <= 1
 
 

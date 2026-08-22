@@ -114,26 +114,20 @@ def deflated_sharpe_probability(
     skew: float,
     kurtosis: float,
 ) -> float:
+    if trial_sharpes is None:
+        raise ValueError("observed trial Sharpe values are required to estimate trial dispersion")
     if observations < 3:
         return 0.0
     if not all(math.isfinite(value) for value in (sharpe, skew, kurtosis)):
         return 0.0
 
-    if trial_sharpes is not None:
-        observed_trials = np.asarray(trial_sharpes, dtype=float)
-        if observed_trials.ndim != 1 or len(observed_trials) < 2 or np.any(~np.isfinite(observed_trials)):
-            raise ValueError("trial Sharpe values must contain at least two finite observations")
-        trial_count = len(observed_trials)
-        if trials is not None and trials != trial_count:
-            raise ValueError("trial count must agree with the observed trial Sharpe values")
-        trial_variance = float(np.var(observed_trials, ddof=1))
-    else:
-        if trials is None or trials <= 0:
-            raise ValueError("observed trial Sharpe values or a positive legacy trial count are required")
-        trial_count = trials
-        # Compatibility for callers that recorded only a count: assume the null
-        # standard error of a Sharpe estimate. New callers should supply trials.
-        trial_variance = 1 / (observations - 1)
+    observed_trials = np.asarray(trial_sharpes, dtype=float)
+    if observed_trials.ndim != 1 or len(observed_trials) < 2 or np.any(~np.isfinite(observed_trials)):
+        raise ValueError("trial Sharpe values must contain at least two finite observations")
+    trial_count = len(observed_trials)
+    if trials is not None and trials != trial_count:
+        raise ValueError("trial count must agree with the observed trial Sharpe values")
+    trial_variance = float(np.var(observed_trials, ddof=1))
 
     if trial_count == 1 or trial_variance == 0:
         expected_maximum = 0.0
@@ -295,8 +289,8 @@ def doubled_cost_survival(
         costs = np.asarray(base_costs, dtype=float)
     if gross.ndim != 1 or costs.ndim != 1 or len(gross) == 0 or len(gross) != len(costs):
         raise ValueError("gross returns and costs must be equally sized non-empty vectors")
-    if np.any(~np.isfinite(gross)) or np.any(~np.isfinite(costs)) or np.any(costs < 0):
-        raise ValueError("gross returns must be finite and costs finite and non-negative")
+    if np.any(~np.isfinite(gross)) or np.any(~np.isfinite(costs)):
+        raise ValueError("gross returns and normalized cost returns must be finite")
     base = float(np.prod(1 + gross - costs) - 1)
     doubled = float(np.prod(1 + gross - 2 * costs) - 1)
     return CostSurvivalResult(

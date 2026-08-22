@@ -311,3 +311,72 @@ def test_task3_strategy_signal_frame_is_directly_consumable_with_explicit_identi
     assert result.trade_ledger.iloc[0]["strategy_id"] == "donchian_breakout"
     assert result.trade_ledger.iloc[0]["symbol"] == "AAA"
     assert result.trade_ledger.iloc[0]["execution_timestamp"] > strategy_signals.iloc[2]["decision_timestamp"]
+
+
+def test_strategy_cap_counts_held_symbols_without_a_current_bar_or_delta() -> None:
+    bars = _bars(("AAA", "BBB"), opens=(100, 100, 100), closes=(100, 100, 100))
+    keep = (
+        (bars["symbol"] == "AAA")
+        & bars["open_timestamp"].isin(
+            pd.to_datetime(
+                [
+                    "2026-08-21 10:00Z",
+                    "2026-08-21 10:01Z",
+                ]
+            )
+        )
+    ) | ((bars["symbol"] == "BBB") & (bars["open_timestamp"] == pd.Timestamp("2026-08-21 10:02Z")))
+    bars = bars.loc[keep].copy()
+    signals = pd.DataFrame(
+        [
+            _signal("asynchronous", "AAA", "2026-08-21 10:01", 1, strength=0.2),
+            _signal("asynchronous", "BBB", "2026-08-21 10:02", 1, strength=0.2),
+        ]
+    )
+    risk = RiskLimits(
+        initial_cash=1_000,
+        maximum_gross_exposure=1,
+        maximum_net_exposure=1,
+        maximum_asset_exposure=1,
+        maximum_strategy_exposure=0.2,
+    )
+
+    result = run_intraday_backtest(bars, signals, ExecutionAssumptions(), risk)
+
+    assert result.trade_ledger[["symbol", "quantity"]].to_dict("records") == [{"symbol": "AAA", "quantity": 2.0}]
+    assert result.equity_curve.iloc[-1]["gross_exposure"] == pytest.approx(0.2)
+    assert "projected_risk_limit" in result.rejection_ledger["reason"].tolist()
+
+
+def test_asymmetric_session_close_batch_is_rejected_before_breaking_net_cap() -> None:
+    bars = _bars(("AAA", "BBB"), opens=(100, 100, 100), closes=(100, 100, 100))
+    bars["session_close_timestamp"] = pd.Series(pd.NaT, index=bars.index, dtype="datetime64[ns, UTC]")
+    closing = bars["open_timestamp"] == pd.Timestamp("2026-08-21 10:02Z")
+    bars.loc[closing, "session_close_timestamp"] = bars.loc[closing, "close_timestamp"]
+    bars.loc[closing & (bars["symbol"] == "BBB"), "halted"] = True
+    signals = pd.DataFrame(
+        [
+            _signal("pairs", "AAA", "2026-08-21 10:01", 1, strength=0.5),
+            _signal("pairs", "BBB", "2026-08-21 10:01", -1, strength=0.5),
+        ]
+    )
+    assumptions = ExecutionAssumptions(
+        flatten_at_session_end=True,
+        session_close=lambda row: row["session_close_timestamp"],
+    )
+    risk = RiskLimits(
+        initial_cash=1_000,
+        maximum_gross_exposure=1,
+        maximum_net_exposure=0.1,
+        maximum_asset_exposure=0.5,
+        maximum_strategy_exposure=1,
+    )
+
+    result = run_intraday_backtest(bars, signals, assumptions, risk)
+
+    assert result.trade_ledger["order_type"].tolist() == ["market", "market"]
+    assert result.equity_curve.iloc[-1]["net_exposure"] == 0
+    assert set(result.rejection_ledger["reason"]) >= {
+        "session_close_bar_not_actionable",
+        "session_close_batch_projected_risk_limit",
+    }

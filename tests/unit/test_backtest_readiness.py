@@ -36,3 +36,21 @@ def test_borderline_evidence_remains_research_only() -> None:
         )
     )
     assert assessment.readiness == "research_only"
+
+
+def test_unavailable_deflated_sharpe_is_an_explicit_conservative_readiness_reason() -> None:
+    assessment = evaluate_readiness(
+        ReadinessInputs(
+            trades=120,
+            development_sharpe=1.0,
+            final_test_sharpe=0.8,
+            probability_positive=0.98,
+            deflated_sharpe_probability=None,
+            cost_stress_return=0.1,
+            subperiod_positive_fraction=1.0,
+            maximum_drawdown=-0.1,
+        )
+    )
+
+    assert assessment.readiness == "research_only"
+    assert any("Deflated Sharpe is unavailable" in reason for reason in assessment.reasons)
