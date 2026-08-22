@@ -36,8 +36,8 @@ struct SignalsView: View {
                     Text("Short research").tag(ResearchPosture?.some(.shortResearch))
                     Text("Abstain").tag(ResearchPosture?.some(.abstain))
                 }
-                .pickerStyle(.segmented)
-                .frame(maxWidth: 480)
+                .pickerStyle(.menu)
+                .frame(width: 190)
                 Spacer()
                 Text("\(rows.count) signals").foregroundStyle(.secondary)
             }
@@ -51,29 +51,26 @@ struct SignalsView: View {
                             .font(.caption2).foregroundStyle(.secondary)
                     }
                 }
-                .width(min: 100, ideal: 130)
+                .width(min: 76, ideal: 84, max: 96)
                 TableColumn("Posture") { signal in
-                    Label(signal.posture.title, systemImage: signal.posture.systemImage)
+                    Label(signal.posture.compactTitle, systemImage: signal.posture.systemImage)
                         .foregroundStyle(signal.posture.color)
+                        .accessibilityLabel(signal.posture.accessibilityDescription)
                 }
-                .width(min: 120, ideal: 140)
-                TableColumn("Decision") { signal in Text(signal.decisionDate, style: .date) }
-                    .width(min: 90, ideal: 110)
-                TableColumn("Horizon") { signal in Text(signal.horizon) }
-                    .width(min: 90, ideal: 120)
-                TableColumn("Probability") { signal in
-                    Text(ResearchFormatting.probability(signal.calibratedProbability)).monospacedDigit()
-                }
-                .width(min: 90, ideal: 105)
-                TableColumn("Confidence") { signal in
-                    Text(signal.confidenceScore?.formatted(.number.precision(.fractionLength(0))) ?? "—")
-                        .monospacedDigit()
-                }
-                .width(min: 75, ideal: 90)
-                TableColumn("Eligibility") { signal in Text(signal.eligibility.replacingOccurrences(of: "_", with: " ").capitalized) }
-                    .width(min: 100, ideal: 120)
+                .width(min: 86, ideal: 96, max: 106)
             }
             .accessibilityIdentifier("signals.table")
+        }
+    }
+}
+
+private extension ResearchPosture {
+    var compactTitle: String {
+        switch self {
+        case .longResearch: "Long"
+        case .shortResearch: "Short"
+        case .abstain: "Abstain"
+        case let .unknown(value): value.replacingOccurrences(of: "_", with: " ").capitalized
         }
     }
 }

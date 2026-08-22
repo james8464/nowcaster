@@ -13,12 +13,23 @@ struct NowcasterApp: App {
         NSApplication.shared.applicationIconImage = icon
     }
 
+    private var forcedColorScheme: ColorScheme? {
+        if ProcessInfo.processInfo.arguments.contains("--ui-dark") { return .dark }
+        if ProcessInfo.processInfo.arguments.contains("--ui-light") { return .light }
+        return nil
+    }
+
+    private var defaultWindowSize: (width: CGFloat, height: CGFloat) {
+        ProcessInfo.processInfo.arguments.contains("--ui-narrow") ? (1_080, 720) : (1_440, 900)
+    }
+
     var body: some Scene {
         WindowGroup {
             RootView(model: model, settings: settings)
+            .preferredColorScheme(forcedColorScheme)
             .frame(minWidth: 1_080, minHeight: 720)
         }
-        .defaultSize(width: 1_280, height: 820)
+        .defaultSize(width: defaultWindowSize.width, height: defaultWindowSize.height)
         .commands {
             SidebarCommands()
             CommandMenu("Research") {

@@ -26,6 +26,11 @@ final class AppModel {
         self.repository = repository
         self.runner = runner
         loadState = snapshot == nil ? .idle : .loaded
+        if let argument = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--destination=") }),
+           let requested = AppDestination(rawValue: String(argument.dropFirst("--destination=".count))) {
+            destination = requested
+        }
+        prepareDefaultSelections()
     }
 
     var searchResults: [InstrumentSnapshot] {
@@ -99,6 +104,7 @@ final class AppModel {
         loadState = .loading
         do {
             snapshot = try await repository.load(url: url)
+            prepareDefaultSelections()
             loadState = .loaded
         } catch let SnapshotRepositoryError.incompatibleSchema(version) {
             loadState = snapshot == nil ? .incompatible(version) : .stale("Snapshot schema \(version) is incompatible")
@@ -123,5 +129,13 @@ final class AppModel {
         } catch {
             progressEvents.append(EngineProgressEvent(event: "job_failed", message: error.localizedDescription))
         }
+    }
+
+    private func prepareDefaultSelections() {
+        guard let snapshot else { return }
+        selectedInstrumentID = selectedInstrumentID ?? snapshot.instruments.first?.id
+        selectedEarningsID = selectedEarningsID ?? snapshot.earnings.first?.id
+        selectedSignalID = selectedSignalID ?? SignalListModel(signals: snapshot.signals).visibleSignals.first?.id
+        selectedBacktestID = selectedBacktestID ?? snapshot.backtests.last?.id
     }
 }

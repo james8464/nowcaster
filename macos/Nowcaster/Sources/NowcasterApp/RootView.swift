@@ -11,14 +11,7 @@ struct RootView: View {
     @FocusState private var searchIsFocused: Bool
 
     var body: some View {
-        NavigationSplitView {
-            sidebar
-        } content: {
-            destinationContent
-                .navigationTitle(model.destination.title)
-        } detail: {
-            inspector
-        }
+        navigationLayout
         .navigationSplitViewStyle(.balanced)
         .searchable(text: $model.searchText, placement: .toolbar, prompt: "Search symbols")
         .searchFocused($searchIsFocused)
@@ -33,13 +26,38 @@ struct RootView: View {
         }
         .toolbar { toolbar }
         .task {
-            if let destination = AppDestination(rawValue: storedDestination) {
+            let screenshotMode = ProcessInfo.processInfo.arguments.contains { $0.hasPrefix("--destination=") }
+            if !screenshotMode, let destination = AppDestination(rawValue: storedDestination) {
                 model.destination = destination
             }
             await model.loadBundledSnapshot()
         }
         .onChange(of: model.destination) { _, destination in storedDestination = destination.rawValue }
         .onReceive(NotificationCenter.default.publisher(for: .focusGlobalSearch)) { _ in searchIsFocused = true }
+    }
+
+    private var usesInspector: Bool {
+        [.markets, .earnings, .signals, .backtests].contains(model.destination)
+    }
+
+    @ViewBuilder private var navigationLayout: some View {
+        if usesInspector {
+            NavigationSplitView {
+                sidebar
+            } content: {
+                destinationContent
+                    .navigationTitle(model.destination.title)
+                    .navigationSplitViewColumnWidth(min: 260, ideal: 300, max: 340)
+            } detail: {
+                inspector
+            }
+        } else {
+            NavigationSplitView {
+                sidebar
+            } detail: {
+                destinationContent.navigationTitle(model.destination.title)
+            }
+        }
     }
 
     private var sidebar: some View {

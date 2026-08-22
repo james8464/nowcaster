@@ -623,7 +623,7 @@ git commit -m "feat: add native backtest and diagnostics"
 **Interfaces:**
 - Produces: keyboard/VoiceOver-accessible application and evidence screenshots for every primary screen in light and dark appearances.
 
-- [ ] **Step 1: Add failing accessibility contract tests**
+- [x] **Step 1: Add failing accessibility contract tests**
 
 ```swift
 @Test func everyChartHasSummaryAndTableAlternative() {
@@ -639,21 +639,21 @@ git commit -m "feat: add native backtest and diagnostics"
 }
 ```
 
-- [ ] **Step 2: Verify red**
+- [x] **Step 2: Verify red**
 
 Run: `make macos-test`
 Expected: missing accessibility contracts.
 
-- [ ] **Step 3: Implement accessibility and automation identifiers**
+- [x] **Step 3: Implement accessibility and automation identifiers**
 
 Add chart descriptors and tabular disclosure, contextual labels/hints, logical focus order, keyboard selection, reduced-motion guards, increased-contrast borders where needed, and stable identifiers. Automate navigation and screenshot capture using XCTest/AppKit APIs without a browser.
 
-- [ ] **Step 4: Perform visual and accessibility QA**
+- [x] **Step 4: Perform visual and accessibility QA**
 
 Run: `make macos-app && make macos-ui-test && make macos-screenshots`
 Inspect every screenshot at 1,440×900 and a narrow 1,080×720 window in light/dark appearance. Run Accessibility Inspector audit. Fix clipping, density, contrast, focus, semantic-copy, and chart issues, then recapture.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add macos/Nowcaster scripts/capture_macos_app.swift docs/images/macos

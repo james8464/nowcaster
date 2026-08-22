@@ -7,6 +7,7 @@ struct ResearchStatusLabel: View {
 
     var body: some View {
         Label(title, systemImage: systemImage)
+            .labelStyle(.titleAndIcon)
             .font(.caption.weight(.medium))
             .foregroundStyle(color)
             .padding(.horizontal, 8)

@@ -26,26 +26,10 @@ struct EarningsView: View {
             .width(min: 85, ideal: 105)
             TableColumn("Event basis") { forecast in Text(forecast.earningsDate, style: .date) }
                 .width(min: 90, ideal: 110)
-            TableColumn("Cutoff") { forecast in Text(forecast.forecastCutoffDate, style: .date) }
-                .width(min: 90, ideal: 110)
-            TableColumn("Horizon") { forecast in Text("\(forecast.horizonDays)d") }
-                .width(65)
-            TableColumn("Forecast") { forecast in
-                Text(ResearchFormatting.compactNumber(forecast.forecastRevenue)).monospacedDigit()
-            }
-            .width(min: 85, ideal: 100)
-            TableColumn("Expectation") { forecast in
-                Text(ResearchFormatting.compactNumber(forecast.expectationRevenue)).monospacedDigit()
-            }
-            .width(min: 85, ideal: 100)
             TableColumn("Variant") { forecast in
                 Text(ResearchFormatting.percentage(forecast.variant)).monospacedDigit()
             }
             .width(min: 75, ideal: 90)
-            TableColumn("Expectation type") { forecast in
-                Text(EarningsDetailModel(forecast: forecast).expectationTitle)
-            }
-            .width(min: 160, ideal: 190)
         }
         .accessibilityIdentifier("earnings.table")
     }
