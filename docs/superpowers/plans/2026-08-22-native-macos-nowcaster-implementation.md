@@ -475,7 +475,7 @@ git commit -m "feat: run research jobs from macOS"
 **Interfaces:**
 - Produces: three-column navigation, global search, toolbar, commands, window restoration, semantic status components, and chart summary/table alternative.
 
-- [ ] **Step 1: Write failing navigation/search tests**
+- [x] **Step 1: Write failing navigation/search tests**
 
 ```swift
 @Test @MainActor func globalSearchFindsSymbolsAndSelectsMarket() {
@@ -488,21 +488,21 @@ git commit -m "feat: run research jobs from macOS"
 }
 ```
 
-- [ ] **Step 2: Verify red**
+- [x] **Step 2: Verify red**
 
 Run: `make macos-test`
 Expected: missing `AppModel` and shell.
 
-- [ ] **Step 3: Implement system navigation and components**
+- [x] **Step 3: Implement system navigation and components**
 
 Use `NavigationSplitView`, `List(selection:)`, `.searchable`, standard `.toolbar`, `Commands`, `Settings`, semantic foreground styles, system accent, and `@SceneStorage`. Add shortcuts for refresh (`⌘R`), search (`⌘F`), backtest (`⇧⌘B`), sidebar (`⌥⌘S`), and export (`⇧⌘E`). No custom window chrome or fixed background palette.
 
-- [ ] **Step 4: Build and test the shell**
+- [x] **Step 4: Build and test the shell**
 
 Run: `make macos-test && make macos-app`
 Expected: PASS and bundle launches into a navigable shell with fixture data.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add macos/Nowcaster
