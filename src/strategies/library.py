@@ -300,7 +300,7 @@ def _volatility_scaled_trend(
     return _RuleResult(
         _direction(scaled > 0, scaled < 0),
         scaled.abs().clip(0, 1),
-        valid=trend.notna() & volatility.notna(),
+        valid=scaled.notna() & np.isfinite(scaled),
     )
 
 

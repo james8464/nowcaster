@@ -325,6 +325,19 @@ def test_configured_shifted_rules_abstain_until_their_first_valid_indicator_boun
     assert result.iloc[20]["signal"] == 1
 
 
+def test_configured_volatility_scaled_trend_marks_zero_volatility_as_an_invalid_indicator():
+    bars = _bars([10.0] * 21, start="2026-08-21T13:30:00Z", frequency="15min")
+
+    result = generate_signals(
+        _configured_spec("volatility_scaled_trend"),
+        bars,
+        StrategyContext(),
+    )
+
+    assert result.iloc[20]["signal"] == 0
+    assert result.iloc[20]["reason"] == "abstain: rule inputs are not yet valid"
+
+
 def test_pairs_abstain_when_auxiliary_bars_lack_point_in_time_provenance():
     bars = _bars([10, 11, 12, 13], frequency="1h", symbol="PRIMARY")
     peer = _bars([8, 9, 10, 11], frequency="1h", symbol="PEER").drop(columns="available_at")
