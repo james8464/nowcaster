@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import numpy as np
 import pandas as pd
 
 
@@ -16,6 +17,15 @@ class PortfolioResult:
     hit_rate: float
     overlap_rows_removed: int
     caveats: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class CryptoPortfolioResult:
+    positions: pd.DataFrame
+    curve: pd.DataFrame
+    net_cumulative_return: float
+    gross_cumulative_return: float
+    maximum_drawdown: float
 
 
 def maximum_drawdown(returns: pd.Series) -> float:
@@ -112,4 +122,81 @@ def run_event_portfolio(
             "This is an event-level research simulation, not an executable trading system.",
             "Capacity, borrow availability, taxes, latency, and intraday fills are not modelled.",
         ),
+    )
+
+
+def simulate_crypto_portfolio(
+    signals: pd.DataFrame,
+    *,
+    fee_bps: float = 10,
+    slippage_bps: float = 5,
+    borrow_bps_annual: float = 300,
+    target_volatility: float = 0.15,
+    maximum_gross_exposure: float = 1.0,
+) -> CryptoPortfolioResult:
+    """Simulate one-bar-lagged crypto positions with explicit round-trip costs."""
+    required = {
+        "signal_id",
+        "symbol",
+        "decision_date",
+        "execution_date",
+        "label_end_date",
+        "posture",
+        "realized_return",
+        "forecast_volatility",
+    }
+    missing = required - set(signals.columns)
+    if missing:
+        raise ValueError(f"Crypto positions are missing columns: {sorted(missing)}")
+    if min(fee_bps, slippage_bps, borrow_bps_annual, target_volatility, maximum_gross_exposure) < 0:
+        raise ValueError("Costs, volatility target, and exposure cannot be negative")
+    positions = signals.copy().sort_values(["execution_date", "symbol"]).reset_index(drop=True)
+    decision = pd.to_datetime(positions["decision_date"])
+    execution = pd.to_datetime(positions["execution_date"])
+    label_end = pd.to_datetime(positions["label_end_date"])
+    if (execution <= decision).any() or (label_end <= execution).any():
+        raise ValueError("Every position requires a one-bar execution lag and a later label end")
+    direction = positions["posture"].map({"long_research": 1.0, "short_research": -1.0, "abstain": 0.0})
+    if direction.isna().any():
+        raise ValueError("Unknown research posture")
+    horizon_days = (label_end - execution).dt.total_seconds().div(86_400).clip(lower=1)
+    horizon_volatility = pd.to_numeric(positions["forecast_volatility"], errors="coerce").clip(lower=1e-6)
+    annualized_forecast = horizon_volatility * np.sqrt(365 / horizon_days)
+    scale = (target_volatility / annualized_forecast).clip(upper=maximum_gross_exposure)
+    positions["weight"] = direction * scale
+    positions["gross_exposure"] = positions["weight"].abs()
+    positions["turnover"] = 2 * positions["gross_exposure"]
+    round_trip_cost = positions["gross_exposure"] * 2 * (fee_bps + slippage_bps) / 10_000
+    borrow_cost = (
+        (positions["weight"] < 0).astype(float)
+        * positions["gross_exposure"]
+        * borrow_bps_annual
+        / 10_000
+        * horizon_days
+        / 365
+    )
+    positions["gross_return"] = positions["weight"] * pd.to_numeric(positions["realized_return"])
+    positions["cost"] = round_trip_cost + borrow_cost
+    positions["net_return"] = positions["gross_return"] - positions["cost"]
+    curve = (
+        positions.groupby("label_end_date", as_index=False)
+        .agg(
+            gross_return=("gross_return", "sum"),
+            net_return=("net_return", "sum"),
+            gross_exposure=("gross_exposure", "sum"),
+            turnover=("turnover", "sum"),
+            costs=("cost", "sum"),
+        )
+        .rename(columns={"label_end_date": "date"})
+        .sort_values("date")
+        .reset_index(drop=True)
+    )
+    curve["gross_equity"] = (1 + curve["gross_return"]).cumprod()
+    curve["net_equity"] = (1 + curve["net_return"]).cumprod()
+    return CryptoPortfolioResult(
+        positions=positions,
+        curve=curve,
+        net_cumulative_return=float(curve["net_equity"].iloc[-1] - 1) if len(curve) else 0,
+        gross_cumulative_return=float(curve["gross_equity"].iloc[-1] - 1) if len(curve) else 0,
+        maximum_drawdown=maximum_drawdown(curve["net_return"]),
     )

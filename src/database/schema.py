@@ -335,6 +335,83 @@ backtest_results = Table(
     UniqueConstraint("signal_id", "window_start", "window_end", name="uq_backtest_result"),
 )
 
+backtest_runs = Table(
+    "backtest_runs",
+    metadata,
+    Column("backtest_run_id", String, primary_key=True),
+    Column("strategy_name", String, nullable=False),
+    Column("symbol", String),
+    Column("asset_class", String, nullable=False),
+    Column("protocol", JSON, nullable=False),
+    Column("development_metrics", JSON, nullable=False),
+    Column("final_test_metrics", JSON, nullable=False),
+    Column("full_metrics", JSON, nullable=False),
+    Column("robustness", JSON, nullable=False),
+    Column("readiness", String, nullable=False),
+    Column("readiness_score", Float, nullable=False),
+    Column("readiness_reasons", JSON, nullable=False),
+    Column("development_start", Date, nullable=False),
+    Column("development_end", Date, nullable=False),
+    Column("final_test_start", Date, nullable=False),
+    Column("final_test_end", Date, nullable=False),
+    Column("status", String, nullable=False),
+    *common_columns(),
+)
+
+backtest_curve = Table(
+    "backtest_curve",
+    metadata,
+    Column("curve_id", String, primary_key=True),
+    Column("backtest_run_id", String, nullable=False),
+    Column("curve_date", Date, nullable=False),
+    Column("phase", String, nullable=False),
+    Column("gross_return", Float, nullable=False),
+    Column("net_return", Float, nullable=False),
+    Column("gross_equity", Float, nullable=False),
+    Column("net_equity", Float, nullable=False),
+    Column("drawdown", Float, nullable=False),
+    Column("gross_exposure", Float, nullable=False),
+    Column("turnover", Float, nullable=False),
+    Column("costs", Float, nullable=False),
+    *common_columns(),
+    UniqueConstraint("backtest_run_id", "curve_date", name="uq_backtest_curve"),
+)
+
+backtest_positions = Table(
+    "backtest_positions",
+    metadata,
+    Column("position_id", String, primary_key=True),
+    Column("backtest_run_id", String, nullable=False),
+    Column("signal_id", String, nullable=False),
+    Column("symbol", String, nullable=False),
+    Column("phase", String, nullable=False),
+    Column("decision_date", Date, nullable=False),
+    Column("execution_date", Date, nullable=False),
+    Column("label_end_date", Date, nullable=False),
+    Column("posture", String, nullable=False),
+    Column("weight", Float, nullable=False),
+    Column("gross_exposure", Float, nullable=False),
+    Column("turnover", Float, nullable=False),
+    Column("realized_return", Float, nullable=False),
+    Column("gross_return", Float, nullable=False),
+    Column("net_return", Float, nullable=False),
+    Column("cost", Float, nullable=False),
+    *common_columns(),
+    UniqueConstraint("backtest_run_id", "signal_id", name="uq_backtest_position"),
+)
+
+backtest_sensitivity = Table(
+    "backtest_sensitivity",
+    metadata,
+    Column("sensitivity_id", String, primary_key=True),
+    Column("backtest_run_id", String, nullable=False),
+    Column("scenario", String, nullable=False),
+    Column("parameters", JSON, nullable=False),
+    Column("metrics", JSON, nullable=False),
+    *common_columns(),
+    UniqueConstraint("backtest_run_id", "scenario", name="uq_backtest_sensitivity"),
+)
+
 data_quality_issues = Table(
     "data_quality_issues",
     metadata,
@@ -383,4 +460,8 @@ NATURAL_KEYS: dict[str, tuple[str, ...]] = {
     "consensus_estimates": ("company_id", "fiscal_quarter", "as_of_date", "mode"),
     "variant_signals": ("forecast_id", "estimate_id"),
     "backtest_results": ("signal_id", "window_start", "window_end"),
+    "backtest_runs": ("backtest_run_id",),
+    "backtest_curve": ("backtest_run_id", "curve_date"),
+    "backtest_positions": ("backtest_run_id", "signal_id"),
+    "backtest_sensitivity": ("backtest_run_id", "scenario"),
 }

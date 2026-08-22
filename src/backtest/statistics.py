@@ -79,3 +79,41 @@ def newey_west_variant_regression(
             "can overstate significance."
         ),
     }
+
+
+def date_clustered_variant_regression(
+    event_returns: pd.DataFrame,
+    *,
+    date_column: str = "event_date",
+    return_column: str = "abnormal_return",
+) -> dict[str, float | int | str]:
+    required = {"variant_zscore", date_column, return_column}
+    missing = required - set(event_returns.columns)
+    if missing:
+        raise ValueError(f"Event returns are missing columns: {sorted(missing)}")
+    data = event_returns[["variant_zscore", date_column, return_column]].dropna().copy()
+    data[["variant_zscore", return_column]] = data[["variant_zscore", return_column]].apply(
+        pd.to_numeric, errors="coerce"
+    )
+    data = data.dropna()
+    if len(data) < 6 or data[date_column].nunique() < 2:
+        return {
+            "n": len(data),
+            "clusters": int(data[date_column].nunique()),
+            "coefficient": math.nan,
+            "standard_error": math.nan,
+            "p_value": math.nan,
+            "caveat": "Insufficient independent event dates for clustered inference.",
+        }
+    design = sm.add_constant(data["variant_zscore"])
+    fit = sm.OLS(data[return_column], design).fit(
+        cov_type="cluster", cov_kwds={"groups": data[date_column], "use_correction": True}
+    )
+    return {
+        "n": len(data),
+        "clusters": int(data[date_column].nunique()),
+        "coefficient": float(fit.params["variant_zscore"]),
+        "standard_error": float(fit.bse["variant_zscore"]),
+        "p_value": float(fit.pvalues["variant_zscore"]),
+        "caveat": "Date-clustered exploratory inference; selection and small-cluster bias may remain.",
+    }

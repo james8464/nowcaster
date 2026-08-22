@@ -9,6 +9,10 @@ import numpy as np
 import pandas as pd
 
 from src.backtest.event_study import run_event_study
+from src.backtest.metrics import calculate_backtest_metrics
+from src.backtest.portfolio import simulate_crypto_portfolio
+from src.backtest.readiness import ReadinessInputs, evaluate_readiness
+from src.backtest.robustness import deflated_sharpe_probability, run_block_bootstrap
 from src.config.settings import Settings
 from src.consensus.proxy import historical_expectation_proxy
 from src.consensus.variant import build_variant_signals
@@ -37,6 +41,7 @@ DEMO_STAGES = (
     "build_crypto_features",
     "train",
     "train_crypto",
+    "backtest_crypto",
     "variant",
     "backtest",
 )
@@ -331,6 +336,203 @@ class DemoStages:
             )
             rows.extend(crypto_signal_rows(output.predictions, source_version="ensemble-v1"))
         return {"market_signals_daily": self.database.insert("market_signals_daily", rows)}
+
+    def backtest_crypto(self) -> dict[str, int]:
+        if not self._empty("backtest_runs"):
+            return {
+                "backtest_runs": 0,
+                "backtest_curve": 0,
+                "backtest_positions": 0,
+                "backtest_sensitivity": 0,
+            }
+        created_at = datetime.now(UTC)
+        run_rows: list[dict[str, object]] = []
+        curve_rows: list[dict[str, object]] = []
+        position_rows: list[dict[str, object]] = []
+        sensitivity_rows: list[dict[str, object]] = []
+        for instrument in self.settings.instruments.instruments:
+            if not instrument.enabled or instrument.asset_class != "crypto":
+                continue
+            signals = self.database.frame(
+                """
+                select s.*, f.target_forward_return as realized_return,
+                       f.feature_volatility_20d * sqrt(f.horizon_days) as forecast_volatility
+                from market_signals_daily s
+                join crypto_features_daily f
+                  on s.symbol = f.symbol
+                 and s.decision_date = f.decision_date
+                 and s.horizon_days = f.horizon_days
+                where s.symbol = :symbol and s.posture <> 'abstain'
+                order by s.decision_date
+                """,
+                {"symbol": instrument.symbol},
+            )
+            if len(signals) < 20:
+                continue
+            split = max(1, int(len(signals) * 0.8))
+            development = signals.iloc[:split].copy()
+            final_test = signals.iloc[split:].copy()
+            costs = {
+                "fee_bps": instrument.fee_bps,
+                "slippage_bps": instrument.slippage_bps,
+                "target_volatility": 0.15,
+            }
+            development_result = simulate_crypto_portfolio(development, **costs)
+            final_result = simulate_crypto_portfolio(final_test, **costs)
+            full_result = simulate_crypto_portfolio(signals, **costs)
+            development_metrics = calculate_backtest_metrics(
+                development_result.curve, development_result.positions, periods_per_year=365
+            )
+            final_metrics = calculate_backtest_metrics(
+                final_result.curve, final_result.positions, periods_per_year=365
+            )
+            full_metrics = calculate_backtest_metrics(full_result.curve, full_result.positions, periods_per_year=365)
+            bootstrap = run_block_bootstrap(
+                full_result.curve["net_return"].to_numpy(),
+                block_size=20,
+                samples=1_000,
+                seed=self.settings.model.random_seed,
+            )
+            trial_probability = deflated_sharpe_probability(
+                full_metrics.sharpe,
+                observations=len(full_result.curve),
+                trials=12,
+                skew=float(full_result.curve["net_return"].skew()),
+                kurtosis=float(full_result.curve["net_return"].kurtosis() + 3),
+            )
+            stressed = simulate_crypto_portfolio(
+                signals,
+                fee_bps=instrument.fee_bps * 2,
+                slippage_bps=instrument.slippage_bps * 2,
+                target_volatility=0.15,
+            )
+            by_year = full_result.curve.assign(
+                year=pd.to_datetime(full_result.curve["date"]).dt.year
+            ).groupby("year")["net_return"].sum()
+            readiness = evaluate_readiness(
+                ReadinessInputs(
+                    trades=full_metrics.trades,
+                    development_sharpe=development_metrics.sharpe,
+                    final_test_sharpe=final_metrics.sharpe,
+                    probability_positive=bootstrap.probability_positive,
+                    deflated_sharpe_probability=trial_probability,
+                    cost_stress_return=stressed.net_cumulative_return,
+                    subperiod_positive_fraction=float((by_year > 0).mean()),
+                    maximum_drawdown=full_metrics.maximum_drawdown,
+                )
+            )
+            run_id = canonical_hash(
+                [instrument.symbol, "crypto_daily_ensemble", "purged-oos-v1", instrument.primary_horizon]
+            )[:24]
+            final_start = pd.Timestamp(final_test["decision_date"].min()).date()
+            run_rows.append(
+                {
+                    "backtest_run_id": run_id,
+                    "strategy_name": f"{instrument.symbol} calibrated ensemble",
+                    "symbol": instrument.symbol,
+                    "asset_class": "crypto",
+                    "protocol": {
+                        "type": "purged_expanding_walk_forward",
+                        "execution_lag_bars": 1,
+                        "final_test_fraction": 0.2,
+                        "horizon_days": instrument.primary_horizon,
+                        "fee_bps": instrument.fee_bps,
+                        "slippage_bps": instrument.slippage_bps,
+                    },
+                    "development_metrics": _clean(development_metrics.to_dict()),
+                    "final_test_metrics": _clean(final_metrics.to_dict()),
+                    "full_metrics": _clean(full_metrics.to_dict()),
+                    "robustness": _clean(
+                        {
+                            "block_bootstrap": bootstrap.__dict__,
+                            "deflated_sharpe_probability": trial_probability,
+                            "profitable_subperiod_fraction": float((by_year > 0).mean()),
+                            "trials_adjusted": 12,
+                        }
+                    ),
+                    "readiness": readiness.readiness,
+                    "readiness_score": readiness.score,
+                    "readiness_reasons": list(readiness.reasons),
+                    "development_start": pd.Timestamp(development["decision_date"].min()).date(),
+                    "development_end": pd.Timestamp(development["decision_date"].max()).date(),
+                    "final_test_start": final_start,
+                    "final_test_end": pd.Timestamp(final_test["decision_date"].max()).date(),
+                    "status": "complete",
+                    "source": "out_of_sample_crypto_backtest",
+                    "source_version": "purged-oos-v1",
+                    "created_at": created_at,
+                }
+            )
+            curve = full_result.curve.copy()
+            curve["phase"] = np.where(pd.to_datetime(curve["date"]).dt.date < final_start, "development", "final_test")
+            curve["drawdown"] = curve["net_equity"] / curve["net_equity"].cummax() - 1
+            for row in curve.to_dict(orient="records"):
+                curve_rows.append(
+                    {
+                        "curve_id": canonical_hash([run_id, row["date"]])[:24],
+                        "backtest_run_id": run_id,
+                        "curve_date": row["date"],
+                        "phase": row["phase"],
+                        **{key: float(row[key]) for key in (
+                            "gross_return", "net_return", "gross_equity", "net_equity", "drawdown",
+                            "gross_exposure", "turnover", "costs"
+                        )},
+                        "source": "out_of_sample_crypto_backtest",
+                        "source_version": "purged-oos-v1",
+                        "created_at": created_at,
+                    }
+                )
+            positions = full_result.positions.copy()
+            positions["phase"] = np.where(
+                pd.to_datetime(positions["decision_date"]).dt.date < final_start, "development", "final_test"
+            )
+            for row in positions.to_dict(orient="records"):
+                position_rows.append(
+                    {
+                        "position_id": canonical_hash([run_id, row["signal_id"]])[:24],
+                        "backtest_run_id": run_id,
+                        "signal_id": row["signal_id"],
+                        "symbol": row["symbol"],
+                        "phase": row["phase"],
+                        "decision_date": row["decision_date"],
+                        "execution_date": row["execution_date"],
+                        "label_end_date": row["label_end_date"],
+                        "posture": row["posture"],
+                        **{key: float(row[key]) for key in (
+                            "weight", "gross_exposure", "turnover", "realized_return", "gross_return",
+                            "net_return", "cost"
+                        )},
+                        "source": "out_of_sample_crypto_backtest",
+                        "source_version": "purged-oos-v1",
+                        "created_at": created_at,
+                    }
+                )
+            for name, multiplier in (("base_costs", 1.0), ("double_costs", 2.0), ("triple_costs", 3.0)):
+                result = simulate_crypto_portfolio(
+                    signals,
+                    fee_bps=instrument.fee_bps * multiplier,
+                    slippage_bps=instrument.slippage_bps * multiplier,
+                    target_volatility=0.15,
+                )
+                metrics = calculate_backtest_metrics(result.curve, result.positions, periods_per_year=365)
+                sensitivity_rows.append(
+                    {
+                        "sensitivity_id": canonical_hash([run_id, name])[:24],
+                        "backtest_run_id": run_id,
+                        "scenario": name,
+                        "parameters": {"cost_multiplier": multiplier},
+                        "metrics": _clean(metrics.to_dict()),
+                        "source": "crypto_cost_sensitivity",
+                        "source_version": "v1",
+                        "created_at": created_at,
+                    }
+                )
+        return {
+            "backtest_runs": self.database.insert("backtest_runs", run_rows),
+            "backtest_curve": self.database.insert("backtest_curve", curve_rows),
+            "backtest_positions": self.database.insert("backtest_positions", position_rows),
+            "backtest_sensitivity": self.database.insert("backtest_sensitivity", sensitivity_rows),
+        }
 
     def variant(self) -> dict[str, int]:
         if not self._empty("variant_signals"):

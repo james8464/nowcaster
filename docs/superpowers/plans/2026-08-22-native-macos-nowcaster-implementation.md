@@ -272,7 +272,7 @@ git commit -m "feat: add point-in-time crypto research"
 **Interfaces:**
 - Produces: `WalkForwardProtocol`, `BacktestMetrics`, `run_block_bootstrap`, `benjamini_hochberg`, `deflated_sharpe_probability`, `evaluate_readiness`, and normalized backtest run/curve/position/sensitivity tables.
 
-- [ ] **Step 1: Write failing split, metric, and robustness tests**
+- [x] **Step 1: Write failing split, metric, and robustness tests**
 
 ```python
 def test_protocol_reserves_final_test_and_embargoes_overlap(rows):
@@ -291,21 +291,21 @@ def test_false_discovery_adjustment_is_monotonic():
     assert adjusted == sorted(adjusted)
 ```
 
-- [ ] **Step 2: Verify red**
+- [x] **Step 2: Verify red**
 
 Run: `.venv/bin/pytest tests/unit/test_backtest_protocol.py tests/unit/test_backtest_metrics.py tests/unit/test_backtest_robustness.py tests/unit/test_backtest_readiness.py -q`
 Expected: missing module failures.
 
-- [ ] **Step 3: Implement protocol, accounting, metrics, and schema**
+- [x] **Step 3: Implement protocol, accounting, metrics, and schema**
 
 Implement final-test isolation, purged expanding folds, horizon embargo, one-bar execution lag, exposure caps, volatility targeting, transaction/borrow/slippage costs, and one declared equity model/horizon per company-event. Persist CAGR, annualized return/volatility, Sharpe, Sortino, Calmar, drawdown, hit rate, profit factor, turnover, exposure, trades, and holding period. Run event/date block bootstrap, HAC/date-clustered inference, false-discovery correction, deflated Sharpe, leave-one-out, subperiod, regime, and cost sensitivity.
 
-- [ ] **Step 4: Run full backtest unit and integration suites**
+- [x] **Step 4: Run full backtest unit and integration suites**
 
 Run: `.venv/bin/pytest tests/unit/test_backtest_*.py tests/unit/test_portfolio.py tests/integration/test_backtest_pipeline.py -q`
 Expected: PASS and readiness fails when sample, stability, cost, or final-test gates fail.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/backtest src/database/schema.py src/demo.py tests

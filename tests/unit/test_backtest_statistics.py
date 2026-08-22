@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from src.backtest.statistics import newey_west_variant_regression, summarize_buckets
+from src.backtest.statistics import date_clustered_variant_regression, newey_west_variant_regression, summarize_buckets
 
 
 def test_bucket_summary_reports_sample_interval_and_hit_rate():
@@ -31,3 +31,16 @@ def test_newey_west_regression_reports_observations_and_caveat():
     assert result["n"] == 6
     assert result["coefficient"] > 0
     assert "multiple" in result["caveat"].lower()
+
+
+def test_date_clustered_regression_reports_independent_event_dates():
+    frame = pd.DataFrame(
+        {
+            "event_date": pd.to_datetime(["2024-01-01"] * 3 + ["2024-02-01"] * 3),
+            "variant_zscore": [-2, -1, 0, 1, 2, 3],
+            "abnormal_return": [-0.03, -0.02, 0, 0.01, 0.03, 0.04],
+        }
+    )
+    result = date_clustered_variant_regression(frame)
+    assert result["clusters"] == 2
+    assert result["coefficient"] > 0
