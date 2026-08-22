@@ -9,7 +9,10 @@ let package = Package(
         .executable(name: "NowcasterApp", targets: ["NowcasterApp"]),
     ],
     targets: [
-        .executableTarget(name: "NowcasterApp"),
+        .executableTarget(
+            name: "NowcasterApp",
+            resources: [.copy("Resources/Fixtures")]
+        ),
         .testTarget(name: "NowcasterAppTests", dependencies: ["NowcasterApp"]),
     ]
 )

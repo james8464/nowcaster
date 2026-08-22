@@ -373,7 +373,7 @@ git commit -m "feat: orchestrate native research demo"
 **Interfaces:**
 - Produces: `NowcasterSnapshot: Decodable, Sendable`, `SnapshotRepository`, and observable `AppEnvironment` with loading/loaded/stale/incompatible/failure states.
 
-- [ ] **Step 1: Generate the fixture and write failing Swift contract tests**
+- [x] **Step 1: Generate the fixture and write failing Swift contract tests**
 
 ```swift
 @Test func decodesPythonGeneratedFixture() throws {
@@ -390,21 +390,21 @@ git commit -m "feat: orchestrate native research demo"
 }
 ```
 
-- [ ] **Step 2: Verify red**
+- [x] **Step 2: Verify red**
 
 Run: `make macos-test`
 Expected: missing Swift model and repository types.
 
-- [ ] **Step 3: Implement exact snake-case decoding and last-known-good state**
+- [x] **Step 3: Implement exact snake-case decoding and last-known-good state**
 
 Use `JSONDecoder.keyDecodingStrategy = .convertFromSnakeCase`, ISO-8601 dates with fractional-seconds fallback, typed enums with explicit `.unknown(String)` decoding where source values may extend, and `@MainActor @Observable` state. Never replace a loaded snapshot after a decoding failure.
 
-- [ ] **Step 4: Run parity tests**
+- [x] **Step 4: Run parity tests**
 
 Run: `.venv/bin/python -m src.cli export-app-snapshot --output macos/Nowcaster/Resources/Fixtures/nowcaster-snapshot.json && make macos-test`
 Expected: Python emits a valid fixture and all Swift decoding tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add macos/Nowcaster src/app_snapshot tests
