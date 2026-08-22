@@ -17,7 +17,7 @@ from src.strategies.ensemble import (
     persist_evidence_weights,
 )
 from src.strategies.types import StrategyMode
-from src.strategies.validation import StrategyEvaluation
+from src.strategies.validation import DEFAULT_VALIDATION_CONFIG, StrategyEvaluation, ValidationConfig
 
 
 def generate_current_decision(
@@ -26,6 +26,7 @@ def generate_current_decision(
     as_of: datetime,
     *,
     config: EnsembleConfig = DEFAULT_ENSEMBLE_CONFIG,
+    validation_config: ValidationConfig = DEFAULT_VALIDATION_CONFIG,
     database: Database | None = None,
 ) -> EnsembleDecision:
     """Generate an unlabeled as-of decision from sealed evidence and resolved feedback only."""
@@ -33,12 +34,23 @@ def generate_current_decision(
     modes = {evaluation.mode for evaluation in evaluations}
     if len(modes) > 1:
         raise ValueError("strategy evaluations in one decision must use the same mode")
-    weights = compute_evidence_weights(evaluations, as_of=as_of, config=config)
+    weights = compute_evidence_weights(
+        evaluations,
+        as_of=as_of,
+        config=config,
+        validation_config=validation_config,
+    )
     if modes and StrategyMode.FROZEN not in modes:
         weights = fixed_share_update(weights, resolved_outcomes, as_of=as_of, config=config)
     if database is not None:
         persist_evidence_weights(database, weights)
-    return combine_current_signals(evaluations, weights, as_of=as_of, config=config)
+    return combine_current_signals(
+        evaluations,
+        weights,
+        as_of=as_of,
+        config=config,
+        validation_config=validation_config,
+    )
 
 
 def decision_to_signal_frame(

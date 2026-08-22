@@ -23,6 +23,14 @@ from src.strategies.validation import (
     evaluate_registry,
 )
 
+VALIDATION_CONFIG = ValidationConfig(
+    final_test_fraction=0.2,
+    minimum_train_observations=4,
+    validation_observations=2,
+    minimum_dsr_probability=0,
+    maximum_drawdown=1,
+)
+
 
 def _bars() -> pd.DataFrame:
     closes = [100, 110, 108, 120, 117, 130, 126, 140, 135, 150, 144, 160, 153, 170]
@@ -146,13 +154,7 @@ def _evaluations() -> tuple:
         dataset_hash="d" * 64,
         symbol="AAA",
         interval=BarInterval.ONE_HOUR,
-        config=ValidationConfig(
-            final_test_fraction=0.2,
-            minimum_train_observations=4,
-            validation_observations=2,
-            minimum_dsr_probability=0,
-            maximum_drawdown=1,
-        ),
+        config=VALIDATION_CONFIG,
     )
     evaluations = evaluate_registry(request)
     assert all(evaluation.promotion.promoted for evaluation in evaluations)
@@ -198,10 +200,24 @@ def test_current_unlabeled_inference_is_deterministic_traceable_and_persists_res
         minimum_breadth=2,
     )
 
-    first = generate_current_decision(evaluations, outcomes, as_of, config=config, database=database)
+    first = generate_current_decision(
+        evaluations,
+        outcomes,
+        as_of,
+        config=config,
+        validation_config=VALIDATION_CONFIG,
+        database=database,
+    )
     changed = outcomes.copy()
     changed.loc[changed["outcome_available_at"] > pd.Timestamp(as_of), "realized_return"] *= -1_000
-    second = generate_current_decision(evaluations, changed, as_of, config=config, database=database)
+    second = generate_current_decision(
+        evaluations,
+        changed,
+        as_of,
+        config=config,
+        validation_config=VALIDATION_CONFIG,
+        database=database,
+    )
 
     assert first.signal == 1
     assert first.decision_hash == second.decision_hash
@@ -242,8 +258,20 @@ def test_frozen_current_decision_never_applies_outcome_feedback() -> None:
     reversed_outcomes["realized_return"] *= -1
     config = EnsembleConfig(maximum_strategy_weight=0.5, maximum_family_weight=0.6)
 
-    first = generate_current_decision(evaluations, outcomes, as_of, config=config)
-    second = generate_current_decision(evaluations, reversed_outcomes, as_of, config=config)
+    first = generate_current_decision(
+        evaluations,
+        outcomes,
+        as_of,
+        config=config,
+        validation_config=VALIDATION_CONFIG,
+    )
+    second = generate_current_decision(
+        evaluations,
+        reversed_outcomes,
+        as_of,
+        config=config,
+        validation_config=VALIDATION_CONFIG,
+    )
 
     assert first.weights == second.weights
     assert first.decision_hash == second.decision_hash

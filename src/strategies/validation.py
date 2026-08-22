@@ -55,6 +55,9 @@ class ValidationConfig:
         return max(self.embargo, self.forecast_horizon + self.publication_delay)
 
 
+DEFAULT_VALIDATION_CONFIG = ValidationConfig()
+
+
 def promotion_reasons(inputs: Mapping[str, Any], config: ValidationConfig) -> tuple[str, ...]:
     reasons: list[str] = []
     if inputs["status"] != EvaluationStatus.EVALUATED.value:
@@ -284,11 +287,19 @@ def _config_record(config: ValidationConfig) -> dict[str, Any]:
     }
 
 
+def validation_policy_hash(config: ValidationConfig) -> str:
+    """Return the canonical external trust anchor for one validation policy."""
+
+    return canonical_hash(_config_record(config))
+
+
 def _seal_development_evidence(
     evidence: StrategyRunEvidence,
     boundary: FinalBoundary,
     chronology: pd.Series,
     expected_folds: Sequence[OuterFold],
+    *,
+    as_of: datetime,
 ) -> _SealedEvidence:
     if evidence.trial_sharpes or evidence.fold_stability is not None:
         raise ValueError("unsealed aggregate evidence is forbidden; provide timestamped trial and fold evidence")
@@ -307,6 +318,8 @@ def _seal_development_evidence(
             raise ValueError("malformed trial evidence: IDs must be unique and Sharpes finite")
         if training_end > evaluated_at:
             raise ValueError("malformed trial evidence: training cannot end after evaluation")
+        if training_end > as_of or evaluated_at > as_of:
+            raise ValueError("trial evidence cannot follow the requested as_of")
         if training_end >= boundary.final_start or evaluated_at >= boundary.final_start:
             raise ValueError("trial evidence crosses the sealed final boundary")
         trial_ids.add(trial_id)
@@ -343,6 +356,8 @@ def _seal_development_evidence(
             raise ValueError("malformed fold evidence: folds, metrics, or chronology are invalid")
         if validation_end >= boundary.final_start or evaluated_at >= boundary.final_start:
             raise ValueError("fold evidence crosses the sealed final boundary")
+        if validation_start > as_of or validation_end > as_of or evaluated_at > as_of:
+            raise ValueError("fold evidence cannot follow the requested as_of")
         fold_ids.add(fold)
         fold_rows.append(
             {
@@ -616,6 +631,9 @@ def evaluate_registry(request: EvaluationRequest) -> tuple[StrategyEvaluation, .
     outcome_availability = _timestamp_values(request.outcome_availability, name="outcome_availability")
     if len(outcome_availability) != len(chronology):
         raise ValueError("outcome_availability must align one-to-one with chronology")
+    requested_as_of = pd.Timestamp(request.as_of)
+    if chronology.max() > requested_as_of or outcome_availability.max() > requested_as_of:
+        raise ValueError("sealed chronology and outcome availability cannot follow the requested as_of")
     validation_data = pd.DataFrame(
         {
             "decision_timestamp": chronology,
@@ -667,7 +685,13 @@ def evaluate_registry(request: EvaluationRequest) -> tuple[StrategyEvaluation, .
             continue
 
         try:
-            sealed_evidence = _seal_development_evidence(evidence, boundary, chronology, expected_folds)
+            sealed_evidence = _seal_development_evidence(
+                evidence,
+                boundary,
+                chronology,
+                expected_folds,
+                as_of=request.as_of,
+            )
         except ValueError as error:
             evaluations.append(
                 _placeholder_evaluation(
@@ -695,6 +719,18 @@ def evaluate_registry(request: EvaluationRequest) -> tuple[StrategyEvaluation, .
             )
             continue
         timestamps = _timestamp_values(curve["timestamp"], name="backtest timestamp")
+        if timestamps.max() > requested_as_of:
+            evaluations.append(
+                _placeholder_evaluation(
+                    request,
+                    spec.strategy_id,
+                    spec.deterministic_version,
+                    spec.family,
+                    EvaluationStatus.FAILED,
+                    "backtest evidence cannot follow the requested as_of",
+                )
+            )
+            continue
         development_mask = timestamps < boundary.final_start
         development = _segment_metrics(
             evidence.backtest, development_mask, periods_per_year=request.config.periods_per_year
@@ -773,14 +809,22 @@ def evaluate_registry(request: EvaluationRequest) -> tuple[StrategyEvaluation, .
             "development_index": boundary.development_index,
             "final_index": boundary.final_index,
         }
+        promotion_timestamps = [timestamp.to_pydatetime() for timestamp in timestamps.loc[development_mask]]
+        promotion_timestamps.extend(item["evaluated_at"] for item in sealed_evidence.provenance["trials"])
+        promotion_timestamps.extend(item["evaluated_at"] for item in sealed_evidence.provenance["folds"])
+        promotion_evidence_through = max(promotion_timestamps)
+        validation_config_record = _config_record(request.config)
         validation_snapshot = {
-            "schema_version": 1,
+            "schema_version": 2,
             "context": context_record,
             "chronology": chronology_record,
             "chronology_hash": canonical_hash(chronology_record),
             "outcome_availability": availability_record,
             "outcome_availability_hash": canonical_hash(availability_record),
-            "validation_config": _config_record(request.config),
+            "validation_config": validation_config_record,
+            "validation_policy_hash": validation_policy_hash(request.config),
+            "evaluated_as_of": request.as_of,
+            "promotion_evidence_through": promotion_evidence_through,
             "final_boundary": boundary_record,
             "fold_plan": _fold_plan(expected_folds),
             "trial_records": sealed_evidence.provenance["trials"],
@@ -836,6 +880,7 @@ def evaluate_registry(request: EvaluationRequest) -> tuple[StrategyEvaluation, .
 
 
 __all__ = [
+    "DEFAULT_VALIDATION_CONFIG",
     "EvaluationRequest",
     "EvaluationStatus",
     "FinalBoundary",
@@ -852,4 +897,5 @@ __all__ = [
     "make_outer_folds",
     "run_frozen_protocol",
     "select_final_boundary",
+    "validation_policy_hash",
 ]

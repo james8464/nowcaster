@@ -1,23 +1,79 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import fields, replace
 from datetime import UTC, datetime, timedelta
 
 import pandas as pd
 import pytest
 
-from src.strategies.engine import decision_to_signal_frame, generate_current_decision
+from src.strategies.engine import decision_to_signal_frame
+from src.strategies.engine import generate_current_decision as _generate_current_decision
 from src.strategies.ensemble import (
     EnsembleConfig,
-    combine_current_signals,
-    compute_evidence_weights,
+    EnsembleDecision,
+    EvidenceWeight,
     fixed_share_update,
 )
+from src.strategies.ensemble import combine_current_signals as _combine_current_signals
+from src.strategies.ensemble import compute_evidence_weights as _compute_evidence_weights
 from src.strategies.types import BarInterval, StrategyFamily, StrategyMode, canonical_hash
-from src.strategies.validation import EvaluationStatus, PromotionDecision, StrategyEvaluation
+from src.strategies.validation import EvaluationStatus, PromotionDecision, StrategyEvaluation, ValidationConfig
 
 AS_OF = datetime(2026, 8, 22, 12, tzinfo=UTC)
+TEST_VALIDATION_CONFIG = ValidationConfig(
+    final_test_fraction=0.2,
+    minimum_train_observations=4,
+    validation_observations=2,
+)
+
+
+def compute_evidence_weights(
+    evaluations: Sequence[StrategyEvaluation],
+    *,
+    as_of: datetime,
+    config: EnsembleConfig,
+    validation_config: ValidationConfig = TEST_VALIDATION_CONFIG,
+) -> tuple[EvidenceWeight, ...]:
+    return _compute_evidence_weights(
+        evaluations,
+        as_of=as_of,
+        config=config,
+        validation_config=validation_config,
+    )
+
+
+def combine_current_signals(
+    evaluations: Sequence[StrategyEvaluation],
+    weights: Sequence[EvidenceWeight],
+    *,
+    as_of: datetime,
+    config: EnsembleConfig,
+    validation_config: ValidationConfig = TEST_VALIDATION_CONFIG,
+) -> EnsembleDecision:
+    return _combine_current_signals(
+        evaluations,
+        weights,
+        as_of=as_of,
+        config=config,
+        validation_config=validation_config,
+    )
+
+
+def generate_current_decision(
+    evaluations: Sequence[StrategyEvaluation],
+    resolved_outcomes: pd.DataFrame,
+    as_of: datetime,
+    *,
+    config: EnsembleConfig,
+) -> EnsembleDecision:
+    return _generate_current_decision(
+        evaluations,
+        resolved_outcomes,
+        as_of,
+        config=config,
+        validation_config=TEST_VALIDATION_CONFIG,
+    )
 
 
 def _evaluation(
@@ -153,8 +209,21 @@ def _with_root_snapshot(evaluation: StrategyEvaluation) -> StrategyEvaluation:
         },
     )
     provenance = dict(evaluation.evidence_provenance)
+    validation_config = {
+        "final_test_fraction": 0.2,
+        "minimum_train_observations": 4,
+        "validation_observations": 2,
+        "forecast_horizon_seconds": 0.0,
+        "publication_delay_seconds": 0.0,
+        "embargo_seconds": 0.0,
+        "periods_per_year": 252,
+        "minimum_trades": 1,
+        "minimum_development_observations": 5,
+        "maximum_drawdown": 0.5,
+        "minimum_dsr_probability": 0.5,
+    }
     snapshot = {
-        "schema_version": 1,
+        "schema_version": 2,
         "context": {
             "dataset_hash": evaluation.dataset_hash,
             "strategy_id": evaluation.strategy_id,
@@ -168,19 +237,10 @@ def _with_root_snapshot(evaluation: StrategyEvaluation) -> StrategyEvaluation:
         "chronology_hash": canonical_hash(chronology),
         "outcome_availability": chronology,
         "outcome_availability_hash": canonical_hash(chronology),
-        "validation_config": {
-            "final_test_fraction": 0.2,
-            "minimum_train_observations": 4,
-            "validation_observations": 2,
-            "forecast_horizon_seconds": 0.0,
-            "publication_delay_seconds": 0.0,
-            "embargo_seconds": 0.0,
-            "periods_per_year": 252,
-            "minimum_trades": 1,
-            "minimum_development_observations": 5,
-            "maximum_drawdown": 0.5,
-            "minimum_dsr_probability": 0.5,
-        },
+        "validation_config": validation_config,
+        "validation_policy_hash": canonical_hash(validation_config),
+        "evaluated_as_of": chronology[-1],
+        "promotion_evidence_through": chronology[7],
         "final_boundary": {
             "final_start": chronology[8],
             "development_index": tuple(range(8)),
@@ -523,6 +583,49 @@ def test_weighting_recomputes_maximum_drawdown_gate_from_the_root_snapshot() -> 
     assert {weight.strategy_id: weight.weight for weight in weights}["alpha"] == 0
 
 
+def test_weighting_rejects_sealed_evidence_created_after_requested_as_of() -> None:
+    evaluations = (
+        _evaluation("alpha", StrategyFamily.TREND),
+        _evaluation("beta", StrategyFamily.MEAN_REVERSION),
+        _evaluation("gamma", StrategyFamily.SESSION),
+    )
+
+    weights = compute_evidence_weights(
+        evaluations,
+        as_of=datetime(2026, 8, 20, 12, tzinfo=UTC),
+        config=EnsembleConfig(maximum_strategy_weight=0.8, maximum_family_weight=0.8),
+        validation_config=TEST_VALIDATION_CONFIG,
+    )
+
+    assert all(weight.weight == 0 for weight in weights)
+
+
+def test_weighting_rejects_rehashed_embedded_policy_forgery_under_trusted_policy() -> None:
+    evaluations = (
+        _evaluation("alpha", StrategyFamily.TREND),
+        _evaluation("beta", StrategyFamily.MEAN_REVERSION),
+        _evaluation("gamma", StrategyFamily.SESSION),
+    )
+    provenance = dict(evaluations[0].evidence_provenance)
+    snapshot = dict(provenance["validation_snapshot"])
+    embedded = dict(snapshot["validation_config"])
+    embedded["maximum_drawdown"] = 1.0
+    snapshot["validation_config"] = embedded
+    snapshot["validation_policy_hash"] = canonical_hash(embedded)
+    provenance["validation_snapshot"] = snapshot
+    provenance["validation_snapshot_hash"] = canonical_hash(snapshot)
+    forged = (replace(evaluations[0], evidence_provenance=provenance), *evaluations[1:])
+
+    weights = compute_evidence_weights(
+        forged,
+        as_of=AS_OF,
+        config=EnsembleConfig(maximum_strategy_weight=0.8, maximum_family_weight=0.8),
+        validation_config=TEST_VALIDATION_CONFIG,
+    )
+
+    assert {weight.strategy_id: weight.weight for weight in weights}["alpha"] == 0
+
+
 def test_fixed_share_updates_only_resolved_outcomes_and_conserves_mass() -> None:
     evaluations = (
         _evaluation("alpha", StrategyFamily.TREND),
@@ -812,6 +915,129 @@ def test_feedback_rejects_mutated_original_weight_cohort(mutation: str) -> None:
         )
 
 
+def test_empty_feedback_and_combination_reject_mutated_offline_current_mass() -> None:
+    evaluations, config, initial, _outcomes = _feedback_fixture()
+    tampered = (replace(initial[0], weight=99.0), *initial[1:])
+
+    with pytest.raises(ValueError, match="weight|mass|cohort"):
+        fixed_share_update(tampered, pd.DataFrame(), as_of=AS_OF, config=config)
+    with pytest.raises(ValueError, match="weight|mass|cohort"):
+        combine_current_signals(
+            evaluations,
+            tampered,
+            as_of=AS_OF,
+            config=config,
+            validation_config=TEST_VALIDATION_CONFIG,
+        )
+
+
+def test_combination_rejects_mutated_authenticated_online_current_mass() -> None:
+    evaluations, config, initial, outcomes = _feedback_fixture()
+    updated = fixed_share_update(
+        initial,
+        outcomes,
+        as_of=datetime(2026, 8, 22, 10, tzinfo=UTC),
+        config=config,
+    )
+    delta = min(updated[1].weight / 2, 0.01)
+    tampered = (
+        replace(updated[0], weight=updated[0].weight + delta),
+        replace(updated[1], weight=updated[1].weight - delta),
+        *updated[2:],
+    )
+    literal = (replace(updated[0], weight=0.99), *updated[1:])
+
+    with pytest.raises(ValueError, match="weight|mass|state"):
+        fixed_share_update(literal, pd.DataFrame(), as_of=AS_OF, config=config)
+    with pytest.raises(ValueError, match="weight|mass|state"):
+        combine_current_signals(
+            evaluations,
+            tampered,
+            as_of=AS_OF,
+            config=config,
+            validation_config=TEST_VALIDATION_CONFIG,
+        )
+
+
+def test_combination_rederivation_rejects_self_consistent_public_hash_reconstruction() -> None:
+    evaluations, config, initial, outcomes = _feedback_fixture()
+    offline_values = (initial[0].weight + 0.01, initial[1].weight - 0.01, initial[2].weight)
+    snapshot = _thaw(initial[0].provenance["weight_cohort_snapshot"])
+    assert isinstance(snapshot, dict)
+    members = [dict(member) for member in snapshot["members"]]
+    current_rows = [dict(row) for row in snapshot["current_weights"]]
+    for member, row, value in zip(members, current_rows, offline_values, strict=True):
+        member["base_weight"] = value
+        row["weight"] = value
+    snapshot["members"] = tuple(members)
+    snapshot["current_weights"] = tuple(current_rows)
+    snapshot["current_weights_hash"] = canonical_hash(snapshot["current_weights"])
+    snapshot_hash = canonical_hash(snapshot)
+    forged_offline = []
+    for weight, value in zip(initial, offline_values, strict=True):
+        provenance = _thaw(weight.provenance)
+        assert isinstance(provenance, dict)
+        provenance["weight_cohort_snapshot"] = snapshot
+        provenance["weight_cohort_hash"] = snapshot_hash
+        forged_offline.append(replace(weight, weight=value, provenance=provenance))
+
+    with pytest.raises(ValueError, match="rederived evidence"):
+        combine_current_signals(
+            evaluations,
+            tuple(forged_offline),
+            as_of=AS_OF,
+            config=config,
+            validation_config=TEST_VALIDATION_CONFIG,
+        )
+
+    updated = fixed_share_update(
+        initial,
+        outcomes,
+        as_of=datetime(2026, 8, 22, 10, tzinfo=UTC),
+        config=config,
+    )
+    online_values = (updated[0].weight, updated[1].weight + 0.01, updated[2].weight - 0.01)
+    state = _thaw(updated[0].provenance["online_state"])
+    assert isinstance(state, dict)
+    state_rows = [dict(row) for row in state["current_weights"]]
+    for row, value in zip(state_rows, online_values, strict=True):
+        row["weight"] = value
+    state["current_weights"] = tuple(state_rows)
+    state["current_weights_hash"] = canonical_hash(state["current_weights"])
+    state.pop("state_hash")
+    state["state_hash"] = canonical_hash(state)
+    forged_online = []
+    for weight, value in zip(updated, online_values, strict=True):
+        provenance = _thaw(weight.provenance)
+        assert isinstance(provenance, dict)
+        provenance["online_state"] = state
+        forged_online.append(replace(weight, weight=value, provenance=provenance))
+
+    with pytest.raises(ValueError, match="authenticated replay"):
+        combine_current_signals(
+            evaluations,
+            tuple(forged_online),
+            as_of=AS_OF,
+            config=config,
+            validation_config=TEST_VALIDATION_CONFIG,
+        )
+
+
+@pytest.mark.parametrize("weights", [(0.99, 0.005, 0.005), (0.2, 0.2, 0.2)])
+def test_combination_rejects_current_mass_cap_or_normalization_failure(weights: tuple[float, ...]) -> None:
+    evaluations, config, initial, _outcomes = _feedback_fixture()
+    tampered = tuple(replace(weight, weight=value) for weight, value in zip(initial, weights, strict=True))
+
+    with pytest.raises(ValueError, match="weight|mass|cap|normalized"):
+        combine_current_signals(
+            evaluations,
+            tampered,
+            as_of=AS_OF,
+            config=config,
+            validation_config=TEST_VALIDATION_CONFIG,
+        )
+
+
 def test_outcome_feedback_requires_exact_strategy_and_dataset_context() -> None:
     evaluations = (
         _evaluation("alpha", StrategyFamily.TREND),
@@ -1088,8 +1314,8 @@ def test_decision_hash_is_permutation_invariant_and_covers_weight_provenance() -
         )
         for weight in first_weights
     )
-    shifted = combine_current_signals(evaluations, shifted_weights, as_of=AS_OF, config=config)
-    assert first.decision_hash != shifted.decision_hash
+    with pytest.raises(ValueError, match="current mass"):
+        combine_current_signals(evaluations, shifted_weights, as_of=AS_OF, config=config)
 
 
 def test_decision_hash_is_derived_and_execution_rejects_tampering() -> None:

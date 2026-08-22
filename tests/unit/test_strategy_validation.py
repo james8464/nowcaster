@@ -131,7 +131,7 @@ def _evaluation_request(registry: StrategyRegistry, runs: dict[str, StrategyRunE
         runs=runs,
         chronology=_timeline(10)["decision_timestamp"],
         outcome_availability=_timeline(10)["outcome_available_at"],
-        as_of=datetime(2026, 8, 21, 18, tzinfo=UTC),
+        as_of=datetime(2026, 8, 21, 20, tzinfo=UTC),
         mode=StrategyMode.FROZEN,
         dataset_hash="d" * 64,
         symbol="AAA",
@@ -164,6 +164,14 @@ def test_final_boundary_rejects_naive_decision_chronology() -> None:
 
     with pytest.raises(ValueError, match="explicit UTC"):
         select_final_boundary(chronology, final_test_fraction=0.2)
+
+
+def test_registry_rejects_chronology_or_availability_after_requested_as_of() -> None:
+    request = _evaluation_request(_registry("future"), {"future": _timestamped_evidence()})
+    request = replace(request, as_of=datetime(2026, 8, 21, 16, tzinfo=UTC))
+
+    with pytest.raises(ValueError, match="as_of"):
+        evaluate_registry(request)
 
 
 def test_outer_folds_are_chronological_and_purge_labels_through_the_full_embargo() -> None:
@@ -295,7 +303,7 @@ def test_registry_evaluation_distinguishes_unavailable_from_failed_runs() -> Non
         },
         chronology=_timeline(10)["decision_timestamp"],
         outcome_availability=_timeline(10)["outcome_available_at"],
-        as_of=datetime(2026, 8, 21, 19, tzinfo=UTC),
+        as_of=datetime(2026, 8, 21, 20, tzinfo=UTC),
         mode=StrategyMode.FROZEN,
         dataset_hash="d" * 64,
         symbol="AAA",
