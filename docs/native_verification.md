@@ -8,7 +8,7 @@
 - Snapshot schema: `1`
 - Snapshot mode: `demo_real_snapshot`
 - Bundled snapshot SHA-256: `c415ce2dabea2b6cfed92454a25b3da64dbbf23ceb90721e755988fab8357c42`
-- Release archive SHA-256: `924dba9e4f7a90f5f6b506c7804b33766cc2ee1e6c41dc79d293485964f50fe2`
+- Release archive SHA-256: `02b2a5d428884f53b3581c92bfe37d65c594c0ec48a1f30158f496d29f11755e`
 
 The snapshot revision is the committed engine code that generated the artifact. Documentation and the generated fixture are committed afterward without changing that engine.
 
