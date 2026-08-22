@@ -766,7 +766,7 @@ git add docs/native_verification.md .
 git commit -m "test: verify native nowcaster release"
 ```
 
-- [ ] **Step 5: Integrate and publish**
+- [x] **Step 5: Integrate and publish**
 
 Fast-forward the verified feature branch into `main`, ensure `git status --short` is empty, then:
 
