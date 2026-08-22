@@ -274,7 +274,7 @@ git commit -m "feat: add point-in-time alternative data"
 - Produces: `FeatureBuilder.build(company_quarters, horizons) -> pd.DataFrame`
 - Produces: `assert_no_lookahead(features: pd.DataFrame) -> None`
 
-- [ ] **Step 1: Write failing point-in-time and future-mutation tests**
+- [x] **Step 1: Write failing point-in-time and future-mutation tests**
 
 ```python
 def test_feature_builder_excludes_observations_available_after_cutoff(builder, observations):
@@ -289,11 +289,11 @@ def test_future_observation_does_not_change_historical_features(builder, observa
     pd.testing.assert_frame_equal(before, after)
 ```
 
-- [ ] **Step 2: Verify failures**
+- [x] **Step 2: Verify failures**
 
 Run: `pytest tests/unit/test_feature_aggregation.py tests/unit/test_growth.py tests/unit/test_leakage.py -q`
 
-- [ ] **Step 3: Implement cutoff-aware fundamentals, attention, macro, seasonal, relative, and missingness features**
+- [x] **Step 3: Implement cutoff-aware fundamentals, attention, macro, seasonal, relative, and missingness features**
 
 ```python
 def assert_no_lookahead(features: pd.DataFrame) -> None:
@@ -302,11 +302,11 @@ def assert_no_lookahead(features: pd.DataFrame) -> None:
         raise LookaheadError(leaked[["company_id", "fiscal_quarter", "feature_name"]])
 ```
 
-- [ ] **Step 4: Run unit and DuckDB feature-store integration tests**
+- [x] **Step 4: Run unit and DuckDB feature-store integration tests**
 
 Run: `pytest tests/unit/test_feature_aggregation.py tests/unit/test_growth.py tests/unit/test_leakage.py tests/integration/test_feature_store.py -q`
 
-- [ ] **Step 5: Commit feature store**
+- [x] **Step 5: Commit feature store**
 
 ```bash
 git add src/features tests
