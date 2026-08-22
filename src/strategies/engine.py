@@ -51,14 +51,18 @@ def decision_to_signal_frame(
     normalized_symbol = symbol.strip().upper()
     if not normalized_symbol or not strategy_id.strip():
         raise ValueError("symbol and strategy_id must not be empty")
-    data_through = decision.data_through or decision.as_of
+    if normalized_symbol != decision.symbol:
+        raise ValueError("execution symbol does not match decision context")
+    if decision.data_through is None:
+        raise ValueError("an executable ensemble decision requires an explicit data_through timestamp")
+    data_through = decision.data_through
     if data_through > decision.as_of:
         raise ValueError("an ensemble decision cannot depend on future data")
     return pd.DataFrame(
         [
             {
                 "strategy_id": strategy_id.strip(),
-                "symbol": normalized_symbol,
+                "symbol": decision.symbol,
                 "decision_timestamp": pd.Timestamp(decision.as_of),
                 "data_through": pd.Timestamp(data_through),
                 "signal": decision.signal,

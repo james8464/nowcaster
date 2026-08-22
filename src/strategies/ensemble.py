@@ -57,6 +57,26 @@ class EnsembleConfig:
 DEFAULT_ENSEMBLE_CONFIG = EnsembleConfig()
 
 
+def _deep_freeze(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return MappingProxyType({str(key): _deep_freeze(item) for key, item in sorted(value.items(), key=str)})
+    if isinstance(value, (list, tuple)):
+        return tuple(_deep_freeze(item) for item in value)
+    if isinstance(value, set):
+        return tuple(sorted((_deep_freeze(item) for item in value), key=str))
+    return value
+
+
+def _deep_thaw(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, Mapping):
+        return {str(key): _deep_thaw(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_deep_thaw(item) for item in value]
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class EvidenceWeight:
     strategy_id: str
@@ -73,14 +93,23 @@ class EvidenceWeight:
     mode: StrategyMode
     provenance: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "provenance", _deep_freeze(self.provenance))
+
 
 @dataclass(frozen=True, slots=True)
 class ComponentContribution:
     strategy_id: str
+    strategy_version: str
     weight: float
     signal: int
     normalized_vote: float
     contribution: float
+    decision_timestamp: datetime
+    data_through: datetime
+    expected_edge: float
+    expected_cost: float
+    uncertainty: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,9 +125,22 @@ class EnsembleDecision:
     uncertainty_buffer: float
     breadth: int
     data_through: datetime | None
+    dataset_hash: str
+    symbol: str
+    interval: BarInterval
+    mode: StrategyMode
+    component_versions: tuple[tuple[str, str], ...]
     weights: tuple[EvidenceWeight, ...]
     contributions: tuple[ComponentContribution, ...]
     decision_hash: str
+
+
+@dataclass(frozen=True, slots=True)
+class _EnsembleContext:
+    dataset_hash: str
+    symbol: str
+    interval: BarInterval
+    mode: StrategyMode
 
 
 def _require_utc(value: datetime, name: str) -> datetime:
@@ -107,7 +149,151 @@ def _require_utc(value: datetime, name: str) -> datetime:
     return value
 
 
+def _evaluation_context(evaluations: Sequence[StrategyEvaluation]) -> _EnsembleContext:
+    if not evaluations:
+        raise ValueError("a homogeneous evaluation context requires at least one strategy")
+    if len({evaluation.strategy_id for evaluation in evaluations}) != len(evaluations):
+        raise ValueError("strategy evaluations must have unique identifiers")
+    contexts = {
+        (evaluation.dataset_hash, evaluation.symbol, evaluation.interval, evaluation.mode)
+        for evaluation in evaluations
+    }
+    if len(contexts) != 1:
+        raise ValueError("strategy evaluations must use one homogeneous evaluation context")
+    dataset_hash, symbol, interval, mode = contexts.pop()
+    if not dataset_hash.strip() or not symbol.strip():
+        raise ValueError("homogeneous evaluation context identifiers must not be empty")
+    if any(not evaluation.strategy_version.strip() for evaluation in evaluations):
+        raise ValueError("strategy versions must not be empty")
+    return _EnsembleContext(dataset_hash, symbol.strip().upper(), interval, mode)
+
+
+def _weight_context(weights: Sequence[EvidenceWeight]) -> _EnsembleContext:
+    if not weights:
+        raise ValueError("a homogeneous weight context requires at least one strategy")
+    if len({weight.strategy_id for weight in weights}) != len(weights):
+        raise ValueError("evidence weights must have unique strategy identifiers")
+    contexts = {(weight.dataset_hash, weight.symbol, weight.interval, weight.mode) for weight in weights}
+    snapshots = {(weight.effective_at, weight.outcomes_through) for weight in weights}
+    if len(contexts) != 1 or len(snapshots) != 1:
+        raise ValueError("evidence weights must use one homogeneous weight context")
+    dataset_hash, symbol, interval, mode = contexts.pop()
+    if not dataset_hash.strip() or not symbol.strip():
+        raise ValueError("homogeneous weight context identifiers must not be empty")
+    for weight in weights:
+        _require_utc(weight.effective_at, "weight effective_at")
+        if weight.outcomes_through is not None:
+            _require_utc(weight.outcomes_through, "weight outcomes_through")
+        if not weight.strategy_version.strip():
+            raise ValueError("strategy versions must not be empty")
+        if not math.isfinite(weight.weight) or weight.weight < 0:
+            raise ValueError("evidence weights must be finite and non-negative")
+    return _EnsembleContext(dataset_hash, symbol.strip().upper(), interval, mode)
+
+
+def _utc_evidence_timestamp(value: Any) -> pd.Timestamp:
+    timestamp = pd.Timestamp(value)
+    if timestamp.tzinfo is None:
+        raise ValueError("sealed evidence timestamps must be timezone-aware")
+    return timestamp.tz_convert("UTC")
+
+
+def _sealed_evidence_is_auditable(evaluation: StrategyEvaluation) -> bool:
+    provenance = evaluation.evidence_provenance
+    try:
+        if provenance.get("sealed") is not True or provenance.get("trial_source") != "timestamped_trial_evidence":
+            return False
+        boundary = _utc_evidence_timestamp(provenance["sealed_boundary"])
+        trials = tuple(provenance["trials"])
+        folds = tuple(provenance["folds"])
+        if provenance["trial_evidence_hash"] != canonical_hash(trials):
+            return False
+        if provenance["fold_evidence_hash"] != canonical_hash(folds):
+            return False
+
+        trial_ids: set[str] = set()
+        trial_sharpes: list[float] = []
+        for trial in trials:
+            trial_id = str(trial["trial_id"])
+            sharpe = float(trial["sharpe"])
+            training_end = _utc_evidence_timestamp(trial["training_end"])
+            evaluated_at = _utc_evidence_timestamp(trial["evaluated_at"])
+            if (
+                not trial_id
+                or trial_id in trial_ids
+                or not math.isfinite(sharpe)
+                or training_end > evaluated_at
+                or evaluated_at >= boundary
+            ):
+                return False
+            trial_ids.add(trial_id)
+            trial_sharpes.append(sharpe)
+        if tuple(trial_sharpes) != tuple(evaluation.trial_sharpes):
+            return False
+
+        fold_ids: set[int] = set()
+        fold_sharpes: list[float] = []
+        calibration_errors: list[float] = []
+        for fold in folds:
+            fold_id = int(fold["fold"])
+            validation_start = _utc_evidence_timestamp(fold["validation_start"])
+            validation_end = _utc_evidence_timestamp(fold["validation_end"])
+            evaluated_at = _utc_evidence_timestamp(fold["evaluated_at"])
+            fold_sharpe = float(fold["sharpe"])
+            calibration_error = float(fold["calibration_error"])
+            if (
+                fold_id < 0
+                or fold_id in fold_ids
+                or not validation_start < validation_end <= evaluated_at < boundary
+                or not math.isfinite(fold_sharpe)
+                or not math.isfinite(calibration_error)
+                or not 0 <= calibration_error <= 1
+            ):
+                return False
+            fold_ids.add(fold_id)
+            fold_sharpes.append(fold_sharpe)
+            calibration_errors.append(calibration_error)
+        stability = sum(value > 0 for value in fold_sharpes) / len(fold_sharpes) if fold_sharpes else 0.0
+        calibration = sum(calibration_errors) / len(calibration_errors) if calibration_errors else 1.0
+        if evaluation.fold_stability is None or evaluation.calibration_error is None:
+            return False
+        if not math.isclose(float(evaluation.fold_stability), stability, abs_tol=1e-15):
+            return False
+        if not math.isclose(float(evaluation.calibration_error), calibration, abs_tol=1e-15):
+            return False
+
+        promotion_inputs = {
+            "status": evaluation.status.value,
+            "development_sharpe": evaluation.development_sharpe,
+            "downside_risk": evaluation.downside_risk,
+            "calibration_error": evaluation.calibration_error,
+            "fold_stability": evaluation.fold_stability,
+            "cost_survives": evaluation.cost_survives,
+            "observations": evaluation.observations,
+            "trades": evaluation.trades,
+            "dsr_probability": evaluation.dsr_probability,
+            "trial_sharpes": evaluation.trial_sharpes,
+            "causal_audit_passed": evaluation.causal_audit_passed,
+        }
+        promotion_decision = {
+            "promoted": evaluation.promotion.promoted,
+            "reasons": evaluation.promotion.reasons,
+        }
+        promotion_payload = {
+            "promotion_inputs": provenance["promotion_inputs"],
+            "promotion_decision": provenance["promotion_decision"],
+        }
+        if provenance["promotion_evidence_hash"] != canonical_hash(promotion_payload):
+            return False
+        if canonical_hash(provenance["promotion_inputs"]) != canonical_hash(promotion_inputs):
+            return False
+        return canonical_hash(provenance["promotion_decision"]) == canonical_hash(promotion_decision)
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return False
+
+
 def _evidence_score(evaluation: StrategyEvaluation, config: EnsembleConfig) -> tuple[float, dict[str, Any]]:
+    sealed = _sealed_evidence_is_auditable(evaluation)
     eligible = (
         evaluation.status is EvaluationStatus.EVALUATED
         and evaluation.promotion.promoted
@@ -116,9 +302,14 @@ def _evidence_score(evaluation: StrategyEvaluation, config: EnsembleConfig) -> t
         and evaluation.development_sharpe is not None
         and len(evaluation.trial_sharpes) >= 2
         and evaluation.observations >= 3
+        and sealed
     )
     if not eligible:
-        return 0.0, {"eligible": False, "reason": "promotion, causal, cost, or observed-trial evidence gate failed"}
+        return 0.0, {
+            "eligible": False,
+            "reason": "promotion, causal, cost, or sealed observed-trial evidence gate failed",
+            "validation_evidence": evaluation.evidence_provenance,
+        }
     sharpe = float(evaluation.development_sharpe)
     if not math.isfinite(sharpe) or sharpe <= 0:
         return 0.0, {"eligible": False, "reason": "development Sharpe is not positive and finite"}
@@ -146,10 +337,11 @@ def _evidence_score(evaluation: StrategyEvaluation, config: EnsembleConfig) -> t
         "stability_score": stability_score,
         "sample_score": sample_score,
         "cost_survives": True,
-        "trial_sharpes": list(evaluation.trial_sharpes),
+        "trial_sharpes": tuple(evaluation.trial_sharpes),
         "trial_count": len(evaluation.trial_sharpes),
         "deflated_sharpe_probability": dsr,
         "multiple_testing_source": "observed_trial_sharpes",
+        "validation_evidence": evaluation.evidence_provenance,
     }
     return max(float(score), 0.0), provenance
 
@@ -222,23 +414,23 @@ def compute_evidence_weights(
     config: EnsembleConfig = DEFAULT_ENSEMBLE_CONFIG,
 ) -> tuple[EvidenceWeight, ...]:
     _require_utc(as_of, "as_of")
-    if len({evaluation.strategy_id for evaluation in evaluations}) != len(evaluations):
-        raise ValueError("strategy evaluations must have unique identifiers")
-    scored = [_evidence_score(evaluation, config) for evaluation in evaluations]
+    _evaluation_context(evaluations)
+    ordered = tuple(sorted(evaluations, key=lambda item: (item.strategy_id, item.strategy_version)))
+    scored = [_evidence_score(evaluation, config) for evaluation in ordered]
     eligible = [index for index, (score, _) in enumerate(scored) if score > 0]
     desired: dict[str, float] = {}
     if eligible:
         score_total = sum(scored[index][0] for index in eligible)
         prior = 1 / len(eligible)
         for index in eligible:
-            evaluation = evaluations[index]
+            evaluation = ordered[index]
             evidence_share = scored[index][0] / score_total
             desired[evaluation.strategy_id] = (
                 (1 - config.equal_weight_shrinkage) * evidence_share + config.equal_weight_shrinkage * prior
             )
         projected = _project_caps(
             desired,
-            {evaluations[index].strategy_id: evaluations[index].family for index in eligible},
+            {ordered[index].strategy_id: ordered[index].family for index in eligible},
             config,
         )
     else:
@@ -246,7 +438,7 @@ def compute_evidence_weights(
         projected = {}
 
     weights: list[EvidenceWeight] = []
-    for evaluation, (score, provenance) in zip(evaluations, scored, strict=True):
+    for evaluation, (score, provenance) in zip(ordered, scored, strict=True):
         weights.append(
             EvidenceWeight(
                 strategy_id=evaluation.strategy_id,
@@ -275,47 +467,115 @@ def fixed_share_update(
     config: EnsembleConfig = DEFAULT_ENSEMBLE_CONFIG,
 ) -> tuple[EvidenceWeight, ...]:
     _require_utc(as_of, "as_of")
-    if not weights or sum(weight.weight for weight in weights) <= 0:
-        return tuple(weights)
-    if len({weight.strategy_id for weight in weights}) != len(weights):
-        raise ValueError("evidence weights must have unique strategy identifiers")
-    required = {"strategy_id", "decision_timestamp", "outcome_available_at", "signal", "realized_return", "cost"}
+    context = _weight_context(weights)
+    ordered_weights = tuple(sorted(weights, key=lambda item: (item.strategy_id, item.strategy_version)))
+    if context.mode is StrategyMode.FROZEN:
+        raise ValueError("frozen evidence weights cannot receive outcome feedback")
+    if resolved_outcomes.empty:
+        return ordered_weights
+    if sum(weight.weight for weight in ordered_weights) <= 0:
+        return ordered_weights
+    required = {
+        "strategy_id",
+        "dataset_hash",
+        "strategy_version",
+        "symbol",
+        "interval",
+        "mode",
+        "decision_timestamp",
+        "outcome_available_at",
+        "signal",
+        "realized_return",
+        "cost",
+    }
     missing = required - set(resolved_outcomes.columns)
     if missing:
-        if resolved_outcomes.empty:
-            return tuple(weights)
         raise ValueError(f"resolved outcomes are missing columns: {sorted(missing)}")
     outcomes = resolved_outcomes.copy()
+    if outcomes[list(required)].isna().any().any():
+        raise ValueError("resolved outcomes must be complete and finite")
     outcomes["decision_timestamp"] = pd.to_datetime(outcomes["decision_timestamp"], utc=True, errors="coerce")
     outcomes["outcome_available_at"] = pd.to_datetime(outcomes["outcome_available_at"], utc=True, errors="coerce")
     outcomes["signal"] = pd.to_numeric(outcomes["signal"], errors="coerce")
     outcomes["realized_return"] = pd.to_numeric(outcomes["realized_return"], errors="coerce")
     outcomes["cost"] = pd.to_numeric(outcomes["cost"], errors="coerce")
-    if outcomes[list(required - {"strategy_id"})].isna().any().any():
+    numeric_columns = ("signal", "realized_return", "cost")
+    if outcomes[["decision_timestamp", "outcome_available_at", *numeric_columns]].isna().any().any():
         raise ValueError("resolved outcomes must be complete and finite")
+    if not all(math.isfinite(float(value)) for column in numeric_columns for value in outcomes[column]):
+        raise ValueError("resolved outcomes must be complete and finite")
+    if not outcomes["signal"].isin((-1, 0, 1)).all():
+        raise ValueError("resolved outcome signals must be -1, 0, or 1")
+    if (outcomes["cost"] < 0).any():
+        raise ValueError("resolved outcome costs must be non-negative")
     if (outcomes["outcome_available_at"] < outcomes["decision_timestamp"]).any():
         raise ValueError("an outcome cannot resolve before its decision")
-    known = {weight.strategy_id for weight in weights}
-    previous_updates = [weight.outcomes_through for weight in weights if weight.outcomes_through is not None]
-    update_cutoff = max(previous_updates) if previous_updates else datetime.min.replace(tzinfo=UTC)
+
+    outcomes["strategy_id"] = outcomes["strategy_id"].astype(str).str.strip()
+    outcomes["dataset_hash"] = outcomes["dataset_hash"].astype(str).str.strip()
+    outcomes["strategy_version"] = outcomes["strategy_version"].astype(str).str.strip()
+    outcomes["symbol"] = outcomes["symbol"].astype(str).str.strip().str.upper()
+    outcomes["interval"] = outcomes["interval"].map(
+        lambda value: value.value if isinstance(value, BarInterval) else str(value).strip()
+    )
+    outcomes["mode"] = outcomes["mode"].map(
+        lambda value: value.value if isinstance(value, StrategyMode) else str(value).strip()
+    )
+    if (outcomes[["strategy_id", "dataset_hash", "strategy_version", "symbol", "interval", "mode"]] == "").any().any():
+        raise ValueError("resolved outcome context identifiers must not be empty")
+
+    weight_by_strategy = {weight.strategy_id: weight for weight in ordered_weights}
+    for row in outcomes.itertuples(index=False):
+        weight = weight_by_strategy.get(str(row.strategy_id))
+        if weight is None:
+            continue
+        supplied = (
+            str(row.dataset_hash),
+            str(row.strategy_version),
+            str(row.symbol),
+            str(row.interval),
+            str(row.mode),
+        )
+        expected = (
+            weight.dataset_hash,
+            weight.strategy_version,
+            weight.symbol.strip().upper(),
+            weight.interval.value,
+            weight.mode.value,
+        )
+        if supplied != expected:
+            raise ValueError(f"resolved outcome context does not match evidence weight for {weight.strategy_id}")
+
+    previous_updates = [weight.outcomes_through for weight in ordered_weights if weight.outcomes_through is not None]
+    update_cutoff = previous_updates[0] if previous_updates else datetime.min.replace(tzinfo=UTC)
     outcomes = outcomes.loc[
-        outcomes["strategy_id"].isin(known)
+        outcomes["strategy_id"].isin(weight_by_strategy)
         & (outcomes["outcome_available_at"] <= pd.Timestamp(as_of))
         & (outcomes["outcome_available_at"] > pd.Timestamp(update_cutoff))
     ].sort_values(["outcome_available_at", "decision_timestamp", "strategy_id"], kind="stable")
     if outcomes.empty:
-        return tuple(weights)
+        return ordered_weights
 
-    current = {weight.strategy_id: weight.weight for weight in weights}
-    prior_total = sum(weight.prior_weight for weight in weights)
+    current = {weight.strategy_id: weight.weight for weight in ordered_weights}
+    prior_total = sum(weight.prior_weight for weight in ordered_weights)
     prior = {
         weight.strategy_id: (weight.prior_weight / prior_total if prior_total > 0 else weight.weight)
-        for weight in weights
+        for weight in ordered_weights
     }
-    families = {weight.strategy_id: weight.family for weight in weights if weight.weight > 0}
+    families = {weight.strategy_id: weight.family for weight in ordered_weights if weight.weight > 0}
     outcomes_through: datetime | None = None
-    cumulative_mixability_gap = 0.0
-    adaptive_learning_rates: list[float] = []
+    stored_states = [_deep_thaw(weight.provenance.get("online_state", {})) for weight in ordered_weights]
+    if len({canonical_hash(state) for state in stored_states}) != 1:
+        raise ValueError("evidence weights must share one homogeneous persisted online state")
+    stored_state = stored_states[0]
+    cumulative_mixability_gap = float(stored_state.get("cumulative_mixability_gap", 0.0))
+    adaptive_learning_rates = [float(value) for value in stored_state.get("adaptive_learning_rates", ())]
+    if (
+        not math.isfinite(cumulative_mixability_gap)
+        or cumulative_mixability_gap < 0
+        or not all(math.isfinite(rate) and rate > 0 for rate in adaptive_learning_rates)
+    ):
+        raise ValueError("persisted online state is invalid")
     for effective_at, group in outcomes.groupby("outcome_available_at", sort=True):
         rewards = (
             (group["signal"] * group["realized_return"] - group["cost"])
@@ -358,16 +618,18 @@ def fixed_share_update(
         outcomes_through = pd.Timestamp(effective_at).to_pydatetime()
 
     updated: list[EvidenceWeight] = []
-    for weight in weights:
-        provenance = dict(weight.provenance)
+    for weight in ordered_weights:
+        provenance = _deep_thaw(weight.provenance)
         provenance.update(
             {
                 "online_method": "specialist_fixed_share_adaptive_hedge",
                 "fixed_share": config.fixed_share,
                 "learning_rate_ceiling": config.learning_rate,
-                "adaptive_learning_rates": adaptive_learning_rates,
-                "cumulative_mixability_gap": cumulative_mixability_gap,
                 "outcomes_through": outcomes_through.isoformat() if outcomes_through else None,
+                "online_state": {
+                    "adaptive_learning_rates": tuple(adaptive_learning_rates),
+                    "cumulative_mixability_gap": cumulative_mixability_gap,
+                },
             }
         )
         updated.append(
@@ -376,7 +638,7 @@ def fixed_share_update(
                 weight=float(current.get(weight.strategy_id, 0.0)),
                 effective_at=outcomes_through or weight.effective_at,
                 outcomes_through=outcomes_through,
-                provenance=MappingProxyType(provenance),
+                provenance=provenance,
             )
         )
     return tuple(updated)
@@ -390,9 +652,30 @@ def combine_current_signals(
     config: EnsembleConfig = DEFAULT_ENSEMBLE_CONFIG,
 ) -> EnsembleDecision:
     _require_utc(as_of, "as_of")
-    for evaluation in evaluations:
+    context = _evaluation_context(evaluations)
+    weight_context = _weight_context(weights)
+    if context != weight_context:
+        raise ValueError("evaluation and weight context must match exactly")
+    ordered_evaluations = tuple(sorted(evaluations, key=lambda item: (item.strategy_id, item.strategy_version)))
+    ordered_weights = tuple(sorted(weights, key=lambda item: (item.strategy_id, item.strategy_version)))
+    evaluation_identity = {
+        evaluation.strategy_id: (evaluation.strategy_version, evaluation.family) for evaluation in ordered_evaluations
+    }
+    weight_identity = {weight.strategy_id: (weight.strategy_version, weight.family) for weight in ordered_weights}
+    if evaluation_identity != weight_identity:
+        raise ValueError("evaluation and weight strategy identity must match exactly")
+
+    decision_times: dict[str, datetime | None] = {}
+    data_times: dict[str, datetime | None] = {}
+    for evaluation in ordered_evaluations:
         decision_time = pd.Timestamp(evaluation.decision_timestamp) if evaluation.decision_timestamp else None
         data_time = pd.Timestamp(evaluation.data_through) if evaluation.data_through else None
+        if decision_time is not None and decision_time.tzinfo is None:
+            raise ValueError("component decision timestamps must be timezone-aware")
+        if data_time is not None and data_time.tzinfo is None:
+            raise ValueError("component data timestamps must be timezone-aware")
+        decision_time = decision_time.tz_convert("UTC") if decision_time is not None else None
+        data_time = data_time.tz_convert("UTC") if data_time is not None else None
         if decision_time is not None and decision_time > pd.Timestamp(as_of):
             raise ValueError("future component decision cannot enter current inference")
         if data_time is not None and (
@@ -401,15 +684,21 @@ def combine_current_signals(
             raise ValueError("future component data cannot enter current inference")
         if evaluation.current_signal not in (-1, 0, 1):
             raise ValueError("component signals must be -1, 0, or 1")
-        numeric_state = (
-            evaluation.current_strength,
-            evaluation.current_probability,
-            evaluation.current_volatility,
-            evaluation.expected_edge,
-            evaluation.expected_cost,
-            evaluation.uncertainty,
-        )
-        if not all(math.isfinite(float(value)) for value in numeric_state):
+        try:
+            numeric_state = tuple(
+                float(value)
+                for value in (
+                    evaluation.current_strength,
+                    evaluation.current_probability,
+                    evaluation.current_volatility,
+                    evaluation.expected_edge,
+                    evaluation.expected_cost,
+                    evaluation.uncertainty,
+                )
+            )
+        except (TypeError, ValueError) as error:
+            raise ValueError("component decision state must be finite") from error
+        if not all(math.isfinite(value) for value in numeric_state):
             raise ValueError("component decision state must be finite")
         if not 0 <= evaluation.current_strength <= 1 or not 0 <= evaluation.current_probability <= 1:
             raise ValueError("component strength and probability must be in [0, 1]")
@@ -417,23 +706,36 @@ def combine_current_signals(
             raise ValueError("component volatility must be positive")
         if min(evaluation.expected_edge, evaluation.expected_cost, evaluation.uncertainty) < 0:
             raise ValueError("component edge, cost, and uncertainty cannot be negative")
-    by_strategy = {evaluation.strategy_id: evaluation for evaluation in evaluations}
+        decision_times[evaluation.strategy_id] = decision_time.to_pydatetime() if decision_time is not None else None
+        data_times[evaluation.strategy_id] = data_time.to_pydatetime() if data_time is not None else None
+
+    by_strategy = {evaluation.strategy_id: evaluation for evaluation in ordered_evaluations}
     contributions: list[ComponentContribution] = []
     active: list[tuple[StrategyEvaluation, EvidenceWeight, float]] = []
-    for weight in weights:
+    for weight in ordered_weights:
         evaluation = by_strategy.get(weight.strategy_id)
         if evaluation is None or weight.weight <= 0 or evaluation.current_signal == 0:
             continue
+        decision_timestamp = decision_times[evaluation.strategy_id]
+        data_through = data_times[evaluation.strategy_id]
+        if decision_timestamp is None or data_through is None:
+            raise ValueError("actionable component timestamps require decision_timestamp and data_through")
         volatility = max(float(evaluation.current_volatility), 1e-12)
         normalized_vote = float(max(min(evaluation.current_signal * evaluation.current_strength / volatility, 1), -1))
         contribution = weight.weight * normalized_vote
         contributions.append(
             ComponentContribution(
-                weight.strategy_id,
-                weight.weight,
-                evaluation.current_signal,
-                normalized_vote,
-                contribution,
+                strategy_id=weight.strategy_id,
+                strategy_version=weight.strategy_version,
+                weight=weight.weight,
+                signal=evaluation.current_signal,
+                normalized_vote=normalized_vote,
+                contribution=contribution,
+                decision_timestamp=decision_timestamp,
+                data_through=data_through,
+                expected_edge=float(evaluation.expected_edge),
+                expected_cost=float(evaluation.expected_cost),
+                uncertainty=float(evaluation.uncertainty),
             )
         )
         active.append((evaluation, weight, contribution))
@@ -483,25 +785,91 @@ def combine_current_signals(
         reasons.append("cost_buffer")
     signal = 0 if reasons else direction
     status = "abstain" if signal == 0 else "long" if signal > 0 else "short"
-    data_times = [evaluation.data_through for evaluation, _, _ in active if evaluation.data_through is not None]
-    data_through = max(data_times) if data_times else None
+    active_data_times = [data_times[evaluation.strategy_id] for evaluation, _, _ in active]
+    data_through = max(active_data_times) if active_data_times else None
     hash_payload = {
+        "context": {
+            "dataset_hash": context.dataset_hash,
+            "symbol": context.symbol,
+            "interval": context.interval,
+            "mode": context.mode,
+        },
         "as_of": as_of,
         "signal": signal,
         "status": status,
-        "reasons": reasons,
+        "reasons": tuple(reasons),
         "probability": probability,
         "vote_margin": vote_margin,
         "expected_net_edge": net_edge,
+        "estimated_cost": estimated_cost,
+        "uncertainty_buffer": uncertainty,
         "breadth": breadth,
+        "data_through": data_through,
+        "config": {
+            "equal_weight_shrinkage": config.equal_weight_shrinkage,
+            "maximum_strategy_weight": config.maximum_strategy_weight,
+            "maximum_family_weight": config.maximum_family_weight,
+            "sharpe_clip": config.sharpe_clip,
+            "sample_size_target": config.sample_size_target,
+            "fixed_share": config.fixed_share,
+            "learning_rate": config.learning_rate,
+            "minimum_breadth": config.minimum_breadth,
+            "minimum_vote_margin": config.minimum_vote_margin,
+            "minimum_probability": config.minimum_probability,
+            "cost_buffer_multiplier": config.cost_buffer_multiplier,
+        },
         "components": [
             {
+                "strategy_id": evaluation.strategy_id,
+                "strategy_version": evaluation.strategy_version,
+                "family": evaluation.family,
+                "status": evaluation.status,
+                "promotion": evaluation.promotion.promoted,
+                "current_signal": evaluation.current_signal,
+                "current_strength": evaluation.current_strength,
+                "current_probability": evaluation.current_probability,
+                "current_volatility": evaluation.current_volatility,
+                "expected_edge": evaluation.expected_edge,
+                "expected_cost": evaluation.expected_cost,
+                "uncertainty": evaluation.uncertainty,
+                "decision_timestamp": decision_times[evaluation.strategy_id],
+                "data_through": data_times[evaluation.strategy_id],
+            }
+            for evaluation in ordered_evaluations
+        ],
+        "contributions": [
+            {
                 "strategy_id": contribution.strategy_id,
+                "strategy_version": contribution.strategy_version,
                 "weight": contribution.weight,
                 "signal": contribution.signal,
                 "normalized_vote": contribution.normalized_vote,
+                "contribution": contribution.contribution,
+                "decision_timestamp": contribution.decision_timestamp,
+                "data_through": contribution.data_through,
+                "expected_edge": contribution.expected_edge,
+                "expected_cost": contribution.expected_cost,
+                "uncertainty": contribution.uncertainty,
             }
             for contribution in contributions
+        ],
+        "weights": [
+            {
+                "strategy_id": weight.strategy_id,
+                "strategy_version": weight.strategy_version,
+                "family": weight.family,
+                "weight": weight.weight,
+                "prior_weight": weight.prior_weight,
+                "evidence_score": weight.evidence_score,
+                "effective_at": weight.effective_at,
+                "outcomes_through": weight.outcomes_through,
+                "dataset_hash": weight.dataset_hash,
+                "symbol": weight.symbol,
+                "interval": weight.interval,
+                "mode": weight.mode,
+                "provenance": weight.provenance,
+            }
+            for weight in ordered_weights
         ],
     }
     return EnsembleDecision(
@@ -516,7 +884,14 @@ def combine_current_signals(
         uncertainty_buffer=float(uncertainty),
         breadth=breadth,
         data_through=data_through,
-        weights=tuple(weights),
+        dataset_hash=context.dataset_hash,
+        symbol=context.symbol,
+        interval=context.interval,
+        mode=context.mode,
+        component_versions=tuple(
+            (evaluation.strategy_id, evaluation.strategy_version) for evaluation in ordered_evaluations
+        ),
+        weights=ordered_weights,
         contributions=tuple(contributions),
         decision_hash=canonical_hash(hash_payload),
     )
@@ -525,7 +900,7 @@ def combine_current_signals(
 def persist_evidence_weights(database: Database, weights: Sequence[EvidenceWeight]) -> int:
     rows: list[dict[str, Any]] = []
     for weight in weights:
-        provenance = dict(weight.provenance)
+        provenance = _deep_thaw(weight.provenance)
         provenance["outcomes_through"] = weight.outcomes_through.isoformat() if weight.outcomes_through else None
         natural = {
             "dataset_hash": weight.dataset_hash,

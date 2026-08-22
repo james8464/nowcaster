@@ -29,6 +29,7 @@ class OrderIntent:
     target_price: float | None = None
     position_effect: PositionEffect = "auto"
     liquidity: Liquidity = "taker"
+    decision_hash: str | None = None
 
     def __post_init__(self) -> None:
         timestamp = pd.Timestamp(self.decision_timestamp)
@@ -36,6 +37,10 @@ class OrderIntent:
             raise ValueError("decision_timestamp must be timezone-aware")
         if not self.order_id.strip() or not self.strategy_id.strip() or not self.symbol.strip():
             raise ValueError("order, strategy, and symbol identifiers must not be empty")
+        if self.decision_hash is not None:
+            if not isinstance(self.decision_hash, str) or not self.decision_hash.strip():
+                raise ValueError("decision_hash must be a non-empty string when supplied")
+            object.__setattr__(self, "decision_hash", self.decision_hash.strip())
         if self.quantity <= 0 or not math.isfinite(self.quantity):
             raise ValueError("order quantity must be finite and positive")
         if self.order_type in {"stop", "protective_stop"} and self.stop_price is None:
@@ -90,6 +95,7 @@ class Fill:
     total_cost: float
     status: Literal["filled", "partial"]
     fill_reason: str
+    decision_hash: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -253,6 +259,7 @@ def _make_fill(
         total_cost=total_cost,
         status="partial" if quantity + 1e-12 < order.quantity else "filled",
         fill_reason=reason,
+        decision_hash=order.decision_hash,
     )
 
 

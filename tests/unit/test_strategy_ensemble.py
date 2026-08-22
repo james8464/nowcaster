@@ -1,18 +1,19 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import fields, replace
 from datetime import UTC, datetime, timedelta
 
 import pandas as pd
 import pytest
 
+from src.strategies.engine import decision_to_signal_frame, generate_current_decision
 from src.strategies.ensemble import (
     EnsembleConfig,
     combine_current_signals,
     compute_evidence_weights,
     fixed_share_update,
 )
-from src.strategies.types import BarInterval, StrategyFamily, StrategyMode
+from src.strategies.types import BarInterval, StrategyFamily, StrategyMode, canonical_hash
 from src.strategies.validation import EvaluationStatus, PromotionDecision, StrategyEvaluation
 
 AS_OF = datetime(2026, 8, 22, 12, tzinfo=UTC)
@@ -32,18 +33,75 @@ def _evaluation(
     causal: bool = True,
     trial_sharpes: tuple[float, ...] = (0.1, 0.2, 0.3, 0.4),
 ) -> StrategyEvaluation:
+    evidence_time = datetime(2026, 8, 21, 12, tzinfo=UTC)
+    trial_rows = tuple(
+        {
+            "trial_id": f"trial-{index}",
+            "sharpe": sharpe_value,
+            "training_end": evidence_time,
+            "evaluated_at": evidence_time + timedelta(hours=1),
+        }
+        for index, sharpe_value in enumerate(trial_sharpes, start=1)
+    )
+    fold_rows = (
+        {
+            "fold": 0,
+            "validation_start": evidence_time - timedelta(hours=2),
+            "validation_end": evidence_time - timedelta(hours=1),
+            "evaluated_at": evidence_time,
+            "sharpe": 0.8,
+            "calibration_error": 0.1,
+        },
+        {
+            "fold": 1,
+            "validation_start": evidence_time,
+            "validation_end": evidence_time + timedelta(hours=1),
+            "evaluated_at": evidence_time + timedelta(hours=1),
+            "sharpe": 0.6,
+            "calibration_error": 0.1,
+        },
+    )
+    promotion = PromotionDecision(promoted, () if promoted else ("promotion failed",))
+    promotion_inputs = {
+        "status": EvaluationStatus.EVALUATED.value,
+        "development_sharpe": sharpe,
+        "downside_risk": 0.02,
+        "calibration_error": 0.1,
+        "fold_stability": 1.0,
+        "cost_survives": True,
+        "observations": 100,
+        "trades": 20,
+        "dsr_probability": 0.9,
+        "trial_sharpes": trial_sharpes,
+        "causal_audit_passed": causal,
+    }
+    promotion_record = {"promoted": promotion.promoted, "reasons": promotion.reasons}
+    sealed_provenance = {
+        "sealed": True,
+        "sealed_boundary": "2026-08-22T11:00:00+00:00",
+        "trial_source": "timestamped_trial_evidence",
+        "trial_evidence_hash": canonical_hash(trial_rows),
+        "fold_evidence_hash": canonical_hash(fold_rows),
+        "trials": trial_rows,
+        "folds": fold_rows,
+        "promotion_inputs": promotion_inputs,
+        "promotion_decision": promotion_record,
+        "promotion_evidence_hash": canonical_hash(
+            {"promotion_inputs": promotion_inputs, "promotion_decision": promotion_record}
+        ),
+    }
     return StrategyEvaluation(
         strategy_id=strategy_id,
         strategy_version="1.0.0-deadbeef0000",
         family=family,
         status=EvaluationStatus.EVALUATED,
         status_reason="evaluation completed",
-        promotion=PromotionDecision(promoted, () if promoted else ("promotion failed",)),
+        promotion=promotion,
         development_sharpe=sharpe,
         final_sharpe=-99.0,
         downside_risk=0.02,
         calibration_error=0.1,
-        fold_stability=0.8,
+        fold_stability=1.0,
         cost_survives=True,
         observations=100,
         trades=20,
@@ -62,7 +120,25 @@ def _evaluation(
         symbol="AAA",
         interval=BarInterval.ONE_HOUR,
         mode=StrategyMode.PAPER,
+        **(
+            {"evidence_provenance": sealed_provenance}
+            if "evidence_provenance" in {item.name for item in fields(StrategyEvaluation)}
+            else {}
+        ),
     )
+
+
+def _with_context(outcomes: pd.DataFrame, evaluations: tuple[StrategyEvaluation, ...]) -> pd.DataFrame:
+    by_strategy = {evaluation.strategy_id: evaluation for evaluation in evaluations}
+    result = outcomes.copy()
+    result["dataset_hash"] = result["strategy_id"].map(lambda strategy_id: by_strategy[strategy_id].dataset_hash)
+    result["strategy_version"] = result["strategy_id"].map(
+        lambda strategy_id: by_strategy[strategy_id].strategy_version
+    )
+    result["symbol"] = result["strategy_id"].map(lambda strategy_id: by_strategy[strategy_id].symbol)
+    result["interval"] = result["strategy_id"].map(lambda strategy_id: by_strategy[strategy_id].interval.value)
+    result["mode"] = result["strategy_id"].map(lambda strategy_id: by_strategy[strategy_id].mode.value)
+    return result
 
 
 def test_weights_are_nonnegative_normalized_shrunk_and_obey_strategy_and_family_caps() -> None:
@@ -131,6 +207,20 @@ def test_weights_ignore_final_holdout_metrics_and_use_actual_trial_sharpe_disper
     assert values["concentrated"] > values["dispersed"]
 
 
+def test_weighting_rejects_aggregates_that_do_not_match_sealed_evidence() -> None:
+    valid = (
+        _evaluation("alpha", StrategyFamily.TREND),
+        _evaluation("beta", StrategyFamily.MEAN_REVERSION),
+        _evaluation("gamma", StrategyFamily.SESSION),
+    )
+    forged = (replace(valid[0], trial_sharpes=(9.0, 9.1, 9.2, 9.3)), *valid[1:])
+    config = EnsembleConfig(maximum_strategy_weight=0.8, maximum_family_weight=0.8)
+
+    weights = compute_evidence_weights(forged, as_of=AS_OF, config=config)
+
+    assert {weight.strategy_id: weight.weight for weight in weights}["alpha"] == 0
+
+
 def test_fixed_share_updates_only_resolved_outcomes_and_conserves_mass() -> None:
     evaluations = (
         _evaluation("alpha", StrategyFamily.TREND),
@@ -139,15 +229,22 @@ def test_fixed_share_updates_only_resolved_outcomes_and_conserves_mass() -> None
     )
     config = EnsembleConfig(maximum_strategy_weight=0.8, maximum_family_weight=0.8, fixed_share=0.1, learning_rate=2)
     initial = compute_evidence_weights(evaluations, as_of=datetime(2026, 8, 22, 10, tzinfo=UTC), config=config)
-    outcomes = pd.DataFrame(
-        {
-            "strategy_id": ["alpha", "beta", "gamma", "alpha", "beta", "gamma"],
-            "decision_timestamp": pd.to_datetime(["2026-08-22 10:00Z"] * 3 + ["2026-08-22 11:00Z"] * 3),
-            "outcome_available_at": pd.to_datetime(["2026-08-22 11:00Z"] * 3 + ["2026-08-22 13:00Z"] * 3),
-            "signal": [1, 1, 1, 1, 1, 1],
-            "realized_return": [0.02, -0.02, 0.0, -1.0, 1.0, 1.0],
-            "cost": [0.001] * 6,
-        }
+    outcomes = _with_context(
+        pd.DataFrame(
+            {
+                "strategy_id": ["alpha", "beta", "gamma", "alpha", "beta", "gamma"],
+                "decision_timestamp": pd.to_datetime(
+                    ["2026-08-22 10:00Z"] * 3 + ["2026-08-22 11:00Z"] * 3
+                ),
+                "outcome_available_at": pd.to_datetime(
+                    ["2026-08-22 11:00Z"] * 3 + ["2026-08-22 13:00Z"] * 3
+                ),
+                "signal": [1, 1, 1, 1, 1, 1],
+                "realized_return": [0.02, -0.02, 0.0, -1.0, 1.0, 1.0],
+                "cost": [0.001] * 6,
+            }
+        ),
+        evaluations,
     )
 
     first = fixed_share_update(initial, outcomes, as_of=datetime(2026, 8, 22, 11, tzinfo=UTC), config=config)
@@ -177,15 +274,22 @@ def test_adahedge_learning_rate_adapts_to_accumulated_mixability_gap() -> None:
         learning_rate=10,
     )
     initial = compute_evidence_weights(evaluations, as_of=datetime(2026, 8, 22, 9, tzinfo=UTC), config=config)
-    outcomes = pd.DataFrame(
-        {
-            "strategy_id": ["alpha", "beta", "gamma"] * 2,
-            "decision_timestamp": pd.to_datetime(["2026-08-22 09:00Z"] * 3 + ["2026-08-22 10:00Z"] * 3),
-            "outcome_available_at": pd.to_datetime(["2026-08-22 10:00Z"] * 3 + ["2026-08-22 11:00Z"] * 3),
-            "signal": [1] * 6,
-            "realized_return": [1.0, -1.0, 0.0, -1.0, 1.0, 0.0],
-            "cost": [0.0] * 6,
-        }
+    outcomes = _with_context(
+        pd.DataFrame(
+            {
+                "strategy_id": ["alpha", "beta", "gamma"] * 2,
+                "decision_timestamp": pd.to_datetime(
+                    ["2026-08-22 09:00Z"] * 3 + ["2026-08-22 10:00Z"] * 3
+                ),
+                "outcome_available_at": pd.to_datetime(
+                    ["2026-08-22 10:00Z"] * 3 + ["2026-08-22 11:00Z"] * 3
+                ),
+                "signal": [1] * 6,
+                "realized_return": [1.0, -1.0, 0.0, -1.0, 1.0, 0.0],
+                "cost": [0.0] * 6,
+            }
+        ),
+        evaluations,
     )
 
     updated = fixed_share_update(
@@ -195,11 +299,157 @@ def test_adahedge_learning_rate_adapts_to_accumulated_mixability_gap() -> None:
         config=config,
     )
 
-    rates = updated[0].provenance["adaptive_learning_rates"]
+    online_state = updated[0].provenance["online_state"]
+    rates = online_state["adaptive_learning_rates"]
     assert len(rates) == 2
     assert rates[0] == 10
     assert 0 < rates[1] < rates[0]
-    assert updated[0].provenance["cumulative_mixability_gap"] > 0
+    assert online_state["cumulative_mixability_gap"] > 0
+
+
+def test_adahedge_state_makes_batch_and_incremental_updates_equivalent() -> None:
+    evaluations = (
+        _evaluation("alpha", StrategyFamily.TREND),
+        _evaluation("beta", StrategyFamily.MEAN_REVERSION),
+        _evaluation("gamma", StrategyFamily.SESSION),
+    )
+    config = EnsembleConfig(
+        maximum_strategy_weight=0.8,
+        maximum_family_weight=0.8,
+        fixed_share=0.1,
+        learning_rate=10,
+    )
+    initial = compute_evidence_weights(evaluations, as_of=datetime(2026, 8, 22, 9, tzinfo=UTC), config=config)
+    outcomes = _with_context(
+        pd.DataFrame(
+            {
+                "strategy_id": ["alpha", "beta", "gamma"] * 2,
+                "decision_timestamp": pd.to_datetime(
+                    ["2026-08-22 09:00Z"] * 3 + ["2026-08-22 10:00Z"] * 3
+                ),
+                "outcome_available_at": pd.to_datetime(
+                    ["2026-08-22 10:00Z"] * 3 + ["2026-08-22 11:00Z"] * 3
+                ),
+                "signal": [1] * 6,
+                "realized_return": [1.0, -1.0, 0.0, -1.0, 1.0, 0.0],
+                "cost": [0.0] * 6,
+            }
+        ),
+        evaluations,
+    )
+
+    batch = fixed_share_update(
+        initial,
+        outcomes,
+        as_of=datetime(2026, 8, 22, 11, tzinfo=UTC),
+        config=config,
+    )
+    first = fixed_share_update(
+        initial,
+        outcomes,
+        as_of=datetime(2026, 8, 22, 10, tzinfo=UTC),
+        config=config,
+    )
+    incremental = fixed_share_update(
+        first,
+        outcomes,
+        as_of=datetime(2026, 8, 22, 11, tzinfo=UTC),
+        config=config,
+    )
+
+    assert incremental == batch
+
+
+def test_outcome_feedback_requires_exact_strategy_and_dataset_context() -> None:
+    evaluations = (
+        _evaluation("alpha", StrategyFamily.TREND),
+        _evaluation("beta", StrategyFamily.MEAN_REVERSION),
+        _evaluation("gamma", StrategyFamily.SESSION),
+    )
+    config = EnsembleConfig(maximum_strategy_weight=0.8, maximum_family_weight=0.8)
+    weights = compute_evidence_weights(evaluations, as_of=datetime(2026, 8, 22, 9, tzinfo=UTC), config=config)
+    outcomes = _with_context(
+        pd.DataFrame(
+            {
+                "strategy_id": ["alpha", "beta", "gamma"],
+                "decision_timestamp": pd.to_datetime(["2026-08-22 09:00Z"] * 3),
+                "outcome_available_at": pd.to_datetime(["2026-08-22 10:00Z"] * 3),
+                "signal": [1, 1, 1],
+                "realized_return": [0.1, -0.1, 0.0],
+                "cost": [0.0, 0.0, 0.0],
+            }
+        ),
+        evaluations,
+    )
+    outcomes.loc[outcomes["strategy_id"] == "alpha", "dataset_hash"] = "x" * 64
+
+    with pytest.raises(ValueError, match="outcome context"):
+        fixed_share_update(
+            weights,
+            outcomes,
+            as_of=datetime(2026, 8, 22, 10, tzinfo=UTC),
+            config=config,
+        )
+
+
+def test_fixed_share_directly_rejects_frozen_and_mixed_weight_modes() -> None:
+    evaluations = tuple(
+        replace(evaluation, mode=StrategyMode.FROZEN)
+        for evaluation in (
+            _evaluation("alpha", StrategyFamily.TREND),
+            _evaluation("beta", StrategyFamily.MEAN_REVERSION),
+            _evaluation("gamma", StrategyFamily.SESSION),
+        )
+    )
+    config = EnsembleConfig(maximum_strategy_weight=0.8, maximum_family_weight=0.8)
+    frozen = compute_evidence_weights(evaluations, as_of=datetime(2026, 8, 22, 9, tzinfo=UTC), config=config)
+    empty = pd.DataFrame()
+
+    with pytest.raises(ValueError, match="frozen"):
+        fixed_share_update(frozen, empty, as_of=AS_OF, config=config)
+    mixed = (frozen[0], replace(frozen[1], mode=StrategyMode.PAPER), frozen[2])
+    with pytest.raises(ValueError, match="homogeneous"):
+        fixed_share_update(mixed, empty, as_of=AS_OF, config=config)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("signal", 2, "signals"),
+        ("realized_return", float("inf"), "finite"),
+        ("cost", -0.01, "non-negative"),
+    ],
+)
+def test_online_outcome_validation_rejects_invalid_numeric_state(field: str, value: float, message: str) -> None:
+    evaluations = (
+        _evaluation("alpha", StrategyFamily.TREND),
+        _evaluation("beta", StrategyFamily.MEAN_REVERSION),
+        _evaluation("gamma", StrategyFamily.SESSION),
+    )
+    config = EnsembleConfig(maximum_strategy_weight=0.8, maximum_family_weight=0.8)
+    weights = compute_evidence_weights(evaluations, as_of=datetime(2026, 8, 22, 9, tzinfo=UTC), config=config)
+    outcomes = _with_context(
+        pd.DataFrame(
+            {
+                "strategy_id": ["alpha", "beta", "gamma"],
+                "decision_timestamp": pd.to_datetime(["2026-08-22 09:00Z"] * 3),
+                "outcome_available_at": pd.to_datetime(["2026-08-22 10:00Z"] * 3),
+                "signal": [1, 1, 1],
+                "realized_return": [0.1, -0.1, 0.0],
+                "cost": [0.0, 0.0, 0.0],
+            }
+        ),
+        evaluations,
+    )
+    outcomes.loc[0, field] = value
+
+    with pytest.raises(ValueError, match=message):
+        fixed_share_update(
+            weights,
+            outcomes,
+            as_of=datetime(2026, 8, 22, 10, tzinfo=UTC),
+            config=config,
+        )
 
 
 @pytest.mark.parametrize(
@@ -283,3 +533,115 @@ def test_current_decision_rejects_component_data_from_after_the_as_of_boundary()
 
     with pytest.raises(ValueError, match="future component data"):
         combine_current_signals(evaluations, weights, as_of=AS_OF, config=config)
+
+
+def test_actionable_positive_weight_component_requires_decision_and_data_timestamps() -> None:
+    evaluations = (
+        replace(
+            _evaluation("missing", StrategyFamily.TREND),
+            decision_timestamp=None,
+            data_through=None,
+        ),
+        _evaluation("causal", StrategyFamily.MEAN_REVERSION),
+    )
+    config = EnsembleConfig(maximum_strategy_weight=1, maximum_family_weight=1)
+    weights = compute_evidence_weights(evaluations, as_of=AS_OF, config=config)
+
+    with pytest.raises(ValueError, match="actionable component timestamps"):
+        combine_current_signals(evaluations, weights, as_of=AS_OF, config=config)
+
+
+def test_engine_requires_homogeneous_context_and_decision_carries_that_context() -> None:
+    evaluations = (
+        _evaluation("alpha", StrategyFamily.TREND),
+        _evaluation("beta", StrategyFamily.MEAN_REVERSION),
+        _evaluation("gamma", StrategyFamily.SESSION),
+    )
+    config = EnsembleConfig(maximum_strategy_weight=0.8, maximum_family_weight=0.8)
+    mixed = (evaluations[0], replace(evaluations[1], dataset_hash="x" * 64), evaluations[2])
+
+    with pytest.raises(ValueError, match="homogeneous evaluation context"):
+        generate_current_decision(mixed, pd.DataFrame(), AS_OF, config=config)
+
+    decision = generate_current_decision(evaluations, pd.DataFrame(), AS_OF, config=config)
+    assert decision.dataset_hash == "d" * 64
+    assert decision.symbol == "AAA"
+    assert decision.interval is BarInterval.ONE_HOUR
+    assert decision.mode is StrategyMode.PAPER
+    assert decision.component_versions == (
+        ("alpha", "1.0.0-deadbeef0000"),
+        ("beta", "1.0.0-deadbeef0000"),
+        ("gamma", "1.0.0-deadbeef0000"),
+    )
+    with pytest.raises(ValueError, match="does not match decision context"):
+        decision_to_signal_frame(decision, symbol="BBB")
+    with pytest.raises(ValueError, match="explicit data_through"):
+        decision_to_signal_frame(replace(decision, data_through=None), symbol="AAA")
+
+
+def test_decision_hash_is_permutation_invariant_and_covers_weight_provenance() -> None:
+    evaluations = (
+        _evaluation("alpha", StrategyFamily.TREND),
+        _evaluation("beta", StrategyFamily.MEAN_REVERSION),
+        _evaluation("gamma", StrategyFamily.SESSION),
+    )
+    config = EnsembleConfig(maximum_strategy_weight=0.8, maximum_family_weight=0.8)
+    first_weights = compute_evidence_weights(evaluations, as_of=AS_OF, config=config)
+    first = combine_current_signals(evaluations, first_weights, as_of=AS_OF, config=config)
+    reversed_evaluations = tuple(reversed(evaluations))
+    reversed_weights = compute_evidence_weights(reversed_evaluations, as_of=AS_OF, config=config)
+    permuted = combine_current_signals(reversed_evaluations, reversed_weights, as_of=AS_OF, config=config)
+
+    assert first.decision_hash == permuted.decision_hash
+    shifted_weights = tuple(
+        replace(
+            weight,
+            effective_at=AS_OF - timedelta(hours=1),
+            outcomes_through=AS_OF - timedelta(hours=1),
+        )
+        for weight in first_weights
+    )
+    shifted = combine_current_signals(evaluations, shifted_weights, as_of=AS_OF, config=config)
+    assert first.decision_hash != shifted.decision_hash
+
+
+def test_weight_provenance_is_deeply_immutable() -> None:
+    evaluations = (
+        _evaluation("alpha", StrategyFamily.TREND),
+        _evaluation("beta", StrategyFamily.MEAN_REVERSION),
+        _evaluation("gamma", StrategyFamily.SESSION),
+    )
+    config = EnsembleConfig(maximum_strategy_weight=0.8, maximum_family_weight=0.8)
+    weights = compute_evidence_weights(
+        evaluations,
+        as_of=datetime(2026, 8, 22, 9, tzinfo=UTC),
+        config=config,
+    )
+    trials = weights[0].provenance["trial_sharpes"]
+    assert isinstance(trials, tuple)
+    with pytest.raises(AttributeError):
+        trials.append(99)
+
+    outcomes = _with_context(
+        pd.DataFrame(
+            {
+                "strategy_id": ["alpha", "beta", "gamma"],
+                "decision_timestamp": pd.to_datetime(["2026-08-22 09:00Z"] * 3),
+                "outcome_available_at": pd.to_datetime(["2026-08-22 10:00Z"] * 3),
+                "signal": [1, 1, 1],
+                "realized_return": [0.1, -0.1, 0.0],
+                "cost": [0.0, 0.0, 0.0],
+            }
+        ),
+        evaluations,
+    )
+    updated = fixed_share_update(
+        weights,
+        outcomes,
+        as_of=datetime(2026, 8, 22, 10, tzinfo=UTC),
+        config=config,
+    )
+    online_state = updated[0].provenance["online_state"]
+    with pytest.raises(TypeError):
+        online_state["cumulative_mixability_gap"] = 0
+    assert isinstance(online_state["adaptive_learning_rates"], tuple)

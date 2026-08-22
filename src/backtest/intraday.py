@@ -96,6 +96,12 @@ def _validated_signals(
     result = signals.copy()
     result["strategy_id"] = result["strategy_id"].astype(str)
     result["symbol"] = result["symbol"].astype(str).str.upper()
+    if "decision_hash" in result:
+        if result["decision_hash"].isna().any() or not result["decision_hash"].map(
+            lambda value: isinstance(value, str) and bool(value.strip())
+        ).all():
+            raise ValueError("decision_hash values must be non-empty strings")
+        result["decision_hash"] = result["decision_hash"].str.strip()
     result["decision_timestamp"] = pd.to_datetime(result["decision_timestamp"], utc=True, errors="coerce")
     result["data_through"] = pd.to_datetime(result["data_through"], utc=True, errors="coerce")
     if result[["decision_timestamp", "data_through"]].isna().any().any():
@@ -331,6 +337,7 @@ def run_intraday_backtest(
     positions: dict[str, float] = {}
     last_prices: dict[str, float] = {}
     states: dict[tuple[str, str], float] = {}
+    state_decision_hashes: dict[tuple[str, str], str | None] = {}
     strategy_symbols: dict[str, set[str]] = {}
     consumed: set[int] = set()
     returns: list[float] = []
@@ -358,6 +365,9 @@ def run_intraday_backtest(
             signal_strategy = str(signal["strategy_id"])
             signal_symbol = str(signal["symbol"])
             states[(signal_strategy, signal_symbol)] = float(signal["signal"] * signal["strength"])
+            state_decision_hashes[(signal_strategy, signal_symbol)] = (
+                str(signal["decision_hash"]) if "decision_hash" in signal else None
+            )
             strategy_symbols.setdefault(signal_strategy, set()).add(signal_symbol)
             consumed.add(index)
 
@@ -383,6 +393,9 @@ def run_intraday_backtest(
                 strategy for (strategy, item_symbol), value in states.items() if item_symbol == symbol and value
             )
             strategy_id = strategy_ids[0] if len(strategy_ids) == 1 else "netted:" + "+".join(strategy_ids)
+            decision_hash = (
+                state_decision_hashes.get((strategy_ids[0], symbol)) if len(strategy_ids) == 1 else None
+            )
             latest_decision = decisions.loc[
                 (decisions["symbol"] == symbol) & decisions.index.isin(consumed), "decision_timestamp"
             ].max()
@@ -396,6 +409,7 @@ def run_intraday_backtest(
                     side=side,
                     quantity=abs(delta),
                     position_effect="open" if side == "sell" and desired_quantities[symbol] < 0 else "auto",
+                    decision_hash=decision_hash,
                 )
             )
             order_sequence += 1

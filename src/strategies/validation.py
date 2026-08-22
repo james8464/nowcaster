@@ -5,6 +5,8 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
+from types import MappingProxyType
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -13,7 +15,7 @@ from src.backtest.intraday import IntradayBacktestResult
 from src.backtest.metrics import BacktestMetrics, calculate_backtest_metrics
 from src.backtest.robustness import deflated_sharpe_probability, doubled_cost_survival
 from src.strategies.registry import StrategyRegistry
-from src.strategies.types import BarInterval, StrategyFamily, StrategyMode
+from src.strategies.types import BarInterval, StrategyFamily, StrategyMode, canonical_hash
 
 
 class EvaluationStatus(StrEnum):
@@ -86,9 +88,30 @@ class PromotionDecision:
 
 
 @dataclass(frozen=True, slots=True)
+class TrialEvidence:
+    trial_id: str
+    sharpe: float
+    training_end: datetime
+    evaluated_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class FoldEvidence:
+    fold: int
+    validation_start: datetime
+    validation_end: datetime
+    evaluated_at: datetime
+    sharpe: float
+    calibration_error: float
+
+
+@dataclass(frozen=True, slots=True)
 class StrategyRunEvidence:
     backtest: IntradayBacktestResult | None = None
     signals: pd.DataFrame = field(default_factory=pd.DataFrame)
+    trial_evidence: tuple[TrialEvidence, ...] = ()
+    fold_evidence: tuple[FoldEvidence, ...] = ()
+    # Legacy aggregate inputs remain constructor-compatible but are rejected by evaluate_registry.
     trial_sharpes: tuple[float, ...] = ()
     causal_audit_passed: bool = True
     calibration_error: float = 0.0
@@ -132,6 +155,10 @@ class StrategyEvaluation:
     symbol: str = ""
     interval: BarInterval = BarInterval.ONE_DAY
     mode: StrategyMode = StrategyMode.FROZEN
+    evidence_provenance: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "evidence_provenance", _deep_freeze(self.evidence_provenance))
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,6 +175,121 @@ class EvaluationRequest:
 
 
 Predictor = Callable[[pd.DataFrame, pd.Series, pd.DataFrame], Sequence[float]]
+
+
+def _deep_freeze(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return MappingProxyType({str(key): _deep_freeze(item) for key, item in sorted(value.items(), key=str)})
+    if isinstance(value, (list, tuple)):
+        return tuple(_deep_freeze(item) for item in value)
+    if isinstance(value, set):
+        return tuple(sorted((_deep_freeze(item) for item in value), key=str))
+    return value
+
+
+@dataclass(frozen=True, slots=True)
+class _SealedEvidence:
+    trial_sharpes: tuple[float, ...]
+    fold_stability: float
+    calibration_error: float
+    provenance: Mapping[str, Any]
+
+
+def _evidence_timestamp(value: object, label: str) -> datetime:
+    if not isinstance(value, datetime) or value.tzinfo is not UTC:
+        raise ValueError(f"malformed {label}: timestamps must be explicit UTC datetimes")
+    return value
+
+
+def _seal_development_evidence(
+    evidence: StrategyRunEvidence,
+    boundary: FinalBoundary,
+) -> _SealedEvidence:
+    if evidence.trial_sharpes or evidence.fold_stability is not None:
+        raise ValueError("unsealed aggregate evidence is forbidden; provide timestamped trial and fold evidence")
+
+    trial_rows: list[dict[str, Any]] = []
+    trial_ids: set[str] = set()
+    for item in evidence.trial_evidence:
+        try:
+            trial_id = str(item.trial_id).strip()
+            sharpe = float(item.sharpe)
+            training_end = _evidence_timestamp(item.training_end, "trial evidence")
+            evaluated_at = _evidence_timestamp(item.evaluated_at, "trial evidence")
+        except (AttributeError, TypeError, ValueError) as error:
+            raise ValueError(f"malformed trial evidence: {error}") from error
+        if not trial_id or trial_id in trial_ids or not math.isfinite(sharpe):
+            raise ValueError("malformed trial evidence: IDs must be unique and Sharpes finite")
+        if training_end > evaluated_at:
+            raise ValueError("malformed trial evidence: training cannot end after evaluation")
+        if training_end >= boundary.final_start or evaluated_at >= boundary.final_start:
+            raise ValueError("trial evidence crosses the sealed final boundary")
+        trial_ids.add(trial_id)
+        trial_rows.append(
+            {
+                "trial_id": trial_id,
+                "sharpe": sharpe,
+                "training_end": training_end,
+                "evaluated_at": evaluated_at,
+            }
+        )
+    trial_rows.sort(key=lambda row: (row["evaluated_at"], row["trial_id"]))
+
+    fold_rows: list[dict[str, Any]] = []
+    fold_ids: set[int] = set()
+    for item in evidence.fold_evidence:
+        try:
+            fold = int(item.fold)
+            validation_start = _evidence_timestamp(item.validation_start, "fold evidence")
+            validation_end = _evidence_timestamp(item.validation_end, "fold evidence")
+            evaluated_at = _evidence_timestamp(item.evaluated_at, "fold evidence")
+            sharpe = float(item.sharpe)
+            calibration_error = float(item.calibration_error)
+        except (AttributeError, TypeError, ValueError) as error:
+            raise ValueError(f"malformed fold evidence: {error}") from error
+        if (
+            fold < 0
+            or fold in fold_ids
+            or not math.isfinite(sharpe)
+            or not math.isfinite(calibration_error)
+            or not 0 <= calibration_error <= 1
+            or not validation_start < validation_end <= evaluated_at
+        ):
+            raise ValueError("malformed fold evidence: folds, metrics, or chronology are invalid")
+        if validation_end >= boundary.final_start or evaluated_at >= boundary.final_start:
+            raise ValueError("fold evidence crosses the sealed final boundary")
+        fold_ids.add(fold)
+        fold_rows.append(
+            {
+                "fold": fold,
+                "validation_start": validation_start,
+                "validation_end": validation_end,
+                "evaluated_at": evaluated_at,
+                "sharpe": sharpe,
+                "calibration_error": calibration_error,
+            }
+        )
+    fold_rows.sort(key=lambda row: (row["validation_start"], row["fold"]))
+
+    fold_stability = float(sum(row["sharpe"] > 0 for row in fold_rows) / len(fold_rows)) if fold_rows else 0.0
+    calibration = (
+        float(round(sum(row["calibration_error"] for row in fold_rows) / len(fold_rows), 15))
+        if fold_rows
+        else 1.0
+    )
+    trial_sharpes = tuple(float(row["sharpe"]) for row in trial_rows)
+    provenance = _deep_freeze(
+        {
+            "sealed": True,
+            "sealed_boundary": boundary.final_start.isoformat(),
+            "trial_source": "timestamped_trial_evidence",
+            "trial_evidence_hash": canonical_hash(trial_rows),
+            "fold_evidence_hash": canonical_hash(fold_rows),
+            "trials": tuple(trial_rows),
+            "folds": tuple(fold_rows),
+        }
+    )
+    return _SealedEvidence(trial_sharpes, fold_stability, calibration, provenance)
 
 
 def _timestamps(values: Sequence[object] | pd.Series, *, name: str) -> pd.Series:
@@ -425,6 +567,21 @@ def evaluate_registry(request: EvaluationRequest) -> tuple[StrategyEvaluation, .
             )
             continue
 
+        try:
+            sealed_evidence = _seal_development_evidence(evidence, boundary)
+        except ValueError as error:
+            evaluations.append(
+                _placeholder_evaluation(
+                    request,
+                    spec.strategy_id,
+                    spec.deterministic_version,
+                    spec.family,
+                    EvaluationStatus.FAILED,
+                    str(error),
+                )
+            )
+            continue
+
         curve = evidence.backtest.equity_curve
         if "timestamp" not in curve or "net_return" not in curve:
             evaluations.append(
@@ -454,15 +611,28 @@ def evaluate_registry(request: EvaluationRequest) -> tuple[StrategyEvaluation, .
         except ValueError:
             cost_survives = False
         dsr: float | None = None
-        if len(evidence.trial_sharpes) >= 2 and development.sharpe == development.sharpe:
-            dsr = deflated_sharpe_probability(
-                development.sharpe,
-                observations=len(development_returns),
-                trial_sharpes=evidence.trial_sharpes,
-                skew=float(development_returns.skew()) if len(development_returns) >= 3 else 0.0,
-                kurtosis=float(development_returns.kurtosis() + 3) if len(development_returns) >= 4 else 3.0,
-            )
-        stability = evidence.fold_stability if evidence.fold_stability is not None else 1.0
+        if len(sealed_evidence.trial_sharpes) >= 2 and development.sharpe == development.sharpe:
+            try:
+                dsr = deflated_sharpe_probability(
+                    development.sharpe,
+                    observations=len(development_returns),
+                    trial_sharpes=sealed_evidence.trial_sharpes,
+                    skew=float(development_returns.skew()) if len(development_returns) >= 3 else 0.0,
+                    kurtosis=float(development_returns.kurtosis() + 3) if len(development_returns) >= 4 else 3.0,
+                )
+            except ValueError as error:
+                evaluations.append(
+                    _placeholder_evaluation(
+                        request,
+                        spec.strategy_id,
+                        spec.deterministic_version,
+                        spec.family,
+                        EvaluationStatus.FAILED,
+                        f"malformed trial evidence: {error}",
+                    )
+                )
+                continue
+        stability = sealed_evidence.fold_stability
         reasons: list[str] = []
         if len(development_returns) < request.config.minimum_development_observations:
             reasons.append("insufficient development observations")
@@ -485,6 +655,34 @@ def evaluate_registry(request: EvaluationRequest) -> tuple[StrategyEvaluation, .
         if not evidence.causal_audit_passed:
             reasons.append("causal audit failed")
         signal, strength, decision_timestamp, data_through = _latest_signal(evidence, request.as_of)
+        development_sharpe = _finite_or_none(development.sharpe)
+        final_sharpe = _finite_or_none(final.sharpe)
+        promotion = PromotionDecision(not reasons, tuple(reasons))
+        promotion_inputs = {
+            "status": EvaluationStatus.EVALUATED.value,
+            "development_sharpe": development_sharpe,
+            "downside_risk": downside_risk,
+            "calibration_error": sealed_evidence.calibration_error,
+            "fold_stability": stability,
+            "cost_survives": cost_survives,
+            "observations": len(development_returns),
+            "trades": development.trades,
+            "dsr_probability": dsr,
+            "trial_sharpes": sealed_evidence.trial_sharpes,
+            "causal_audit_passed": evidence.causal_audit_passed,
+        }
+        promotion_record = {"promoted": promotion.promoted, "reasons": promotion.reasons}
+        promotion_payload = {
+            "promotion_inputs": promotion_inputs,
+            "promotion_decision": promotion_record,
+        }
+        evidence_provenance = _deep_freeze(
+            {
+                **dict(sealed_evidence.provenance),
+                **promotion_payload,
+                "promotion_evidence_hash": canonical_hash(promotion_payload),
+            }
+        )
         evaluations.append(
             StrategyEvaluation(
                 strategy_id=spec.strategy_id,
@@ -492,17 +690,17 @@ def evaluate_registry(request: EvaluationRequest) -> tuple[StrategyEvaluation, .
                 family=spec.family,
                 status=EvaluationStatus.EVALUATED,
                 status_reason="evaluation completed",
-                promotion=PromotionDecision(not reasons, tuple(reasons)),
-                development_sharpe=_finite_or_none(development.sharpe),
-                final_sharpe=_finite_or_none(final.sharpe),
+                promotion=promotion,
+                development_sharpe=development_sharpe,
+                final_sharpe=final_sharpe,
                 downside_risk=downside_risk,
-                calibration_error=evidence.calibration_error,
+                calibration_error=sealed_evidence.calibration_error,
                 fold_stability=stability,
                 cost_survives=cost_survives,
                 observations=len(development_returns),
                 trades=development.trades,
                 dsr_probability=dsr,
-                trial_sharpes=evidence.trial_sharpes,
+                trial_sharpes=sealed_evidence.trial_sharpes,
                 causal_audit_passed=evidence.causal_audit_passed,
                 current_signal=signal,
                 current_strength=strength,
@@ -516,6 +714,7 @@ def evaluate_registry(request: EvaluationRequest) -> tuple[StrategyEvaluation, .
                 symbol=request.symbol,
                 interval=request.interval,
                 mode=request.mode,
+                evidence_provenance=evidence_provenance,
             )
         )
     return tuple(evaluations)
@@ -525,11 +724,13 @@ __all__ = [
     "EvaluationRequest",
     "EvaluationStatus",
     "FinalBoundary",
+    "FoldEvidence",
     "FrozenProtocolResult",
     "OuterFold",
     "PromotionDecision",
     "StrategyEvaluation",
     "StrategyRunEvidence",
+    "TrialEvidence",
     "ValidationConfig",
     "WalkForwardFold",
     "evaluate_registry",

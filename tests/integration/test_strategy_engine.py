@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pandas as pd
 import pytest
@@ -16,7 +16,9 @@ from src.strategies.registry import StrategyRegistry
 from src.strategies.types import BarInterval, StrategyFamily, StrategyMode, StrategySpec
 from src.strategies.validation import (
     EvaluationRequest,
+    FoldEvidence,
     StrategyRunEvidence,
+    TrialEvidence,
     ValidationConfig,
     evaluate_registry,
 )
@@ -94,7 +96,33 @@ def _evaluations() -> tuple:
         runs[registered.spec.strategy_id] = StrategyRunEvidence(
             backtest=backtest,
             signals=signals,
-            trial_sharpes=(0.1 + offset * 0.01, 0.2 + offset * 0.01, 0.3 + offset * 0.01, 0.4 + offset * 0.01),
+            trial_evidence=tuple(
+                TrialEvidence(
+                    f"trial-{trial}",
+                    sharpe + offset * 0.01,
+                    datetime(2026, 8, 21, 18, tzinfo=UTC),
+                    datetime(2026, 8, 21, 19, tzinfo=UTC),
+                )
+                for trial, sharpe in enumerate((0.1, 0.2, 0.3, 0.4), start=1)
+            ),
+            fold_evidence=(
+                FoldEvidence(
+                    0,
+                    datetime(2026, 8, 21, 14, tzinfo=UTC),
+                    datetime(2026, 8, 21, 15, tzinfo=UTC),
+                    datetime(2026, 8, 21, 16, tzinfo=UTC),
+                    0.8,
+                    0.1,
+                ),
+                FoldEvidence(
+                    1,
+                    datetime(2026, 8, 21, 16, tzinfo=UTC),
+                    datetime(2026, 8, 21, 17, tzinfo=UTC),
+                    datetime(2026, 8, 21, 18, tzinfo=UTC),
+                    0.6,
+                    0.2,
+                ),
+            ),
             expected_edge=0.02,
             expected_cost=0.001,
             uncertainty=0.001,
@@ -122,10 +150,10 @@ def _evaluations() -> tuple:
     return evaluations
 
 
-def _outcomes(as_of: datetime) -> pd.DataFrame:
+def _outcomes(as_of: datetime, evaluations: tuple) -> pd.DataFrame:
     resolved_at = as_of - timedelta(hours=1)
     unresolved_at = as_of + timedelta(hours=1)
-    return pd.DataFrame(
+    outcomes = pd.DataFrame(
         {
             "strategy_id": ["trend", "reversion", "session", "trend", "reversion", "session"],
             "decision_timestamp": [as_of - timedelta(hours=3)] * 3 + [as_of] * 3,
@@ -135,13 +163,20 @@ def _outcomes(as_of: datetime) -> pd.DataFrame:
             "cost": [0.001] * 6,
         }
     )
+    by_strategy = {evaluation.strategy_id: evaluation for evaluation in evaluations}
+    outcomes["dataset_hash"] = outcomes["strategy_id"].map(lambda item: by_strategy[item].dataset_hash)
+    outcomes["strategy_version"] = outcomes["strategy_id"].map(lambda item: by_strategy[item].strategy_version)
+    outcomes["symbol"] = outcomes["strategy_id"].map(lambda item: by_strategy[item].symbol)
+    outcomes["interval"] = outcomes["strategy_id"].map(lambda item: by_strategy[item].interval.value)
+    outcomes["mode"] = outcomes["strategy_id"].map(lambda item: by_strategy[item].mode.value)
+    return outcomes
 
 
 def test_current_unlabeled_inference_is_deterministic_traceable_and_persists_resolved_provenance(tmp_path) -> None:
     evaluations = _evaluations()
     as_of = evaluations[0].decision_timestamp
     assert as_of is not None
-    outcomes = _outcomes(as_of)
+    outcomes = _outcomes(as_of, evaluations)
     assert not (outcomes["decision_timestamp"] == as_of).loc[
         outcomes["outcome_available_at"] <= pd.Timestamp(as_of)
     ].any()
@@ -183,13 +218,14 @@ def test_current_unlabeled_inference_is_deterministic_traceable_and_persists_res
     assert not execution.trade_ledger.empty
     assert execution.trade_ledger["decision_timestamp"].eq(pd.Timestamp(first.as_of)).all()
     assert set(execution.trade_ledger["side"]) == {"buy"}
+    assert execution.trade_ledger["decision_hash"].eq(first.decision_hash).all()
 
 
 def test_frozen_current_decision_never_applies_outcome_feedback() -> None:
     evaluations = tuple(replace(evaluation, mode=StrategyMode.FROZEN) for evaluation in _evaluations())
     as_of = evaluations[0].decision_timestamp
     assert as_of is not None
-    outcomes = _outcomes(as_of)
+    outcomes = _outcomes(as_of, evaluations)
     reversed_outcomes = outcomes.copy()
     reversed_outcomes["realized_return"] *= -1
     config = EnsembleConfig(maximum_strategy_weight=0.5, maximum_family_weight=0.6)
