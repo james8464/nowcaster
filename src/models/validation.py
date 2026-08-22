@@ -10,6 +10,7 @@ from src.models.base import ExpandingFold, ModelRunRecord, ModelSpec
 from src.models.baselines import historical_growth_forecast, seasonal_naive_forecast
 from src.models.linear import build_linear_pipeline
 from src.models.metrics import evaluate_forecasts
+from src.models.targets import decode_revenue_growth, encode_revenue_growth
 from src.models.tree import build_tree_pipeline
 from src.utils.provenance import canonical_hash
 
@@ -85,9 +86,18 @@ def _prediction_rows(
     run_id: str,
     spec: ModelSpec,
     residual_std: float,
+    growth_forecasts: np.ndarray | None = None,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for (_, source), forecast in zip(test.iterrows(), forecasts, strict=True):
+    if growth_forecasts is None:
+        growth_forecasts = np.asarray(
+            [
+                encode_revenue_growth(float(forecast), float(source.revenue_year_ago))
+                for (_, source), forecast in zip(test.iterrows(), forecasts, strict=True)
+            ],
+            dtype=float,
+        )
+    for (_, source), forecast, forecast_growth in zip(test.iterrows(), forecasts, growth_forecasts, strict=True):
         latest = source.get("revenue_level_lag1", math.nan)
         interval = 1.2816 * residual_std if not math.isnan(residual_std) else math.nan
         scale = max(abs(float(source.actual_revenue)), 1.0)
@@ -102,6 +112,7 @@ def _prediction_rows(
                 "model_name": spec.name,
                 "ablation": spec.ablation,
                 "forecast_revenue": float(forecast),
+                "forecast_growth": float(forecast_growth),
                 "actual_revenue": float(source.actual_revenue),
                 "interval_low": float(forecast - interval) if not math.isnan(interval) else math.nan,
                 "interval_high": float(forecast + interval) if not math.isnan(interval) else math.nan,
@@ -138,6 +149,9 @@ def expanding_window_forecasts(
                     if train[column].notna().any()
                 ]
                 fitted_model = None
+                model_train = train
+                model_test = test
+                growth_forecasts: np.ndarray | None = None
                 if spec.name == "seasonal_naive":
                     forecasts = test.apply(seasonal_naive_forecast, axis=1).to_numpy(dtype=float)
                     train_forecasts = train.apply(seasonal_naive_forecast, axis=1).to_numpy(dtype=float)
@@ -147,14 +161,65 @@ def expanding_window_forecasts(
                 else:
                     if not feature_columns:
                         continue
+                    valid_train = (
+                        train["actual_revenue"].notna()
+                        & train["revenue_year_ago"].notna()
+                        & (train["actual_revenue"] > 0)
+                        & (train["revenue_year_ago"] > 0)
+                    )
+                    valid_test = (
+                        test["actual_revenue"].notna()
+                        & test["revenue_year_ago"].notna()
+                        & (test["actual_revenue"] > 0)
+                        & (test["revenue_year_ago"] > 0)
+                    )
+                    model_train = train.loc[valid_train]
+                    model_test = test.loc[valid_test]
+                    if len(model_train) < minimum_training_quarters or model_test.empty:
+                        continue
                     fitted_model = _build_pipeline(spec, feature_columns, seed)
                     input_columns = ["company_id", *feature_columns]
-                    fitted_model.fit(train[input_columns], train["actual_revenue"])
-                    forecasts = np.asarray(fitted_model.predict(test[input_columns]), dtype=float)
-                    train_forecasts = np.asarray(fitted_model.predict(train[input_columns]), dtype=float)
-                residuals = train_forecasts - train["actual_revenue"].to_numpy(dtype=float)
+                    train_growth = np.asarray(
+                        [
+                            encode_revenue_growth(float(row.actual_revenue), float(row.revenue_year_ago))
+                            for row in model_train.itertuples(index=False)
+                        ],
+                        dtype=float,
+                    )
+                    fitted_model.fit(model_train[input_columns], train_growth)
+                    raw_growth = np.asarray(fitted_model.predict(model_test[input_columns]), dtype=float)
+                    raw_train_growth = np.asarray(fitted_model.predict(model_train[input_columns]), dtype=float)
+                    lower, upper = np.quantile(train_growth, [0.01, 0.99])
+                    growth_forecasts = np.clip(raw_growth, lower, upper)
+                    train_growth_forecasts = np.clip(raw_train_growth, lower, upper)
+                    forecasts = np.asarray(
+                        [
+                            decode_revenue_growth(float(growth), float(year_ago))
+                            for growth, year_ago in zip(growth_forecasts, model_test["revenue_year_ago"], strict=True)
+                        ],
+                        dtype=float,
+                    )
+                    train_forecasts = np.asarray(
+                        [
+                            decode_revenue_growth(float(growth), float(year_ago))
+                            for growth, year_ago in zip(
+                                train_growth_forecasts,
+                                model_train["revenue_year_ago"],
+                                strict=True,
+                            )
+                        ],
+                        dtype=float,
+                    )
+                residuals = train_forecasts - model_train["actual_revenue"].to_numpy(dtype=float)
                 residual_std = float(np.std(residuals, ddof=1)) if len(residuals) > 1 else math.nan
-                fold_rows = _prediction_rows(test, forecasts, run_id=run_id, spec=spec, residual_std=residual_std)
+                fold_rows = _prediction_rows(
+                    model_test,
+                    forecasts,
+                    run_id=run_id,
+                    spec=spec,
+                    residual_std=residual_std,
+                    growth_forecasts=growth_forecasts,
+                )
                 predictions.extend(fold_rows)
                 metrics = evaluate_forecasts(pd.DataFrame(fold_rows))
                 runs.append(
@@ -166,9 +231,9 @@ def expanding_window_forecasts(
                         training_end=fold.training_end,
                         test_start=fold.test_start,
                         test_end=fold.test_end,
-                        observations=len(train),
+                        observations=len(model_train),
                         feature_columns=feature_columns,
-                        test_indices=fold.test_indices,
+                        test_indices=model_test.index.tolist(),
                         parameters=spec.parameters,
                         metrics=metrics,
                         fitted_model=fitted_model if retain_models else None,

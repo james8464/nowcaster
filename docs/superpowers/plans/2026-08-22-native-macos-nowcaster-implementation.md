@@ -159,7 +159,7 @@ git commit -m "feat: export native app snapshots"
 **Interfaces:**
 - Produces: `encode_revenue_growth(actual, year_ago)`, `decode_revenue_growth(growth, year_ago)`, `inverse_error_weights(metrics)`, `RollingProbabilityCalibrator`, and `assess_signal_eligibility(...) -> EligibilityAssessment`.
 
-- [ ] **Step 1: Write failing numerical and eligibility tests**
+- [x] **Step 1: Write failing numerical and eligibility tests**
 
 ```python
 def test_log_growth_round_trip_is_positive():
@@ -176,21 +176,21 @@ def test_wide_interval_forces_abstention():
     assert "interval" in result.reasons[0].lower()
 ```
 
-- [ ] **Step 2: Verify red**
+- [x] **Step 2: Verify red**
 
 Run: `.venv/bin/pytest tests/unit/test_model_targets.py tests/unit/test_model_ensemble.py tests/unit/test_model_calibration.py tests/unit/test_signal_eligibility.py -q`
 Expected: import failures.
 
-- [ ] **Step 3: Implement fold-local target modelling and diagnostics**
+- [x] **Step 3: Implement fold-local target modelling and diagnostics**
 
 Use `log(actual / year_ago)` as the learned target and `year_ago * exp(prediction)` for reconstruction. Clip growth to training-fold quantiles, not revenue after prediction. Compute ensemble weights from prior-fold MAE only. Fit rolling isotonic calibration only after 100 direction observations with both classes; otherwise emit `calibration_status="insufficient"`. Abstain if configured gates fail.
 
-- [ ] **Step 4: Integrate without cross-horizon leakage and run model suite**
+- [x] **Step 4: Integrate without cross-horizon leakage and run model suite**
 
 Run: `.venv/bin/pytest tests/unit/test_model_*.py tests/unit/test_signal_eligibility.py tests/integration/test_training_pipeline.py -q`
 Expected: PASS, and every persisted learned forecast is positive.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/models src/demo.py tests/unit tests/integration/test_training_pipeline.py

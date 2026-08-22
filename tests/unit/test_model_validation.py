@@ -89,6 +89,7 @@ def test_expanding_forecasts_are_deterministic_and_preserve_company_quarter(mode
 
     pd.testing.assert_frame_equal(first, second)
     assert first[["company_id", "fiscal_quarter"]].notna().all().all()
+    assert (first["forecast_revenue"] > 0).all()
     assert all(run.training_end < run.test_start for run in first_runs)
 
 
@@ -105,4 +106,4 @@ def test_linear_contributions_sum_to_model_prediction(model_matrix):
     explanation = explain_linear(run.fitted_model, test_row, run.feature_columns)
 
     assert sum(explanation.contributions.values()) + explanation.intercept == pytest.approx(explanation.prediction)
-    assert explanation.prediction == pytest.approx(predicted.forecast_revenue)
+    assert explanation.prediction == pytest.approx(predicted.forecast_growth)
