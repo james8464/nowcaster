@@ -1,0 +1,15 @@
+{
+  "data_mode": "demo_real_snapshot",
+  "retrieved_at": "2026-08-22T12:51:00Z",
+  "source": "Yahoo Finance chart JSON endpoint",
+  "source_posture": "Free keyless endpoint used for personal research; unofficial API with no availability or redistribution SLA. Raw and adjusted closes remain distinct.",
+  "request_period": {"start": "2009-01-01", "end": "2026-08-22"},
+  "files": {
+    "COST.json": "884c3c529ba79657000844a464007274450f5d7a17711ebcbc9f91e49f8f2779",
+    "MCD.json": "36519d5174afeca12fde7fe859e5ee98b0a357a674e43490da979837e72d4eba",
+    "SBUX.json": "4c99482b5bce815fe48ea587679f033585245c744cd3c38d4bc5ac79e9392984",
+    "SPY.json": "411c2587c187809fcd485ccbbb64c88b0e334f1fb519faecb7818eab61e67c40",
+    "XLP.json": "ae00d45e1dfb8e5e03d125486e8d707cb8d42bec6d0065013190b83d52fe74ad",
+    "XLY.json": "c5b4eae907d9e69af9e170a1c10a5870d4ba596d218292e328d90790a4e15d22"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "chart": {
+    "result": [{
+      "meta": {"symbol": "SBUX", "currency": "USD"},
+      "timestamp": [1706869800, 1707129000],
+      "indicators": {
+        "quote": [{"close": [100.0, 104.0], "volume": [1000000, 1200000]}],
+        "adjclose": [{"adjclose": [99.5, 103.48]}]
+      }
+    }],
+    "error": null
+  }
+}

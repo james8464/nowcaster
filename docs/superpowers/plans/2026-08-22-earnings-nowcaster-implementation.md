@@ -176,7 +176,7 @@ git commit -m "feat: ingest and normalize SEC fundamentals"
 - Produces: `CsvPriceProvider`, `StooqPriceProvider`, `AlphaVantagePriceProvider`
 - Produces: `calculate_event_return(prices, event_date, window, benchmark=None) -> EventReturn`
 
-- [ ] **Step 1: Write failing provider-normalization and event-window tests**
+- [x] **Step 1: Write failing provider-normalization and event-window tests**
 
 ```python
 def test_event_return_uses_trading_rows_and_adjusted_close(price_frame):
@@ -191,11 +191,11 @@ def test_abnormal_return_subtracts_matched_benchmark(company_prices, spy_prices)
     assert result.abnormal_return == pytest.approx(result.raw_return - result.benchmark_return)
 ```
 
-- [ ] **Step 2: Verify failures**
+- [x] **Step 2: Verify failures**
 
 Run: `pytest tests/unit/test_prices.py tests/unit/test_event_returns.py -q`
 
-- [ ] **Step 3: Implement providers, strict adjusted-price metadata, earnings-calendar CSV, and event returns**
+- [x] **Step 3: Implement providers, strict adjusted-price metadata, earnings-calendar CSV, and event returns**
 
 ```python
 class PriceProvider(Protocol):
@@ -203,11 +203,11 @@ class PriceProvider(Protocol):
         raise NotImplementedError
 ```
 
-- [ ] **Step 4: Cross-check returns against GS Quant when importable and run market integration tests**
+- [x] **Step 4: Cross-check returns against GS Quant when importable and run market integration tests**
 
 Run: `pytest tests/unit/test_prices.py tests/unit/test_event_returns.py tests/integration/test_market_pipeline.py -q`
 
-- [ ] **Step 5: Commit market pipeline**
+- [x] **Step 5: Commit market pipeline**
 
 ```bash
 git add src/ingestion/prices.py src/ingestion/earnings.py src/backtest data/demo/prices data/demo/earnings_calendar.csv tests
