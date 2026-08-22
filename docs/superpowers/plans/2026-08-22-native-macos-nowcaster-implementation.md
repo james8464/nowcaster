@@ -525,7 +525,7 @@ git commit -m "feat: add native macOS navigation shell"
 - Consumes: `AppModel` and snapshot collections.
 - Produces: native sortable monitors and evidence-rich detail views for the primary user journey.
 
-- [ ] **Step 1: Write failing sort/filter/evidence tests**
+- [x] **Step 1: Write failing sort/filter/evidence tests**
 
 ```swift
 @Test func signalRankingPlacesEligibleEvidenceBeforeAbstentions() {
@@ -541,21 +541,21 @@ git commit -m "feat: add native macOS navigation shell"
 }
 ```
 
-- [ ] **Step 2: Verify red**
+- [x] **Step 2: Verify red**
 
 Run: `make macos-test`
 Expected: missing feature models/views.
 
-- [ ] **Step 3: Implement native tables, charts, selection, and evidence details**
+- [x] **Step 3: Implement native tables, charts, selection, and evidence details**
 
 Use `Table` with sortable columns for Markets, Earnings, and Signals. Use Swift Charts with selection scrubbers and concise chart summaries. Today prioritizes stale/failed sources before signals. Signal details pair posture colors with SF Symbols and text, show calibration status, and place catalyst/invalidation beside the research posture.
 
-- [ ] **Step 4: Test and launch monitor workflows**
+- [x] **Step 4: Test and launch monitor workflows**
 
 Run: `make macos-test && make macos-app && open build/Nowcaster.app`
 Expected: all selections, filters, period controls, and detail navigation work with real fixture content.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add macos/Nowcaster

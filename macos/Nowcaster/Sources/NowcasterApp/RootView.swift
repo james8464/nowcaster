@@ -72,7 +72,18 @@ struct RootView: View {
 
     @ViewBuilder private var destinationContent: some View {
         if let snapshot = model.snapshot {
-            PlaceholderFeatureView(destination: model.destination, snapshot: snapshot)
+            switch model.destination {
+            case .today:
+                TodayView(snapshot: snapshot, selectSignal: model.selectSignal)
+            case .markets:
+                MarketsView(model: model, snapshot: snapshot)
+            case .earnings:
+                EarningsView(model: model, snapshot: snapshot)
+            case .signals:
+                SignalsView(model: model, snapshot: snapshot)
+            case .backtests, .modelLab, .dataQuality, .pipelineRuns:
+                PlaceholderFeatureView(destination: model.destination, snapshot: snapshot)
+            }
         } else {
             switch model.loadState {
             case .loading:
@@ -92,20 +103,32 @@ struct RootView: View {
     }
 
     @ViewBuilder private var inspector: some View {
-        if let instrument = model.selectedInstrument {
-            VStack(alignment: .leading, spacing: 10) {
-                Text(instrument.symbol).font(.title2.weight(.semibold))
-                Text(instrument.displayName).foregroundStyle(.secondary)
-                Divider()
-                MetricSummary(title: "Last price", value: instrument.lastPrice?.formatted(.currency(code: "USD")) ?? "—")
-                MetricSummary(title: "Trend", value: instrument.trendRegime.capitalized)
-                Spacer()
+        switch model.destination {
+        case .markets:
+            if let instrument = model.selectedInstrument {
+                InstrumentDetailView(instrument: instrument)
+            } else {
+                selectionPlaceholder("Select an instrument to inspect price history and market context.")
             }
-            .padding()
-            .navigationTitle("Inspector")
-        } else {
-            ContentUnavailableView("No Selection", systemImage: "sidebar.right", description: Text("Select a row to inspect its evidence."))
+        case .earnings:
+            if let forecast = model.selectedEarnings {
+                EarningsDetailView(forecast: forecast)
+            } else {
+                selectionPlaceholder("Select a forecast to compare the model, expectation source, and actual.")
+            }
+        case .signals:
+            if let signal = model.selectedSignal {
+                SignalDetailView(signal: signal)
+            } else {
+                selectionPlaceholder("Select a signal to inspect evidence, catalyst, and invalidation.")
+            }
+        default:
+            selectionPlaceholder("Select a row to inspect its research evidence.")
         }
+    }
+
+    private func selectionPlaceholder(_ description: String) -> some View {
+        ContentUnavailableView("No Selection", systemImage: "sidebar.right", description: Text(description))
     }
 
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {

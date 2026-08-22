@@ -59,10 +59,27 @@ final class AppModel {
         snapshot?.instruments.first { $0.id == selectedInstrumentID }
     }
 
+    var selectedEarnings: EarningsSnapshot? {
+        snapshot?.earnings.first { $0.id == selectedEarningsID }
+    }
+
+    var selectedSignal: ResearchSignalSnapshot? {
+        snapshot?.signals.first { $0.id == selectedSignalID }
+    }
+
+    var selectedBacktest: BacktestSnapshot? {
+        snapshot?.backtests.first { $0.id == selectedBacktestID }
+    }
+
     func selectSearchResult(_ instrument: InstrumentSnapshot) {
         selectedInstrumentID = instrument.id
         destination = .markets
         searchText = ""
+    }
+
+    func selectSignal(_ signal: ResearchSignalSnapshot) {
+        selectedSignalID = signal.id
+        destination = .signals
     }
 
     func loadBundledSnapshot() async {
