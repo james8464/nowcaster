@@ -734,7 +734,7 @@ git commit -m "docs: ship native macOS nowcaster"
 **Interfaces:**
 - Produces: authoritative verification evidence, clean `main`, and complete remote repository at `https://github.com/james8464/nowcaster.git`.
 
-- [ ] **Step 1: Run all static and automated checks from a clean generated state**
+- [x] **Step 1: Run all static and automated checks from a clean generated state**
 
 Run:
 
@@ -751,15 +751,15 @@ make dashboard-smoke
 
 Expected: every command exits zero; Python tests, Swift tests, integration/UI tests, engine snapshot, app bundle, and legacy migration smoke are green.
 
-- [ ] **Step 2: Audit evidence and invariants**
+- [x] **Step 2: Audit evidence and invariants**
 
 Verify snapshot hashes, natural-key uniqueness, feature chronology, label availability, purged/embargoed folds, final-test isolation, execution lag, transaction costs, signal/backtest joins, schema parity, source labels, report claims, app copy, and generated checksums. Record exact row counts, model observations, trade counts, readiness, and measured final-test metrics without selecting only favorable results.
 
-- [ ] **Step 3: Launch and inspect the release app**
+- [x] **Step 3: Launch and inspect the release app**
 
 Run: `open build/Nowcaster.app` and exercise all primary workflows, refresh progress, failure recovery, keyboard commands, Settings, light/dark appearance, resize behavior, and accessibility. Re-run `codesign --verify --deep --strict build/Nowcaster.app` and `spctl --assess --type execute --verbose build/Nowcaster.app` while documenting that ad-hoc builds are not notarized distributions.
 
-- [ ] **Step 4: Write verification record and commit fixes**
+- [x] **Step 4: Write verification record and commit fixes**
 
 ```bash
 git add docs/native_verification.md .

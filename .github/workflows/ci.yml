@@ -33,6 +33,7 @@ jobs:
         run: |
           make clean-generated
           make demo
+          make sync-macos-snapshot
           test -s data/app/nowcaster-snapshot.json
 
   native-macos:

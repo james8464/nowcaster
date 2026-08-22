@@ -30,6 +30,8 @@ Research actions are explicit:
 
 An unsuccessful job leaves the last-known-good snapshot visible with an error state.
 
+After intentionally refreshing the checked-in first-launch evidence, run `make demo && make sync-macos-snapshot`. CI repeats and validates the export before native assembly.
+
 ## Packaging
 
 ```bash

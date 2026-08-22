@@ -2,7 +2,7 @@ PYTHON ?= python3
 VENV ?= .venv
 PIP_INDEX ?= https://pypi.org/simple
 
-.PHONY: setup test lint init-db fetch features train backtest dashboard dashboard-smoke report demo clean-generated macos-build macos-test macos-app macos-open macos-ui-test macos-screenshots release-archive
+.PHONY: setup test lint init-db fetch features train backtest dashboard dashboard-smoke report demo clean-generated sync-macos-snapshot macos-build macos-test macos-app macos-open macos-ui-test macos-screenshots release-archive
 setup:
 	uv venv --python 3.13 $(VENV)
 	uv pip install --python $(VENV)/bin/python --index-url $(PIP_INDEX) -e '.[dev]'
@@ -42,6 +42,9 @@ report:
 
 demo:
 	$(VENV)/bin/python -m src.cli demo
+
+sync-macos-snapshot:
+	$(VENV)/bin/python -m src.cli export-app-snapshot --output macos/Nowcaster/Sources/NowcasterApp/Resources/Fixtures/nowcaster-snapshot.json
 
 clean-generated:
 	rm -f data/nowcaster.duckdb data/test.duckdb data/app/nowcaster-snapshot.json reports/latest_research_report.md reports/resume_bullets.md

@@ -22,8 +22,8 @@ These are frozen demo measurements through 22 August 2026, not selected live cla
 
 | Research system | Status | Development Sharpe | Final-test Sharpe | Full Sharpe | Trades | Full max drawdown |
 |---|---|---:|---:|---:|---:|---:|
-| BTC-USD calibrated ensemble | Research only | 0.758 | 0.571 | 0.666 | 173 | -26.1% |
-| ETH-USD calibrated ensemble | Not ready | 0.198 | 0.593 | 0.272 | 57 | -16.8% |
+| BTC-USD calibrated ensemble | Research only | 0.769 | 0.571 | 0.691 | 173 | -26.1% |
+| ETH-USD calibrated ensemble | Not ready | 0.152 | 0.593 | 0.258 | 57 | -16.8% |
 
 BTC remains research-only because fewer than 75% of subperiods were profitable. ETH fails the declared promotion gates, including sample size and development performance. The equity event study is also research-only: the bundled three-company universe uses a seasonal expectation proxy—not Wall Street consensus—and its [0,+3] abnormal-return top-minus-bottom spread is about -0.04%.
 
@@ -52,6 +52,7 @@ open build/Nowcaster.app
 make lint               # Ruff formatting and static analysis
 make test               # Python suite
 make demo               # deterministic engine run and native snapshot export
+make sync-macos-snapshot # refresh the checked-in first-launch snapshot
 make macos-test         # Swift model, decoding, security, and accessibility tests
 make macos-ui-test      # launch the signed app and verify a real window
 make macos-screenshots  # all primary screens, light/dark, plus narrow layouts
