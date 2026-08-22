@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Annotated
 
 import typer
 
+from src.app_snapshot import build_app_snapshot, write_snapshot_atomic
 from src.config.settings import Settings
 from src.database.engine import Database
 from src.demo import DEMO_STAGES, demo_pipeline, live_pipeline, run_demo
@@ -157,6 +159,24 @@ def report(
     report_path = generate_research_report(database, destination / "latest_research_report.md")
     bullet_path = generate_resume_bullets(database, destination / "resume_bullets.md")
     typer.echo(f"Generated {report_path} and {bullet_path}")
+
+
+@app.command("export-app-snapshot")
+def export_app_snapshot(
+    project_root: Annotated[Path, typer.Option(exists=True, file_okay=False)] = DEFAULT_PROJECT_ROOT,
+    database_url: Annotated[str | None, typer.Option()] = None,
+    mode: Annotated[str, typer.Option()] = "demo",
+    output: Annotated[Path | None, typer.Option(dir_okay=False)] = None,
+) -> None:
+    """Export a validated, versioned snapshot for the native macOS app."""
+    settings = _load_settings(project_root, database_url, mode)
+    database = Database.from_url(settings.database_url)
+    database.initialize()
+    destination = output or settings.project_root / "data" / "app" / "nowcaster-snapshot.json"
+    if not destination.is_absolute():
+        destination = settings.project_root / destination
+    path = write_snapshot_atomic(build_app_snapshot(database, settings), destination)
+    typer.echo(json.dumps({"event": "snapshot_exported", "path": str(path), "schema_version": 1}))
 
 
 @app.command("run-all")

@@ -1,0 +1,333 @@
+from __future__ import annotations
+
+import math
+from datetime import UTC, date, datetime
+from typing import Any
+
+import numpy as np
+import pandas as pd
+
+from src.app_snapshot.models import (
+    AppSnapshot,
+    BacktestSnapshot,
+    EarningsSnapshot,
+    InstrumentSnapshot,
+    ModelDiagnosticSnapshot,
+    OverviewSnapshot,
+    PipelineRunSnapshot,
+    PricePoint,
+    QualityIssueSnapshot,
+    ResearchSignalSnapshot,
+    SnapshotMetadata,
+)
+from src.config.settings import Settings
+from src.database.engine import Database
+from src.reporting.recruiter import recruiter_statistics
+from src.utils.provenance import git_commit
+
+
+def _finite(value: Any) -> float | None:
+    if value is None or pd.isna(value):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
+
+
+def _python_datetime(value: Any) -> datetime | None:
+    if value is None or pd.isna(value):
+        return None
+    converted = pd.Timestamp(value).to_pydatetime()
+    return converted.replace(tzinfo=UTC) if converted.tzinfo is None else converted
+
+
+def _python_date(value: Any) -> date:
+    return pd.Timestamp(value).date()
+
+
+def _metadata(database: Database, settings: Settings) -> SnapshotMetadata:
+    latest = database.frame(
+        "select mode, ended_at from pipeline_runs where status = 'success' order by ended_at desc limit 1"
+    )
+    raw_mode = str(latest.iloc[0]["mode"]) if not latest.empty else settings.mode
+    data_mode = {"demo": "demo_real_snapshot", "live": "live_provider"}.get(raw_mode, raw_mode)
+    expectation = database.scalar("select mode from consensus_estimates order by as_of_date desc limit 1")
+    source_posture = (
+        "Bundled real public snapshots with filing-date and expectation proxies"
+        if data_mode == "demo_real_snapshot"
+        else "Live configured providers; inspect source freshness and coverage before use"
+    )
+    return SnapshotMetadata(
+        generated_at=datetime.now(UTC),
+        git_commit=git_commit(settings.project_root),
+        data_mode=data_mode,
+        source_posture=source_posture,
+        expectation_mode=str(expectation or "unavailable"),
+        last_refresh=_python_datetime(latest.iloc[0]["ended_at"]) if not latest.empty else None,
+    )
+
+
+def _instruments(database: Database) -> list[InstrumentSnapshot]:
+    companies = database.frame("select company_id, ticker, name from companies order by ticker")
+    prices = database.frame(
+        "select symbol, trading_date, adjusted_close, volume from market_prices_daily order by symbol, trading_date"
+    )
+    company_lookup = {
+        str(row.ticker): (str(row.company_id), str(row.name)) for row in companies.itertuples(index=False)
+    }
+    instruments: list[InstrumentSnapshot] = []
+    for symbol, group in prices.groupby("symbol", sort=True):
+        symbol = str(symbol)
+        if symbol not in company_lookup:
+            continue
+        ordered = group.sort_values("trading_date").tail(260).reset_index(drop=True)
+        closes = pd.to_numeric(ordered["adjusted_close"], errors="coerce")
+        returns = closes.pct_change(fill_method=None)
+        last_price = _finite(closes.iloc[-1]) if not closes.empty else None
+        daily_return = _finite(returns.iloc[-1]) if len(returns) >= 2 else None
+        weekly_return = _finite(closes.iloc[-1] / closes.iloc[-6] - 1) if len(closes) >= 6 else None
+        volatility = _finite(returns.tail(20).std(ddof=1) * np.sqrt(252)) if len(returns.dropna()) >= 20 else None
+        trend = "insufficient"
+        if len(closes.dropna()) >= 100:
+            short = closes.tail(20).mean()
+            long = closes.tail(100).mean()
+            trend = "uptrend" if short > long else "downtrend"
+        instrument_id, name = company_lookup[symbol]
+        history = [
+            PricePoint(
+                date=_python_date(row.trading_date),
+                close=float(row.adjusted_close),
+                volume=_finite(row.volume),
+            )
+            for row in ordered.tail(180).itertuples(index=False)
+            if _finite(row.adjusted_close) is not None
+        ]
+        instruments.append(
+            InstrumentSnapshot(
+                instrument_id=instrument_id,
+                symbol=symbol,
+                display_name=name,
+                asset_class="equity",
+                last_price=last_price,
+                daily_return=daily_return,
+                weekly_return=weekly_return,
+                realized_volatility=volatility,
+                trend_regime=trend,
+                freshness_date=history[-1].date if history else None,
+                price_history=history,
+            )
+        )
+    return instruments
+
+
+def _earnings(database: Database) -> list[EarningsSnapshot]:
+    frame = database.frame(
+        """
+        select f.forecast_id, f.company_id, f.fiscal_quarter, e.earnings_date,
+               f.forecast_cutoff_date, f.horizon_days, f.model_name, f.ablation,
+               f.forecast_revenue, f.actual_revenue, c.consensus_revenue,
+               v.expectation_mode, v.variant, v.variant_zscore, v.confidence_score
+        from forecasts f
+        join variant_signals v on f.forecast_id = v.forecast_id
+        join consensus_estimates c on v.estimate_id = c.estimate_id
+        join earnings_calendar e on f.company_id = e.company_id and f.fiscal_quarter = e.fiscal_quarter
+        order by f.forecast_cutoff_date desc, abs(v.variant) desc
+        limit 1000
+        """
+    )
+    return [
+        EarningsSnapshot(
+            forecast_id=str(row.forecast_id),
+            company_id=str(row.company_id),
+            fiscal_quarter=str(row.fiscal_quarter),
+            earnings_date=_python_date(row.earnings_date),
+            forecast_cutoff_date=_python_date(row.forecast_cutoff_date),
+            horizon_days=int(row.horizon_days),
+            model_name=str(row.model_name),
+            ablation=str(row.ablation),
+            forecast_revenue=float(row.forecast_revenue),
+            actual_revenue=_finite(row.actual_revenue),
+            expectation_revenue=float(row.consensus_revenue),
+            expectation_mode=str(row.expectation_mode),
+            variant=float(row.variant),
+            variant_zscore=_finite(row.variant_zscore),
+            confidence_score=_finite(row.confidence_score),
+        )
+        for row in frame.itertuples(index=False)
+    ]
+
+
+def _signals(database: Database) -> list[ResearchSignalSnapshot]:
+    frame = database.frame(
+        """
+        select v.signal_id, v.company_id, v.forecast_cutoff_date, v.horizon_days,
+               v.variant, v.variant_zscore, v.confidence_score, v.expectation_mode,
+               f.model_name, f.ablation, e.earnings_date
+        from variant_signals v
+        join forecasts f on v.forecast_id = f.forecast_id
+        join earnings_calendar e on v.company_id = e.company_id and v.fiscal_quarter = e.fiscal_quarter
+        order by v.forecast_cutoff_date desc, abs(v.variant_zscore) desc nulls last
+        limit 1000
+        """
+    )
+    signals: list[ResearchSignalSnapshot] = []
+    for row in frame.itertuples(index=False):
+        zscore = _finite(row.variant_zscore)
+        posture = "abstain"
+        reasons: list[str] = []
+        if zscore is not None and zscore >= 0.5:
+            posture = "long_research"
+        elif zscore is not None and zscore <= -0.5:
+            posture = "short_research"
+        else:
+            reasons.append("Variant magnitude does not clear the research threshold")
+        eligibility = "research_only" if str(row.expectation_mode) == "expectation_proxy" else "eligible"
+        if eligibility == "research_only":
+            reasons.append("Expectation is a seasonal proxy, not historical sell-side consensus")
+        signals.append(
+            ResearchSignalSnapshot(
+                signal_id=str(row.signal_id),
+                instrument_id=str(row.company_id),
+                asset_class="equity",
+                decision_date=_python_date(row.forecast_cutoff_date),
+                horizon=f"{int(row.horizon_days)}d pre-event",
+                posture=posture,
+                eligibility=eligibility,
+                strength=zscore,
+                confidence_score=_finite(row.confidence_score),
+                catalyst=f"SEC filing-date proxy on {_python_date(row.earnings_date).isoformat()}",
+                invalidation="Reported revenue and event response do not confirm the model-expectation divergence",
+                evidence_summary=f"{row.model_name} · {row.ablation} · {row.expectation_mode}",
+                reasons=reasons,
+            )
+        )
+    return signals
+
+
+def _model_diagnostics(database: Database) -> list[ModelDiagnosticSnapshot]:
+    frame = database.frame(
+        """
+        select model_name, ablation, horizon_days, forecast_revenue, actual_revenue
+        from forecasts where status = 'out_of_sample' and actual_revenue is not null
+        """
+    )
+    diagnostics: list[ModelDiagnosticSnapshot] = []
+    for key, group in frame.groupby(["model_name", "ablation", "horizon_days"], dropna=False):
+        error = pd.to_numeric(group["forecast_revenue"] - group["actual_revenue"], errors="coerce")
+        actual = pd.to_numeric(group["actual_revenue"], errors="coerce").abs().replace(0, np.nan)
+        diagnostics.append(
+            ModelDiagnosticSnapshot(
+                model_name=str(key[0]),
+                ablation=str(key[1]),
+                horizon_days=int(key[2]),
+                observations=len(group),
+                mae=float(error.abs().mean()),
+                rmse=float(np.sqrt(np.square(error).mean())),
+                mape=_finite((error.abs() / actual).mean()),
+            )
+        )
+    return sorted(diagnostics, key=lambda row: (row.horizon_days, row.mae))
+
+
+def _backtests(database: Database, statistics: dict[str, int | float | None]) -> list[BacktestSnapshot]:
+    observations = int(statistics["backtest_observations"] or 0)
+    if observations == 0:
+        return []
+    return [
+        BacktestSnapshot(
+            backtest_id="equity_event_variant_demo_v1",
+            asset_class="equity",
+            strategy_name="Earnings expectation-variant event study",
+            readiness="research_only",
+            verdict="Exploratory evidence only",
+            sample_size=observations,
+            development_metrics={"top_bottom_spread_0_3": _finite(statistics["event_spread"])},
+            assumptions=[
+                "SEC filing dates proxy for exact earnings timestamps",
+                "Seasonal expectation proxy is not Wall Street consensus",
+                "Daily adjusted closes and market adjustment are used",
+            ],
+            warnings=[
+                "Small three-company universe",
+                "Repeated model signals reduce the effective event sample",
+                "Borrow, capacity, taxes, and intraday execution are not fully modelled",
+            ],
+        )
+    ]
+
+
+def _quality_issues(database: Database) -> list[QualityIssueSnapshot]:
+    frame = database.frame(
+        """
+        select issue_id, stage, severity, rule, entity_key, message, detected_at
+        from data_quality_issues order by detected_at desc limit 500
+        """
+    )
+    return [
+        QualityIssueSnapshot(
+            issue_id=str(row.issue_id),
+            stage=str(row.stage),
+            severity=str(row.severity),
+            rule=str(row.rule),
+            entity_key=str(row.entity_key),
+            message=str(row.message),
+            detected_at=_python_datetime(row.detected_at) or datetime.now(UTC),
+        )
+        for row in frame.itertuples(index=False)
+    ]
+
+
+def _pipeline_runs(database: Database) -> list[PipelineRunSnapshot]:
+    frame = database.frame(
+        """
+        select pipeline_run_id, command, mode, started_at, ended_at, status, row_counts, error_summary
+        from pipeline_runs order by started_at desc limit 100
+        """
+    )
+    rows: list[PipelineRunSnapshot] = []
+    for row in frame.itertuples(index=False):
+        counts = row.row_counts if isinstance(row.row_counts, dict) else {}
+        rows.append(
+            PipelineRunSnapshot(
+                pipeline_run_id=str(row.pipeline_run_id),
+                command=str(row.command),
+                mode=str(row.mode),
+                started_at=_python_datetime(row.started_at) or datetime.now(UTC),
+                ended_at=_python_datetime(row.ended_at),
+                status=str(row.status),
+                row_counts={str(key): int(value) for key, value in counts.items()},
+                error_summary=str(row.error_summary) if row.error_summary else None,
+            )
+        )
+    return rows
+
+
+def build_app_snapshot(database: Database, settings: Settings) -> AppSnapshot:
+    statistics = recruiter_statistics(database)
+    instruments = _instruments(database)
+    earnings = _earnings(database)
+    signals = _signals(database)
+    quality_issues = _quality_issues(database)
+    overview = OverviewSnapshot(
+        company_count=int(statistics["companies"] or 0),
+        instrument_count=len(instruments),
+        company_quarter_count=int(statistics["company_quarters"] or 0),
+        alternative_observation_count=int(statistics["alternative_observations"] or 0),
+        forecast_count=int(statistics["historical_forecasts"] or 0),
+        signal_count=len(signals),
+        event_window_count=int(statistics["backtest_observations"] or 0),
+        quality_issue_count=len(quality_issues),
+        forecast_mae_improvement=_finite(statistics["forecast_mae_improvement"]),
+        alternative_incremental_mae_improvement=_finite(statistics["alternative_incremental_mae_improvement"]),
+        event_spread=_finite(statistics["event_spread"]),
+    )
+    return AppSnapshot(
+        metadata=_metadata(database, settings),
+        overview=overview,
+        instruments=instruments,
+        earnings=earnings,
+        signals=signals,
+        model_diagnostics=_model_diagnostics(database),
+        backtests=_backtests(database, statistics),
+        quality_issues=quality_issues,
+        pipeline_runs=_pipeline_runs(database),
+    )

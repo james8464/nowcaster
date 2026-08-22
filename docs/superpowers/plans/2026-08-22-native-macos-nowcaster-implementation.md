@@ -98,7 +98,7 @@ git commit -m "feat: establish native macOS app"
 - Consumes: `Database`, recruiter statistics, model/backtest tables.
 - Produces: `AppSnapshot`, `build_app_snapshot(database, settings) -> AppSnapshot`, `write_snapshot_atomic(snapshot, path) -> Path`, and CLI `export-app-snapshot`.
 
-- [ ] **Step 1: Write failing schema and atomic-write tests**
+- [x] **Step 1: Write failing schema and atomic-write tests**
 
 ```python
 def test_snapshot_contract_is_versioned_and_never_calls_confidence_profit_probability(database):
@@ -113,16 +113,16 @@ def test_atomic_writer_replaces_complete_document(tmp_path, snapshot):
     assert not list(tmp_path.glob("*.tmp"))
 ```
 
-- [ ] **Step 2: Verify red**
+- [x] **Step 2: Verify red**
 
 Run: `.venv/bin/pytest tests/unit/test_app_snapshot.py tests/integration/test_app_snapshot_export.py -q`
 Expected: FAIL because `src.app_snapshot` is missing.
 
-- [ ] **Step 3: Implement strict Pydantic models and exporter**
+- [x] **Step 3: Implement strict Pydantic models and exporter**
 
 Define focused nested models for `SnapshotMetadata`, `OverviewSnapshot`, `InstrumentSnapshot`, `PricePoint`, `EarningsSnapshot`, `ResearchSignalSnapshot`, `BacktestSnapshot`, `BacktestPoint`, `ModelDiagnosticSnapshot`, `QualityIssueSnapshot`, and `PipelineRunSnapshot`. Set `model_config = ConfigDict(extra="forbid")`. Serialize dates as ISO-8601 and nonfinite numbers as `None`. Write using `NamedTemporaryFile(dir=path.parent, delete=False)` followed by `Path.replace`.
 
-- [ ] **Step 4: Add CLI command and run tests**
+- [x] **Step 4: Add CLI command and run tests**
 
 ```python
 @app.command("export-app-snapshot")
@@ -135,7 +135,7 @@ def export_app_snapshot(...):
 Run: `.venv/bin/pytest tests/unit/test_app_snapshot.py tests/integration/test_app_snapshot_export.py -q`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/app_snapshot src/cli.py tests/unit/test_app_snapshot.py tests/integration/test_app_snapshot_export.py
