@@ -50,8 +50,9 @@ def calculate_backtest_metrics(
     cumulative = float(wealth.iloc[-1] - 1)
     effective_periods = float(periods_per_year)
     years = len(returns) / effective_periods
-    if "date" in curve and len(curve) > 1:
-        dates = pd.to_datetime(curve.loc[returns.index, "date"], errors="coerce").dropna().sort_values()
+    date_column = "date" if "date" in curve else "timestamp" if "timestamp" in curve else None
+    if date_column is not None and len(curve) > 1:
+        dates = pd.to_datetime(curve.loc[returns.index, date_column], errors="coerce").dropna().sort_values()
         if len(dates) > 1 and (dates.iloc[-1] - dates.iloc[0]).days > 0:
             elapsed_days = float((dates.iloc[-1] - dates.iloc[0]).days)
             effective_periods = (len(dates) - 1) * 365.25 / elapsed_days
@@ -66,13 +67,18 @@ def calculate_backtest_metrics(
     drawdown = maximum_drawdown(returns)
     profit = float(returns[returns > 0].sum())
     loss = float(abs(returns[returns < 0].sum()))
-    holding = (
-        pd.to_datetime(positions["label_end_date"]) - pd.to_datetime(positions["execution_date"])
-        if not positions.empty
-        else pd.Series(dtype="timedelta64[ns]")
+    if not positions.empty and {"label_end_date", "execution_date"} <= set(positions):
+        holding = pd.to_datetime(positions["label_end_date"]) - pd.to_datetime(positions["execution_date"])
+    elif "holding_period_days" in positions:
+        holding = pd.to_timedelta(pd.to_numeric(positions["holding_period_days"]), unit="D")
+    else:
+        holding = pd.Series(dtype="timedelta64[ns]")
+    turnover_source = positions if "turnover" in positions else curve
+    exposure_source = positions if "gross_exposure" in positions else curve
+    turnover = float(pd.to_numeric(turnover_source.get("turnover", pd.Series(dtype=float)), errors="coerce").sum())
+    exposure = float(
+        pd.to_numeric(exposure_source.get("gross_exposure", pd.Series(dtype=float)), errors="coerce").mean()
     )
-    turnover = float(pd.to_numeric(positions.get("turnover", pd.Series(dtype=float)), errors="coerce").sum())
-    exposure = float(pd.to_numeric(positions.get("gross_exposure", pd.Series(dtype=float)), errors="coerce").mean())
     return BacktestMetrics(
         cumulative_return=cumulative,
         cagr=cagr,
