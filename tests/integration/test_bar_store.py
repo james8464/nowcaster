@@ -78,6 +78,42 @@ def test_append_is_idempotent_and_as_of_selects_only_the_revision_available_then
     assert repository.database.scalar("SELECT count(*) FROM market_bars") == 2
 
 
+def test_as_of_uses_source_availability_when_revisions_arrive_out_of_order(repository):
+    original = _bar(0, available_minute=6, close=100.5, payload_hash="a" * 64)
+    corrected = _bar(0, available_minute=8, close=100.75, payload_hash="b" * 64)
+
+    assert repository.append([corrected]) == 1
+    assert repository.append([original]) == 1
+
+    early = repository.bars_as_of(_query(), datetime(2026, 8, 22, 10, 7, tzinfo=UTC))
+    late = repository.bars_as_of(_query(), datetime(2026, 8, 22, 10, 9, tzinfo=UTC))
+
+    assert early[["revision", "close", "payload_hash"]].to_dict("records") == [
+        {"revision": 2, "close": 100.5, "payload_hash": "a" * 64}
+    ]
+    assert late[["revision", "close", "payload_hash"]].to_dict("records") == [
+        {"revision": 1, "close": 100.75, "payload_hash": "b" * 64}
+    ]
+
+
+def test_manifest_checksum_is_independent_of_revision_ingestion_order(tmp_path):
+    original = _bar(0, available_minute=6, close=100.5, payload_hash="a" * 64)
+    corrected = _bar(0, available_minute=8, close=100.75, payload_hash="b" * 64)
+    chronological_database = Database.from_url(f"duckdb:///{tmp_path / 'chronological.duckdb'}")
+    reversed_database = Database.from_url(f"duckdb:///{tmp_path / 'reversed.duckdb'}")
+    chronological_database.initialize()
+    reversed_database.initialize()
+    chronological = BarRepository(chronological_database)
+    reversed_order = BarRepository(reversed_database)
+
+    chronological.append([original])
+    chronological.append([corrected])
+    reversed_order.append([corrected])
+    reversed_order.append([original])
+
+    assert chronological.manifest(_query()).dataset_hash == reversed_order.manifest(_query()).dataset_hash
+
+
 def test_append_rejects_unfinalized_bars(repository):
     incomplete = _bar(0, available_minute=6, close=100.5, payload_hash="a" * 64, finalized=False)
 

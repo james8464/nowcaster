@@ -140,7 +140,6 @@ class BarRepository:
                 "open_timestamp": self._iso(row.open_timestamp),
                 "close_timestamp": self._iso(row.close_timestamp),
                 "available_at": self._iso(row.available_at),
-                "revision": int(row.revision),
                 "payload_hash": row.payload_hash,
             }
             for row in frame.itertuples(index=False)
@@ -198,7 +197,7 @@ class BarRepository:
         if frame.empty:
             return frame.reset_index(drop=True)
         return (
-            frame.sort_values(["open_timestamp", "revision", "available_at"])
+            frame.sort_values(["open_timestamp", "available_at", "revision"])
             .drop_duplicates(["provider", "feed", "symbol", "interval", "open_timestamp"], keep="last")
             .sort_values("open_timestamp")
             .reset_index(drop=True)

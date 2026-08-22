@@ -52,6 +52,30 @@ def test_binance_normalizes_utc_rejects_open_bar_and_hashes_complete_payload():
     assert bar.payload_hash == "5ecaf0e14ec23613558771976a2b3832bb3b16cd7afb7ed807334f27ec0371ec"
 
 
+def test_binance_rejects_non_spot_provider_feed_configuration():
+    client = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json=[])))
+
+    with pytest.raises(ValueError, match="spot"):
+        BinanceBarProvider(client, feed="futures")
+
+
+def test_binance_rejects_non_spot_request_feed_before_http_call():
+    def unexpected_request(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("unsupported feed must be rejected before an HTTP call")
+
+    provider = BinanceBarProvider(httpx.Client(transport=httpx.MockTransport(unexpected_request)))
+    request = BarRequest(
+        symbol="BTCUSDT",
+        interval=BarInterval.FIVE_MINUTES,
+        start=datetime(2026, 8, 22, 10, 0, tzinfo=UTC),
+        end=datetime(2026, 8, 22, 10, 5, tzinfo=UTC),
+        feed="futures",
+    )
+
+    with pytest.raises(ValueError, match="spot"):
+        list(provider.fetch(request))
+
+
 def test_alpaca_preserves_feed_pages_exclusive_end_and_deduplicates_page_boundary(monkeypatch):
     pages = {
         None: _json_fixture("alpaca_bars_page_1.json"),

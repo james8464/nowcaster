@@ -33,6 +33,8 @@ class BinanceBarProvider:
     ):
         self.client = client
         self.feed = feed.strip().lower()
+        if self.feed != "spot":
+            raise ValueError("BinanceBarProvider supports only the spot feed")
         self.base_url = base_url.rstrip("/")
         self.max_attempts = max_attempts
         self.clock = clock
@@ -41,6 +43,8 @@ class BinanceBarProvider:
 
     def fetch(self, request: BarRequest) -> Iterable[MarketBar]:
         feed = (request.feed or self.feed).strip().lower()
+        if feed != "spot":
+            raise ValueError("BinanceBarProvider supports only the spot feed")
         cursor_ms = int(request.start.timestamp() * 1_000)
         end_ms = int(request.end.timestamp() * 1_000)
         interval = INTERVAL_DURATION[request.interval]
