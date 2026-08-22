@@ -40,7 +40,7 @@ else:
         title="Largest absolute variants",
     )
     chart.add_vline(x=0, line_color="#344054", line_width=1)
-    st.plotly_chart(style_figure(chart, height=560), width="stretch", theme=None)
+    st.plotly_chart(style_figure(chart, height=560, left_margin=175), width="stretch", theme=None)
     st.caption("Expectation mode is a historical proxy in demo data, not actual Wall Street consensus.")
     visible = filtered[
         [

@@ -44,5 +44,5 @@ else:
         labels={"mae": "Mean absolute error", "ablation": "Feature set", "model_name": "Model"},
     )
     chart.update_traces(marker_line_color="#17212B", marker_line_width=0.5)
-    st.plotly_chart(style_figure(chart), width="stretch", theme=None)
+    st.plotly_chart(style_figure(chart, left_margin=170), width="stretch", theme=None)
     st.caption("Source: persisted expanding-window forecasts in DuckDB. Revenue is reported in issuer filing units.")

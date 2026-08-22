@@ -29,10 +29,10 @@ def apply_theme() -> None:
     )
 
 
-def style_figure(figure: go.Figure, *, height: int = 380) -> go.Figure:
+def style_figure(figure: go.Figure, *, height: int = 380, left_margin: int = 90) -> go.Figure:
     figure.update_layout(
         height=height,
-        margin=dict(l=10, r=10, t=55, b=10),
+        margin=dict(l=left_margin, r=20, t=60, b=45),
         paper_bgcolor="white",
         plot_bgcolor="white",
         font=dict(family="Inter, -apple-system, BlinkMacSystemFont, sans-serif", color=INK),

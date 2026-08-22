@@ -650,7 +650,7 @@ git commit -m "feat: add Streamlit research dashboard"
 - Consumes: verified demo database, reports, and dashboard
 - Produces: recruiter-quality entry documentation and verified screenshots
 
-- [ ] **Step 1: Write failing documentation-link, command, notebook-import, and disclaimer tests**
+- [x] **Step 1: Write failing documentation-link, command, notebook-import, and disclaimer tests**
 
 ```python
 def test_readme_documents_definition_of_done_commands():
@@ -660,17 +660,17 @@ def test_readme_documents_definition_of_done_commands():
     assert "not investment advice" in text.lower()
 ```
 
-- [ ] **Step 2: Verify failures**
+- [x] **Step 2: Verify failures**
 
 Run: `pytest tests/unit/test_documentation.py tests/integration/test_notebooks.py -q`
 
-- [ ] **Step 3: Write README, architecture, methodology, dictionary, interview guide, and import-only notebooks**
+- [x] **Step 3: Write README, architecture, methodology, dictionary, interview guide, and import-only notebooks**
 
-- [ ] **Step 4: Capture and inspect all six dashboard pages, then update README screenshots**
+- [x] **Step 4: Capture and inspect all six dashboard pages, then update README screenshots**
 
 Run: `python scripts/capture_dashboard.py --database-url duckdb:///data/nowcaster.duckdb --output docs/images`
 
-- [ ] **Step 5: Commit documentation**
+- [x] **Step 5: Commit documentation**
 
 ```bash
 git add README.md docs notebooks scripts tests

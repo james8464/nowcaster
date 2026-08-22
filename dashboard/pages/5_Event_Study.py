@@ -34,7 +34,7 @@ else:
         color_discrete_sequence=[BLUE],
     )
     chart.add_vline(x=0, line_color="#344054", line_width=1)
-    st.plotly_chart(style_figure(chart), width="stretch", theme=None)
+    st.plotly_chart(style_figure(chart, left_margin=175), width="stretch", theme=None)
     scatter = px.scatter(
         filtered,
         x="variant_zscore",

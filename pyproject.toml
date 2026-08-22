@@ -33,7 +33,10 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "freezegun>=1.5",
+  "ipykernel>=6.29",
+  "nbconvert>=7.16",
   "nbformat>=5.10",
+  "playwright>=1.55",
   "pytest>=8.3",
   "pytest-cov>=6.0",
   "respx>=0.22",

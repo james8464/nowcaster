@@ -31,7 +31,7 @@ else:
         title="Persisted coverage by dataset",
         color_discrete_sequence=[BLUE],
     )
-    st.plotly_chart(style_figure(chart), width="stretch", theme=None)
+    st.plotly_chart(style_figure(chart, left_margin=170), width="stretch", theme=None)
     st.dataframe(coverage, width="stretch", hide_index=True)
 if issues.empty:
     st.success("No persisted validation exceptions. This does not imply source completeness or absence of model risk.")
