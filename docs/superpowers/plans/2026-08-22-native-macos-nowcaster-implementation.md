@@ -575,7 +575,7 @@ git commit -m "feat: build native monitoring workflows"
 **Interfaces:**
 - Produces: robustness-first backtest and diagnostic workflows with development/final-test separation.
 
-- [ ] **Step 1: Write failing readiness and metric presentation tests**
+- [x] **Step 1: Write failing readiness and metric presentation tests**
 
 ```swift
 @Test func notReadyBacktestDoesNotUsePositiveRecommendationCopy() {
@@ -590,21 +590,21 @@ git commit -m "feat: build native monitoring workflows"
 }
 ```
 
-- [ ] **Step 2: Verify red**
+- [x] **Step 2: Verify red**
 
 Run: `make macos-test`
 Expected: missing diagnostic features.
 
-- [ ] **Step 3: Implement charts, tables, assumptions, and run controls**
+- [x] **Step 3: Implement charts, tables, assumptions, and run controls**
 
 Backtest detail includes verdict, assumptions, development/final-test metrics, equity curve, drawdown, rolling risk, exposure, turnover, monthly table, fold stability, parameter sensitivity, robustness, and warnings. Model Lab shows horizon/ablation/fold performance and calibration. Data Quality and Pipeline Runs expose provenance and recovery actions without raw-log overload.
 
-- [ ] **Step 4: Test and launch diagnostics**
+- [x] **Step 4: Test and launch diagnostics**
 
 Run: `make macos-test && make macos-app && open build/Nowcaster.app`
 Expected: all diagnostic views render populated and empty/error fixtures without clipping or crashes.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add macos/Nowcaster

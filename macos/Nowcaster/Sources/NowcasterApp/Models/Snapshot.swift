@@ -206,6 +206,14 @@ struct BacktestPoint: Decodable, Identifiable, Sendable {
     var id: Date { date }
 }
 
+struct SensitivitySnapshot: Decodable, Identifiable, Sendable {
+    let scenario: String
+    let costMultiplier: Double
+    let metrics: [String: Double?]
+
+    var id: String { scenario }
+}
+
 struct BacktestSnapshot: Decodable, Identifiable, Sendable {
     let backtestId: String
     let assetClass: AssetClass
@@ -215,10 +223,17 @@ struct BacktestSnapshot: Decodable, Identifiable, Sendable {
     let sampleSize: Int
     let developmentMetrics: [String: Double?]
     let finalTestMetrics: [String: Double?]
+    let fullMetrics: [String: Double?]
+    let robustness: [String: Double?]
     let assumptions: [String]
     let warnings: [String]
     let equityCurve: [BacktestPoint]
     let drawdownCurve: [BacktestPoint]
+    let rollingSharpeCurve: [BacktestPoint]
+    let exposureCurve: [BacktestPoint]
+    let turnoverCurve: [BacktestPoint]
+    let monthlyReturns: [BacktestPoint]
+    let sensitivities: [SensitivitySnapshot]
 
     var id: String { backtestId }
 }

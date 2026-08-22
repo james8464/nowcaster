@@ -81,8 +81,14 @@ struct RootView: View {
                 EarningsView(model: model, snapshot: snapshot)
             case .signals:
                 SignalsView(model: model, snapshot: snapshot)
-            case .backtests, .modelLab, .dataQuality, .pipelineRuns:
-                PlaceholderFeatureView(destination: model.destination, snapshot: snapshot)
+            case .backtests:
+                BacktestsView(model: model, snapshot: snapshot)
+            case .modelLab:
+                ModelLabView(snapshot: snapshot)
+            case .dataQuality:
+                DataQualityView(snapshot: snapshot)
+            case .pipelineRuns:
+                PipelineRunsView(model: model, settings: settings, snapshot: snapshot)
             }
         } else {
             switch model.loadState {
@@ -122,6 +128,12 @@ struct RootView: View {
             } else {
                 selectionPlaceholder("Select a signal to inspect evidence, catalyst, and invalidation.")
             }
+        case .backtests:
+            if let backtest = model.selectedBacktest {
+                BacktestDetailView(backtest: backtest)
+            } else {
+                selectionPlaceholder("Select a backtest to inspect final-test evidence, robustness, and assumptions.")
+            }
         default:
             selectionPlaceholder("Select a row to inspect its research evidence.")
         }
@@ -155,18 +167,5 @@ struct RootView: View {
             .disabled(model.isRunningJob)
             .accessibilityIdentifier("toolbar.refresh")
         }
-    }
-}
-
-private struct PlaceholderFeatureView: View {
-    let destination: AppDestination
-    let snapshot: NowcasterSnapshot
-
-    var body: some View {
-        EmptyStateView(
-            title: destination.title,
-            systemImage: destination.symbolName,
-            description: "\(snapshot.overview.instrumentCount) instruments are loaded and ready for this native workflow."
-        )
     }
 }

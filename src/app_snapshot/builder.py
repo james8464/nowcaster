@@ -19,6 +19,7 @@ from src.app_snapshot.models import (
     PricePoint,
     QualityIssueSnapshot,
     ResearchSignalSnapshot,
+    SensitivitySnapshot,
     SnapshotMetadata,
 )
 from src.config.settings import Settings
@@ -321,7 +322,7 @@ def _backtests(database: Database, statistics: dict[str, int | float | None]) ->
         """
         select backtest_run_id, asset_class, strategy_name, readiness,
                full_metrics, development_metrics, final_test_metrics,
-               protocol, readiness_reasons
+               protocol, robustness, readiness_reasons
         from backtest_runs order by strategy_name
         """
     )
@@ -330,14 +331,40 @@ def _backtests(database: Database, statistics: dict[str, int | float | None]) ->
         development_metrics = row.development_metrics if isinstance(row.development_metrics, dict) else {}
         final_test_metrics = row.final_test_metrics if isinstance(row.final_test_metrics, dict) else {}
         protocol = row.protocol if isinstance(row.protocol, dict) else {}
+        robustness = row.robustness if isinstance(row.robustness, dict) else {}
         warnings = list(row.readiness_reasons) if isinstance(row.readiness_reasons, list) else []
         curve = database.frame(
             """
-            select curve_date, net_equity, drawdown from backtest_curve
+            select curve_date, net_return, net_equity, drawdown, gross_exposure, turnover
+            from backtest_curve
             where backtest_run_id = :run_id order by curve_date
             """,
             {"run_id": str(row.backtest_run_id)},
         )
+        returns = pd.to_numeric(curve["net_return"], errors="coerce")
+        cadence = 365 / max(int(protocol.get("horizon_days") or 5), 1)
+        rolling_mean = returns.rolling(30, min_periods=15).mean()
+        rolling_std = returns.rolling(30, min_periods=15).std(ddof=1).replace(0, np.nan)
+        curve["rolling_sharpe"] = rolling_mean / rolling_std * np.sqrt(cadence)
+        monthly = curve.assign(month=pd.to_datetime(curve["curve_date"]).dt.to_period("M")).groupby("month")[
+            "net_return"
+        ].apply(lambda values: float((1 + values).prod() - 1))
+        sensitivity = database.frame(
+            """
+            select scenario, parameters, metrics from backtest_sensitivity
+            where backtest_run_id = :run_id order by scenario
+            """,
+            {"run_id": str(row.backtest_run_id)},
+        )
+        bootstrap = robustness.get("block_bootstrap") if isinstance(robustness.get("block_bootstrap"), dict) else {}
+        flattened_robustness = {
+            "bootstrap_probability_positive": _finite(bootstrap.get("probability_positive")),
+            "bootstrap_ci_low": _finite(bootstrap.get("ci_low")),
+            "bootstrap_ci_high": _finite(bootstrap.get("ci_high")),
+            "deflated_sharpe_probability": _finite(robustness.get("deflated_sharpe_probability")),
+            "profitable_subperiod_fraction": _finite(robustness.get("profitable_subperiod_fraction")),
+            "trials_adjusted": _finite(robustness.get("trials_adjusted")),
+        }
         snapshots.append(
             BacktestSnapshot(
                 backtest_id=str(row.backtest_run_id),
@@ -354,6 +381,8 @@ def _backtests(database: Database, statistics: dict[str, int | float | None]) ->
                 sample_size=int(full_metrics.get("trades") or 0),
                 development_metrics={str(key): _finite(value) for key, value in development_metrics.items()},
                 final_test_metrics={str(key): _finite(value) for key, value in final_test_metrics.items()},
+                full_metrics={str(key): _finite(value) for key, value in full_metrics.items()},
+                robustness=flattened_robustness,
                 assumptions=[
                     f"One-bar execution lag; {protocol.get('horizon_days', '?')}-day holding horizon",
                     f"Fees {protocol.get('fee_bps', '?')} bps and slippage {protocol.get('slippage_bps', '?')} bps",
@@ -367,6 +396,31 @@ def _backtests(database: Database, statistics: dict[str, int | float | None]) ->
                 drawdown_curve=[
                     BacktestPoint(date=_python_date(item.curve_date), value=float(item.drawdown))
                     for item in curve.itertuples(index=False)
+                ],
+                rolling_sharpe_curve=[
+                    BacktestPoint(date=_python_date(item.curve_date), value=float(item.rolling_sharpe))
+                    for item in curve.itertuples(index=False)
+                    if _finite(item.rolling_sharpe) is not None
+                ],
+                exposure_curve=[
+                    BacktestPoint(date=_python_date(item.curve_date), value=float(item.gross_exposure))
+                    for item in curve.itertuples(index=False)
+                ],
+                turnover_curve=[
+                    BacktestPoint(date=_python_date(item.curve_date), value=float(item.turnover))
+                    for item in curve.itertuples(index=False)
+                ],
+                monthly_returns=[
+                    BacktestPoint(date=period.to_timestamp(how="end").date(), value=float(value))
+                    for period, value in monthly.items()
+                ],
+                sensitivities=[
+                    SensitivitySnapshot(
+                        scenario=str(item.scenario),
+                        cost_multiplier=float((item.parameters or {}).get("cost_multiplier", 1)),
+                        metrics={str(key): _finite(value) for key, value in (item.metrics or {}).items()},
+                    )
+                    for item in sensitivity.itertuples(index=False)
                 ],
             )
         )

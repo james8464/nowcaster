@@ -103,6 +103,12 @@ class BacktestPoint(SnapshotModel):
     value: float
 
 
+class SensitivitySnapshot(SnapshotModel):
+    scenario: str
+    cost_multiplier: float
+    metrics: dict[str, float | None] = Field(default_factory=dict)
+
+
 class BacktestSnapshot(SnapshotModel):
     backtest_id: str
     asset_class: str
@@ -112,10 +118,17 @@ class BacktestSnapshot(SnapshotModel):
     sample_size: int
     development_metrics: dict[str, float | None] = Field(default_factory=dict)
     final_test_metrics: dict[str, float | None] = Field(default_factory=dict)
+    full_metrics: dict[str, float | None] = Field(default_factory=dict)
+    robustness: dict[str, float | None] = Field(default_factory=dict)
     assumptions: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     equity_curve: list[BacktestPoint] = Field(default_factory=list)
     drawdown_curve: list[BacktestPoint] = Field(default_factory=list)
+    rolling_sharpe_curve: list[BacktestPoint] = Field(default_factory=list)
+    exposure_curve: list[BacktestPoint] = Field(default_factory=list)
+    turnover_curve: list[BacktestPoint] = Field(default_factory=list)
+    monthly_returns: list[BacktestPoint] = Field(default_factory=list)
+    sensitivities: list[SensitivitySnapshot] = Field(default_factory=list)
 
 
 class QualityIssueSnapshot(SnapshotModel):
