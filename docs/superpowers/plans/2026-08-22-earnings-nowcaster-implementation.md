@@ -438,7 +438,7 @@ git commit -m "feat: construct variant perception signals"
 - Produces: `summarize_buckets(event_returns, bootstrap_samples, seed) -> pd.DataFrame`
 - Produces: `run_event_portfolio(signals, prices, config) -> PortfolioResult`
 
-- [ ] **Step 1: Write failing bucket, bootstrap, cost, overlap, and drawdown tests**
+- [x] **Step 1: Write failing bucket, bootstrap, cost, overlap, and drawdown tests**
 
 ```python
 def test_round_trip_costs_reduce_long_short_return(portfolio_fixture):
@@ -453,11 +453,11 @@ def test_bucket_summary_reports_sample_and_interval(event_returns):
     assert summary.loc["strongly_positive", "ci_low"] <= summary.loc["strongly_positive", "mean"]
 ```
 
-- [ ] **Step 2: Verify failures**
+- [x] **Step 2: Verify failures**
 
 Run: `pytest tests/unit/test_event_study.py tests/unit/test_backtest_statistics.py tests/unit/test_portfolio.py -q`
 
-- [ ] **Step 3: Implement event joins, raw/benchmark/sector adjustments, robust summaries, Newey-West regression, and multiple-testing caveats**
+- [x] **Step 3: Implement event joins, raw/benchmark/sector adjustments, robust summaries, Newey-West regression, and multiple-testing caveats**
 
 ```python
 def run_event_study(
@@ -471,11 +471,11 @@ def run_event_study(
     return EventStudyResult(event_returns=event_returns, bucket_summary=summarize_buckets(event_returns, 2_000, 42))
 ```
 
-- [ ] **Step 4: Implement constrained equal-weight long/short event portfolio and metrics**
+- [x] **Step 4: Implement constrained equal-weight long/short event portfolio and metrics**
 
 Run: `pytest tests/unit/test_event_study.py tests/unit/test_backtest_statistics.py tests/unit/test_portfolio.py tests/integration/test_backtest_pipeline.py -q`
 
-- [ ] **Step 5: Commit backtesting**
+- [x] **Step 5: Commit backtesting**
 
 ```bash
 git add src/backtest tests
