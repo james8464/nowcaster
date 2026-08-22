@@ -35,6 +35,7 @@ class StrategyContext:
     session: SessionCalendar = field(default_factory=SessionCalendar.continuous_utc)
     paired_bars: pd.DataFrame | None = None
     universe_bars: Mapping[str, pd.DataFrame] = field(default_factory=lambda: MappingProxyType({}))
+    universe_membership: pd.DataFrame | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +43,7 @@ class _RuleResult:
     signal: pd.Series
     strength: pd.Series | None = None
     reason: pd.Series | None = None
+    valid: pd.Series | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,7 +91,8 @@ def _ema_adx(bars: pd.DataFrame, parameters: Mapping[str, ParameterValue], _: St
     threshold = _parameter(parameters, "adx_threshold", float)
     active = trend_strength >= threshold
     signal = _direction(active & (fast > slow), active & (fast < slow))
-    return _RuleResult(signal, (trend_strength / 100).clip(0, 1))
+    valid = fast.notna() & slow.notna() & trend_strength.notna()
+    return _RuleResult(signal, (trend_strength / 100).clip(0, 1), valid=valid)
 
 
 def _macd_histogram(
@@ -102,7 +105,11 @@ def _macd_histogram(
         _parameter(parameters, "signal_period", int),
     )
     scale = histogram.abs().rolling(_parameter(parameters, "signal_period", int), min_periods=1).max()
-    return _RuleResult(_direction(histogram > 0, histogram < 0), (histogram.abs() / scale).clip(0, 1))
+    return _RuleResult(
+        _direction(histogram > 0, histogram < 0),
+        (histogram.abs() / scale).clip(0, 1),
+        valid=histogram.notna(),
+    )
 
 
 def _donchian(bars: pd.DataFrame, parameters: Mapping[str, ParameterValue], _: StrategyContext) -> _RuleResult:
@@ -110,7 +117,7 @@ def _donchian(bars: pd.DataFrame, parameters: Mapping[str, ParameterValue], _: S
     signal = _direction(bars["close"] > upper, bars["close"] < lower)
     width = (upper - lower).replace(0, np.nan)
     strength = ((bars["close"] - upper).clip(lower=0) + (lower - bars["close"]).clip(lower=0)) / width
-    return _RuleResult(signal, strength.clip(0, 1))
+    return _RuleResult(signal, strength.clip(0, 1), valid=upper.notna() & lower.notna())
 
 
 def _supertrend(bars: pd.DataFrame, parameters: Mapping[str, ParameterValue], _: StrategyContext) -> _RuleResult:
@@ -134,7 +141,8 @@ def _supertrend(bars: pd.DataFrame, parameters: Mapping[str, ParameterValue], _:
             direction = -1
         signal.iloc[position] = direction
     strength = (bars["close"] - midpoint).abs() / (multiplier * average_range).replace(0, np.nan)
-    return _RuleResult(signal, strength.clip(0, 1))
+    valid = upper.shift(1).notna() & lower.shift(1).notna()
+    return _RuleResult(signal, strength.clip(0, 1), valid=valid)
 
 
 def _vwap_trend(bars: pd.DataFrame, parameters: Mapping[str, ParameterValue], context: StrategyContext) -> _RuleResult:
@@ -146,7 +154,8 @@ def _vwap_trend(bars: pd.DataFrame, parameters: Mapping[str, ParameterValue], co
     slope = vwap.diff(slope_bars)
     signal = _direction((bars["close"] > vwap) & (slope > 0), (bars["close"] < vwap) & (slope < 0))
     strength = (bars["close"] - vwap).abs() / vwap.abs().replace(0, np.nan)
-    return _RuleResult(signal, strength.clip(0, 1))
+    valid = vwap.notna() & slope.notna() & context.session.in_session(timestamps)
+    return _RuleResult(signal, strength.clip(0, 1), valid=valid)
 
 
 def _rsi_reversal(bars: pd.DataFrame, parameters: Mapping[str, ParameterValue], _: StrategyContext) -> _RuleResult:
@@ -154,7 +163,7 @@ def _rsi_reversal(bars: pd.DataFrame, parameters: Mapping[str, ParameterValue], 
     oversold = _parameter(parameters, "oversold", float)
     overbought = _parameter(parameters, "overbought", float)
     strength = ((50 - value).abs() / 50).clip(0, 1)
-    return _RuleResult(_direction(value <= oversold, value >= overbought), strength)
+    return _RuleResult(_direction(value <= oversold, value >= overbought), strength, valid=value.notna())
 
 
 def _streak(close: pd.Series) -> pd.Series:
@@ -181,7 +190,11 @@ def _connors_rsi(bars: pd.DataFrame, parameters: Mapping[str, ParameterValue], _
     streak_rsi = rsi(_streak(bars["close"]), _parameter(parameters, "streak_period", int))
     rank = _percent_rank(bars["close"].pct_change(), _parameter(parameters, "rank_period", int))
     connors = (close_rsi + streak_rsi + rank) / 3
-    return _RuleResult(_direction(connors <= 20, connors >= 80), ((connors - 50).abs() / 50).clip(0, 1))
+    return _RuleResult(
+        _direction(connors <= 20, connors >= 80),
+        ((connors - 50).abs() / 50).clip(0, 1),
+        valid=connors.notna(),
+    )
 
 
 def _bollinger_reversion(
@@ -192,7 +205,8 @@ def _bollinger_reversion(
     )
     signal = _direction(bars["close"] < lower, bars["close"] > upper)
     strength = (bars["close"] - middle).abs() / (upper - middle).replace(0, np.nan)
-    return _RuleResult(signal, strength.clip(0, 1))
+    valid = middle.notna() & upper.notna() & lower.notna()
+    return _RuleResult(signal, strength.clip(0, 1), valid=valid)
 
 
 def _vwap_zscore(bars: pd.DataFrame, parameters: Mapping[str, ParameterValue], context: StrategyContext) -> _RuleResult:
@@ -202,7 +216,12 @@ def _vwap_zscore(bars: pd.DataFrame, parameters: Mapping[str, ParameterValue], c
     )
     score = rolling_zscore(bars["close"] - vwap, _parameter(parameters, "lookback", int))
     entry = _parameter(parameters, "entry_zscore", float)
-    return _RuleResult(_direction(score <= -entry, score >= entry), (score.abs() / entry).clip(0, 1))
+    valid = score.notna() & vwap.notna() & context.session.in_session(timestamps)
+    return _RuleResult(
+        _direction(score <= -entry, score >= entry),
+        (score.abs() / entry).clip(0, 1),
+        valid=valid,
+    )
 
 
 def _stochastic_reversal(
@@ -215,13 +234,21 @@ def _stochastic_reversal(
         _parameter(parameters, "k_period", int),
         _parameter(parameters, "d_period", int),
     )
-    return _RuleResult(_direction(percent_k <= 20, percent_k >= 80), ((percent_k - 50).abs() / 50).clip(0, 1))
+    return _RuleResult(
+        _direction(percent_k <= 20, percent_k >= 80),
+        ((percent_k - 50).abs() / 50).clip(0, 1),
+        valid=percent_k.notna(),
+    )
 
 
 def _extreme_return(bars: pd.DataFrame, parameters: Mapping[str, ParameterValue], _: StrategyContext) -> _RuleResult:
     score = rolling_zscore(bars["close"].pct_change(), _parameter(parameters, "lookback", int))
     entry = _parameter(parameters, "entry_zscore", float)
-    return _RuleResult(_direction(score <= -entry, score >= entry), (score.abs() / entry).clip(0, 1))
+    return _RuleResult(
+        _direction(score <= -entry, score >= entry),
+        (score.abs() / entry).clip(0, 1),
+        valid=score.notna(),
+    )
 
 
 def _squeeze(bars: pd.DataFrame, parameters: Mapping[str, ParameterValue], _: StrategyContext) -> _RuleResult:
@@ -239,7 +266,13 @@ def _squeeze(bars: pd.DataFrame, parameters: Mapping[str, ParameterValue], _: St
     strength = (bars["close"] - bollinger_upper.shift(1)).abs() / (
         bollinger_upper.shift(1) - bollinger_lower.shift(1)
     ).replace(0, np.nan)
-    return _RuleResult(signal, strength.clip(0, 1))
+    valid = (
+        bollinger_upper.shift(1).notna()
+        & bollinger_lower.shift(1).notna()
+        & keltner_upper.shift(1).notna()
+        & keltner_lower.shift(1).notna()
+    )
+    return _RuleResult(signal, strength.clip(0, 1), valid=valid)
 
 
 def _volume_breakout(
@@ -251,7 +284,8 @@ def _volume_breakout(
     upper, lower = donchian_channels(bars["high"], bars["low"], lookback)
     active = relative >= multiple
     signal = _direction(active & (bars["close"] > upper), active & (bars["close"] < lower))
-    return _RuleResult(signal, (relative / multiple).clip(0, 1))
+    valid = relative.notna() & upper.notna() & lower.notna()
+    return _RuleResult(signal, (relative / multiple).clip(0, 1), valid=valid)
 
 
 def _volatility_scaled_trend(
@@ -263,7 +297,11 @@ def _volatility_scaled_trend(
         min_periods=_parameter(parameters, "volatility_lookback", int),
     ).std(ddof=0)
     scaled = trend / volatility.replace(0, np.nan)
-    return _RuleResult(_direction(scaled > 0, scaled < 0), scaled.abs().clip(0, 1))
+    return _RuleResult(
+        _direction(scaled > 0, scaled < 0),
+        scaled.abs().clip(0, 1),
+        valid=trend.notna() & volatility.notna(),
+    )
 
 
 def _opening_range(
@@ -278,7 +316,14 @@ def _opening_range(
     after_range = ~in_range
     active = after_range & (relative > 1)
     signal = _direction(active & (bars["close"] > range_high), active & (bars["close"] < range_low))
-    return _RuleResult(signal, relative.clip(0, 1))
+    valid = (
+        context.session.in_session(timestamps)
+        & after_range
+        & relative.notna()
+        & range_high.notna()
+        & range_low.notna()
+    )
+    return _RuleResult(signal, relative.clip(0, 1), valid=valid)
 
 
 def _last_half_hour(
@@ -287,7 +332,11 @@ def _last_half_hour(
     timestamps = _bar_timestamps(bars, "open_timestamp")
     trend = bars["close"].pct_change(_parameter(parameters, "lookback", int))
     active = context.session.last_window(timestamps, 30)
-    return _RuleResult(_direction(active & (trend > 0), active & (trend < 0)), trend.abs().clip(0, 1))
+    return _RuleResult(
+        _direction(active & (trend > 0), active & (trend < 0)),
+        trend.abs().clip(0, 1),
+        valid=trend.notna(),
+    )
 
 
 def _bitcoin_active(
@@ -296,19 +345,31 @@ def _bitcoin_active(
     timestamps = _bar_timestamps(bars, "open_timestamp")
     trend = bars["close"].pct_change(_parameter(parameters, "lookback", int))
     active = context.session.active_window(timestamps)
-    return _RuleResult(_direction(active & (trend > 0), active & (trend < 0)), trend.abs().clip(0, 1))
+    return _RuleResult(
+        _direction(active & (trend > 0), active & (trend < 0)),
+        trend.abs().clip(0, 1),
+        valid=trend.notna(),
+    )
 
 
 def _pairs(bars: pd.DataFrame, parameters: Mapping[str, ParameterValue], context: StrategyContext) -> _RuleResult:
-    if context.paired_bars is None:
-        reason = pd.Series("abstain: paired instrument bars are unavailable", index=bars.index, dtype="object")
-        return _RuleResult(_empty_signal(bars), reason=reason)
+    if context.paired_bars is None or context.paired_bars.empty:
+        reason = pd.Series(
+            "abstain: paired instrument point-in-time data is unavailable",
+            index=bars.index,
+            dtype="object",
+        )
+        return _RuleResult(_empty_signal(bars), reason=reason, valid=pd.Series(False, index=bars.index))
     peer = aligned_peer_close(bars, context.paired_bars)
     score = rolling_cointegration_zscore(
         bars["close"].astype(float), peer, _parameter(parameters, "lookback", int)
     )
     entry = _parameter(parameters, "entry_zscore", float)
-    return _RuleResult(_direction(score <= -entry, score >= entry), (score.abs() / entry).clip(0, 1))
+    return _RuleResult(
+        _direction(score <= -entry, score >= entry),
+        (score.abs() / entry).clip(0, 1),
+        valid=score.notna(),
+    )
 
 
 def _cross_sectional(
@@ -317,7 +378,35 @@ def _cross_sectional(
     lookback = _parameter(parameters, "lookback", int)
     minimum = _parameter(parameters, "minimum_universe", int)
     symbol = str(bars["symbol"].iloc[0]) if "symbol" in bars and not bars.empty else ""
-    universe = dict(context.universe_bars)
+    if context.universe_membership is None or context.universe_membership.empty:
+        reasons = pd.Series(
+            "abstain: point-in-time universe membership is unavailable",
+            index=bars.index,
+            dtype="object",
+        )
+        return _RuleResult(
+            _empty_signal(bars), reason=reasons, valid=pd.Series(False, index=bars.index)
+        )
+    eligible_symbols = set(
+        context.universe_membership.loc[
+            context.universe_membership["member"] & context.universe_membership["liquid"],
+            "symbol",
+        ].astype(str)
+    )
+    universe = {
+        member: member_bars
+        for member, member_bars in context.universe_bars.items()
+        if member in eligible_symbols
+    }
+    if symbol not in eligible_symbols:
+        reasons = pd.Series(
+            "abstain: focal instrument is not in the point-in-time eligible universe",
+            index=bars.index,
+            dtype="object",
+        )
+        return _RuleResult(
+            _empty_signal(bars), reason=reasons, valid=pd.Series(False, index=bars.index)
+        )
     universe.setdefault(symbol, bars)
     main_times = pd.to_datetime(bars[_timestamp_name(bars)], utc=True)
     returns_by_symbol: dict[str, pd.Series] = {}
@@ -330,6 +419,7 @@ def _cross_sectional(
 
     signal = _empty_signal(bars)
     strength = pd.Series(0.0, index=bars.index)
+    valid = pd.Series(False, index=bars.index)
     reasons = pd.Series("abstain: indicator warm-up incomplete", index=bars.index, dtype="object")
     for position, timestamp in enumerate(main_times):
         observations = {
@@ -344,6 +434,7 @@ def _cross_sectional(
             )
             continue
         ranked = pd.Series(observations).rank(method="average", pct=True)
+        valid.iloc[position] = True
         percentile = float(ranked[symbol])
         if percentile >= 0.8:
             signal.iloc[position] = 1
@@ -354,7 +445,7 @@ def _cross_sectional(
         else:
             reasons.iloc[position] = "abstain: return rank is between the entry quintiles"
         strength.iloc[position] = min(1.0, abs(percentile - 0.5) * 2)
-    return _RuleResult(signal, strength, reasons)
+    return _RuleResult(signal, strength, reasons, valid)
 
 
 _RULES: Mapping[str, Rule] = MappingProxyType(
@@ -394,19 +485,129 @@ def _bar_timestamps(bars: pd.DataFrame, preferred: str) -> pd.Series:
     return pd.Series(pd.to_datetime(bars[name], utc=True), index=bars.index)
 
 
-def _validate_bars(bars: pd.DataFrame) -> pd.DataFrame:
-    required = {"high", "low", "close", "volume"}
+_BAR_IDENTITY = ["provider", "feed", "symbol", "interval", "open_timestamp"]
+
+
+def _validate_revision_ledger(bars: pd.DataFrame, *, label: str = "primary") -> pd.DataFrame:
+    required = {
+        *_BAR_IDENTITY,
+        "close_timestamp",
+        "available_at",
+        "revision",
+        "finalized",
+        "high",
+        "low",
+        "close",
+        "volume",
+    }
     missing = required - set(bars.columns)
     if missing:
-        raise ValueError(f"bars are missing required columns: {', '.join(sorted(missing))}")
-    if "finalized" in bars and not bars["finalized"].astype(bool).all():
-        raise ValueError("signals require finalized bars")
-    timestamps = pd.to_datetime(bars[_timestamp_name(bars)], utc=True)
-    if not timestamps.is_monotonic_increasing:
-        raise ValueError("bars must be ordered by timestamp")
-    if timestamps.duplicated().any():
-        raise ValueError("bars must contain one finalized row per timestamp")
-    return bars.reset_index(drop=True).copy()
+        raise ValueError(
+            f"{label} bars must be a revision ledger; missing columns: {', '.join(sorted(missing))}"
+        )
+    ledger = bars.reset_index(drop=True).copy()
+    for column in ("open_timestamp", "close_timestamp", "available_at"):
+        ledger[column] = pd.to_datetime(ledger[column], utc=True)
+    if not ledger["finalized"].map(lambda value: value is True or value == 1).all():
+        raise ValueError(f"{label} revision ledger requires finalized bars")
+    if (ledger["revision"].astype(int) <= 0).any():
+        raise ValueError(f"{label} revision ledger requires positive revisions")
+    if (ledger["open_timestamp"] >= ledger["close_timestamp"]).any():
+        raise ValueError(f"{label} revision ledger has invalid bar boundaries")
+    if (ledger["available_at"] < ledger["close_timestamp"]).any():
+        raise ValueError(f"{label} revision ledger contains a bar available before its close")
+    revision_key = [*_BAR_IDENTITY, "revision"]
+    if ledger.duplicated(revision_key).any():
+        raise ValueError(f"{label} revision ledger contains duplicate revisions")
+    instrument_key = ["provider", "feed", "symbol", "interval"]
+    if len(ledger[instrument_key].drop_duplicates()) > 1:
+        raise ValueError(f"{label} revision ledger must contain exactly one instrument and feed")
+    return ledger
+
+
+def _snapshot_as_of(ledger: pd.DataFrame, decision_timestamp: pd.Timestamp) -> pd.DataFrame:
+    eligible = ledger[
+        (ledger["finalized"])
+        & (ledger["available_at"] <= decision_timestamp)
+        & (ledger["close_timestamp"] <= decision_timestamp)
+    ]
+    return (
+        eligible.sort_values(["open_timestamp", "available_at", "revision"])
+        .drop_duplicates(_BAR_IDENTITY, keep="last")
+        .sort_values("open_timestamp")
+        .reset_index(drop=True)
+    )
+
+
+def _decision_events(ledger: pd.DataFrame) -> pd.DataFrame:
+    return (
+        ledger.sort_values(["open_timestamp", "available_at", "revision"])
+        .drop_duplicates(_BAR_IDENTITY, keep="first")
+        .sort_values("open_timestamp")
+        .reset_index(drop=True)
+    )
+
+
+def _is_monotonic_unique_snapshot(ledger: pd.DataFrame) -> bool:
+    events = _decision_events(ledger)
+    return len(events) == len(ledger) and events["available_at"].is_monotonic_increasing
+
+
+def _membership_as_of(membership: pd.DataFrame | None, decision_timestamp: pd.Timestamp) -> pd.DataFrame | None:
+    if membership is None:
+        return None
+    required = {
+        "symbol",
+        "effective_from",
+        "effective_to",
+        "available_at",
+        "member",
+        "liquid",
+    }
+    if required - set(membership.columns):
+        return None
+    records = membership.copy()
+    records["effective_from"] = pd.to_datetime(records["effective_from"], utc=True)
+    records["effective_to"] = pd.to_datetime(records["effective_to"], utc=True)
+    records["available_at"] = pd.to_datetime(records["available_at"], utc=True)
+    active = records[
+        (records["available_at"] <= decision_timestamp)
+        & (records["effective_from"] <= decision_timestamp)
+        & (records["effective_to"].isna() | (decision_timestamp < records["effective_to"]))
+    ]
+    return (
+        active.sort_values(["symbol", "available_at", "effective_from"])
+        .drop_duplicates("symbol", keep="last")
+        .reset_index(drop=True)
+    )
+
+
+def _context_as_of(context: StrategyContext, decision_timestamp: pd.Timestamp) -> StrategyContext:
+    paired: pd.DataFrame | None = None
+    if context.paired_bars is not None:
+        try:
+            paired = _snapshot_as_of(
+                _validate_revision_ledger(context.paired_bars, label="paired instrument"),
+                decision_timestamp,
+            )
+        except (KeyError, TypeError, ValueError):
+            paired = None
+
+    universe: dict[str, pd.DataFrame] = {}
+    for symbol, member_bars in context.universe_bars.items():
+        try:
+            universe[symbol] = _snapshot_as_of(
+                _validate_revision_ledger(member_bars, label=f"universe member {symbol}"),
+                decision_timestamp,
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+    return StrategyContext(
+        session=context.session,
+        paired_bars=paired,
+        universe_bars=universe,
+        universe_membership=_membership_as_of(context.universe_membership, decision_timestamp),
+    )
 
 
 def _result_frame(spec: StrategySpec, bars: pd.DataFrame, result: _RuleResult) -> StrategySignalFrame:
@@ -420,7 +621,13 @@ def _result_frame(spec: StrategySpec, bars: pd.DataFrame, result: _RuleResult) -
     signal = result.signal.reindex(bars.index).fillna(0).astype("int8")
     if not signal.isin((-1, 0, 1)).all():
         raise ValueError("strategy signals must be -1, 0, or 1")
-    ready = pd.Series(np.arange(len(bars)) + 1 >= spec.warmup_bars, index=bars.index)
+    warmup_ready = pd.Series(np.arange(len(bars)) + 1 >= spec.warmup_bars, index=bars.index)
+    valid = (
+        result.valid.reindex(bars.index).fillna(False).astype(bool)
+        if result.valid is not None
+        else pd.Series(False, index=bars.index)
+    )
+    ready = warmup_ready & valid
     signal = signal.where(ready, 0).astype("int8")
     if result.strength is None:
         strength = signal.abs().astype(float)
@@ -434,7 +641,9 @@ def _result_frame(spec: StrategySpec, bars: pd.DataFrame, result: _RuleResult) -
         reason.loc[signal < 0] = "short: configured trailing rule condition met"
     else:
         reason = result.reason.reindex(bars.index).fillna("abstain: no rule condition met").astype(str)
-    reason.loc[~ready] = f"abstain: strategy requires {spec.warmup_bars} warm-up bars"
+    if result.reason is None:
+        reason.loc[warmup_ready & ~valid] = "abstain: rule inputs are not yet valid"
+    reason.loc[~warmup_ready] = f"abstain: strategy requires {spec.warmup_bars} warm-up bars"
 
     return pd.DataFrame(
         {
@@ -452,8 +661,30 @@ def _generate_for_rule(
 ) -> StrategySignalFrame:
     if spec.strategy_id != strategy_id:
         raise ValueError(f"generator for '{strategy_id}' cannot run strategy '{spec.strategy_id}'")
-    validated = _validate_bars(bars)
-    return _result_frame(spec, validated, _RULES[strategy_id](validated, spec.parameters, context))
+    ledger = _validate_revision_ledger(bars)
+    if strategy_id not in {"rolling_cointegration_pairs", "crypto_cross_sectional_momentum"} and (
+        _is_monotonic_unique_snapshot(ledger)
+    ):
+        snapshot = ledger.sort_values("open_timestamp").reset_index(drop=True)
+        return _result_frame(spec, snapshot, _RULES[strategy_id](snapshot, spec.parameters, context))
+    rows: list[pd.Series] = []
+    for event in _decision_events(ledger).itertuples(index=False):
+        decision = pd.Timestamp(event.available_at)
+        snapshot = _snapshot_as_of(ledger, decision)
+        point_in_time_context = _context_as_of(context, decision)
+        result = _result_frame(
+            spec,
+            snapshot,
+            _RULES[strategy_id](snapshot, spec.parameters, point_in_time_context),
+        )
+        target = result.index[snapshot["open_timestamp"] == pd.Timestamp(event.open_timestamp)]
+        if len(target) != 1:
+            raise ValueError("revision ledger could not resolve the decision bar in its point-in-time snapshot")
+        row = result.loc[target[0]].copy()
+        row["decision_timestamp"] = decision
+        row["data_through"] = pd.Timestamp(event.close_timestamp)
+        rows.append(row)
+    return pd.DataFrame(rows, columns=["decision_timestamp", "data_through", "signal", "strength", "reason"])
 
 
 def _generator(strategy_id: str) -> RegisteredGenerator:

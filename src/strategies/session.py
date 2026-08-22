@@ -31,13 +31,26 @@ class SessionCalendar:
 
     def session_labels(self, timestamps: pd.Series) -> pd.Series:
         local = self._local(timestamps)
-        return pd.Series(local.dt.date, index=timestamps.index, dtype="object")
+        if self.continuous:
+            return pd.Series(local.dt.date, index=timestamps.index, dtype="object")
+        session_open = local.dt.normalize() + pd.Timedelta(
+            hours=self.open_time.hour,
+            minutes=self.open_time.minute,
+        )
+        return session_open.dt.tz_convert("UTC").where(self.in_session(timestamps))
+
+    def in_session(self, timestamps: pd.Series) -> pd.Series:
+        if self.continuous:
+            return pd.Series(True, index=timestamps.index, dtype=bool)
+        elapsed = self._minutes_from_open(timestamps)
+        remaining = self._minutes_to_close(timestamps)
+        return elapsed.ge(0) & remaining.gt(0)
 
     def opening_range(self, timestamps: pd.Series, minutes: int) -> pd.Series:
         if minutes <= 0:
             raise ValueError("session window minutes must be positive")
         elapsed = self._minutes_from_open(timestamps)
-        return elapsed.ge(0) & elapsed.lt(minutes)
+        return self.in_session(timestamps) & elapsed.ge(0) & elapsed.lt(minutes)
 
     def last_window(self, timestamps: pd.Series, minutes: int) -> pd.Series:
         if minutes <= 0:
@@ -47,7 +60,7 @@ class SessionCalendar:
             minute = local.dt.hour * 60 + local.dt.minute
             return minute.ge(24 * 60 - minutes)
         remaining = self._minutes_to_close(timestamps)
-        return remaining.ge(0) & remaining.le(minutes)
+        return self.in_session(timestamps) & remaining.gt(0) & remaining.le(minutes)
 
     def active_window(self, timestamps: pd.Series, start_hour: int = 7, end_hour: int = 16) -> pd.Series:
         if not 0 <= start_hour < end_hour <= 24:

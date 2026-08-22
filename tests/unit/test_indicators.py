@@ -136,6 +136,30 @@ def test_session_vwap_resets_at_each_causal_session_boundary():
     assert result.tolist() == pytest.approx([10.0, 13.0, 20.0])
 
 
+def test_equity_session_vwap_excludes_extended_hours_and_anchors_at_regular_open():
+    timestamps = pd.Series(
+        pd.to_datetime(
+            [
+                "2026-08-21T12:00:00Z",
+                "2026-08-21T13:30:00Z",
+                "2026-08-21T13:35:00Z",
+                "2026-08-21T20:30:00Z",
+                "2026-08-22T12:00:00Z",
+                "2026-08-22T13:30:00Z",
+            ],
+            utc=True,
+        )
+    )
+    prices = _series([1000, 10, 14, 2000, 3000, 20])
+    calendar = SessionCalendar.equity_us()
+
+    result = session_vwap(prices, prices, prices, _series([100, 1, 3, 100, 100, 2]), timestamps, calendar)
+
+    assert result.iloc[[0, 3, 4]].isna().all()
+    assert result.iloc[[1, 2, 5]].tolist() == pytest.approx([10.0, 13.0, 20.0])
+    assert calendar.in_session(timestamps).tolist() == [False, True, True, False, False, True]
+
+
 def test_relative_volume_compares_current_volume_with_prior_bars_only():
     result = relative_volume(_series([10, 20, 30, 60]), lookback=2)
 

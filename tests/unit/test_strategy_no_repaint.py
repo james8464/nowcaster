@@ -28,7 +28,10 @@ def _bars(symbol: str, closes: np.ndarray) -> pd.DataFrame:
     volume = 100 + (np.arange(len(closes)) % 17) * 11
     return pd.DataFrame(
         {
+            "provider": "test-provider",
+            "feed": "test-feed",
             "symbol": symbol,
+            "interval": "1h",
             "open_timestamp": opens,
             "close_timestamp": close_times,
             "available_at": close_times + pd.Timedelta(seconds=5),
@@ -53,12 +56,29 @@ def _contexts(primary: pd.DataFrame, cutoff: int) -> tuple[StrategyContext, Stra
         "E": _bars("E", 60 + np.cos(np.arange(len(primary)) / 6)),
     }
     calendar = SessionCalendar.equity_us()
+    membership = pd.DataFrame(
+        {
+            "symbol": list(universe),
+            "effective_from": pd.to_datetime(["2026-06-01T00:00:00Z"] * len(universe), utc=True),
+            "effective_to": pd.to_datetime([None] * len(universe), utc=True),
+            "available_at": pd.to_datetime(["2026-06-01T00:00:00Z"] * len(universe), utc=True),
+            "member": True,
+            "liquid": True,
+            "eligible": True,
+        }
+    )
     before = StrategyContext(
         session=calendar,
         paired_bars=peer.iloc[:cutoff].copy(),
         universe_bars={symbol: frame.iloc[:cutoff].copy() for symbol, frame in universe.items()},
+        universe_membership=membership,
     )
-    after = StrategyContext(session=calendar, paired_bars=peer, universe_bars=universe)
+    after = StrategyContext(
+        session=calendar,
+        paired_bars=peer,
+        universe_bars=universe,
+        universe_membership=membership,
+    )
     return before, after
 
 
@@ -88,13 +108,12 @@ def test_prefix_audit_catches_an_intentionally_future_dependent_generator():
 
 
 @pytest.mark.parametrize("spec", _configured_specs(), ids=lambda spec: spec.strategy_id)
-def test_every_registered_strategy_is_unchanged_when_future_bars_and_revisions_are_appended(spec: StrategySpec):
+def test_every_registered_strategy_is_unchanged_when_future_bars_are_appended(spec: StrategySpec):
     count = 150
     cutoff = 135
     positions = np.arange(count)
     closes = 100 + positions * 0.05 + np.sin(positions / 5) * 2
     extended = _bars("PRIMARY", closes)
-    extended.loc[cutoff:, "revision"] = 2
     extended.loc[cutoff:, "close"] += np.linspace(0, 40, count - cutoff)
     extended.loc[cutoff:, "high"] = np.maximum(
         extended.loc[cutoff:, "high"], extended.loc[cutoff:, "close"] + 0.5
@@ -110,6 +129,52 @@ def test_every_registered_strategy_is_unchanged_when_future_bars_and_revisions_a
         extended,
         before_context,
         after_context,
+    )
+
+    assert audit.passed, audit.reason
+
+
+def test_later_available_revision_of_a_historical_primary_bar_does_not_repaint_prior_decisions():
+    spec = next(spec for spec in _configured_specs() if spec.strategy_id == "donchian_breakout")
+    prefix = _bars("PRIMARY", 100 + np.arange(30, dtype=float) * 3)
+    correction = prefix.iloc[[5]].copy()
+    correction["revision"] = 2
+    correction["available_at"] = prefix.iloc[-1]["available_at"] + pd.Timedelta(hours=1)
+    correction["close"] = 1000.0
+    correction["high"] = 1001.0
+    correction["low"] = 999.0
+    extended = pd.concat([prefix, correction], ignore_index=True)
+
+    audit = audit_prefix_invariance(
+        spec,
+        prefix,
+        extended,
+        StrategyContext(),
+        StrategyContext(),
+    )
+
+    assert audit.passed, audit.reason
+
+
+def test_later_available_revision_of_a_historical_peer_bar_does_not_repaint_pair_decisions():
+    spec = next(spec for spec in _configured_specs() if spec.strategy_id == "rolling_cointegration_pairs")
+    count = 125
+    primary = _bars("PRIMARY", np.exp(2 + np.arange(count) * 0.01 + np.sin(np.arange(count) / 9) * 0.02))
+    peer = _bars("PEER", np.exp(1 + np.arange(count) * 0.008))
+    peer_correction = peer.iloc[[-1]].copy()
+    peer_correction["revision"] = 2
+    peer_correction["available_at"] = primary.iloc[-1]["available_at"] + pd.Timedelta(hours=1)
+    peer_correction["close"] *= 10
+    peer_correction["high"] = peer_correction["close"] + 1
+    peer_correction["low"] = peer_correction["close"] - 1
+    corrected_peer = pd.concat([peer, peer_correction], ignore_index=True)
+
+    audit = audit_prefix_invariance(
+        spec,
+        primary,
+        primary,
+        StrategyContext(paired_bars=peer),
+        StrategyContext(paired_bars=corrected_peer),
     )
 
     assert audit.passed, audit.reason
