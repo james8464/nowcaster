@@ -10,6 +10,7 @@ from src.strategies.ensemble import (
     DEFAULT_ENSEMBLE_CONFIG,
     EnsembleConfig,
     EnsembleDecision,
+    canonical_decision_hash,
     combine_current_signals,
     compute_evidence_weights,
     fixed_share_update,
@@ -53,6 +54,8 @@ def decision_to_signal_frame(
         raise ValueError("symbol and strategy_id must not be empty")
     if normalized_symbol != decision.symbol:
         raise ValueError("execution symbol does not match decision context")
+    if decision.decision_hash != canonical_decision_hash(decision):
+        raise ValueError("ensemble decision hash does not match its canonical payload")
     if decision.data_through is None:
         raise ValueError("an executable ensemble decision requires an explicit data_through timestamp")
     data_through = decision.data_through

@@ -122,6 +122,14 @@ def _evaluations() -> tuple:
                     0.6,
                     0.2,
                 ),
+                FoldEvidence(
+                    2,
+                    datetime(2026, 8, 21, 18, tzinfo=UTC),
+                    datetime(2026, 8, 21, 19, tzinfo=UTC),
+                    datetime(2026, 8, 21, 19, tzinfo=UTC),
+                    0.7,
+                    0.15,
+                ),
             ),
             expected_edge=0.02,
             expected_cost=0.001,
@@ -132,6 +140,7 @@ def _evaluations() -> tuple:
         registry=registry,
         runs=runs,
         chronology=bars["close_timestamp"],
+        outcome_availability=bars["available_at"],
         as_of=as_of,
         mode=StrategyMode.PAPER,
         dataset_hash="d" * 64,
@@ -218,7 +227,10 @@ def test_current_unlabeled_inference_is_deterministic_traceable_and_persists_res
     assert not execution.trade_ledger.empty
     assert execution.trade_ledger["decision_timestamp"].eq(pd.Timestamp(first.as_of)).all()
     assert set(execution.trade_ledger["side"]) == {"buy"}
-    assert execution.trade_ledger["decision_hash"].eq(first.decision_hash).all()
+    assert execution.trade_ledger["source_decision_hashes"].map(
+        lambda hashes: hashes == (first.decision_hash,)
+    ).all()
+    assert execution.trade_ledger["decision_hash"].notna().all()
 
 
 def test_frozen_current_decision_never_applies_outcome_feedback() -> None:

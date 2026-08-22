@@ -44,9 +44,10 @@ def _signal(
     decision: str,
     signal: int,
     strength: float = 1.0,
+    decision_hash: str | None = None,
 ) -> dict[str, object]:
     timestamp = pd.Timestamp(decision, tz="UTC")
-    return {
+    result = {
         "strategy_id": strategy_id,
         "symbol": symbol,
         "decision_timestamp": timestamp,
@@ -54,6 +55,9 @@ def _signal(
         "signal": signal,
         "strength": strength,
     }
+    if decision_hash is not None:
+        result["decision_hash"] = decision_hash
+    return result
 
 
 def test_portfolio_enters_next_bar_and_produces_literal_equity_and_trade_ledgers() -> None:
@@ -380,3 +384,72 @@ def test_asymmetric_session_close_batch_is_rejected_before_breaking_net_cap() ->
         "session_close_bar_not_actionable",
         "session_close_batch_projected_risk_limit",
     }
+
+
+def test_netted_open_and_zero_signal_close_preserve_ordered_source_decision_provenance() -> None:
+    alpha_open = "a" * 64
+    beta_open = "b" * 64
+    alpha_close = "c" * 64
+    beta_close = "d" * 64
+    signals = pd.DataFrame(
+        [
+            _signal("alpha", "AAA", "2026-08-21 10:01", 1, 0.6, alpha_open),
+            _signal("beta", "AAA", "2026-08-21 10:01", 1, 0.4, beta_open),
+            _signal("alpha", "AAA", "2026-08-21 10:02", 0, 0.0, alpha_close),
+            _signal("beta", "AAA", "2026-08-21 10:02", 0, 0.0, beta_close),
+        ]
+    )
+
+    result = run_intraday_backtest(
+        _bars(),
+        signals,
+        ExecutionAssumptions(),
+        RiskLimits(initial_cash=1_000),
+    )
+
+    assert "source_decision_hashes" in result.trade_ledger
+    assert result.trade_ledger["source_decision_hashes"].tolist() == [
+        (alpha_open, beta_open),
+        (alpha_open, beta_open, alpha_close, beta_close),
+    ]
+    assert result.trade_ledger["decision_hash"].notna().all()
+    assert result.trade_ledger["decision_hash"].str.len().eq(64).all()
+    assert result.trade_ledger.iloc[0]["strategy_id"] == "netted:alpha+beta"
+
+    changed = signals.copy()
+    changed.loc[changed["strategy_id"].eq("beta") & changed["signal"].eq(1), "strength"] = 0.3
+    changed_result = run_intraday_backtest(
+        _bars(),
+        changed,
+        ExecutionAssumptions(),
+        RiskLimits(initial_cash=1_000),
+    )
+    assert changed_result.trade_ledger.iloc[0]["decision_hash"] != result.trade_ledger.iloc[0]["decision_hash"]
+
+
+def test_session_flatten_carries_originating_position_decision_provenance() -> None:
+    alpha_hash = "a" * 64
+    beta_hash = "b" * 64
+    bars = _bars(opens=(100, 100, 100), closes=(100, 100, 100))
+    bars["session_close_timestamp"] = pd.Series(pd.NaT, index=bars.index, dtype="datetime64[ns, UTC]")
+    closing = bars["open_timestamp"] == pd.Timestamp("2026-08-21 10:02Z")
+    bars.loc[closing, "session_close_timestamp"] = bars.loc[closing, "close_timestamp"]
+    signals = pd.DataFrame(
+        [
+            _signal("alpha", "AAA", "2026-08-21 10:01", 1, 0.6, alpha_hash),
+            _signal("beta", "AAA", "2026-08-21 10:01", 1, 0.4, beta_hash),
+        ]
+    )
+    assumptions = ExecutionAssumptions(
+        flatten_at_session_end=True,
+        session_close=lambda row: row["session_close_timestamp"],
+    )
+
+    result = run_intraday_backtest(bars, signals, assumptions, RiskLimits(initial_cash=1_000))
+
+    assert result.trade_ledger["order_type"].tolist() == ["market", "session_flatten"]
+    assert result.trade_ledger["source_decision_hashes"].tolist() == [
+        (alpha_hash, beta_hash),
+        (alpha_hash, beta_hash),
+    ]
+    assert result.trade_ledger["decision_hash"].notna().all()

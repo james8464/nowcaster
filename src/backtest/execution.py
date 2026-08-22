@@ -2,18 +2,81 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from typing import Any, Literal
 
 import pandas as pd
 
 from src.backtest.costs import CostAssumptions, calculate_transaction_cost
+from src.strategies.types import canonical_hash
 
 OrderSide = Literal["buy", "sell"]
 OrderType = Literal["market", "stop", "protective_stop", "target", "bracket_exit", "timed_exit"]
 PositionEffect = Literal["auto", "open", "close"]
 Liquidity = Literal["maker", "taker"]
+
+
+@dataclass(frozen=True, slots=True)
+class DecisionProvenance:
+    strategy_id: str
+    symbol: str
+    decision_hash: str
+    decision_timestamp: pd.Timestamp
+    signal: int
+    strength: float
+
+    def __post_init__(self) -> None:
+        timestamp = pd.Timestamp(self.decision_timestamp)
+        if timestamp.tzinfo is None:
+            raise ValueError("source decision timestamps must be timezone-aware")
+        if not self.strategy_id.strip() or not self.symbol.strip() or not self.decision_hash.strip():
+            raise ValueError("source decision identity must not be empty")
+        if self.signal not in (-1, 0, 1) or not math.isfinite(self.strength) or not 0 <= self.strength <= 1:
+            raise ValueError("source decision state is invalid")
+        object.__setattr__(self, "strategy_id", self.strategy_id.strip())
+        object.__setattr__(self, "symbol", self.symbol.strip().upper())
+        object.__setattr__(self, "decision_hash", self.decision_hash.strip())
+        object.__setattr__(self, "decision_timestamp", timestamp.tz_convert("UTC"))
+
+
+def _ordered_sources(sources: Sequence[DecisionProvenance]) -> tuple[DecisionProvenance, ...]:
+    unique = {
+        (
+            source.strategy_id,
+            source.symbol,
+            source.decision_hash,
+            source.decision_timestamp,
+            source.signal,
+            source.strength,
+        ): source
+        for source in sources
+    }
+    return tuple(
+        sorted(unique.values(), key=lambda item: (item.decision_timestamp, item.strategy_id, item.decision_hash))
+    )
+
+
+def _source_decision_hash(symbol: str, sources: Sequence[DecisionProvenance]) -> str | None:
+    ordered = _ordered_sources(sources)
+    if not ordered:
+        return None
+    return canonical_hash(
+        {
+            "symbol": symbol.strip().upper(),
+            "sources": tuple(
+                {
+                    "strategy_id": source.strategy_id,
+                    "symbol": source.symbol,
+                    "decision_hash": source.decision_hash,
+                    "decision_timestamp": source.decision_timestamp,
+                    "signal": source.signal,
+                    "strength": source.strength,
+                }
+                for source in ordered
+            ),
+        }
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,7 +92,9 @@ class OrderIntent:
     target_price: float | None = None
     position_effect: PositionEffect = "auto"
     liquidity: Liquidity = "taker"
-    decision_hash: str | None = None
+    source_decisions: tuple[DecisionProvenance, ...] = ()
+    source_decision_hashes: tuple[str, ...] = field(init=False)
+    decision_hash: str | None = field(init=False)
 
     def __post_init__(self) -> None:
         timestamp = pd.Timestamp(self.decision_timestamp)
@@ -37,10 +102,6 @@ class OrderIntent:
             raise ValueError("decision_timestamp must be timezone-aware")
         if not self.order_id.strip() or not self.strategy_id.strip() or not self.symbol.strip():
             raise ValueError("order, strategy, and symbol identifiers must not be empty")
-        if self.decision_hash is not None:
-            if not isinstance(self.decision_hash, str) or not self.decision_hash.strip():
-                raise ValueError("decision_hash must be a non-empty string when supplied")
-            object.__setattr__(self, "decision_hash", self.decision_hash.strip())
         if self.quantity <= 0 or not math.isfinite(self.quantity):
             raise ValueError("order quantity must be finite and positive")
         if self.order_type in {"stop", "protective_stop"} and self.stop_price is None:
@@ -51,6 +112,12 @@ class OrderIntent:
             raise ValueError("bracket exits require stop_price and target_price")
         object.__setattr__(self, "decision_timestamp", timestamp.tz_convert("UTC"))
         object.__setattr__(self, "symbol", self.symbol.strip().upper())
+        ordered_sources = _ordered_sources(self.source_decisions)
+        if any(source.symbol != self.symbol for source in ordered_sources):
+            raise ValueError("source decision symbols must match the order symbol")
+        object.__setattr__(self, "source_decisions", ordered_sources)
+        object.__setattr__(self, "source_decision_hashes", tuple(source.decision_hash for source in ordered_sources))
+        object.__setattr__(self, "decision_hash", _source_decision_hash(self.symbol, ordered_sources))
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,7 +162,15 @@ class Fill:
     total_cost: float
     status: Literal["filled", "partial"]
     fill_reason: str
-    decision_hash: str | None = None
+    source_decisions: tuple[DecisionProvenance, ...] = ()
+    source_decision_hashes: tuple[str, ...] = field(init=False)
+    decision_hash: str | None = field(init=False)
+
+    def __post_init__(self) -> None:
+        ordered_sources = _ordered_sources(self.source_decisions)
+        object.__setattr__(self, "source_decisions", ordered_sources)
+        object.__setattr__(self, "source_decision_hashes", tuple(source.decision_hash for source in ordered_sources))
+        object.__setattr__(self, "decision_hash", _source_decision_hash(self.symbol, ordered_sources))
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,6 +186,7 @@ class ExecutionResult:
     fills: tuple[Fill, ...]
     rejections: tuple[OrderRejection, ...]
     positions: dict[str, float]
+    position_provenance: dict[str, tuple[DecisionProvenance, ...]]
 
 
 @dataclass(slots=True)
@@ -259,7 +335,7 @@ def _make_fill(
         total_cost=total_cost,
         status="partial" if quantity + 1e-12 < order.quantity else "filled",
         fill_reason=reason,
-        decision_hash=order.decision_hash,
+        source_decisions=order.source_decisions,
     )
 
 
@@ -301,12 +377,25 @@ def run_execution(
     assumptions: ExecutionAssumptions,
     *,
     initial_positions: Mapping[str, float] | None = None,
+    initial_position_provenance: Mapping[str, Sequence[DecisionProvenance]] | None = None,
     initial_used_capacity: Mapping[tuple[str, pd.Timestamp], float] | None = None,
 ) -> ExecutionResult:
     ordered_bars = _validated_bars(bars)
     positions = {str(symbol).upper(): float(quantity) for symbol, quantity in (initial_positions or {}).items()}
     if any(not math.isfinite(quantity) for quantity in positions.values()):
         raise ValueError("initial positions must be finite")
+    position_provenance = {
+        str(symbol).upper(): _ordered_sources(sources)
+        for symbol, sources in (initial_position_provenance or {}).items()
+    }
+    if any(
+        source.symbol != symbol
+        for symbol, sources in position_provenance.items()
+        for source in sources
+    ):
+        raise ValueError("initial position provenance symbols must match their positions")
+    if set(position_provenance) - set(positions):
+        raise ValueError("initial position provenance requires a matching position")
     used_capacity_by_bar = {
         (str(symbol).upper(), pd.Timestamp(timestamp).tz_convert("UTC")): float(quantity)
         for (symbol, timestamp), quantity in (initial_used_capacity or {}).items()
@@ -377,9 +466,26 @@ def run_execution(
                     pending.remove(item)
                     continue
             raw_price, reason = triggered
-            fill = _make_fill(order, bar, assumptions, quantity, raw_price, reason)
+            direction = 1 if order.side == "buy" else -1
+            reducing = position * direction < 0
+            execution_order = order
+            if reducing:
+                execution_order = replace(
+                    order,
+                    source_decisions=(*position_provenance.get(order.symbol, ()), *order.source_decisions),
+                )
+            fill = _make_fill(execution_order, bar, assumptions, quantity, raw_price, reason)
             fills.append(fill)
-            positions[order.symbol] = positions.get(order.symbol, 0.0) + quantity * (1 if order.side == "buy" else -1)
+            updated_position = position + quantity * direction
+            positions[order.symbol] = updated_position
+            if abs(updated_position) <= 1e-12:
+                position_provenance.pop(order.symbol, None)
+            elif abs(position) <= 1e-12 or position * updated_position < 0:
+                position_provenance[order.symbol] = order.source_decisions
+            elif abs(updated_position) > abs(position):
+                position_provenance[order.symbol] = _ordered_sources(
+                    (*position_provenance.get(order.symbol, ()), *order.source_decisions)
+                )
             used_capacity += quantity
             pending.remove(item)
             if remainder_reason is not None:
@@ -406,6 +512,7 @@ def run_execution(
                     quantity=abs(quantity),
                     order_type="timed_exit",
                     position_effect="close",
+                    source_decisions=position_provenance.get(symbol, ()),
                 )
                 capacity = _round_quantity(
                     max(float(bar["volume"]) * assumptions.participation_rate - used_capacity, 0.0),
@@ -427,6 +534,8 @@ def run_execution(
                 )
                 fills.append(fill)
                 positions[symbol] += executable * (1 if side == "buy" else -1)
+                if abs(positions[symbol]) <= 1e-12:
+                    position_provenance.pop(symbol, None)
                 if executable + 1e-12 < abs(quantity):
                     rejections.append(_session_rejection(bar, "close_quantity_exceeds_position_capacity"))
 
@@ -439,10 +548,11 @@ def run_execution(
         rejections.append(OrderRejection(item.order.order_id, item.order.strategy_id, item.order.symbol, reason))
     fills.sort(key=lambda item: (item.execution_timestamp, item.order_id))
     rejections.sort(key=lambda item: item.order_id)
-    return ExecutionResult(tuple(fills), tuple(rejections), positions)
+    return ExecutionResult(tuple(fills), tuple(rejections), positions, position_provenance)
 
 
 __all__ = [
+    "DecisionProvenance",
     "ExecutionAssumptions",
     "ExecutionResult",
     "Fill",

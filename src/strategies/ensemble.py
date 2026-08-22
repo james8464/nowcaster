@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
 from typing import Any
 
@@ -12,7 +12,13 @@ import pandas as pd
 from src.backtest.robustness import deflated_sharpe_probability
 from src.database.engine import Database
 from src.strategies.types import BarInterval, StrategyFamily, StrategyMode, canonical_hash
-from src.strategies.validation import EvaluationStatus, StrategyEvaluation
+from src.strategies.validation import (
+    EvaluationStatus,
+    StrategyEvaluation,
+    ValidationConfig,
+    make_outer_folds,
+    select_final_boundary,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,9 +136,94 @@ class EnsembleDecision:
     interval: BarInterval
     mode: StrategyMode
     component_versions: tuple[tuple[str, str], ...]
+    component_states: tuple[Mapping[str, Any], ...]
     weights: tuple[EvidenceWeight, ...]
     contributions: tuple[ComponentContribution, ...]
-    decision_hash: str
+    config: EnsembleConfig
+    decision_hash: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "component_states", tuple(_deep_freeze(item) for item in self.component_states))
+        object.__setattr__(self, "decision_hash", canonical_decision_hash(self))
+
+
+def _config_payload(config: EnsembleConfig) -> dict[str, Any]:
+    return {
+        "equal_weight_shrinkage": config.equal_weight_shrinkage,
+        "maximum_strategy_weight": config.maximum_strategy_weight,
+        "maximum_family_weight": config.maximum_family_weight,
+        "sharpe_clip": config.sharpe_clip,
+        "sample_size_target": config.sample_size_target,
+        "fixed_share": config.fixed_share,
+        "learning_rate": config.learning_rate,
+        "minimum_breadth": config.minimum_breadth,
+        "minimum_vote_margin": config.minimum_vote_margin,
+        "minimum_probability": config.minimum_probability,
+        "cost_buffer_multiplier": config.cost_buffer_multiplier,
+    }
+
+
+def _decision_payload(decision: EnsembleDecision) -> dict[str, Any]:
+    return {
+        "context": {
+            "dataset_hash": decision.dataset_hash,
+            "symbol": decision.symbol,
+            "interval": decision.interval,
+            "mode": decision.mode,
+        },
+        "as_of": decision.as_of,
+        "signal": decision.signal,
+        "status": decision.status,
+        "reasons": decision.reasons,
+        "probability": decision.probability,
+        "vote_margin": decision.vote_margin,
+        "expected_net_edge": decision.expected_net_edge,
+        "estimated_cost": decision.estimated_cost,
+        "uncertainty_buffer": decision.uncertainty_buffer,
+        "breadth": decision.breadth,
+        "data_through": decision.data_through,
+        "component_versions": decision.component_versions,
+        "config": _config_payload(decision.config),
+        "components": decision.component_states,
+        "contributions": tuple(
+            {
+                "strategy_id": contribution.strategy_id,
+                "strategy_version": contribution.strategy_version,
+                "weight": contribution.weight,
+                "signal": contribution.signal,
+                "normalized_vote": contribution.normalized_vote,
+                "contribution": contribution.contribution,
+                "decision_timestamp": contribution.decision_timestamp,
+                "data_through": contribution.data_through,
+                "expected_edge": contribution.expected_edge,
+                "expected_cost": contribution.expected_cost,
+                "uncertainty": contribution.uncertainty,
+            }
+            for contribution in decision.contributions
+        ),
+        "weights": tuple(
+            {
+                "strategy_id": weight.strategy_id,
+                "strategy_version": weight.strategy_version,
+                "family": weight.family,
+                "weight": weight.weight,
+                "prior_weight": weight.prior_weight,
+                "evidence_score": weight.evidence_score,
+                "effective_at": weight.effective_at,
+                "outcomes_through": weight.outcomes_through,
+                "dataset_hash": weight.dataset_hash,
+                "symbol": weight.symbol,
+                "interval": weight.interval,
+                "mode": weight.mode,
+                "provenance": weight.provenance,
+            }
+            for weight in decision.weights
+        ),
+    }
+
+
+def canonical_decision_hash(decision: EnsembleDecision) -> str:
+    return canonical_hash(_decision_payload(decision))
 
 
 @dataclass(frozen=True, slots=True)
@@ -198,9 +289,116 @@ def _utc_evidence_timestamp(value: Any) -> pd.Timestamp:
     return timestamp.tz_convert("UTC")
 
 
+def _root_validation_snapshot_is_auditable(evaluation: StrategyEvaluation) -> bool:
+    provenance = evaluation.evidence_provenance
+    snapshot = provenance["validation_snapshot"]
+    if provenance["validation_snapshot_hash"] != canonical_hash(snapshot):
+        return False
+    context = {
+        "dataset_hash": evaluation.dataset_hash,
+        "strategy_id": evaluation.strategy_id,
+        "strategy_version": evaluation.strategy_version,
+        "family": evaluation.family.value,
+        "symbol": evaluation.symbol,
+        "interval": evaluation.interval.value,
+        "mode": evaluation.mode.value,
+    }
+    if canonical_hash(snapshot["context"]) != canonical_hash(context):
+        return False
+    chronology = tuple(_utc_evidence_timestamp(value) for value in snapshot["chronology"])
+    availability = tuple(_utc_evidence_timestamp(value) for value in snapshot["outcome_availability"])
+    if not chronology or len(chronology) != len(availability):
+        return False
+    if tuple(sorted(chronology)) != chronology or len(set(chronology)) != len(chronology):
+        return False
+    if snapshot["chronology_hash"] != canonical_hash(chronology):
+        return False
+    if snapshot["outcome_availability_hash"] != canonical_hash(availability):
+        return False
+    config_record = snapshot["validation_config"]
+    config = ValidationConfig(
+        final_test_fraction=float(config_record["final_test_fraction"]),
+        minimum_train_observations=int(config_record["minimum_train_observations"]),
+        validation_observations=int(config_record["validation_observations"]),
+        forecast_horizon=timedelta(seconds=float(config_record["forecast_horizon_seconds"])),
+        publication_delay=timedelta(seconds=float(config_record["publication_delay_seconds"])),
+        embargo=timedelta(seconds=float(config_record["embargo_seconds"])),
+        periods_per_year=int(config_record["periods_per_year"]),
+        minimum_trades=int(config_record["minimum_trades"]),
+        minimum_development_observations=int(config_record["minimum_development_observations"]),
+        maximum_drawdown=float(config_record["maximum_drawdown"]),
+        minimum_dsr_probability=float(config_record["minimum_dsr_probability"]),
+    )
+    expected_config = {
+        "final_test_fraction": config.final_test_fraction,
+        "minimum_train_observations": config.minimum_train_observations,
+        "validation_observations": config.validation_observations,
+        "forecast_horizon_seconds": config.forecast_horizon.total_seconds(),
+        "publication_delay_seconds": config.publication_delay.total_seconds(),
+        "embargo_seconds": config.embargo.total_seconds(),
+        "periods_per_year": config.periods_per_year,
+        "minimum_trades": config.minimum_trades,
+        "minimum_development_observations": config.minimum_development_observations,
+        "maximum_drawdown": config.maximum_drawdown,
+        "minimum_dsr_probability": config.minimum_dsr_probability,
+    }
+    if canonical_hash(config_record) != canonical_hash(expected_config):
+        return False
+    boundary = select_final_boundary(chronology, final_test_fraction=config.final_test_fraction)
+    expected_boundary = {
+        "final_start": boundary.final_start.to_pydatetime(),
+        "development_index": boundary.development_index,
+        "final_index": boundary.final_index,
+    }
+    if canonical_hash(snapshot["final_boundary"]) != canonical_hash(expected_boundary):
+        return False
+    validation_data = pd.DataFrame(
+        {
+            "decision_timestamp": chronology,
+            "outcome_available_at": availability,
+        }
+    )
+    folds = make_outer_folds(validation_data, boundary=boundary, config=config)
+    expected_plan = tuple(
+        {
+            "fold": fold_number,
+            "train_index": fold.train_index,
+            "validation_index": fold.validation_index,
+            "inner_folds": tuple(
+                {"train_index": inner.train_index, "validation_index": inner.validation_index}
+                for inner in fold.inner_folds
+            ),
+        }
+        for fold_number, fold in enumerate(folds)
+    )
+    if canonical_hash(snapshot["fold_plan"]) != canonical_hash(expected_plan):
+        return False
+    trial_records = tuple(snapshot["trial_records"])
+    fold_records = tuple(snapshot["fold_records"])
+    if canonical_hash(trial_records) != canonical_hash(provenance["trials"]):
+        return False
+    if canonical_hash(fold_records) != canonical_hash(provenance["folds"]):
+        return False
+    if len(fold_records) != len(expected_plan):
+        return False
+    for record, plan in zip(fold_records, expected_plan, strict=True):
+        validation_index = plan["validation_index"]
+        if int(record["fold"]) != int(plan["fold"]):
+            return False
+        if _utc_evidence_timestamp(record["validation_start"]) != chronology[validation_index[0]]:
+            return False
+        if _utc_evidence_timestamp(record["validation_end"]) != chronology[validation_index[-1]]:
+            return False
+    if canonical_hash(snapshot["derived"]) != canonical_hash(provenance["promotion_inputs"]):
+        return False
+    return canonical_hash(snapshot["promotion"]) == canonical_hash(provenance["promotion_decision"])
+
+
 def _sealed_evidence_is_auditable(evaluation: StrategyEvaluation) -> bool:
     provenance = evaluation.evidence_provenance
     try:
+        if not _root_validation_snapshot_is_auditable(evaluation):
+            return False
         if provenance.get("sealed") is not True or provenance.get("trial_source") != "timestamped_trial_evidence":
             return False
         boundary = _utc_evidence_timestamp(provenance["sealed_boundary"])
@@ -459,6 +657,39 @@ def compute_evidence_weights(
     return tuple(weights)
 
 
+def _strict_utc_outcome_column(values: pd.Series, name: str) -> pd.Series:
+    timestamps: list[pd.Timestamp] = []
+    for value in values:
+        try:
+            timestamp = pd.Timestamp(value)
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"resolved outcome {name} values must be timezone-aware") from error
+        if pd.isna(timestamp) or timestamp.tzinfo is None:
+            raise ValueError(f"resolved outcome {name} values must be timezone-aware")
+        timestamps.append(timestamp.tz_convert("UTC"))
+    return pd.Series(timestamps, index=values.index)
+
+
+def _outcome_record(row: Any) -> dict[str, Any]:
+    identity = {
+        "strategy_id": str(row.strategy_id),
+        "dataset_hash": str(row.dataset_hash),
+        "strategy_version": str(row.strategy_version),
+        "symbol": str(row.symbol),
+        "interval": str(row.interval),
+        "mode": str(row.mode),
+        "decision_timestamp": pd.Timestamp(row.decision_timestamp).isoformat(),
+        "outcome_available_at": pd.Timestamp(row.outcome_available_at).isoformat(),
+    }
+    return {
+        "outcome_id": canonical_hash(identity),
+        **identity,
+        "signal": int(row.signal),
+        "realized_return": float(row.realized_return),
+        "cost": float(row.cost),
+    }
+
+
 def fixed_share_update(
     weights: Sequence[EvidenceWeight],
     resolved_outcomes: pd.DataFrame,
@@ -494,8 +725,12 @@ def fixed_share_update(
     outcomes = resolved_outcomes.copy()
     if outcomes[list(required)].isna().any().any():
         raise ValueError("resolved outcomes must be complete and finite")
-    outcomes["decision_timestamp"] = pd.to_datetime(outcomes["decision_timestamp"], utc=True, errors="coerce")
-    outcomes["outcome_available_at"] = pd.to_datetime(outcomes["outcome_available_at"], utc=True, errors="coerce")
+    outcomes["decision_timestamp"] = _strict_utc_outcome_column(
+        outcomes["decision_timestamp"], "decision_timestamp"
+    )
+    outcomes["outcome_available_at"] = _strict_utc_outcome_column(
+        outcomes["outcome_available_at"], "outcome_available_at"
+    )
     outcomes["signal"] = pd.to_numeric(outcomes["signal"], errors="coerce")
     outcomes["realized_return"] = pd.to_numeric(outcomes["realized_return"], errors="coerce")
     outcomes["cost"] = pd.to_numeric(outcomes["cost"], errors="coerce")
@@ -546,37 +781,77 @@ def fixed_share_update(
         if supplied != expected:
             raise ValueError(f"resolved outcome context does not match evidence weight for {weight.strategy_id}")
 
-    previous_updates = [weight.outcomes_through for weight in ordered_weights if weight.outcomes_through is not None]
-    update_cutoff = previous_updates[0] if previous_updates else datetime.min.replace(tzinfo=UTC)
     outcomes = outcomes.loc[
         outcomes["strategy_id"].isin(weight_by_strategy)
         & (outcomes["outcome_available_at"] <= pd.Timestamp(as_of))
-        & (outcomes["outcome_available_at"] > pd.Timestamp(update_cutoff))
     ].sort_values(["outcome_available_at", "decision_timestamp", "strategy_id"], kind="stable")
     if outcomes.empty:
         return ordered_weights
 
-    current = {weight.strategy_id: weight.weight for weight in ordered_weights}
+    stored_states = [_deep_thaw(weight.provenance.get("online_state", {})) for weight in ordered_weights]
+    if len({canonical_hash(state) for state in stored_states}) != 1:
+        raise ValueError("evidence weights must share one homogeneous persisted online state")
+    stored_state = stored_states[0]
+    config_hash = canonical_hash(
+        {
+            "fixed_share": config.fixed_share,
+            "learning_rate": config.learning_rate,
+            "maximum_strategy_weight": config.maximum_strategy_weight,
+            "maximum_family_weight": config.maximum_family_weight,
+        }
+    )
+    if stored_state and stored_state.get("config_hash") != config_hash:
+        raise ValueError("online feedback configuration cannot change during replay")
+    base_weight_rows = stored_state.get(
+        "base_weights",
+        tuple({"strategy_id": weight.strategy_id, "weight": weight.weight} for weight in ordered_weights),
+    )
+    base_weights = {str(row["strategy_id"]): float(row["weight"]) for row in base_weight_rows}
+    if set(base_weights) != set(weight_by_strategy) or any(
+        not math.isfinite(value) or value < 0 for value in base_weights.values()
+    ):
+        raise ValueError("persisted online base weights are invalid")
+
+    history_by_id: dict[str, dict[str, Any]] = {}
+    for record in stored_state.get("processed_outcomes", ()):
+        normalized = dict(record)
+        outcome_id = str(normalized.get("outcome_id", ""))
+        if not outcome_id or outcome_id in history_by_id:
+            raise ValueError("persisted outcome history is invalid")
+        history_by_id[outcome_id] = normalized
+    for row in outcomes.itertuples(index=False):
+        record = _outcome_record(row)
+        outcome_id = record["outcome_id"]
+        previous = history_by_id.get(outcome_id)
+        if previous is not None and canonical_hash(previous) != canonical_hash(record):
+            raise ValueError("resolved outcome identity was replayed with conflicting values")
+        history_by_id[outcome_id] = record
+    history = tuple(
+        sorted(
+            history_by_id.values(),
+            key=lambda record: (
+                record["outcome_available_at"],
+                record["decision_timestamp"],
+                record["strategy_id"],
+                record["outcome_id"],
+            ),
+        )
+    )
+    history_frame = pd.DataFrame(history)
+    history_frame["outcome_available_at"] = pd.to_datetime(history_frame["outcome_available_at"], utc=True)
+    history_frame["decision_timestamp"] = pd.to_datetime(history_frame["decision_timestamp"], utc=True)
+
+    current = base_weights.copy()
     prior_total = sum(weight.prior_weight for weight in ordered_weights)
     prior = {
         weight.strategy_id: (weight.prior_weight / prior_total if prior_total > 0 else weight.weight)
         for weight in ordered_weights
     }
-    families = {weight.strategy_id: weight.family for weight in ordered_weights if weight.weight > 0}
+    families = {weight.strategy_id: weight.family for weight in ordered_weights if base_weights[weight.strategy_id] > 0}
     outcomes_through: datetime | None = None
-    stored_states = [_deep_thaw(weight.provenance.get("online_state", {})) for weight in ordered_weights]
-    if len({canonical_hash(state) for state in stored_states}) != 1:
-        raise ValueError("evidence weights must share one homogeneous persisted online state")
-    stored_state = stored_states[0]
-    cumulative_mixability_gap = float(stored_state.get("cumulative_mixability_gap", 0.0))
-    adaptive_learning_rates = [float(value) for value in stored_state.get("adaptive_learning_rates", ())]
-    if (
-        not math.isfinite(cumulative_mixability_gap)
-        or cumulative_mixability_gap < 0
-        or not all(math.isfinite(rate) and rate > 0 for rate in adaptive_learning_rates)
-    ):
-        raise ValueError("persisted online state is invalid")
-    for effective_at, group in outcomes.groupby("outcome_available_at", sort=True):
+    cumulative_mixability_gap = 0.0
+    adaptive_learning_rates: list[float] = []
+    for effective_at, group in history_frame.groupby("outcome_available_at", sort=True):
         rewards = (
             (group["signal"] * group["realized_return"] - group["cost"])
             .groupby(group["strategy_id"])
@@ -627,6 +902,13 @@ def fixed_share_update(
                 "learning_rate_ceiling": config.learning_rate,
                 "outcomes_through": outcomes_through.isoformat() if outcomes_through else None,
                 "online_state": {
+                    "config_hash": config_hash,
+                    "base_weights": tuple(
+                        {"strategy_id": strategy_id, "weight": base_weights[strategy_id]}
+                        for strategy_id in sorted(base_weights)
+                    ),
+                    "processed_outcome_ids": tuple(record["outcome_id"] for record in history),
+                    "processed_outcomes": history,
                     "adaptive_learning_rates": tuple(adaptive_learning_rates),
                     "cumulative_mixability_gap": cumulative_mixability_gap,
                 },
@@ -787,91 +1069,25 @@ def combine_current_signals(
     status = "abstain" if signal == 0 else "long" if signal > 0 else "short"
     active_data_times = [data_times[evaluation.strategy_id] for evaluation, _, _ in active]
     data_through = max(active_data_times) if active_data_times else None
-    hash_payload = {
-        "context": {
-            "dataset_hash": context.dataset_hash,
-            "symbol": context.symbol,
-            "interval": context.interval,
-            "mode": context.mode,
-        },
-        "as_of": as_of,
-        "signal": signal,
-        "status": status,
-        "reasons": tuple(reasons),
-        "probability": probability,
-        "vote_margin": vote_margin,
-        "expected_net_edge": net_edge,
-        "estimated_cost": estimated_cost,
-        "uncertainty_buffer": uncertainty,
-        "breadth": breadth,
-        "data_through": data_through,
-        "config": {
-            "equal_weight_shrinkage": config.equal_weight_shrinkage,
-            "maximum_strategy_weight": config.maximum_strategy_weight,
-            "maximum_family_weight": config.maximum_family_weight,
-            "sharpe_clip": config.sharpe_clip,
-            "sample_size_target": config.sample_size_target,
-            "fixed_share": config.fixed_share,
-            "learning_rate": config.learning_rate,
-            "minimum_breadth": config.minimum_breadth,
-            "minimum_vote_margin": config.minimum_vote_margin,
-            "minimum_probability": config.minimum_probability,
-            "cost_buffer_multiplier": config.cost_buffer_multiplier,
-        },
-        "components": [
-            {
-                "strategy_id": evaluation.strategy_id,
-                "strategy_version": evaluation.strategy_version,
-                "family": evaluation.family,
-                "status": evaluation.status,
-                "promotion": evaluation.promotion.promoted,
-                "current_signal": evaluation.current_signal,
-                "current_strength": evaluation.current_strength,
-                "current_probability": evaluation.current_probability,
-                "current_volatility": evaluation.current_volatility,
-                "expected_edge": evaluation.expected_edge,
-                "expected_cost": evaluation.expected_cost,
-                "uncertainty": evaluation.uncertainty,
-                "decision_timestamp": decision_times[evaluation.strategy_id],
-                "data_through": data_times[evaluation.strategy_id],
-            }
-            for evaluation in ordered_evaluations
-        ],
-        "contributions": [
-            {
-                "strategy_id": contribution.strategy_id,
-                "strategy_version": contribution.strategy_version,
-                "weight": contribution.weight,
-                "signal": contribution.signal,
-                "normalized_vote": contribution.normalized_vote,
-                "contribution": contribution.contribution,
-                "decision_timestamp": contribution.decision_timestamp,
-                "data_through": contribution.data_through,
-                "expected_edge": contribution.expected_edge,
-                "expected_cost": contribution.expected_cost,
-                "uncertainty": contribution.uncertainty,
-            }
-            for contribution in contributions
-        ],
-        "weights": [
-            {
-                "strategy_id": weight.strategy_id,
-                "strategy_version": weight.strategy_version,
-                "family": weight.family,
-                "weight": weight.weight,
-                "prior_weight": weight.prior_weight,
-                "evidence_score": weight.evidence_score,
-                "effective_at": weight.effective_at,
-                "outcomes_through": weight.outcomes_through,
-                "dataset_hash": weight.dataset_hash,
-                "symbol": weight.symbol,
-                "interval": weight.interval,
-                "mode": weight.mode,
-                "provenance": weight.provenance,
-            }
-            for weight in ordered_weights
-        ],
-    }
+    component_states = tuple(
+        {
+            "strategy_id": evaluation.strategy_id,
+            "strategy_version": evaluation.strategy_version,
+            "family": evaluation.family,
+            "status": evaluation.status,
+            "promotion": evaluation.promotion.promoted,
+            "current_signal": evaluation.current_signal,
+            "current_strength": evaluation.current_strength,
+            "current_probability": evaluation.current_probability,
+            "current_volatility": evaluation.current_volatility,
+            "expected_edge": evaluation.expected_edge,
+            "expected_cost": evaluation.expected_cost,
+            "uncertainty": evaluation.uncertainty,
+            "decision_timestamp": decision_times[evaluation.strategy_id],
+            "data_through": data_times[evaluation.strategy_id],
+        }
+        for evaluation in ordered_evaluations
+    )
     return EnsembleDecision(
         as_of=as_of,
         signal=signal,
@@ -891,9 +1107,10 @@ def combine_current_signals(
         component_versions=tuple(
             (evaluation.strategy_id, evaluation.strategy_version) for evaluation in ordered_evaluations
         ),
+        component_states=component_states,
         weights=ordered_weights,
         contributions=tuple(contributions),
-        decision_hash=canonical_hash(hash_payload),
+        config=config,
     )
 
 
@@ -933,6 +1150,7 @@ __all__ = [
     "EnsembleConfig",
     "EnsembleDecision",
     "EvidenceWeight",
+    "canonical_decision_hash",
     "combine_current_signals",
     "compute_evidence_weights",
     "fixed_share_update",

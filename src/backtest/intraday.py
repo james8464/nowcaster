@@ -8,6 +8,7 @@ import pandas as pd
 
 from src.backtest.costs import calculate_carry_cost
 from src.backtest.execution import (
+    DecisionProvenance,
     ExecutionAssumptions,
     ExecutionResult,
     Fill,
@@ -215,20 +216,33 @@ def _execute_atomic_batch(
     orders: list[OrderIntent],
     assumptions: ExecutionAssumptions,
     positions: dict[str, float],
+    position_provenance: dict[str, tuple[DecisionProvenance, ...]],
     cash: float,
     mark_prices: dict[str, float],
     risk: RiskLimits,
     strategy_symbols: dict[str, set[str]],
-) -> tuple[tuple[Fill, ...], list[dict[str, object]], dict[str, float], float]:
+) -> tuple[
+    tuple[Fill, ...],
+    list[dict[str, object]],
+    dict[str, float],
+    dict[str, tuple[DecisionProvenance, ...]],
+    float,
+]:
     if not orders:
-        return (), [], positions.copy(), cash
+        return (), [], positions.copy(), position_provenance.copy(), cash
     local = replace(
         assumptions,
         latency=pd.Timedelta(0).to_pytimedelta(),
         flatten_at_session_end=False,
         session_close=None,
     )
-    preview = run_execution(bars, orders, local, initial_positions=positions)
+    preview = run_execution(
+        bars,
+        orders,
+        local,
+        initial_positions=positions,
+        initial_position_provenance=position_provenance,
+    )
     filled_by_order = {fill.order_id: fill.quantity for fill in preview.fills}
     executable_fraction = min(filled_by_order.get(order.order_id, 0.0) / order.quantity for order in orders)
     if executable_fraction <= 0:
@@ -243,14 +257,20 @@ def _execute_atomic_batch(
             for order in orders
             if order.order_id in filled_by_order
         )
-        return (), rejected, positions.copy(), cash
+        return (), rejected, positions.copy(), position_provenance.copy(), cash
 
     fraction = executable_fraction
     for _attempt in range(100):
         candidates = _scaled_orders(orders, fraction, assumptions.lot_size)
         if len(candidates) != len(orders):
             break
-        execution = run_execution(bars, candidates, local, initial_positions=positions)
+        execution = run_execution(
+            bars,
+            candidates,
+            local,
+            initial_positions=positions,
+            initial_position_provenance=position_provenance,
+        )
         fully_executable = len(execution.fills) == len(candidates) and all(
             fill.status == "filled" for fill in execution.fills
         )
@@ -267,7 +287,13 @@ def _execute_atomic_batch(
                     }
                     for order in orders
                 ]
-            return execution.fills, rejected, execution.positions, projected_cash
+            return (
+                execution.fills,
+                rejected,
+                execution.positions,
+                execution.position_provenance,
+                projected_cash,
+            )
         fraction *= 0.99
 
     rejected = [
@@ -279,32 +305,46 @@ def _execute_atomic_batch(
         }
         for order in orders
     ]
-    return (), rejected, positions.copy(), cash
+    return (), rejected, positions.copy(), position_provenance.copy(), cash
 
 
 def _execute_session_close_batch(
     bars: pd.DataFrame,
     assumptions: ExecutionAssumptions,
     positions: dict[str, float],
+    position_provenance: dict[str, tuple[DecisionProvenance, ...]],
     used_capacity: dict[tuple[str, pd.Timestamp], float],
     cash: float,
     mark_prices: dict[str, float],
     risk: RiskLimits,
     strategy_symbols: dict[str, set[str]],
-) -> tuple[tuple[Fill, ...], list[dict[str, object]], dict[str, float], float]:
+) -> tuple[
+    tuple[Fill, ...],
+    list[dict[str, object]],
+    dict[str, float],
+    dict[str, tuple[DecisionProvenance, ...]],
+    float,
+]:
     execution = run_execution(
         bars,
         [],
         replace(assumptions, latency=pd.Timedelta(0).to_pytimedelta()),
         initial_positions=positions,
+        initial_position_provenance=position_provenance,
         initial_used_capacity=used_capacity,
     )
     rejected = [asdict(item) for item in execution.rejections]
     if not execution.fills:
-        return (), rejected, positions.copy(), cash
+        return (), rejected, positions.copy(), position_provenance.copy(), cash
     valid, projected_cash = _projected_risk_is_valid(execution, strategy_symbols, cash, mark_prices, risk)
     if valid:
-        return execution.fills, rejected, execution.positions, projected_cash
+        return (
+            execution.fills,
+            rejected,
+            execution.positions,
+            execution.position_provenance,
+            projected_cash,
+        )
     rejected.extend(
         {
             "order_id": fill.order_id,
@@ -314,7 +354,7 @@ def _execute_session_close_batch(
         }
         for fill in execution.fills
     )
-    return (), rejected, positions.copy(), cash
+    return (), rejected, positions.copy(), position_provenance.copy(), cash
 
 
 def run_intraday_backtest(
@@ -335,9 +375,10 @@ def run_intraday_backtest(
     cash = risk.initial_cash
     prior_equity = risk.initial_cash
     positions: dict[str, float] = {}
+    position_provenance: dict[str, tuple[DecisionProvenance, ...]] = {}
     last_prices: dict[str, float] = {}
     states: dict[tuple[str, str], float] = {}
-    state_decision_hashes: dict[tuple[str, str], str | None] = {}
+    state_decisions: dict[tuple[str, str], DecisionProvenance | None] = {}
     strategy_symbols: dict[str, set[str]] = {}
     consumed: set[int] = set()
     returns: list[float] = []
@@ -365,8 +406,17 @@ def run_intraday_backtest(
             signal_strategy = str(signal["strategy_id"])
             signal_symbol = str(signal["symbol"])
             states[(signal_strategy, signal_symbol)] = float(signal["signal"] * signal["strength"])
-            state_decision_hashes[(signal_strategy, signal_symbol)] = (
-                str(signal["decision_hash"]) if "decision_hash" in signal else None
+            state_decisions[(signal_strategy, signal_symbol)] = (
+                DecisionProvenance(
+                    strategy_id=signal_strategy,
+                    symbol=signal_symbol,
+                    decision_hash=str(signal["decision_hash"]),
+                    decision_timestamp=pd.Timestamp(signal["decision_timestamp"]),
+                    signal=int(signal["signal"]),
+                    strength=float(signal["strength"]),
+                )
+                if "decision_hash" in signal
+                else None
             )
             strategy_symbols.setdefault(signal_strategy, set()).add(signal_symbol)
             consumed.add(index)
@@ -389,13 +439,20 @@ def run_intraday_backtest(
             if abs(delta) + 1e-12 < assumptions.lot_size:
                 continue
             side = "buy" if delta > 0 else "sell"
-            strategy_ids = sorted(
+            active_strategy_ids = sorted(
                 strategy for (strategy, item_symbol), value in states.items() if item_symbol == symbol and value
             )
-            strategy_id = strategy_ids[0] if len(strategy_ids) == 1 else "netted:" + "+".join(strategy_ids)
-            decision_hash = (
-                state_decision_hashes.get((strategy_ids[0], symbol)) if len(strategy_ids) == 1 else None
+            all_strategy_ids = sorted(
+                strategy for strategy, item_symbol in states if item_symbol == symbol
             )
+            strategy_ids = active_strategy_ids or all_strategy_ids
+            strategy_id = strategy_ids[0] if len(strategy_ids) == 1 else "netted:" + "+".join(strategy_ids)
+            current_sources = tuple(
+                source
+                for item_strategy in all_strategy_ids
+                if (source := state_decisions.get((item_strategy, symbol))) is not None
+            )
+            sources = (*position_provenance.get(symbol, ()), *current_sources)
             latest_decision = decisions.loc[
                 (decisions["symbol"] == symbol) & decisions.index.isin(consumed), "decision_timestamp"
             ].max()
@@ -409,16 +466,23 @@ def run_intraday_backtest(
                     side=side,
                     quantity=abs(delta),
                     position_effect="open" if side == "sell" and desired_quantities[symbol] < 0 else "auto",
-                    decision_hash=decision_hash,
+                    source_decisions=sources,
                 )
             )
             order_sequence += 1
 
-        batch_fills, batch_rejections, projected_positions, projected_cash = _execute_atomic_batch(
+        (
+            batch_fills,
+            batch_rejections,
+            projected_positions,
+            projected_position_provenance,
+            projected_cash,
+        ) = _execute_atomic_batch(
             current,
             orders,
             assumptions,
             positions,
+            position_provenance,
             cash,
             mark_prices,
             risk,
@@ -426,6 +490,7 @@ def run_intraday_backtest(
         )
         rejection_rows.extend(batch_rejections)
         positions = projected_positions
+        position_provenance = projected_position_provenance
         cash = projected_cash
         open_filled_capacity: dict[tuple[str, pd.Timestamp], float] = {}
         for fill in batch_fills:
@@ -444,10 +509,17 @@ def run_intraday_backtest(
         bar_costs += carry_total
 
         if assumptions.flatten_at_session_end:
-            close_fills, close_rejections, projected_positions, projected_cash = _execute_session_close_batch(
+            (
+                close_fills,
+                close_rejections,
+                projected_positions,
+                projected_position_provenance,
+                projected_cash,
+            ) = _execute_session_close_batch(
                 current,
                 assumptions,
                 positions,
+                position_provenance,
                 open_filled_capacity,
                 cash,
                 last_prices,
@@ -456,6 +528,7 @@ def run_intraday_backtest(
             )
             rejection_rows.extend(close_rejections)
             positions = projected_positions
+            position_provenance = projected_position_provenance
             cash = projected_cash
             for fill in close_fills:
                 fills.append(fill)

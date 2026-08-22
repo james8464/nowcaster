@@ -4,6 +4,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pandas as pd
+import pytest
 
 from src.backtest.intraday import IntradayBacktestResult
 from src.backtest.metrics import calculate_backtest_metrics
@@ -129,6 +130,7 @@ def _evaluation_request(registry: StrategyRegistry, runs: dict[str, StrategyRunE
         registry=registry,
         runs=runs,
         chronology=_timeline(10)["decision_timestamp"],
+        outcome_availability=_timeline(10)["outcome_available_at"],
         as_of=datetime(2026, 8, 21, 18, tzinfo=UTC),
         mode=StrategyMode.FROZEN,
         dataset_hash="d" * 64,
@@ -157,6 +159,13 @@ def test_final_boundary_is_selected_from_complete_chronology_before_filtering() 
     assert filtered_boundary.final_start != boundary.final_start
 
 
+def test_final_boundary_rejects_naive_decision_chronology() -> None:
+    chronology = [datetime(2026, 8, 21, hour) for hour in range(9, 19)]
+
+    with pytest.raises(ValueError, match="explicit UTC"):
+        select_final_boundary(chronology, final_test_fraction=0.2)
+
+
 def test_outer_folds_are_chronological_and_purge_labels_through_the_full_embargo() -> None:
     data = _timeline()
     config = ValidationConfig(
@@ -179,6 +188,16 @@ def test_outer_folds_are_chronological_and_purge_labels_through_the_full_embargo
         assert training["decision_timestamp"].max() < validation_start
         assert training["outcome_available_at"].max() <= validation_start - pd.Timedelta(hours=2)
         assert validation["decision_timestamp"].max() < boundary.final_start
+
+
+def test_outer_folds_reject_naive_outcome_availability_before_conversion() -> None:
+    data = _timeline(10)
+    data["outcome_available_at"] = [datetime(2026, 8, 21, hour) for hour in range(11, 21)]
+    config = ValidationConfig(final_test_fraction=0.2, minimum_train_observations=4, validation_observations=2)
+    boundary = select_final_boundary(data["decision_timestamp"], final_test_fraction=0.2)
+
+    with pytest.raises(ValueError, match="explicit UTC"):
+        make_outer_folds(data, boundary=boundary, config=config)
 
 
 def test_each_later_outer_fold_contains_only_development_inner_folds() -> None:
@@ -275,6 +294,7 @@ def test_registry_evaluation_distinguishes_unavailable_from_failed_runs() -> Non
             "failed": StrategyRunEvidence(error_summary="backtest raised"),
         },
         chronology=_timeline(10)["decision_timestamp"],
+        outcome_availability=_timeline(10)["outcome_available_at"],
         as_of=datetime(2026, 8, 21, 19, tzinfo=UTC),
         mode=StrategyMode.FROZEN,
         dataset_hash="d" * 64,
@@ -342,6 +362,23 @@ def test_trial_evidence_at_or_after_final_boundary_is_rejected() -> None:
 
     assert evaluation.status is EvaluationStatus.FAILED
     assert "sealed final boundary" in evaluation.status_reason
+
+
+@pytest.mark.parametrize("evidence_kind", ["trial", "fold"])
+def test_registry_rejects_naive_trial_and_fold_evidence_timestamps(evidence_kind: str) -> None:
+    registry = _registry("naive")
+    evidence = _timestamped_evidence()
+    if evidence_kind == "trial":
+        bad_trial = replace(evidence.trial_evidence[0], evaluated_at=datetime(2026, 8, 21, 15))
+        evidence = replace(evidence, trial_evidence=(bad_trial, *evidence.trial_evidence[1:]))
+    else:
+        bad_fold = replace(evidence.fold_evidence[0], validation_start=datetime(2026, 8, 21, 13))
+        evidence = replace(evidence, fold_evidence=(bad_fold, *evidence.fold_evidence[1:]))
+
+    evaluation = evaluate_registry(_evaluation_request(registry, {"naive": evidence}))[0]
+
+    assert evaluation.status is EvaluationStatus.FAILED
+    assert "explicit UTC" in evaluation.status_reason
 
 
 def test_malformed_trial_evidence_fails_only_its_strategy_without_aborting_registry() -> None:

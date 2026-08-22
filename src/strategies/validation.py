@@ -166,6 +166,7 @@ class EvaluationRequest:
     registry: StrategyRegistry
     runs: Mapping[str, StrategyRunEvidence]
     chronology: Sequence[object] | pd.Series
+    outcome_availability: Sequence[object] | pd.Series
     as_of: datetime
     mode: StrategyMode
     dataset_hash: str
@@ -201,9 +202,61 @@ def _evidence_timestamp(value: object, label: str) -> datetime:
     return value
 
 
+def _timestamp_values(values: Sequence[object] | pd.Series, *, name: str) -> pd.Series:
+    raw = list(values)
+    timestamps: list[pd.Timestamp] = []
+    for value in raw:
+        try:
+            timestamp = pd.Timestamp(value)
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"{name} must contain explicit UTC timestamps") from error
+        if pd.isna(timestamp) or timestamp.tzinfo is None or timestamp.utcoffset() != timedelta(0):
+            raise ValueError(f"{name} must contain explicit UTC timestamps")
+        timestamps.append(timestamp.tz_convert("UTC"))
+    if not timestamps:
+        raise ValueError(f"{name} must contain explicit UTC timestamps")
+    return pd.Series(timestamps).reset_index(drop=True)
+
+
+def _fold_plan(folds: Sequence[OuterFold]) -> tuple[dict[str, Any], ...]:
+    return tuple(
+        {
+            "fold": fold_number,
+            "train_index": fold.train_index,
+            "validation_index": fold.validation_index,
+            "inner_folds": tuple(
+                {
+                    "train_index": inner.train_index,
+                    "validation_index": inner.validation_index,
+                }
+                for inner in fold.inner_folds
+            ),
+        }
+        for fold_number, fold in enumerate(folds)
+    )
+
+
+def _config_record(config: ValidationConfig) -> dict[str, Any]:
+    return {
+        "final_test_fraction": float(config.final_test_fraction),
+        "minimum_train_observations": config.minimum_train_observations,
+        "validation_observations": config.validation_observations,
+        "forecast_horizon_seconds": config.forecast_horizon.total_seconds(),
+        "publication_delay_seconds": config.publication_delay.total_seconds(),
+        "embargo_seconds": config.embargo.total_seconds(),
+        "periods_per_year": config.periods_per_year,
+        "minimum_trades": config.minimum_trades,
+        "minimum_development_observations": config.minimum_development_observations,
+        "maximum_drawdown": float(config.maximum_drawdown),
+        "minimum_dsr_probability": float(config.minimum_dsr_probability),
+    }
+
+
 def _seal_development_evidence(
     evidence: StrategyRunEvidence,
     boundary: FinalBoundary,
+    chronology: pd.Series,
+    expected_folds: Sequence[OuterFold],
 ) -> _SealedEvidence:
     if evidence.trial_sharpes or evidence.fold_stability is not None:
         raise ValueError("unsealed aggregate evidence is forbidden; provide timestamped trial and fold evidence")
@@ -270,6 +323,15 @@ def _seal_development_evidence(
             }
         )
     fold_rows.sort(key=lambda row: (row["validation_start"], row["fold"]))
+    if len(fold_rows) != len(expected_folds) or tuple(row["fold"] for row in fold_rows) != tuple(
+        range(len(expected_folds))
+    ):
+        raise ValueError("fold evidence is incomplete for the sealed outer-fold plan")
+    for row, expected in zip(fold_rows, expected_folds, strict=True):
+        expected_start = chronology.iloc[expected.validation_index[0]].to_pydatetime()
+        expected_end = chronology.iloc[expected.validation_index[-1]].to_pydatetime()
+        if row["validation_start"] != expected_start or row["validation_end"] != expected_end:
+            raise ValueError("fold evidence does not match the sealed outer-fold plan")
 
     fold_stability = float(sum(row["sharpe"] > 0 for row in fold_rows) / len(fold_rows)) if fold_rows else 0.0
     calibration = (
@@ -293,9 +355,7 @@ def _seal_development_evidence(
 
 
 def _timestamps(values: Sequence[object] | pd.Series, *, name: str) -> pd.Series:
-    result = pd.Series(pd.to_datetime(values, utc=True, errors="coerce")).reset_index(drop=True)
-    if result.empty or result.isna().any():
-        raise ValueError(f"{name} must contain valid timestamps")
+    result = _timestamp_values(values, name=name)
     if not result.is_monotonic_increasing or result.duplicated().any():
         raise ValueError(f"{name} must be strictly chronological and unique")
     return result
@@ -333,10 +393,8 @@ def make_outer_folds(
     if missing:
         raise ValueError(f"validation data is missing columns: {sorted(missing)}")
     decisions = _timestamps(data[timestamp_column], name=timestamp_column)
-    available = pd.Series(pd.to_datetime(data[outcome_available_column], utc=True, errors="coerce")).reset_index(
-        drop=True
-    )
-    if available.isna().any() or (available < decisions).any():
+    available = _timestamp_values(data[outcome_available_column], name=outcome_available_column)
+    if (available < decisions).any():
         raise ValueError("outcomes must become available at or after their decisions")
     folds: list[OuterFold] = []
     development_end = len(boundary.development_index)
@@ -426,9 +484,7 @@ def run_frozen_protocol(
         outer_frames.append(frame)
 
     decisions = _timestamps(data[timestamp_column], name=timestamp_column)
-    available = pd.Series(pd.to_datetime(data[outcome_available_column], utc=True, errors="coerce")).reset_index(
-        drop=True
-    )
+    available = _timestamp_values(data[outcome_available_column], name=outcome_available_column)
     final_cutoff = boundary.final_start - config.effective_embargo
     final_train = tuple(
         index
@@ -482,8 +538,8 @@ def _latest_signal(
     required = {"decision_timestamp", "data_through", "signal", "strength"}
     if missing := required - set(signals.columns):
         raise ValueError(f"strategy signals are missing columns: {sorted(missing)}")
-    signals["decision_timestamp"] = pd.to_datetime(signals["decision_timestamp"], utc=True)
-    signals["data_through"] = pd.to_datetime(signals["data_through"], utc=True)
+    signals["decision_timestamp"] = _timestamp_values(signals["decision_timestamp"], name="decision_timestamp")
+    signals["data_through"] = _timestamp_values(signals["data_through"], name="data_through")
     eligible = signals.loc[signals["decision_timestamp"] <= pd.Timestamp(as_of)].sort_values(
         "decision_timestamp", kind="stable"
     )
@@ -524,7 +580,18 @@ def _finite_or_none(value: float) -> float | None:
 def evaluate_registry(request: EvaluationRequest) -> tuple[StrategyEvaluation, ...]:
     if request.as_of.tzinfo is not UTC:
         raise ValueError("as_of must be an explicit UTC datetime")
-    boundary = select_final_boundary(request.chronology, final_test_fraction=request.config.final_test_fraction)
+    chronology = _timestamps(request.chronology, name="chronology")
+    outcome_availability = _timestamp_values(request.outcome_availability, name="outcome_availability")
+    if len(outcome_availability) != len(chronology):
+        raise ValueError("outcome_availability must align one-to-one with chronology")
+    validation_data = pd.DataFrame(
+        {
+            "decision_timestamp": chronology,
+            "outcome_available_at": outcome_availability,
+        }
+    )
+    boundary = select_final_boundary(chronology, final_test_fraction=request.config.final_test_fraction)
+    expected_folds = make_outer_folds(validation_data, boundary=boundary, config=request.config)
     evaluations: list[StrategyEvaluation] = []
     for registered in request.registry.enabled():
         spec = registered.spec
@@ -568,7 +635,7 @@ def evaluate_registry(request: EvaluationRequest) -> tuple[StrategyEvaluation, .
             continue
 
         try:
-            sealed_evidence = _seal_development_evidence(evidence, boundary)
+            sealed_evidence = _seal_development_evidence(evidence, boundary, chronology, expected_folds)
         except ValueError as error:
             evaluations.append(
                 _placeholder_evaluation(
@@ -595,7 +662,7 @@ def evaluate_registry(request: EvaluationRequest) -> tuple[StrategyEvaluation, .
                 )
             )
             continue
-        timestamps = pd.to_datetime(curve["timestamp"], utc=True)
+        timestamps = _timestamp_values(curve["timestamp"], name="backtest timestamp")
         development_mask = timestamps < boundary.final_start
         development = _segment_metrics(
             evidence.backtest, development_mask, periods_per_year=request.config.periods_per_year
@@ -676,11 +743,44 @@ def evaluate_registry(request: EvaluationRequest) -> tuple[StrategyEvaluation, .
             "promotion_inputs": promotion_inputs,
             "promotion_decision": promotion_record,
         }
+        context_record = {
+            "dataset_hash": request.dataset_hash,
+            "strategy_id": spec.strategy_id,
+            "strategy_version": spec.deterministic_version,
+            "family": spec.family.value,
+            "symbol": request.symbol,
+            "interval": request.interval.value,
+            "mode": request.mode.value,
+        }
+        chronology_record = tuple(timestamp.to_pydatetime() for timestamp in chronology)
+        availability_record = tuple(timestamp.to_pydatetime() for timestamp in outcome_availability)
+        boundary_record = {
+            "final_start": boundary.final_start.to_pydatetime(),
+            "development_index": boundary.development_index,
+            "final_index": boundary.final_index,
+        }
+        validation_snapshot = {
+            "schema_version": 1,
+            "context": context_record,
+            "chronology": chronology_record,
+            "chronology_hash": canonical_hash(chronology_record),
+            "outcome_availability": availability_record,
+            "outcome_availability_hash": canonical_hash(availability_record),
+            "validation_config": _config_record(request.config),
+            "final_boundary": boundary_record,
+            "fold_plan": _fold_plan(expected_folds),
+            "trial_records": sealed_evidence.provenance["trials"],
+            "fold_records": sealed_evidence.provenance["folds"],
+            "derived": promotion_inputs,
+            "promotion": promotion_record,
+        }
         evidence_provenance = _deep_freeze(
             {
                 **dict(sealed_evidence.provenance),
                 **promotion_payload,
                 "promotion_evidence_hash": canonical_hash(promotion_payload),
+                "validation_snapshot": validation_snapshot,
+                "validation_snapshot_hash": canonical_hash(validation_snapshot),
             }
         )
         evaluations.append(
