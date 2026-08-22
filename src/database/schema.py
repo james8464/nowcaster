@@ -1,0 +1,316 @@
+from __future__ import annotations
+
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Column,
+    Date,
+    DateTime,
+    Float,
+    Integer,
+    MetaData,
+    String,
+    Table,
+    Text,
+    UniqueConstraint,
+)
+
+metadata = MetaData()
+
+
+def common_columns() -> tuple[Column, ...]:
+    return (
+        Column("source", String, nullable=False, default="unknown"),
+        Column("source_version", String, nullable=False, default="1"),
+        Column("created_at", DateTime(timezone=True), nullable=False),
+    )
+
+
+companies = Table(
+    "companies",
+    metadata,
+    Column("company_id", String, primary_key=True),
+    Column("ticker", String, nullable=False, unique=True),
+    Column("cik", String, nullable=False, unique=True),
+    Column("name", String, nullable=False),
+    Column("sector", String, nullable=False),
+    Column("sector_etf", String, nullable=False),
+    Column("fiscal_year_end_month", Integer, nullable=False),
+    Column("active", Boolean, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+)
+
+financials_quarterly = Table(
+    "financials_quarterly",
+    metadata,
+    Column("financial_id", String, primary_key=True),
+    Column("company_id", String, nullable=False),
+    Column("fiscal_year", Integer, nullable=False),
+    Column("fiscal_quarter", String, nullable=False),
+    Column("period_start", Date),
+    Column("period_end", Date, nullable=False),
+    Column("filed_date", Date, nullable=False),
+    Column("available_date", Date, nullable=False),
+    Column("accession", String, nullable=False),
+    Column("form", String, nullable=False),
+    Column("selected_tag", String, nullable=False),
+    Column("revenue", Float),
+    Column("operating_income", Float),
+    Column("net_income", Float),
+    Column("diluted_eps", Float),
+    Column("diluted_shares", Float),
+    Column("unit", String, nullable=False),
+    Column("amendment", Boolean, nullable=False, default=False),
+    Column("quality_status", String, nullable=False),
+    *common_columns(),
+    UniqueConstraint("company_id", "fiscal_quarter", "accession", name="uq_financial_filing"),
+)
+
+company_kpis = Table(
+    "company_kpis",
+    metadata,
+    Column("kpi_id", String, primary_key=True),
+    Column("company_id", String, nullable=False),
+    Column("fiscal_quarter", String, nullable=False),
+    Column("kpi_name", String, nullable=False),
+    Column("value", Float, nullable=False),
+    Column("unit", String, nullable=False),
+    Column("period_end", Date, nullable=False),
+    Column("available_date", Date, nullable=False),
+    Column("accession", String, nullable=False),
+    Column("extraction_method", String, nullable=False),
+    Column("evidence_url", Text),
+    *common_columns(),
+    UniqueConstraint("company_id", "fiscal_quarter", "kpi_name", "accession", name="uq_company_kpi"),
+)
+
+earnings_calendar = Table(
+    "earnings_calendar",
+    metadata,
+    Column("event_id", String, primary_key=True),
+    Column("company_id", String, nullable=False),
+    Column("fiscal_quarter", String, nullable=False),
+    Column("earnings_date", Date, nullable=False),
+    Column("earnings_time", String),
+    Column("timing_confidence", String, nullable=False),
+    Column("available_date", Date, nullable=False),
+    *common_columns(),
+    UniqueConstraint("company_id", "fiscal_quarter", name="uq_earnings_quarter"),
+)
+
+market_prices_daily = Table(
+    "market_prices_daily",
+    metadata,
+    Column("price_id", String, primary_key=True),
+    Column("symbol", String, nullable=False),
+    Column("trading_date", Date, nullable=False),
+    Column("raw_close", Float, nullable=False),
+    Column("adjusted_close", Float, nullable=False),
+    Column("volume", Float),
+    Column("currency", String, nullable=False),
+    Column("adjustment_status", String, nullable=False),
+    *common_columns(),
+    UniqueConstraint("symbol", "trading_date", "source", name="uq_market_price"),
+)
+
+alternative_data_daily = Table(
+    "alternative_data_daily",
+    metadata,
+    Column("observation_id", String, primary_key=True),
+    Column("company_id", String, nullable=False),
+    Column("signal", String, nullable=False),
+    Column("observation_date", Date, nullable=False),
+    Column("available_date", Date, nullable=False),
+    Column("value", Float, nullable=False),
+    Column("unit", String, nullable=False),
+    Column("dimensions", JSON),
+    *common_columns(),
+    UniqueConstraint("company_id", "signal", "observation_date", "source", name="uq_alt_observation"),
+)
+
+macro_data = Table(
+    "macro_data",
+    metadata,
+    Column("macro_id", String, primary_key=True),
+    Column("series_id", String, nullable=False),
+    Column("observation_date", Date, nullable=False),
+    Column("available_date", Date, nullable=False),
+    Column("vintage_date", Date, nullable=False),
+    Column("value", Float, nullable=False),
+    Column("unit", String, nullable=False),
+    *common_columns(),
+    UniqueConstraint("series_id", "observation_date", "vintage_date", "source", name="uq_macro_observation"),
+)
+
+features_quarterly = Table(
+    "features_quarterly",
+    metadata,
+    Column("feature_id", String, primary_key=True),
+    Column("company_id", String, nullable=False),
+    Column("fiscal_quarter", String, nullable=False),
+    Column("earnings_date", Date, nullable=False),
+    Column("forecast_cutoff_date", Date, nullable=False),
+    Column("horizon_days", Integer, nullable=False),
+    Column("feature_name", String, nullable=False),
+    Column("feature_value", Float),
+    Column("feature_family", String, nullable=False),
+    Column("maximum_input_available_date", Date, nullable=False),
+    Column("transformation_version", String, nullable=False),
+    *common_columns(),
+    UniqueConstraint(
+        "company_id",
+        "fiscal_quarter",
+        "horizon_days",
+        "feature_name",
+        "transformation_version",
+        name="uq_quarter_feature",
+    ),
+)
+
+model_runs = Table(
+    "model_runs",
+    metadata,
+    Column("run_id", String, primary_key=True),
+    Column("run_timestamp", DateTime(timezone=True), nullable=False),
+    Column("git_commit", String, nullable=False),
+    Column("random_seed", Integer, nullable=False),
+    Column("model_name", String, nullable=False),
+    Column("feature_set", JSON, nullable=False),
+    Column("training_start", Date),
+    Column("training_end", Date),
+    Column("test_start", Date),
+    Column("test_end", Date),
+    Column("hyperparameters", JSON, nullable=False),
+    Column("observations", Integer, nullable=False),
+    Column("metrics", JSON, nullable=False),
+    Column("status", String, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+)
+
+forecasts = Table(
+    "forecasts",
+    metadata,
+    Column("forecast_id", String, primary_key=True),
+    Column("run_id", String, nullable=False),
+    Column("company_id", String, nullable=False),
+    Column("fiscal_quarter", String, nullable=False),
+    Column("forecast_cutoff_date", Date, nullable=False),
+    Column("horizon_days", Integer, nullable=False),
+    Column("model_name", String, nullable=False),
+    Column("ablation", String, nullable=False),
+    Column("target_forecast", Float, nullable=False),
+    Column("forecast_revenue", Float, nullable=False),
+    Column("actual_revenue", Float),
+    Column("interval_low", Float),
+    Column("interval_high", Float),
+    Column("confidence_score", Float),
+    Column("explanation", JSON),
+    Column("status", String, nullable=False),
+    *common_columns(),
+    UniqueConstraint(
+        "run_id", "company_id", "fiscal_quarter", "model_name", "horizon_days", "ablation", name="uq_forecast"
+    ),
+)
+
+consensus_estimates = Table(
+    "consensus_estimates",
+    metadata,
+    Column("estimate_id", String, primary_key=True),
+    Column("company_id", String, nullable=False),
+    Column("fiscal_quarter", String, nullable=False),
+    Column("as_of_date", Date, nullable=False),
+    Column("consensus_revenue", Float, nullable=False),
+    Column("consensus_eps", Float),
+    Column("number_of_analysts", Integer),
+    Column("mode", String, nullable=False),
+    *common_columns(),
+    UniqueConstraint("company_id", "fiscal_quarter", "as_of_date", "mode", name="uq_consensus_estimate"),
+)
+
+variant_signals = Table(
+    "variant_signals",
+    metadata,
+    Column("signal_id", String, primary_key=True),
+    Column("forecast_id", String, nullable=False),
+    Column("estimate_id", String, nullable=False),
+    Column("company_id", String, nullable=False),
+    Column("fiscal_quarter", String, nullable=False),
+    Column("forecast_cutoff_date", Date, nullable=False),
+    Column("horizon_days", Integer, nullable=False),
+    Column("variant", Float, nullable=False),
+    Column("variant_zscore", Float),
+    Column("variant_bucket", String, nullable=False),
+    Column("confidence_score", Float),
+    Column("confidence_components", JSON),
+    Column("expectation_mode", String, nullable=False),
+    *common_columns(),
+    UniqueConstraint("forecast_id", "estimate_id", name="uq_variant_signal"),
+)
+
+backtest_results = Table(
+    "backtest_results",
+    metadata,
+    Column("result_id", String, primary_key=True),
+    Column("signal_id", String, nullable=False),
+    Column("company_id", String, nullable=False),
+    Column("event_date", Date, nullable=False),
+    Column("window_start", Integer, nullable=False),
+    Column("window_end", Integer, nullable=False),
+    Column("raw_return", Float, nullable=False),
+    Column("benchmark_return", Float),
+    Column("sector_return", Float),
+    Column("abnormal_return", Float),
+    Column("sector_adjusted_return", Float),
+    Column("portfolio_weight", Float),
+    Column("transaction_cost", Float),
+    Column("liquidity_status", String),
+    *common_columns(),
+    UniqueConstraint("signal_id", "window_start", "window_end", name="uq_backtest_result"),
+)
+
+data_quality_issues = Table(
+    "data_quality_issues",
+    metadata,
+    Column("issue_id", String, primary_key=True),
+    Column("stage", String, nullable=False),
+    Column("entity_key", String, nullable=False),
+    Column("severity", String, nullable=False),
+    Column("rule", String, nullable=False),
+    Column("observed_value", Text),
+    Column("message", Text, nullable=False),
+    Column("detected_at", DateTime(timezone=True), nullable=False),
+    *common_columns(),
+)
+
+pipeline_runs = Table(
+    "pipeline_runs",
+    metadata,
+    Column("pipeline_run_id", String, primary_key=True),
+    Column("command", String, nullable=False),
+    Column("mode", String, nullable=False),
+    Column("started_at", DateTime(timezone=True), nullable=False),
+    Column("ended_at", DateTime(timezone=True)),
+    Column("config_hash", String, nullable=False),
+    Column("git_commit", String, nullable=False),
+    Column("row_counts", JSON),
+    Column("status", String, nullable=False),
+    Column("error_summary", Text),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+)
+
+TABLES = {table.name: table for table in metadata.tables.values()}
+
+NATURAL_KEYS: dict[str, tuple[str, ...]] = {
+    "companies": ("company_id",),
+    "financials_quarterly": ("company_id", "fiscal_quarter", "accession"),
+    "company_kpis": ("company_id", "fiscal_quarter", "kpi_name", "accession"),
+    "earnings_calendar": ("company_id", "fiscal_quarter"),
+    "market_prices_daily": ("symbol", "trading_date", "source"),
+    "alternative_data_daily": ("company_id", "signal", "observation_date", "source"),
+    "macro_data": ("series_id", "observation_date", "vintage_date", "source"),
+    "features_quarterly": ("company_id", "fiscal_quarter", "horizon_days", "feature_name", "transformation_version"),
+    "forecasts": ("run_id", "company_id", "fiscal_quarter", "model_name", "horizon_days", "ablation"),
+    "consensus_estimates": ("company_id", "fiscal_quarter", "as_of_date", "mode"),
+    "variant_signals": ("forecast_id", "estimate_id"),
+    "backtest_results": ("signal_id", "window_start", "window_end"),
+}

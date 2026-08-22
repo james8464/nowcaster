@@ -1,0 +1,15 @@
+companies:
+  - {ticker: SBUX, cik: "0000829224", name: Starbucks Corporation, sector: Consumer Discretionary, sector_etf: XLY, fiscal_year_end_month: 9, wikipedia_article: Starbucks, search_terms: [Starbucks], enabled: true}
+  - {ticker: NKE, cik: "0000320187", name: NIKE Inc., sector: Consumer Discretionary, sector_etf: XLY, fiscal_year_end_month: 5, wikipedia_article: "Nike,_Inc.", search_terms: [Nike], enabled: true}
+  - {ticker: LULU, cik: "0001397187", name: lululemon athletica inc., sector: Consumer Discretionary, sector_etf: XLY, fiscal_year_end_month: 1, wikipedia_article: Lululemon_Athletica, search_terms: [Lululemon], enabled: true}
+  - {ticker: CMG, cik: "0001058090", name: Chipotle Mexican Grill Inc., sector: Consumer Discretionary, sector_etf: XLY, fiscal_year_end_month: 12, wikipedia_article: Chipotle_Mexican_Grill, search_terms: [Chipotle], enabled: true}
+  - {ticker: MCD, cik: "0000063908", name: McDonald's Corporation, sector: Consumer Discretionary, sector_etf: XLY, fiscal_year_end_month: 12, wikipedia_article: McDonald's, search_terms: [McDonalds], enabled: true}
+  - {ticker: TGT, cik: "0000027419", name: Target Corporation, sector: Consumer Staples, sector_etf: XLP, fiscal_year_end_month: 1, wikipedia_article: Target_Corporation, search_terms: [Target store], enabled: true}
+  - {ticker: WMT, cik: "0000104169", name: Walmart Inc., sector: Consumer Staples, sector_etf: XLP, fiscal_year_end_month: 1, wikipedia_article: Walmart, search_terms: [Walmart], enabled: true}
+  - {ticker: COST, cik: "0000909832", name: Costco Wholesale Corporation, sector: Consumer Staples, sector_etf: XLP, fiscal_year_end_month: 8, wikipedia_article: Costco, search_terms: [Costco], enabled: true}
+  - {ticker: HD, cik: "0000354950", name: The Home Depot Inc., sector: Consumer Discretionary, sector_etf: XLY, fiscal_year_end_month: 1, wikipedia_article: The_Home_Depot, search_terms: [Home Depot], enabled: true}
+  - {ticker: LOW, cik: "0000060667", name: Lowe's Companies Inc., sector: Consumer Discretionary, sector_etf: XLY, fiscal_year_end_month: 1, wikipedia_article: Lowe's, search_terms: [Lowes], enabled: true}
+  - {ticker: ABNB, cik: "0001559720", name: Airbnb Inc., sector: Consumer Discretionary, sector_etf: XLY, fiscal_year_end_month: 12, wikipedia_article: Airbnb, search_terms: [Airbnb], enabled: true}
+  - {ticker: BKNG, cik: "0001075531", name: Booking Holdings Inc., sector: Consumer Discretionary, sector_etf: XLY, fiscal_year_end_month: 12, wikipedia_article: Booking_Holdings, search_terms: [Booking.com], enabled: true}
+  - {ticker: UBER, cik: "0001543151", name: Uber Technologies Inc., sector: Industrials, sector_etf: XLI, fiscal_year_end_month: 12, wikipedia_article: Uber, search_terms: [Uber], enabled: true}
+  - {ticker: DASH, cik: "0001792789", name: DoorDash Inc., sector: Consumer Discretionary, sector_etf: XLY, fiscal_year_end_month: 12, wikipedia_article: DoorDash, search_terms: [DoorDash], enabled: true}

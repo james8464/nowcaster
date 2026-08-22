@@ -1,0 +1,13 @@
+availability_lags:
+  wikipedia: 1
+  prices: 1
+attention_windows: [28, 91]
+minimum_history_observations: 20
+macro_series:
+  RSAFS: retail_sales
+  CPIAUCSL: consumer_prices
+  UNRATE: unemployment
+  UMCSENT: consumer_sentiment
+  GASREGW: gasoline_prices
+  FEDFUNDS: policy_rate
+

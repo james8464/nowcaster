@@ -39,7 +39,7 @@
 - Produces: `Database.from_url(url: str) -> Database`, `Database.initialize() -> None`, `Database.upsert(table_name: str, rows: Sequence[Mapping]) -> int`
 - Produces: `capture_run_context(command: str, config_hash: str) -> RunContext`
 
-- [ ] **Step 1: Write failing configuration and database tests**
+- [x] **Step 1: Write failing configuration and database tests**
 
 ```python
 def test_settings_loads_yaml_and_env(project_root, monkeypatch):
@@ -48,6 +48,7 @@ def test_settings_loads_yaml_and_env(project_root, monkeypatch):
     assert settings.mode == "demo"
     assert 7 in settings.model.forecast_horizons
 
+
 def test_financial_unique_key_is_enforced(tmp_path):
     db = Database.from_url(f"duckdb:///{tmp_path / 'test.duckdb'}")
     db.initialize()
@@ -55,34 +56,37 @@ def test_financial_unique_key_is_enforced(tmp_path):
     assert db.upsert("companies", [company_row]) == 0
 ```
 
-- [ ] **Step 2: Run tests and verify missing-module failures**
+- [x] **Step 2: Run tests and verify missing-module failures**
 
 Run: `pytest tests/unit/test_config.py tests/unit/test_database.py tests/unit/test_provenance.py -q`
 
-- [ ] **Step 3: Implement packaging, typed settings, structured logging, provenance, schema, repositories, and CLI `init-db`**
+- [x] **Step 3: Implement packaging, typed settings, structured logging, provenance, schema, repositories, and CLI `init-db`**
 
 ```python
 class Database:
     @classmethod
     def from_url(cls, url: str) -> "Database":
         return cls(create_engine(url, future=True))
+
     def initialize(self) -> None:
         metadata.create_all(self.engine)
+
     def upsert(self, table_name: str, rows: Sequence[Mapping[str, Any]]) -> int:
         table = TABLES[table_name]
         inserted = deduplicate_against_database(self.engine, table, rows)
         with self.engine.begin() as connection:
             connection.execute(insert(table), inserted)
         return len(inserted)
+
     def frame(self, statement: Select | str, params: Mapping[str, Any] | None = None) -> pd.DataFrame:
         return pd.read_sql(statement, self.engine, params=params)
 ```
 
-- [ ] **Step 4: Run foundation tests and CLI smoke check**
+- [x] **Step 4: Run foundation tests and CLI smoke check**
 
 Run: `pytest tests/unit/test_config.py tests/unit/test_database.py tests/unit/test_provenance.py -q && python -m src.cli init-db --database-url duckdb:///data/test.duckdb`
 
-- [ ] **Step 5: Commit foundation**
+- [x] **Step 5: Commit foundation**
 
 ```bash
 git add pyproject.toml .gitignore .env.example Makefile config src tests
@@ -114,6 +118,7 @@ def test_normalizer_prefers_standard_revenue_and_standalone_quarter(sec_companyf
     assert q2.selected_tag == "RevenueFromContractWithCustomerExcludingAssessedTax"
     assert q2.available_date == date(2024, 8, 7)
 
+
 def test_ytd_facts_are_differenced_only_when_components_tie(sec_ytd_facts):
     rows = normalize_company_facts(sec_ytd_facts, company_config)
     assert quarter(rows, "2024Q2").revenue == Decimal("240")
@@ -132,12 +137,19 @@ class SecClient:
             raise ValueError("SEC_USER_AGENT must include a contact email")
         self.http, self.user_agent = http, user_agent
         self.limiter = RateLimiter(requests_per_second)
+
     def company_facts(self, cik: str) -> dict[str, Any]:
         self.limiter.wait()
-        return self.http.get_json(f"https://data.sec.gov/api/xbrl/companyfacts/CIK{int(cik):010d}.json", headers={"User-Agent": self.user_agent})
+        return self.http.get_json(
+            f"https://data.sec.gov/api/xbrl/companyfacts/CIK{int(cik):010d}.json",
+            headers={"User-Agent": self.user_agent},
+        )
+
     def submissions(self, cik: str) -> dict[str, Any]:
         self.limiter.wait()
-        return self.http.get_json(f"https://data.sec.gov/submissions/CIK{int(cik):010d}.json", headers={"User-Agent": self.user_agent})
+        return self.http.get_json(
+            f"https://data.sec.gov/submissions/CIK{int(cik):010d}.json", headers={"User-Agent": self.user_agent}
+        )
 ```
 
 - [ ] **Step 4: Add data-quality rules and persisted issue report**
@@ -172,6 +184,7 @@ def test_event_return_uses_trading_rows_and_adjusted_close(price_frame):
     assert result.start_date == date(2024, 2, 5)
     assert result.end_date == date(2024, 2, 8)
     assert result.raw_return == pytest.approx(0.08)
+
 
 def test_abnormal_return_subtracts_matched_benchmark(company_prices, spy_prices):
     result = calculate_event_return(company_prices, event_date, (0, 1), spy_prices)
@@ -220,6 +233,7 @@ def test_wikipedia_applies_conservative_availability_lag(wiki_response):
     rows = parse_pageviews(wiki_response, company_id="SBUX", availability_lag_days=1)
     assert rows[0].available_date == rows[0].observation_date + timedelta(days=1)
 
+
 def test_fred_vintage_is_preserved(fred_response):
     rows = parse_fred(fred_response, "RSAFS")
     assert rows[0].vintage_date == date(2020, 4, 15)
@@ -266,6 +280,7 @@ git commit -m "feat: add point-in-time alternative data"
 def test_feature_builder_excludes_observations_available_after_cutoff(builder, observations):
     frame = builder.build(quarters, horizons=[7])
     assert (frame.maximum_input_available_date <= frame.forecast_cutoff_date).all()
+
 
 def test_future_observation_does_not_change_historical_features(builder, observations):
     before = builder.build(quarters, horizons=[7])
@@ -315,6 +330,7 @@ git commit -m "feat: build leakage-safe feature store"
 def test_expanding_folds_never_train_on_test_or_future_rows(feature_matrix):
     forecasts, runs = expanding_window_forecasts(feature_matrix, specs, 8, 42)
     assert all(run.training_end < run.test_start for run in runs)
+
 
 def test_linear_contributions_sum_to_prediction_adjustment(fitted_linear, row):
     explanation = explain_linear(fitted_linear, row)
@@ -373,6 +389,7 @@ def test_consensus_selection_never_uses_future_revision(estimates):
     selected = select_expectation(estimates, cutoff=date(2024, 4, 20))
     assert selected.as_of_date == date(2024, 4, 18)
 
+
 def test_proxy_is_never_labeled_actual(proxy_expectation):
     assert proxy_expectation.mode == "expectation_proxy"
     assert "consensus" not in proxy_expectation.display_label.lower()
@@ -386,10 +403,16 @@ Run: `pytest tests/unit/test_consensus.py tests/unit/test_variant.py -q`
 
 ```python
 def build_variant_signals(forecasts: pd.DataFrame, expectations: pd.DataFrame) -> pd.DataFrame:
-    joined = forecasts.merge(expectations, on=["company_id", "fiscal_quarter", "forecast_cutoff_date"], validate="many_to_one")
+    joined = forecasts.merge(
+        expectations, on=["company_id", "fiscal_quarter", "forecast_cutoff_date"], validate="many_to_one"
+    )
     joined["variant"] = (joined["forecast_revenue"] - joined["expectation_revenue"]) / joined["expectation_revenue"]
-    joined["variant_zscore"] = joined.groupby(["forecast_cutoff_date", "horizon_days"])["variant"].transform(safe_zscore)
-    joined["variant_bucket"] = joined.groupby(["forecast_cutoff_date", "horizon_days"])["variant"].transform(bucket_variants)
+    joined["variant_zscore"] = joined.groupby(["forecast_cutoff_date", "horizon_days"])["variant"].transform(
+        safe_zscore
+    )
+    joined["variant_bucket"] = joined.groupby(["forecast_cutoff_date", "horizon_days"])["variant"].transform(
+        bucket_variants
+    )
     return joined
 ```
 
@@ -422,6 +445,7 @@ def test_round_trip_costs_reduce_long_short_return(portfolio_fixture):
     gross = run_event_portfolio(**portfolio_fixture, transaction_cost_bps=0)
     net = run_event_portfolio(**portfolio_fixture, transaction_cost_bps=10)
     assert net.cumulative_return < gross.cumulative_return
+
 
 def test_bucket_summary_reports_sample_and_interval(event_returns):
     summary = summarize_buckets(event_returns, bootstrap_samples=500, seed=42)
@@ -476,7 +500,13 @@ def test_demo_builds_all_required_tables_and_labels_sources(demo_project):
     result = runner.invoke(app, ["demo", "--project-root", str(demo_project)])
     assert result.exit_code == 0
     assert required_tables <= set(database_tables(demo_project / "data/nowcaster.duckdb"))
-    assert set(read_sources()) <= {"sec_public_snapshot", "wikimedia_public_snapshot", "fred_public_snapshot", "market_public_snapshot", "expectation_proxy"}
+    assert set(read_sources()) <= {
+        "sec_public_snapshot",
+        "wikimedia_public_snapshot",
+        "fred_public_snapshot",
+        "market_public_snapshot",
+        "expectation_proxy",
+    }
 ```
 
 - [ ] **Step 2: Verify failures**
@@ -525,6 +555,7 @@ def test_report_contains_all_required_sections_and_measured_counts(demo_db):
     text = generate_research_report(demo_db, report_path).read_text()
     assert all(section in text for section in REQUIRED_REPORT_SECTIONS)
     assert f"{actual_company_count(demo_db)} companies" in text
+
 
 def test_resume_bullets_refuse_missing_metrics(empty_db):
     text = generate_resume_bullets(empty_db, output).read_text()
@@ -666,7 +697,9 @@ Run: `make clean-generated && make demo`
 - [ ] **Step 3: Audit database tables, row counts, source labels, leakage invariants, model folds, reports, and resume bullets**
 
 ```python
-assert not db.frame("select * from features_quarterly where maximum_input_available_date > forecast_cutoff_date").shape[0]
+assert not db.frame("select * from features_quarterly where maximum_input_available_date > forecast_cutoff_date").shape[
+    0
+]
 assert set(required_tables).issubset(database_tables)
 assert all(source_mode != "synthetic" for source_mode in demo_source_modes)
 ```

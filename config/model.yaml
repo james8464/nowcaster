@@ -1,0 +1,16 @@
+forecast_horizons: [30, 14, 7, 1]
+target: revenue_yoy_log_growth
+minimum_training_quarters: 8
+random_seed: 42
+models:
+  seasonal_naive: {enabled: true}
+  historical_growth: {enabled: true}
+  linear: {enabled: true}
+  ridge: {enabled: true}
+  elastic_net: {enabled: true}
+  gradient_boosting: {enabled: true, minimum_observations: 40}
+backtest:
+  event_windows: [[-1, 1], [0, 1], [0, 3], [0, 5]]
+  transaction_cost_bps: 10
+  slippage_bps: 5
+
