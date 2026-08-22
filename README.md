@@ -31,7 +31,7 @@ Historical performance can be overfit and may not persist. Confidence is evidenc
 
 ## Build and run
 
-Requirements: macOS 14 or later, Xcode Command Line Tools, and Python 3.11–3.13. The bundled demo needs no API keys.
+Requirements: macOS 15 or later, Xcode Command Line Tools, and Python 3.11–3.13. The bundled demo needs no API keys.
 
 ```bash
 xcode-select --install

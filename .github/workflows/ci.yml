@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   python:
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -37,7 +37,7 @@ jobs:
           test -s data/app/nowcaster-snapshot.json
 
   native-macos:
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 20
     env:
       DEVELOPER_DIR: /Applications/Xcode_16.2.app/Contents/Developer
