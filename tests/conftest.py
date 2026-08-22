@@ -53,3 +53,18 @@ def model_matrix():
                 }
             )
     return pd.DataFrame(rows)
+
+
+@pytest.fixture(scope="session")
+def demo_database(tmp_path_factory):
+    from src.config.settings import Settings
+    from src.database.engine import Database
+    from src.demo import run_demo
+
+    root = Path(__file__).resolve().parents[1]
+    database_path = tmp_path_factory.mktemp("shared-demo") / "demo.duckdb"
+    settings = Settings.load(root, mode="demo").model_copy(update={"database_url": f"duckdb:///{database_path}"})
+    summary = run_demo(settings)
+    if summary.failed:
+        raise RuntimeError(summary.concise_message)
+    return settings, Database.from_url(settings.database_url)

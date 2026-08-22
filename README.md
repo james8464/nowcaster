@@ -15,11 +15,11 @@ The bundled demo uses real public snapshots for SBUX, MCD, and COST—never synt
 | SEC company-quarters | 155 |
 | Daily Wikimedia observations | 12,210 |
 | Adjusted-price observations | 26,616 |
-| Expanding-window forecasts | 512 |
-| Event signal-window observations | 2,048 |
-| Fundamentals-plus-attention Ridge MAE vs seasonal baseline | 27.6% lower |
-| Incremental attention-data MAE vs fundamentals-only Ridge | 10.2% worse |
-| [0,+3] top-minus-bottom abnormal-return spread | 0.04% |
+| Expanding-window forecasts | 2,047 |
+| Event signal-window observations | 8,188 |
+| Fundamentals-plus-attention Ridge MAE vs seasonal baseline | 28.3% lower |
+| Incremental attention-data MAE vs fundamentals-only Ridge | 8.4% worse |
+| [0,+3] top-minus-bottom abnormal-return spread | -0.04% |
 
 The central finding is deliberately unvarnished: the full model beat a naive seasonal baseline, but the attention features did not add value relative to the matched fundamentals-only model. The small event spread is not evidence of a profitable strategy.
 
@@ -77,9 +77,9 @@ Snapshot manifests record retrieval URLs, timestamps, source notes, and SHA-256 
 
 ## Forecasting and backtesting
 
-- Forecast cutoffs: configurable; the demo uses seven calendar days before the event proxy.
+- Forecast cutoffs: configurable; the demo evaluates 1, 7, 14, and 30 calendar days before the event proxy.
 - Feature rule: `maximum_input_available_date <= forecast_cutoff_date` for every row.
-- Validation: expanding windows only; all preprocessing is fit inside each training fold.
+- Validation: separate expanding windows by horizon; a label becomes trainable only after its reported-result date, and all preprocessing is fit inside each fold.
 - Models: seasonal naive, historical growth, OLS/Ridge/Elastic Net, and histogram gradient boosting.
 - Ablations: fundamentals only, alternative only, fundamentals + alternative, and optional vintage-safe macro.
 - Variant: `(model forecast - expectation) / expectation`, plus within-cohort z-scores and five buckets.

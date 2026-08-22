@@ -79,10 +79,11 @@ def generate_research_report(database: Database, output_path: Path) -> Path:
         ),
         (
             "Methodology",
-            "Features are reconstructed at a seven-day pre-event cutoff and must satisfy input availability date less "
-            "than or equal to cutoff. Models use expanding windows with fold-local preprocessing; no random split is "
-            "used. The demo compares seasonal/history baselines with Ridge models using fundamentals-only and "
-            "fundamentals-plus-attention ablations.",
+            "Features are reconstructed independently at 1-, 7-, 14-, and 30-day pre-event cutoffs and must satisfy "
+            "input availability date less than or equal to cutoff. Each horizon uses its own expanding-window models; "
+            "a target can enter training only after its reported result is available. Preprocessing is fit within each "
+            "fold and no random split is used. The demo compares seasonal/history baselines with Ridge models using "
+            "fundamentals-only and fundamentals-plus-attention ablations.",
         ),
         (
             "Forecast Accuracy",
@@ -91,9 +92,9 @@ def generate_research_report(database: Database, output_path: Path) -> Path:
         ),
         (
             "Incremental Value of Alternative Data",
-            f"{incremental_sentence} This ablation is the relevant test of incremental attention-data value and its "
-            "negative result is not suppressed. Coverage begins only when Wikimedia observations become available; "
-            "early folds cannot use those features.",
+            f"{incremental_sentence} This matched ablation is the relevant test of incremental attention-data value; "
+            "the measured result is reported regardless of sign. Coverage begins only when Wikimedia observations "
+            "become available, so earlier observations cannot use those features.",
         ),
         (
             "Variant-Perception Analysis",

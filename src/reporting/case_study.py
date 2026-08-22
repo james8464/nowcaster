@@ -30,10 +30,13 @@ def select_case_study(database: Database) -> CaseStudy | None:
                b.abnormal_return, v.confidence_score
         from variant_signals v
         join forecasts f on v.forecast_id = f.forecast_id
+        join model_runs m on f.run_id = m.run_id
         join consensus_estimates c on v.estimate_id = c.estimate_id
         join earnings_calendar e on v.company_id = e.company_id and v.fiscal_quarter = e.fiscal_quarter
         left join backtest_results b on v.signal_id = b.signal_id and b.window_start = 0 and b.window_end = 3
         where f.model_name = 'ridge' and f.ablation = 'fundamentals_alt'
+          and e.earnings_date >= date '2015-08-01'
+          and cast(m.feature_set as varchar) like '%wikipedia%'
         order by abs(v.variant) desc, v.confidence_score desc nulls last
         limit 1
         """

@@ -31,14 +31,15 @@ def make_expanding_folds(matrix: pd.DataFrame, minimum_training_observations: in
     if minimum_training_observations <= 0:
         raise ValueError("minimum_training_observations must be positive")
     dates = pd.to_datetime(matrix["forecast_cutoff_date"]).dt.date
+    label_available_dates = pd.to_datetime(matrix["earnings_date"]).dt.date if "earnings_date" in matrix else dates
     unique_dates = sorted(set(dates))
     folds: list[ExpandingFold] = []
     for test_date in unique_dates:
-        train_indices = matrix.index[dates < test_date].tolist()
+        train_indices = matrix.index[label_available_dates < test_date].tolist()
         test_indices = matrix.index[dates == test_date].tolist()
         if len(train_indices) < minimum_training_observations or not test_indices:
             continue
-        train_dates = dates.loc[train_indices]
+        train_dates = label_available_dates.loc[train_indices]
         folds.append(
             ExpandingFold(
                 train_indices=train_indices,
@@ -121,54 +122,58 @@ def expanding_window_forecasts(
     retain_models: bool = False,
 ) -> tuple[pd.DataFrame, list[ModelRunRecord]]:
     data = matrix.copy().sort_values(["forecast_cutoff_date", "company_id"]).reset_index(drop=True)
-    folds = make_expanding_folds(data, minimum_training_quarters)
     predictions: list[dict[str, Any]] = []
     runs: list[ModelRunRecord] = []
-    for fold in folds:
-        train = data.loc[fold.train_indices]
-        test = data.loc[fold.test_indices]
-        for spec in model_specs:
-            run_id = canonical_hash([spec.name, spec.ablation, fold.test_start, seed])[:24]
-            feature_columns = [
-                column for column in feature_columns_for_ablation(data, spec.ablation) if train[column].notna().any()
-            ]
-            fitted_model = None
-            if spec.name == "seasonal_naive":
-                forecasts = test.apply(seasonal_naive_forecast, axis=1).to_numpy(dtype=float)
-                train_forecasts = train.apply(seasonal_naive_forecast, axis=1).to_numpy(dtype=float)
-            elif spec.name == "historical_growth":
-                forecasts = test.apply(historical_growth_forecast, axis=1).to_numpy(dtype=float)
-                train_forecasts = train.apply(historical_growth_forecast, axis=1).to_numpy(dtype=float)
-            else:
-                if not feature_columns:
-                    continue
-                fitted_model = _build_pipeline(spec, feature_columns, seed)
-                input_columns = ["company_id", *feature_columns]
-                fitted_model.fit(train[input_columns], train["actual_revenue"])
-                forecasts = np.asarray(fitted_model.predict(test[input_columns]), dtype=float)
-                train_forecasts = np.asarray(fitted_model.predict(train[input_columns]), dtype=float)
-            residuals = train_forecasts - train["actual_revenue"].to_numpy(dtype=float)
-            residual_std = float(np.std(residuals, ddof=1)) if len(residuals) > 1 else math.nan
-            fold_rows = _prediction_rows(test, forecasts, run_id=run_id, spec=spec, residual_std=residual_std)
-            predictions.extend(fold_rows)
-            metrics = evaluate_forecasts(pd.DataFrame(fold_rows))
-            runs.append(
-                ModelRunRecord(
-                    run_id=run_id,
-                    model_name=spec.name,
-                    ablation=spec.ablation,
-                    training_start=fold.training_start,
-                    training_end=fold.training_end,
-                    test_start=fold.test_start,
-                    test_end=fold.test_end,
-                    observations=len(train),
-                    feature_columns=feature_columns,
-                    test_indices=fold.test_indices,
-                    parameters=spec.parameters,
-                    metrics=metrics,
-                    fitted_model=fitted_model if retain_models else None,
+    for horizon_days, horizon_data in data.groupby("horizon_days", sort=True):
+        horizon_data = horizon_data.reset_index(drop=True)
+        folds = make_expanding_folds(horizon_data, minimum_training_quarters)
+        for fold in folds:
+            train = horizon_data.loc[fold.train_indices]
+            test = horizon_data.loc[fold.test_indices]
+            for spec in model_specs:
+                run_id = canonical_hash([spec.name, spec.ablation, horizon_days, fold.test_start, seed])[:24]
+                feature_columns = [
+                    column
+                    for column in feature_columns_for_ablation(horizon_data, spec.ablation)
+                    if train[column].notna().any()
+                ]
+                fitted_model = None
+                if spec.name == "seasonal_naive":
+                    forecasts = test.apply(seasonal_naive_forecast, axis=1).to_numpy(dtype=float)
+                    train_forecasts = train.apply(seasonal_naive_forecast, axis=1).to_numpy(dtype=float)
+                elif spec.name == "historical_growth":
+                    forecasts = test.apply(historical_growth_forecast, axis=1).to_numpy(dtype=float)
+                    train_forecasts = train.apply(historical_growth_forecast, axis=1).to_numpy(dtype=float)
+                else:
+                    if not feature_columns:
+                        continue
+                    fitted_model = _build_pipeline(spec, feature_columns, seed)
+                    input_columns = ["company_id", *feature_columns]
+                    fitted_model.fit(train[input_columns], train["actual_revenue"])
+                    forecasts = np.asarray(fitted_model.predict(test[input_columns]), dtype=float)
+                    train_forecasts = np.asarray(fitted_model.predict(train[input_columns]), dtype=float)
+                residuals = train_forecasts - train["actual_revenue"].to_numpy(dtype=float)
+                residual_std = float(np.std(residuals, ddof=1)) if len(residuals) > 1 else math.nan
+                fold_rows = _prediction_rows(test, forecasts, run_id=run_id, spec=spec, residual_std=residual_std)
+                predictions.extend(fold_rows)
+                metrics = evaluate_forecasts(pd.DataFrame(fold_rows))
+                runs.append(
+                    ModelRunRecord(
+                        run_id=run_id,
+                        model_name=spec.name,
+                        ablation=spec.ablation,
+                        training_start=fold.training_start,
+                        training_end=fold.training_end,
+                        test_start=fold.test_start,
+                        test_end=fold.test_end,
+                        observations=len(train),
+                        feature_columns=feature_columns,
+                        test_indices=fold.test_indices,
+                        parameters=spec.parameters,
+                        metrics=metrics,
+                        fitted_model=fitted_model if retain_models else None,
+                    )
                 )
-            )
     prediction_frame = pd.DataFrame(predictions)
     if not prediction_frame.empty:
         prediction_frame = prediction_frame.sort_values(

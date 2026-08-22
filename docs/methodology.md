@@ -31,7 +31,7 @@ Missing inputs remain missing. The system does not backfill future values. Fold-
 - OLS, Ridge, Elastic Net: interpretable linear pipelines with company one-hot encoding.
 - Histogram gradient boosting: nonlinear benchmark gated by sample size.
 
-Evaluation uses expanding cutoff dates. Every fold satisfies `training_end < test_start`. No random split is used. Metrics include MAE, RMSE, MAPE, bias, and directional accuracy. Intervals are residual-based research intervals; confidence combines empirical residual dispersion and coverage and is not calibrated as a probability of profit.
+Evaluation uses independent expanding windows for each forecast horizon. A target row becomes eligible for training only when its `earnings_date < test_start`; an earlier-cutoff row for the same unresolved quarter therefore cannot leak its future result into a shorter-horizon fold. Every fold satisfies `training_end < test_start`. No random split is used. Metrics include MAE, RMSE, MAPE, bias, and directional accuracy. Intervals are residual-based research intervals; confidence combines empirical residual dispersion and coverage and is not calibrated as a probability of profit.
 
 ## Ablation logic
 

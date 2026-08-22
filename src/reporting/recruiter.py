@@ -115,7 +115,7 @@ def generate_resume_bullets(database: Database, output_path: Path) -> Path:
         )
     else:
         accuracy_bullet = (
-            f"- Measured a {abs(improvement):.1%} deterioration in matched out-of-sample MAE after adding attention "
+            f"- Measured an {abs(improvement):.1%} deterioration in matched out-of-sample MAE after adding attention "
             "signals to a fundamentals-only Ridge model, documenting the negative result and model-risk controls."
         )
     spread = metrics["event_spread"]

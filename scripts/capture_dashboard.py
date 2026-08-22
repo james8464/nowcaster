@@ -75,7 +75,7 @@ def capture(database_url: str, output: Path, *, port: int = 8511) -> None:
             for title, filename in PAGES.items():
                 page.get_by_text(title, exact=True).first.click()
                 page.wait_for_load_state("networkidle")
-                page.wait_for_timeout(1_000)
+                page.wait_for_timeout(2_500)
                 page.screenshot(path=output / filename, full_page=True)
             browser.close()
     finally:

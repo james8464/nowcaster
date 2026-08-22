@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -45,6 +47,38 @@ def test_expanding_folds_never_train_on_test_or_future_rows(model_matrix):
     assert folds
     assert all(fold.training_end < fold.test_start for fold in folds)
     assert all(set(fold.train_indices).isdisjoint(fold.test_indices) for fold in folds)
+
+
+def test_cross_horizon_row_cannot_train_until_its_target_is_reported():
+    matrix = pd.DataFrame(
+        [
+            {
+                "company_id": "SBUX",
+                "fiscal_quarter": "2023Q4",
+                "forecast_cutoff_date": date(2023, 12, 1),
+                "earnings_date": date(2023, 12, 15),
+                "horizon_days": 7,
+            },
+            {
+                "company_id": "SBUX",
+                "fiscal_quarter": "2024Q1",
+                "forecast_cutoff_date": date(2024, 1, 1),
+                "earnings_date": date(2024, 1, 31),
+                "horizon_days": 30,
+            },
+            {
+                "company_id": "SBUX",
+                "fiscal_quarter": "2024Q1",
+                "forecast_cutoff_date": date(2024, 1, 24),
+                "earnings_date": date(2024, 1, 31),
+                "horizon_days": 7,
+            },
+        ]
+    )
+
+    fold = next(item for item in make_expanding_folds(matrix, 1) if item.test_start == date(2024, 1, 24))
+
+    assert fold.train_indices == [0]
 
 
 def test_expanding_forecasts_are_deterministic_and_preserve_company_quarter(model_matrix):

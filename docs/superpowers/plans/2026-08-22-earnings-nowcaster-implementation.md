@@ -686,15 +686,15 @@ git commit -m "docs: finish recruiter-facing project guide"
 **Interfaces:**
 - Produces: authoritative evidence for every definition-of-done requirement
 
-- [ ] **Step 1: Run formatting, linting, typing, and the full test suite**
+- [x] **Step 1: Run formatting, linting, typing, and the full test suite**
 
 Run: `ruff format --check . && ruff check . && pytest --cov=src --cov=dashboard --cov-report=term-missing -q`
 
-- [ ] **Step 2: Rebuild from a clean generated-data state using public demo snapshots**
+- [x] **Step 2: Rebuild from a clean generated-data state using public demo snapshots**
 
 Run: `make clean-generated && make demo`
 
-- [ ] **Step 3: Audit database tables, row counts, source labels, leakage invariants, model folds, reports, and resume bullets**
+- [x] **Step 3: Audit database tables, row counts, source labels, leakage invariants, model folds, reports, and resume bullets**
 
 ```python
 assert not db.frame("select * from features_quarterly where maximum_input_available_date > forecast_cutoff_date").shape[
@@ -704,11 +704,11 @@ assert set(required_tables).issubset(database_tables)
 assert all(source_mode != "synthetic" for source_mode in demo_source_modes)
 ```
 
-- [ ] **Step 4: Verify all CLI commands and Streamlit health on macOS**
+- [x] **Step 4: Verify all CLI commands and Streamlit health on macOS**
 
 Run: `python -m src.cli --help && make dashboard-smoke`
 
-- [ ] **Step 5: Write `docs/verification.md`, review Git diff/status, and commit only verified fixes**
+- [x] **Step 5: Write `docs/verification.md`, review Git diff/status, and commit only verified fixes**
 
 ```bash
 git add docs/verification.md

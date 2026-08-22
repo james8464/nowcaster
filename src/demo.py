@@ -146,7 +146,9 @@ class DemoStages:
         financials = self.database.frame("select * from financials_quarterly")
         earnings = self.database.frame("select * from earnings_calendar")
         alternative = self.database.frame("select * from alternative_data_daily")
-        features = FeatureBuilder(financials, earnings, alternative).build(horizons=[7])
+        features = FeatureBuilder(financials, earnings, alternative).build(
+            horizons=list(self.settings.model.forecast_horizons)
+        )
         rows = feature_rows(features, source="point_in_time_feature_engine")
         return {"features_quarterly": self.database.insert("features_quarterly", rows)}
 

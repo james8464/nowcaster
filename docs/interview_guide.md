@@ -29,7 +29,7 @@ The engineering and evaluation framework is the strongest result: deterministic 
 
 ## Weakest result
 
-The alternative signal itself is weak in this small demo. Attention worsened matched Ridge MAE by 10.2%, and the [0,+3] top-minus-bottom abnormal-return spread was only 0.04%. That is useful evidence against overclaiming, not a failure to hide.
+The alternative signal itself is weak in this small demo. Attention worsened matched Ridge MAE by 8.4%, and the [0,+3] top-minus-bottom abnormal-return spread was -0.04%. That is useful evidence against overclaiming, not a failure to hide.
 
 ## What institutional data would improve
 
@@ -44,7 +44,7 @@ The alternative signal itself is weak in this small demo. Attention worsened mat
 
 **Why not predict long/short directly?** Revenue forecasting, expectation surprise, and return response have different labels and error processes. Collapsing them makes leakage and attribution harder to diagnose.
 
-**Does 27.6% lower MAE prove the alternative data works?** No. That compares the full Ridge model with seasonal naive. The matched ablation shows attention worsened MAE by 10.2% versus fundamentals-only Ridge.
+**Does 28.3% lower MAE prove the alternative data works?** No. That compares the full Ridge model with seasonal naive. The matched ablation shows attention worsened MAE by 8.4% versus fundamentals-only Ridge.
 
 **Is the confidence score a win probability?** No. It reflects residual dispersion and coverage. Calibration to profit probability would require a separate, sufficiently large return model and still would not guarantee profit.
 
