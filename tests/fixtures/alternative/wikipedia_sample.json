@@ -1,0 +1,7 @@
+{
+  "items": [
+    {"project": "en.wikipedia", "article": "Starbucks", "granularity": "daily", "timestamp": "2024010100", "access": "all-access", "agent": "user", "views": 1000},
+    {"project": "en.wikipedia", "article": "Starbucks", "granularity": "daily", "timestamp": "2024010200", "access": "all-access", "agent": "user", "views": 1200}
+  ]
+}
+

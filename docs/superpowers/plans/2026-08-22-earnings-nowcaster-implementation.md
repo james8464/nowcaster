@@ -226,7 +226,7 @@ git commit -m "feat: add market and earnings-event data"
 - Produces: `FredProvider.fetch(series_id, start, end, vintage_dates) -> list[MacroObservation]`
 - Produces: `ManualTrendsProvider.fetch(company, start, end) -> list[AlternativeObservation]`
 
-- [ ] **Step 1: Write failing availability, provider-shape, and missing-data tests**
+- [x] **Step 1: Write failing availability, provider-shape, and missing-data tests**
 
 ```python
 def test_wikipedia_applies_conservative_availability_lag(wiki_response):
@@ -239,11 +239,11 @@ def test_fred_vintage_is_preserved(fred_response):
     assert rows[0].vintage_date == date(2020, 4, 15)
 ```
 
-- [ ] **Step 2: Verify failures**
+- [x] **Step 2: Verify failures**
 
 Run: `pytest tests/unit/test_wikipedia.py tests/unit/test_macro.py -q`
 
-- [ ] **Step 3: Implement Wikimedia, FRED/ALFRED, bundled CSV, and disabled-by-default search adapters**
+- [x] **Step 3: Implement Wikimedia, FRED/ALFRED, bundled CSV, and disabled-by-default search adapters**
 
 ```python
 class AlternativeDataProvider(Protocol):
@@ -251,11 +251,11 @@ class AlternativeDataProvider(Protocol):
         raise NotImplementedError
 ```
 
-- [ ] **Step 4: Run alternative-data integration tests and provenance assertions**
+- [x] **Step 4: Run alternative-data integration tests and provenance assertions**
 
 Run: `pytest tests/unit/test_wikipedia.py tests/unit/test_macro.py tests/integration/test_altdata_pipeline.py -q`
 
-- [ ] **Step 5: Commit alternative data**
+- [x] **Step 5: Commit alternative data**
 
 ```bash
 git add src/ingestion data/demo/alternative data/demo/macro tests

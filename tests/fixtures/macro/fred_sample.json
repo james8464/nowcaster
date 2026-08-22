@@ -1,0 +1,12 @@
+{
+  "realtime_start": "2024-03-15",
+  "realtime_end": "2024-03-15",
+  "observation_start": "2024-01-01",
+  "observation_end": "2024-02-01",
+  "units": "Millions of Dollars",
+  "observations": [
+    {"realtime_start": "2024-02-15", "realtime_end": "2024-03-14", "date": "2024-01-01", "value": "700000.0"},
+    {"realtime_start": "2024-03-15", "realtime_end": "9999-12-31", "date": "2024-02-01", "value": "710000.0"}
+  ]
+}
+

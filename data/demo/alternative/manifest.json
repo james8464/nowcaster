@@ -1,0 +1,13 @@
+{
+  "data_mode": "demo_real_snapshot",
+  "retrieved_at": "2026-08-22T13:01:00Z",
+  "source": "Wikimedia Analytics Pageviews API",
+  "license": "CC0 1.0",
+  "access_policy": "Descriptive user-agent, sequential requests, conservative one-day availability lag",
+  "observation_period": {"start": "2015-07-01", "end": "2026-08-21"},
+  "files": {
+    "COST_wikipedia.json": "0ebdb6fa38bc5fd6ab994eaeeac6a8a38327642159f6ea39caed7dbb2d53bf29",
+    "MCD_wikipedia.json": "6c2f700415bc76d4409e732519827f6c7de22ac42a4e158bf8829813d84a638e",
+    "SBUX_wikipedia.json": "2a08c0be4eb642a0aee2143bc1c064bcc3e27fdb0cd7b784a25b0440b79c2513"
+  }
+}
