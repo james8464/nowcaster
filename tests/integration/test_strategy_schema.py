@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import pytest
 from sqlalchemy import inspect, text
+from sqlalchemy.exc import IntegrityError
 
 from src.database.engine import Database
 
@@ -92,3 +94,32 @@ def test_legacy_database_migrates_idempotently_without_altering_daily_table(tmp_
     assert "legacy_daily_prices" in database.table_names()
     assert database.schema_version() == 2
     assert database.scalar("SELECT count(*) FROM schema_versions WHERE version = 2") == 1
+
+
+def test_ensemble_weights_reject_negative_database_weights(tmp_path):
+    database = Database.from_url(f"duckdb:///{tmp_path / 'weights.duckdb'}")
+    database.initialize()
+
+    with pytest.raises(IntegrityError):
+        database.insert(
+            "ensemble_weights",
+            [
+                {
+                    "weight_id": "weight-1",
+                    "strategy_run_id": "run-1",
+                    "dataset_hash": "dataset-1",
+                    "strategy_id": "ema_adx_trend",
+                    "strategy_version": "1.0.0",
+                    "family": "trend",
+                    "symbol": "BTCUSDT",
+                    "interval": "5m",
+                    "mode": "frozen",
+                    "effective_at": "2026-08-22T12:00:00Z",
+                    "weight": -0.01,
+                    "evidence": {},
+                    "source": "test",
+                    "source_version": "1",
+                    "created_at": "2026-08-22T12:00:00Z",
+                }
+            ],
+        )

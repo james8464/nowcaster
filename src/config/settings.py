@@ -1,14 +1,25 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Literal
+from types import MappingProxyType
+from typing import Annotated, Any, Literal
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, field_validator, model_validator
 
 from src.strategies.types import StrategyFamily, StrategySpec
+
+ImmutableFamilyWeightCaps = Annotated[
+    Mapping[StrategyFamily, float],
+    PlainSerializer(
+        lambda value: {family.value: cap for family, cap in value.items()},
+        return_type=dict[str, float],
+        when_used="always",
+    ),
+]
 
 
 class CompanyConfig(BaseModel):
@@ -125,20 +136,24 @@ class StrategiesConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     strategy_weight_cap: float = Field(default=0.25, gt=0, le=1)
-    family_weight_caps: dict[StrategyFamily, float] = {}
+    family_weight_caps: ImmutableFamilyWeightCaps = Field(default_factory=lambda: MappingProxyType({}))
     strategies: tuple[StrategySpec, ...] = ()
 
     @field_validator("family_weight_caps")
     @classmethod
-    def valid_family_caps(cls, value: dict[StrategyFamily, float]) -> dict[StrategyFamily, float]:
+    def valid_family_caps(cls, value: Mapping[StrategyFamily, float]) -> Mapping[StrategyFamily, float]:
         if any(cap <= 0 or cap > 1 for cap in value.values()):
             raise ValueError("family weight caps must be in (0, 1]")
-        return dict(value)
+        return MappingProxyType(dict(value))
 
     @model_validator(mode="after")
     def consistent_caps_and_ids(self) -> StrategiesConfig:
         if any(self.strategy_weight_cap > cap for cap in self.family_weight_caps.values()):
             raise ValueError("strategy weight cap must not exceed a family weight cap")
+        missing_families = {spec.family for spec in self.strategies if spec.enabled} - set(self.family_weight_caps)
+        if missing_families:
+            values = ", ".join(sorted(family.value for family in missing_families))
+            raise ValueError(f"enabled strategy family requires a weight cap: {values}")
         strategy_ids = [spec.strategy_id for spec in self.strategies]
         if len(strategy_ids) != len(set(strategy_ids)):
             raise ValueError("strategy IDs must be unique")

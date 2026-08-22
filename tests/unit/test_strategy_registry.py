@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import warnings
 
 import pytest
 from pydantic import ValidationError
@@ -61,9 +62,14 @@ def test_strategy_spec_hash_is_stable_for_equivalent_canonical_inputs():
 
 def test_strategy_spec_parameters_are_immutable_after_validation():
     spec = _spec()
+    definition_hash = spec.definition_hash
 
     with pytest.raises(TypeError):
         spec.parameters["fast_period"] = 20
+    with pytest.raises(TypeError):
+        dict.__setitem__(spec.parameters, "fast_period", 20)
+
+    assert spec.definition_hash == definition_hash
 
 
 def test_settings_loads_only_enabled_yaml_strategies(project_root):
@@ -105,6 +111,50 @@ def test_settings_loads_only_enabled_yaml_strategies(project_root):
 def test_strategy_and_family_weight_caps_validate(payload: dict[str, object]):
     with pytest.raises(ValidationError):
         StrategiesConfig.model_validate(payload)
+
+
+def test_enabled_strategy_family_requires_a_weight_cap():
+    with pytest.raises(ValidationError, match="enabled strategy family"):
+        StrategiesConfig.model_validate(
+            {
+                "strategy_weight_cap": 0.25,
+                "family_weight_caps": {},
+                "strategies": [_spec()],
+            }
+        )
+
+
+def test_family_weight_caps_are_immutable_without_hash_drift():
+    config = StrategiesConfig.model_validate(
+        {
+            "strategy_weight_cap": 0.25,
+            "family_weight_caps": {"trend": 0.50},
+            "strategies": [_spec()],
+        }
+    )
+    config_hash = canonical_hash(config)
+
+    with pytest.raises(TypeError):
+        config.family_weight_caps[StrategyFamily.TREND] = 0.75
+    with pytest.raises(TypeError):
+        dict.__setitem__(config.family_weight_caps, StrategyFamily.TREND, 0.75)
+
+    assert canonical_hash(config) == config_hash
+
+
+def test_immutable_mappings_serialize_without_pydantic_warnings():
+    config = StrategiesConfig.model_validate(
+        {
+            "strategy_weight_cap": 0.25,
+            "family_weight_caps": {"trend": 0.50},
+            "strategies": [_spec()],
+        }
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert config.model_dump(mode="json")["family_weight_caps"] == {"trend": 0.50}
+        assert config.enabled[0].model_dump(mode="json")["parameters"]["fast_period"] == 12
 
 
 def test_registry_resolves_enabled_registered_strategies_without_yaml_import_paths():

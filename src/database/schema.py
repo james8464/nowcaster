@@ -3,6 +3,7 @@ from __future__ import annotations
 from sqlalchemy import (
     JSON,
     Boolean,
+    CheckConstraint,
     Column,
     Date,
     DateTime,
@@ -562,6 +563,7 @@ ensemble_weights = Table(
     Column("weight", Float, nullable=False),
     Column("evidence", JSON, nullable=False),
     *common_columns(),
+    CheckConstraint("weight >= 0", name="ck_ensemble_weight_nonnegative"),
     UniqueConstraint(
         "dataset_hash",
         "strategy_id",

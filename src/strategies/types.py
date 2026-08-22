@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from datetime import UTC, date, datetime
 from enum import StrEnum
-from typing import Any
+from types import MappingProxyType
+from typing import Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, field_validator, model_validator
 
 
 class BarInterval(StrEnum):
@@ -35,26 +37,10 @@ class StrategyMode(StrEnum):
 
 
 ParameterValue = float | int | str | bool
-
-
-class FrozenParameters(dict[str, ParameterValue]):
-    """A JSON-serializable mapping that cannot mutate a validated strategy."""
-
-    def __init__(self, values: dict[str, ParameterValue]) -> None:
-        dict.__init__(self, values)
-
-    @staticmethod
-    def _immutable(*_args: Any, **_kwargs: Any) -> None:
-        raise TypeError("strategy parameters are immutable")
-
-    __setitem__ = _immutable
-    __delitem__ = _immutable
-    clear = _immutable
-    pop = _immutable
-    popitem = _immutable
-    setdefault = _immutable
-    update = _immutable
-    __ior__ = _immutable
+ImmutableParameters = Annotated[
+    Mapping[str, ParameterValue],
+    PlainSerializer(lambda value: dict(value), return_type=dict[str, ParameterValue], when_used="always"),
+]
 
 
 def _canonical_value(value: Any) -> Any:
@@ -66,7 +52,7 @@ def _canonical_value(value: Any) -> Any:
         return value.isoformat()
     if isinstance(value, BaseModel):
         return _canonical_value(value.model_dump(mode="python"))
-    if isinstance(value, dict):
+    if isinstance(value, Mapping):
         return {str(key): _canonical_value(item) for key, item in value.items()}
     if isinstance(value, (tuple, list)):
         return [_canonical_value(item) for item in value]
@@ -95,7 +81,7 @@ class StrategySpec(BaseModel):
     version: str
     intervals: tuple[BarInterval, ...]
     warmup_bars: int = Field(gt=0)
-    parameters: dict[str, ParameterValue]
+    parameters: ImmutableParameters
     enabled: bool = True
 
     @field_validator("strategy_id", "version")
@@ -117,13 +103,13 @@ class StrategySpec(BaseModel):
 
     @field_validator("parameters")
     @classmethod
-    def scalar_parameters(cls, value: dict[str, ParameterValue]) -> dict[str, ParameterValue]:
+    def scalar_parameters(cls, value: Mapping[str, ParameterValue]) -> Mapping[str, ParameterValue]:
         for name, parameter in value.items():
             if not name.strip():
                 raise ValueError("parameter names must not be empty")
             if type(parameter) not in (float, int, str, bool):
                 raise ValueError("strategy parameters must be scalar JSON values")
-        return FrozenParameters(value)
+        return MappingProxyType(dict(value))
 
     @model_validator(mode="after")
     def validate_parameter_contract(self) -> StrategySpec:
