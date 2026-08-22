@@ -103,6 +103,14 @@ def _validated_signals(
         ).all():
             raise ValueError("decision_hash values must be non-empty strings")
         result["decision_hash"] = result["decision_hash"].str.strip()
+    for column in ("decision_timestamp", "data_through"):
+        for value in result[column]:
+            try:
+                timestamp = pd.Timestamp(value)
+            except (TypeError, ValueError) as error:
+                raise ValueError(f"signal {column} values must be timezone-aware timestamps") from error
+            if pd.isna(timestamp) or timestamp.tzinfo is None:
+                raise ValueError(f"signal {column} values must be timezone-aware timestamps")
     result["decision_timestamp"] = pd.to_datetime(result["decision_timestamp"], utc=True, errors="coerce")
     result["data_through"] = pd.to_datetime(result["data_through"], utc=True, errors="coerce")
     if result[["decision_timestamp", "data_through"]].isna().any().any():
@@ -452,7 +460,6 @@ def run_intraday_backtest(
                 for item_strategy in all_strategy_ids
                 if (source := state_decisions.get((item_strategy, symbol))) is not None
             )
-            sources = (*position_provenance.get(symbol, ()), *current_sources)
             latest_decision = decisions.loc[
                 (decisions["symbol"] == symbol) & decisions.index.isin(consumed), "decision_timestamp"
             ].max()
@@ -466,7 +473,7 @@ def run_intraday_backtest(
                     side=side,
                     quantity=abs(delta),
                     position_effect="open" if side == "sell" and desired_quantities[symbol] < 0 else "auto",
-                    source_decisions=sources,
+                    source_decisions=current_sources,
                 )
             )
             order_sequence += 1

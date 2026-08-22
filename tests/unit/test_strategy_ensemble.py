@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import fields, replace
 from datetime import UTC, datetime, timedelta
 
@@ -66,6 +67,7 @@ def _evaluation(
         "status": EvaluationStatus.EVALUATED.value,
         "development_sharpe": sharpe,
         "downside_risk": 0.02,
+        "maximum_drawdown": -0.1,
         "calibration_error": 0.1,
         "fold_stability": 1.0,
         "cost_survives": True,
@@ -100,6 +102,7 @@ def _evaluation(
         development_sharpe=sharpe,
         final_sharpe=-99.0,
         downside_risk=0.02,
+        development_maximum_drawdown=-0.1,
         calibration_error=0.1,
         fold_stability=1.0,
         cost_survives=True,
@@ -225,6 +228,56 @@ def _with_context(outcomes: pd.DataFrame, evaluations: tuple[StrategyEvaluation,
     result["interval"] = result["strategy_id"].map(lambda strategy_id: by_strategy[strategy_id].interval.value)
     result["mode"] = result["strategy_id"].map(lambda strategy_id: by_strategy[strategy_id].mode.value)
     return result
+
+
+def _thaw(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {key: _thaw(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return tuple(_thaw(item) for item in value)
+    return value
+
+
+def _replace_online_state(
+    weights: tuple,
+    state: dict[str, object],
+) -> tuple:
+    changed = []
+    for weight in weights:
+        provenance = _thaw(weight.provenance)
+        assert isinstance(provenance, dict)
+        provenance["online_state"] = state
+        changed.append(replace(weight, provenance=provenance))
+    return tuple(changed)
+
+
+def _feedback_fixture() -> tuple[tuple[StrategyEvaluation, ...], EnsembleConfig, tuple, pd.DataFrame]:
+    evaluations = (
+        _evaluation("alpha", StrategyFamily.TREND),
+        _evaluation("beta", StrategyFamily.MEAN_REVERSION),
+        _evaluation("gamma", StrategyFamily.SESSION),
+    )
+    config = EnsembleConfig(
+        maximum_strategy_weight=0.8,
+        maximum_family_weight=0.8,
+        fixed_share=0.1,
+        learning_rate=10,
+    )
+    initial = compute_evidence_weights(evaluations, as_of=datetime(2026, 8, 22, 9, tzinfo=UTC), config=config)
+    outcomes = _with_context(
+        pd.DataFrame(
+            {
+                "strategy_id": ["alpha", "beta", "gamma"],
+                "decision_timestamp": pd.to_datetime(["2026-08-22 09:00Z"] * 3),
+                "outcome_available_at": pd.to_datetime(["2026-08-22 10:00Z"] * 3),
+                "signal": [1, 1, 1],
+                "realized_return": [1.0, -1.0, 0.0],
+                "cost": [0.0, 0.0, 0.0],
+            }
+        ),
+        evaluations,
+    )
+    return evaluations, config, initial, outcomes
 
 
 def test_weights_are_nonnegative_normalized_shrunk_and_obey_strategy_and_family_caps() -> None:
@@ -358,6 +411,111 @@ def test_weighting_rejects_rehashed_boundary_substitution_against_bound_chronolo
 
     weights = compute_evidence_weights(
         forged,
+        as_of=AS_OF,
+        config=EnsembleConfig(maximum_strategy_weight=0.8, maximum_family_weight=0.8),
+    )
+
+    assert {weight.strategy_id: weight.weight for weight in weights}["alpha"] == 0
+
+
+def test_weighting_rejects_shifted_provenance_boundary_even_when_root_snapshot_is_unchanged() -> None:
+    evaluations = (
+        _evaluation("alpha", StrategyFamily.TREND),
+        _evaluation("beta", StrategyFamily.MEAN_REVERSION),
+        _evaluation("gamma", StrategyFamily.SESSION),
+    )
+    provenance = dict(evaluations[0].evidence_provenance)
+    provenance["sealed_boundary"] = "2026-08-22T12:00:00+00:00"
+    forged = (replace(evaluations[0], evidence_provenance=provenance), *evaluations[1:])
+
+    weights = compute_evidence_weights(
+        forged,
+        as_of=AS_OF,
+        config=EnsembleConfig(maximum_strategy_weight=0.8, maximum_family_weight=0.8),
+    )
+
+    assert {weight.strategy_id: weight.weight for weight in weights}["alpha"] == 0
+
+
+@pytest.mark.parametrize("schema_version", [None, 999])
+def test_weighting_rejects_missing_or_unknown_root_snapshot_schema(schema_version: int | None) -> None:
+    evaluations = (
+        _evaluation("alpha", StrategyFamily.TREND),
+        _evaluation("beta", StrategyFamily.MEAN_REVERSION),
+        _evaluation("gamma", StrategyFamily.SESSION),
+    )
+    provenance = dict(evaluations[0].evidence_provenance)
+    snapshot = dict(provenance["validation_snapshot"])
+    if schema_version is None:
+        snapshot.pop("schema_version")
+    else:
+        snapshot["schema_version"] = schema_version
+    provenance["validation_snapshot"] = snapshot
+    provenance["validation_snapshot_hash"] = canonical_hash(snapshot)
+    forged = (replace(evaluations[0], evidence_provenance=provenance), *evaluations[1:])
+
+    weights = compute_evidence_weights(
+        forged,
+        as_of=AS_OF,
+        config=EnsembleConfig(maximum_strategy_weight=0.8, maximum_family_weight=0.8),
+    )
+
+    assert {weight.strategy_id: weight.weight for weight in weights}["alpha"] == 0
+
+
+def test_weighting_recomputes_promotion_and_rejects_rehashed_zero_trade_forgery() -> None:
+    evaluations = (
+        _evaluation("alpha", StrategyFamily.TREND),
+        _evaluation("beta", StrategyFamily.MEAN_REVERSION),
+        _evaluation("gamma", StrategyFamily.SESSION),
+    )
+    provenance = dict(evaluations[0].evidence_provenance)
+    promotion_inputs = dict(provenance["promotion_inputs"])
+    promotion_inputs["trades"] = 0
+    snapshot = dict(provenance["validation_snapshot"])
+    snapshot["derived"] = promotion_inputs
+    provenance["promotion_inputs"] = promotion_inputs
+    provenance["promotion_evidence_hash"] = canonical_hash(
+        {"promotion_inputs": promotion_inputs, "promotion_decision": provenance["promotion_decision"]}
+    )
+    provenance["validation_snapshot"] = snapshot
+    provenance["validation_snapshot_hash"] = canonical_hash(snapshot)
+    forged_alpha = replace(evaluations[0], trades=0, evidence_provenance=provenance)
+
+    weights = compute_evidence_weights(
+        (forged_alpha, *evaluations[1:]),
+        as_of=AS_OF,
+        config=EnsembleConfig(maximum_strategy_weight=0.8, maximum_family_weight=0.8),
+    )
+
+    assert {weight.strategy_id: weight.weight for weight in weights}["alpha"] == 0
+
+
+def test_weighting_recomputes_maximum_drawdown_gate_from_the_root_snapshot() -> None:
+    evaluations = (
+        _evaluation("alpha", StrategyFamily.TREND),
+        _evaluation("beta", StrategyFamily.MEAN_REVERSION),
+        _evaluation("gamma", StrategyFamily.SESSION),
+    )
+    provenance = dict(evaluations[0].evidence_provenance)
+    promotion_inputs = dict(provenance["promotion_inputs"])
+    promotion_inputs["maximum_drawdown"] = -0.9
+    snapshot = dict(provenance["validation_snapshot"])
+    snapshot["derived"] = promotion_inputs
+    provenance["promotion_inputs"] = promotion_inputs
+    provenance["promotion_evidence_hash"] = canonical_hash(
+        {"promotion_inputs": promotion_inputs, "promotion_decision": provenance["promotion_decision"]}
+    )
+    provenance["validation_snapshot"] = snapshot
+    provenance["validation_snapshot_hash"] = canonical_hash(snapshot)
+    forged_alpha = replace(
+        evaluations[0],
+        development_maximum_drawdown=-0.9,
+        evidence_provenance=provenance,
+    )
+
+    weights = compute_evidence_weights(
+        (forged_alpha, *evaluations[1:]),
         as_of=AS_OF,
         config=EnsembleConfig(maximum_strategy_weight=0.8, maximum_family_weight=0.8),
     )
@@ -554,6 +712,104 @@ def test_same_timestamp_partial_feedback_is_partition_invariant_and_replay_idemp
     assert incremental == batch
     assert replayed == batch
     assert len(batch[0].provenance["online_state"]["processed_outcome_ids"]) == 3
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("realized_return", 0.25),
+        ("dataset_hash", "x" * 64),
+        ("outcome_available_at", "2026-08-22T12:00:00+00:00"),
+        ("signal", 2),
+        ("cost", -0.1),
+        ("decision_timestamp", "2026-08-22T11:00:00+00:00"),
+    ],
+)
+def test_feedback_rejects_mutated_or_noncausal_persisted_outcome_records(field: str, value: object) -> None:
+    evaluations, config, initial, outcomes = _feedback_fixture()
+    updated = fixed_share_update(
+        initial,
+        outcomes,
+        as_of=datetime(2026, 8, 22, 10, tzinfo=UTC),
+        config=config,
+    )
+    state = _thaw(updated[0].provenance["online_state"])
+    assert isinstance(state, dict)
+    records = list(state["processed_outcomes"])
+    record = dict(records[0])
+    record[field] = value
+    records[0] = record
+    state["processed_outcomes"] = tuple(records)
+    tampered = _replace_online_state(updated, state)
+    next_outcome = _with_context(
+        pd.DataFrame(
+            {
+                "strategy_id": ["alpha"],
+                "decision_timestamp": pd.to_datetime(["2026-08-22 10:00Z"]),
+                "outcome_available_at": pd.to_datetime(["2026-08-22 11:00Z"]),
+                "signal": [1],
+                "realized_return": [0.1],
+                "cost": [0.0],
+            }
+        ),
+        evaluations,
+    )
+
+    with pytest.raises(ValueError, match="persisted outcome"):
+        fixed_share_update(
+            tampered,
+            next_outcome,
+            as_of=datetime(2026, 8, 22, 11, tzinfo=UTC),
+            config=config,
+        )
+
+
+def test_feedback_rejects_as_of_rollback_before_the_weight_snapshot() -> None:
+    _evaluations, config, initial, outcomes = _feedback_fixture()
+    updated = fixed_share_update(
+        initial,
+        outcomes,
+        as_of=datetime(2026, 8, 22, 10, tzinfo=UTC),
+        config=config,
+    )
+
+    with pytest.raises(ValueError, match="as_of"):
+        fixed_share_update(
+            updated,
+            pd.DataFrame(),
+            as_of=datetime(2026, 8, 22, 9, tzinfo=UTC),
+            config=config,
+        )
+
+
+@pytest.mark.parametrize("mutation", ["base_weight", "prior", "cohort"])
+def test_feedback_rejects_mutated_original_weight_cohort(mutation: str) -> None:
+    _evaluations, config, initial, outcomes = _feedback_fixture()
+    updated = fixed_share_update(
+        initial,
+        outcomes,
+        as_of=datetime(2026, 8, 22, 10, tzinfo=UTC),
+        config=config,
+    )
+    if mutation == "base_weight":
+        state = _thaw(updated[0].provenance["online_state"])
+        assert isinstance(state, dict)
+        rows = list(state["base_weights"])
+        rows[0] = {**dict(rows[0]), "weight": 0.01}
+        state["base_weights"] = tuple(rows)
+        tampered = _replace_online_state(updated, state)
+    elif mutation == "prior":
+        tampered = (replace(updated[0], prior_weight=0.01), *updated[1:])
+    else:
+        tampered = (replace(updated[0], strategy_version="forged-version"), *updated[1:])
+
+    with pytest.raises(ValueError, match="cohort"):
+        fixed_share_update(
+            tampered,
+            pd.DataFrame(),
+            as_of=datetime(2026, 8, 22, 11, tzinfo=UTC),
+            config=config,
+        )
 
 
 def test_outcome_feedback_requires_exact_strategy_and_dataset_context() -> None:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 import pandas as pd
 import pytest
 
@@ -453,3 +455,62 @@ def test_session_flatten_carries_originating_position_decision_provenance() -> N
         (alpha_hash, beta_hash),
     ]
     assert result.trade_ledger["decision_hash"].notna().all()
+
+
+def test_long_to_short_reversal_closes_old_lineage_before_later_session_flatten() -> None:
+    long_hash = "a" * 64
+    short_hash = "b" * 64
+    bars = _bars(opens=(100, 100, 100, 100), closes=(100, 100, 100, 100))
+    bars["session_close_timestamp"] = pd.Series(pd.NaT, index=bars.index, dtype="datetime64[ns, UTC]")
+    closing = bars["open_timestamp"] == pd.Timestamp("2026-08-21 10:03Z")
+    bars.loc[closing, "session_close_timestamp"] = bars.loc[closing, "close_timestamp"]
+    signals = pd.DataFrame(
+        [
+            _signal("alpha", "AAA", "2026-08-21 10:01", 1, 1.0, long_hash),
+            _signal("alpha", "AAA", "2026-08-21 10:02", -1, 1.0, short_hash),
+        ]
+    )
+    assumptions = ExecutionAssumptions(
+        flatten_at_session_end=True,
+        session_close=lambda row: row["session_close_timestamp"],
+    )
+
+    result = run_intraday_backtest(bars, signals, assumptions, RiskLimits(initial_cash=1_000))
+
+    assert result.trade_ledger["order_type"].tolist() == ["market", "market", "session_flatten"]
+    assert result.trade_ledger["source_decision_hashes"].tolist() == [
+        (long_hash,),
+        (long_hash, short_hash),
+        (short_hash,),
+    ]
+
+
+@pytest.mark.parametrize("timestamp_column", ["decision_timestamp", "data_through"])
+def test_intraday_rejects_naive_raw_signal_timestamps(timestamp_column: str) -> None:
+    signals = pd.DataFrame([_signal("alpha", "AAA", "2026-08-21 10:01", 1)])
+    values = list(signals[timestamp_column].dt.to_pydatetime())
+    values[0] = datetime(2026, 8, 21, 10, 1)
+    signals[timestamp_column] = pd.Series(values, dtype=object)
+
+    with pytest.raises(ValueError, match="timezone-aware"):
+        run_intraday_backtest(
+            _bars(),
+            signals,
+            ExecutionAssumptions(),
+            RiskLimits(initial_cash=1_000),
+        )
+
+
+def test_intraday_preserves_aware_offset_signal_timestamp_conversion() -> None:
+    signals = pd.DataFrame([_signal("alpha", "AAA", "2026-08-21 10:01", 1)])
+    signals["decision_timestamp"] = signals["decision_timestamp"].dt.tz_convert("Europe/London")
+    signals["data_through"] = signals["data_through"].dt.tz_convert("Europe/London")
+
+    result = run_intraday_backtest(
+        _bars(),
+        signals,
+        ExecutionAssumptions(),
+        RiskLimits(initial_cash=1_000),
+    )
+
+    assert result.trade_ledger.iloc[0]["decision_timestamp"] == pd.Timestamp("2026-08-21 10:01Z")

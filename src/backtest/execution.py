@@ -41,19 +41,29 @@ class DecisionProvenance:
 
 
 def _ordered_sources(sources: Sequence[DecisionProvenance]) -> tuple[DecisionProvenance, ...]:
-    unique = {
-        (
+    unique: dict[tuple[str, str, pd.Timestamp], DecisionProvenance] = {}
+    for source in sources:
+        identity = (
             source.strategy_id,
             source.symbol,
-            source.decision_hash,
             source.decision_timestamp,
-            source.signal,
-            source.strength,
-        ): source
-        for source in sources
-    }
+        )
+        previous = unique.get(identity)
+        if previous is not None and previous != source:
+            raise ValueError("conflicting source decision state for one logical identity")
+        unique[identity] = source
     return tuple(
-        sorted(unique.values(), key=lambda item: (item.decision_timestamp, item.strategy_id, item.decision_hash))
+        sorted(
+            unique.values(),
+            key=lambda item: (
+                item.decision_timestamp,
+                item.strategy_id,
+                item.symbol,
+                item.decision_hash,
+                item.signal,
+                item.strength,
+            ),
+        )
     )
 
 
@@ -208,6 +218,13 @@ def _round_price(price: float, tick_size: float, side: OrderSide) -> float:
 
 
 def _utc_column(frame: pd.DataFrame, name: str) -> pd.Series:
+    for value in frame[name]:
+        try:
+            timestamp = pd.Timestamp(value)
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"bar {name} values must be timezone-aware timestamps") from error
+        if pd.isna(timestamp) or timestamp.tzinfo is None:
+            raise ValueError(f"bar {name} values must be timezone-aware timestamps")
     values = pd.to_datetime(frame[name], utc=True, errors="coerce")
     if values.isna().any():
         raise ValueError(f"bar {name} values must be valid timestamps")

@@ -17,6 +17,7 @@ from src.strategies.validation import (
     StrategyEvaluation,
     ValidationConfig,
     make_outer_folds,
+    promotion_reasons,
     select_final_boundary,
 )
 
@@ -289,9 +290,45 @@ def _utc_evidence_timestamp(value: Any) -> pd.Timestamp:
     return timestamp.tz_convert("UTC")
 
 
+_VALIDATION_SNAPSHOT_FIELDS = {
+    "schema_version",
+    "context",
+    "chronology",
+    "chronology_hash",
+    "outcome_availability",
+    "outcome_availability_hash",
+    "validation_config",
+    "final_boundary",
+    "fold_plan",
+    "trial_records",
+    "fold_records",
+    "derived",
+    "promotion",
+}
+_PROMOTION_INPUT_FIELDS = {
+    "status",
+    "development_sharpe",
+    "downside_risk",
+    "maximum_drawdown",
+    "calibration_error",
+    "fold_stability",
+    "cost_survives",
+    "observations",
+    "trades",
+    "dsr_probability",
+    "trial_sharpes",
+    "causal_audit_passed",
+}
+
+
 def _root_validation_snapshot_is_auditable(evaluation: StrategyEvaluation) -> bool:
     provenance = evaluation.evidence_provenance
     snapshot = provenance["validation_snapshot"]
+    if not isinstance(snapshot, Mapping) or set(snapshot) != _VALIDATION_SNAPSHOT_FIELDS:
+        return False
+    schema_version = snapshot["schema_version"]
+    if isinstance(schema_version, bool) or not isinstance(schema_version, int) or schema_version != 1:
+        return False
     if provenance["validation_snapshot_hash"] != canonical_hash(snapshot):
         return False
     context = {
@@ -352,6 +389,8 @@ def _root_validation_snapshot_is_auditable(evaluation: StrategyEvaluation) -> bo
     }
     if canonical_hash(snapshot["final_boundary"]) != canonical_hash(expected_boundary):
         return False
+    if _utc_evidence_timestamp(provenance["sealed_boundary"]) != boundary.final_start:
+        return False
     validation_data = pd.DataFrame(
         {
             "decision_timestamp": chronology,
@@ -389,7 +428,14 @@ def _root_validation_snapshot_is_auditable(evaluation: StrategyEvaluation) -> bo
             return False
         if _utc_evidence_timestamp(record["validation_end"]) != chronology[validation_index[-1]]:
             return False
-    if canonical_hash(snapshot["derived"]) != canonical_hash(provenance["promotion_inputs"]):
+    derived = snapshot["derived"]
+    if not isinstance(derived, Mapping) or set(derived) != _PROMOTION_INPUT_FIELDS:
+        return False
+    if canonical_hash(derived) != canonical_hash(provenance["promotion_inputs"]):
+        return False
+    expected_reasons = promotion_reasons(derived, config)
+    expected_promotion = {"promoted": not expected_reasons, "reasons": expected_reasons}
+    if canonical_hash(snapshot["promotion"]) != canonical_hash(expected_promotion):
         return False
     return canonical_hash(snapshot["promotion"]) == canonical_hash(provenance["promotion_decision"])
 
@@ -464,6 +510,7 @@ def _sealed_evidence_is_auditable(evaluation: StrategyEvaluation) -> bool:
             "status": evaluation.status.value,
             "development_sharpe": evaluation.development_sharpe,
             "downside_risk": evaluation.downside_risk,
+            "maximum_drawdown": evaluation.development_maximum_drawdown,
             "calibration_error": evaluation.calibration_error,
             "fold_stability": evaluation.fold_stability,
             "cost_survives": evaluation.cost_survives,
@@ -605,6 +652,60 @@ def _project_caps(
     return result
 
 
+_ONLINE_PROVENANCE_FIELDS = {
+    "weight_cohort_snapshot",
+    "weight_cohort_hash",
+    "online_method",
+    "fixed_share",
+    "learning_rate_ceiling",
+    "outcomes_through",
+    "online_state",
+}
+
+
+def _offline_provenance_hash(provenance: Mapping[str, Any]) -> str:
+    offline = {key: value for key, value in provenance.items() if key not in _ONLINE_PROVENANCE_FIELDS}
+    return canonical_hash(_deep_thaw(offline))
+
+
+def _weight_cohort_snapshot(weights: Sequence[EvidenceWeight]) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "members": tuple(
+            {
+                "strategy_id": weight.strategy_id,
+                "strategy_version": weight.strategy_version,
+                "family": weight.family.value,
+                "dataset_hash": weight.dataset_hash,
+                "symbol": weight.symbol,
+                "interval": weight.interval.value,
+                "mode": weight.mode.value,
+                "base_weight": weight.weight,
+                "prior_weight": weight.prior_weight,
+                "evidence_score": weight.evidence_score,
+                "initial_effective_at": weight.effective_at.isoformat(),
+                "initial_outcomes_through": (
+                    weight.outcomes_through.isoformat() if weight.outcomes_through is not None else None
+                ),
+                "offline_provenance_hash": _offline_provenance_hash(weight.provenance),
+            }
+            for weight in weights
+        ),
+    }
+
+
+def _attach_weight_cohort(weights: Sequence[EvidenceWeight]) -> tuple[EvidenceWeight, ...]:
+    snapshot = _weight_cohort_snapshot(weights)
+    snapshot_hash = canonical_hash(snapshot)
+    attached: list[EvidenceWeight] = []
+    for weight in weights:
+        provenance = _deep_thaw(weight.provenance)
+        provenance["weight_cohort_snapshot"] = snapshot
+        provenance["weight_cohort_hash"] = snapshot_hash
+        attached.append(replace(weight, provenance=provenance))
+    return tuple(attached)
+
+
 def compute_evidence_weights(
     evaluations: Sequence[StrategyEvaluation],
     *,
@@ -654,7 +755,7 @@ def compute_evidence_weights(
                 provenance=MappingProxyType(provenance),
             )
         )
-    return tuple(weights)
+    return _attach_weight_cohort(weights)
 
 
 def _strict_utc_outcome_column(values: pd.Series, name: str) -> pd.Series:
@@ -690,6 +791,128 @@ def _outcome_record(row: Any) -> dict[str, Any]:
     }
 
 
+_COHORT_MEMBER_FIELDS = {
+    "strategy_id",
+    "strategy_version",
+    "family",
+    "dataset_hash",
+    "symbol",
+    "interval",
+    "mode",
+    "base_weight",
+    "prior_weight",
+    "evidence_score",
+    "initial_effective_at",
+    "initial_outcomes_through",
+    "offline_provenance_hash",
+}
+_OUTCOME_RECORD_FIELDS = {
+    "outcome_id",
+    "strategy_id",
+    "dataset_hash",
+    "strategy_version",
+    "symbol",
+    "interval",
+    "mode",
+    "decision_timestamp",
+    "outcome_available_at",
+    "signal",
+    "realized_return",
+    "cost",
+}
+
+
+def _validated_weight_cohort(weights: Sequence[EvidenceWeight]) -> Mapping[str, Any]:
+    snapshots = [_deep_thaw(weight.provenance.get("weight_cohort_snapshot")) for weight in weights]
+    hashes = [weight.provenance.get("weight_cohort_hash") for weight in weights]
+    if not snapshots or len({canonical_hash(snapshot) for snapshot in snapshots}) != 1 or len(set(hashes)) != 1:
+        raise ValueError("evidence weight cohort snapshots must be homogeneous")
+    snapshot = snapshots[0]
+    if not isinstance(snapshot, dict) or set(snapshot) != {"schema_version", "members"}:
+        raise ValueError("evidence weight cohort snapshot is invalid")
+    if snapshot["schema_version"] != 1 or hashes[0] != canonical_hash(snapshot):
+        raise ValueError("evidence weight cohort hash is invalid")
+    members = tuple(snapshot["members"])
+    if len(members) != len(weights):
+        raise ValueError("evidence weight cohort membership is invalid")
+    for weight, member in zip(weights, members, strict=True):
+        if not isinstance(member, dict) or set(member) != _COHORT_MEMBER_FIELDS:
+            raise ValueError("evidence weight cohort member is invalid")
+        current = {
+            "strategy_id": weight.strategy_id,
+            "strategy_version": weight.strategy_version,
+            "family": weight.family.value,
+            "dataset_hash": weight.dataset_hash,
+            "symbol": weight.symbol,
+            "interval": weight.interval.value,
+            "mode": weight.mode.value,
+            "prior_weight": weight.prior_weight,
+            "evidence_score": weight.evidence_score,
+            "offline_provenance_hash": _offline_provenance_hash(weight.provenance),
+        }
+        expected = {key: member[key] for key in current}
+        if canonical_hash(current) != canonical_hash(expected):
+            raise ValueError("evidence weight cohort no longer matches its original members")
+    return snapshot
+
+
+def _normalized_persisted_outcome(
+    record: Mapping[str, Any],
+    *,
+    weight_by_strategy: Mapping[str, EvidenceWeight],
+    as_of: datetime,
+) -> dict[str, Any]:
+    if set(record) != _OUTCOME_RECORD_FIELDS:
+        raise ValueError("persisted outcome record schema is invalid")
+    try:
+        decision_timestamp = _utc_evidence_timestamp(record["decision_timestamp"])
+        outcome_available_at = _utc_evidence_timestamp(record["outcome_available_at"])
+        signal = int(record["signal"])
+        realized_return = float(record["realized_return"])
+        cost = float(record["cost"])
+    except (TypeError, ValueError, OverflowError) as error:
+        raise ValueError("persisted outcome record values are invalid") from error
+    if isinstance(record["signal"], bool) or float(record["signal"]) != signal or signal not in (-1, 0, 1):
+        raise ValueError("persisted outcome signal is invalid")
+    if not math.isfinite(realized_return) or not math.isfinite(cost) or cost < 0:
+        raise ValueError("persisted outcome numeric values are invalid")
+    if outcome_available_at < decision_timestamp or outcome_available_at > pd.Timestamp(as_of):
+        raise ValueError("persisted outcome chronology is invalid")
+    strategy_id = str(record["strategy_id"]).strip()
+    weight = weight_by_strategy.get(strategy_id)
+    context = {
+        "dataset_hash": str(record["dataset_hash"]).strip(),
+        "strategy_version": str(record["strategy_version"]).strip(),
+        "symbol": str(record["symbol"]).strip().upper(),
+        "interval": str(record["interval"]).strip(),
+        "mode": str(record["mode"]).strip(),
+    }
+    if weight is None or tuple(context.values()) != (
+        weight.dataset_hash,
+        weight.strategy_version,
+        weight.symbol,
+        weight.interval.value,
+        weight.mode.value,
+    ):
+        raise ValueError("persisted outcome context is foreign to its weight cohort")
+    identity = {
+        "strategy_id": strategy_id,
+        **context,
+        "decision_timestamp": decision_timestamp.isoformat(),
+        "outcome_available_at": outcome_available_at.isoformat(),
+    }
+    outcome_id = canonical_hash(identity)
+    if str(record["outcome_id"]) != outcome_id:
+        raise ValueError("persisted outcome identity does not match its canonical content")
+    return {
+        "outcome_id": outcome_id,
+        **identity,
+        "signal": signal,
+        "realized_return": realized_return,
+        "cost": cost,
+    }
+
+
 def fixed_share_update(
     weights: Sequence[EvidenceWeight],
     resolved_outcomes: pd.DataFrame,
@@ -700,8 +923,90 @@ def fixed_share_update(
     _require_utc(as_of, "as_of")
     context = _weight_context(weights)
     ordered_weights = tuple(sorted(weights, key=lambda item: (item.strategy_id, item.strategy_version)))
+    cohort = _validated_weight_cohort(ordered_weights)
+    weight_by_strategy = {weight.strategy_id: weight for weight in ordered_weights}
+    for weight in ordered_weights:
+        if as_of < weight.effective_at or (
+            weight.outcomes_through is not None and as_of < weight.outcomes_through
+        ):
+            raise ValueError("as_of cannot precede an evidence weight snapshot or outcome watermark")
+        if weight.outcomes_through is not None and weight.outcomes_through > weight.effective_at:
+            raise ValueError("an outcome watermark cannot follow its effective weight timestamp")
     if context.mode is StrategyMode.FROZEN:
         raise ValueError("frozen evidence weights cannot receive outcome feedback")
+
+    config_hash = canonical_hash(
+        {
+            "fixed_share": config.fixed_share,
+            "learning_rate": config.learning_rate,
+            "maximum_strategy_weight": config.maximum_strategy_weight,
+            "maximum_family_weight": config.maximum_family_weight,
+        }
+    )
+    cohort_hash = canonical_hash(cohort)
+    expected_base_rows = tuple(
+        {"strategy_id": member["strategy_id"], "weight": member["base_weight"]}
+        for member in cohort["members"]
+    )
+    stored_states = [_deep_thaw(weight.provenance.get("online_state", {})) for weight in ordered_weights]
+    if len({canonical_hash(state) for state in stored_states}) != 1:
+        raise ValueError("evidence weights must share one homogeneous persisted online state")
+    stored_state = stored_states[0]
+    history_by_id: dict[str, dict[str, Any]] = {}
+    if stored_state:
+        state_fields = {
+            "config_hash",
+            "cohort_hash",
+            "base_weights",
+            "processed_outcome_ids",
+            "processed_outcomes",
+            "processed_outcomes_hash",
+            "adaptive_learning_rates",
+            "cumulative_mixability_gap",
+            "state_hash",
+        }
+        if not isinstance(stored_state, dict) or set(stored_state) != state_fields:
+            raise ValueError("persisted online state schema is invalid")
+        if stored_state["config_hash"] != config_hash:
+            raise ValueError("online feedback configuration cannot change during replay")
+        if stored_state["cohort_hash"] != cohort_hash:
+            raise ValueError("persisted online state does not match the weight cohort")
+        base_weight_rows = tuple(stored_state["base_weights"])
+        if canonical_hash(base_weight_rows) != canonical_hash(expected_base_rows):
+            raise ValueError("persisted online base weights do not match the weight cohort")
+        persisted_records = tuple(stored_state["processed_outcomes"])
+        if stored_state["processed_outcomes_hash"] != canonical_hash(persisted_records):
+            raise ValueError("persisted outcome history content hash is invalid")
+        persisted_ids = tuple(str(value) for value in stored_state["processed_outcome_ids"])
+        if persisted_ids != tuple(str(record.get("outcome_id", "")) for record in persisted_records):
+            raise ValueError("persisted outcome identities do not match their history")
+        for raw_record in persisted_records:
+            if not isinstance(raw_record, Mapping):
+                raise ValueError("persisted outcome record schema is invalid")
+            normalized = _normalized_persisted_outcome(
+                raw_record,
+                weight_by_strategy=weight_by_strategy,
+                as_of=as_of,
+            )
+            if canonical_hash(raw_record) != canonical_hash(normalized):
+                raise ValueError("persisted outcome record is not in canonical form")
+            outcome_id = normalized["outcome_id"]
+            if outcome_id in history_by_id:
+                raise ValueError("persisted outcome history contains duplicate identities")
+            history_by_id[outcome_id] = normalized
+        rates = tuple(float(value) for value in stored_state["adaptive_learning_rates"])
+        gap = float(stored_state["cumulative_mixability_gap"])
+        if not math.isfinite(gap) or gap < 0 or not all(math.isfinite(rate) and rate > 0 for rate in rates):
+            raise ValueError("persisted online learning state is invalid")
+        state_payload = dict(stored_state)
+        state_hash = state_payload.pop("state_hash")
+        if state_hash != canonical_hash(state_payload):
+            raise ValueError("persisted online state hash is invalid")
+    base_weights = {str(row["strategy_id"]): float(row["weight"]) for row in expected_base_rows}
+    if set(base_weights) != set(weight_by_strategy) or any(
+        not math.isfinite(value) or value < 0 for value in base_weights.values()
+    ):
+        raise ValueError("weight cohort base weights are invalid")
     if resolved_outcomes.empty:
         return ordered_weights
     if sum(weight.weight for weight in ordered_weights) <= 0:
@@ -759,7 +1064,6 @@ def fixed_share_update(
     if (outcomes[["strategy_id", "dataset_hash", "strategy_version", "symbol", "interval", "mode"]] == "").any().any():
         raise ValueError("resolved outcome context identifiers must not be empty")
 
-    weight_by_strategy = {weight.strategy_id: weight for weight in ordered_weights}
     for row in outcomes.itertuples(index=False):
         weight = weight_by_strategy.get(str(row.strategy_id))
         if weight is None:
@@ -788,37 +1092,6 @@ def fixed_share_update(
     if outcomes.empty:
         return ordered_weights
 
-    stored_states = [_deep_thaw(weight.provenance.get("online_state", {})) for weight in ordered_weights]
-    if len({canonical_hash(state) for state in stored_states}) != 1:
-        raise ValueError("evidence weights must share one homogeneous persisted online state")
-    stored_state = stored_states[0]
-    config_hash = canonical_hash(
-        {
-            "fixed_share": config.fixed_share,
-            "learning_rate": config.learning_rate,
-            "maximum_strategy_weight": config.maximum_strategy_weight,
-            "maximum_family_weight": config.maximum_family_weight,
-        }
-    )
-    if stored_state and stored_state.get("config_hash") != config_hash:
-        raise ValueError("online feedback configuration cannot change during replay")
-    base_weight_rows = stored_state.get(
-        "base_weights",
-        tuple({"strategy_id": weight.strategy_id, "weight": weight.weight} for weight in ordered_weights),
-    )
-    base_weights = {str(row["strategy_id"]): float(row["weight"]) for row in base_weight_rows}
-    if set(base_weights) != set(weight_by_strategy) or any(
-        not math.isfinite(value) or value < 0 for value in base_weights.values()
-    ):
-        raise ValueError("persisted online base weights are invalid")
-
-    history_by_id: dict[str, dict[str, Any]] = {}
-    for record in stored_state.get("processed_outcomes", ()):
-        normalized = dict(record)
-        outcome_id = str(normalized.get("outcome_id", ""))
-        if not outcome_id or outcome_id in history_by_id:
-            raise ValueError("persisted outcome history is invalid")
-        history_by_id[outcome_id] = normalized
     for row in outcomes.itertuples(index=False):
         record = _outcome_record(row)
         outcome_id = record["outcome_id"]
@@ -892,6 +1165,17 @@ def fixed_share_update(
         current = _project_caps(shared, families, config)
         outcomes_through = pd.Timestamp(effective_at).to_pydatetime()
 
+    online_state = {
+        "config_hash": config_hash,
+        "cohort_hash": cohort_hash,
+        "base_weights": expected_base_rows,
+        "processed_outcome_ids": tuple(record["outcome_id"] for record in history),
+        "processed_outcomes": history,
+        "processed_outcomes_hash": canonical_hash(history),
+        "adaptive_learning_rates": tuple(adaptive_learning_rates),
+        "cumulative_mixability_gap": cumulative_mixability_gap,
+    }
+    online_state["state_hash"] = canonical_hash(online_state)
     updated: list[EvidenceWeight] = []
     for weight in ordered_weights:
         provenance = _deep_thaw(weight.provenance)
@@ -901,17 +1185,7 @@ def fixed_share_update(
                 "fixed_share": config.fixed_share,
                 "learning_rate_ceiling": config.learning_rate,
                 "outcomes_through": outcomes_through.isoformat() if outcomes_through else None,
-                "online_state": {
-                    "config_hash": config_hash,
-                    "base_weights": tuple(
-                        {"strategy_id": strategy_id, "weight": base_weights[strategy_id]}
-                        for strategy_id in sorted(base_weights)
-                    ),
-                    "processed_outcome_ids": tuple(record["outcome_id"] for record in history),
-                    "processed_outcomes": history,
-                    "adaptive_learning_rates": tuple(adaptive_learning_rates),
-                    "cumulative_mixability_gap": cumulative_mixability_gap,
-                },
+                "online_state": online_state,
             }
         )
         updated.append(

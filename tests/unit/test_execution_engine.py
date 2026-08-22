@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from dataclasses import replace
+from datetime import datetime, timedelta
 
 import pandas as pd
 import pytest
 
 from src.backtest.costs import CostAssumptions, calculate_carry_cost, calculate_transaction_cost
-from src.backtest.execution import ExecutionAssumptions, OrderIntent, run_execution
+from src.backtest.execution import DecisionProvenance, ExecutionAssumptions, OrderIntent, run_execution
 
 
 def _bars() -> pd.DataFrame:
@@ -360,3 +361,95 @@ def test_second_protective_exit_is_cancelled_after_first_exit_flattens_position(
     assert result.positions == {"XYZ": 0.0}
     assert result.rejections[0].order_id == "stale"
     assert result.rejections[0].reason == "stale_protective_exit"
+
+
+def test_source_decision_composite_is_permutation_invariant_and_exactly_deduplicated() -> None:
+    alpha = DecisionProvenance(
+        strategy_id="alpha",
+        symbol="XYZ",
+        decision_hash="a" * 64,
+        decision_timestamp=pd.Timestamp("2026-08-21 10:01Z"),
+        signal=1,
+        strength=0.6,
+    )
+    beta = DecisionProvenance(
+        strategy_id="beta",
+        symbol="XYZ",
+        decision_hash="b" * 64,
+        decision_timestamp=pd.Timestamp("2026-08-21 10:01Z"),
+        signal=-1,
+        strength=0.4,
+    )
+
+    first = OrderIntent(
+        order_id="first",
+        strategy_id="netted:alpha+beta",
+        symbol="XYZ",
+        decision_timestamp=pd.Timestamp("2026-08-21 10:01Z"),
+        side="buy",
+        quantity=1,
+        source_decisions=(alpha, beta, alpha),
+    )
+    reversed_order = replace(first, order_id="reversed", source_decisions=(beta, alpha))
+
+    assert first.decision_hash == reversed_order.decision_hash
+    assert first.source_decisions == reversed_order.source_decisions
+    assert first.source_decision_hashes == ("a" * 64, "b" * 64)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("decision_hash", "b" * 64), ("signal", -1), ("strength", 0.2)],
+)
+def test_source_decision_composite_rejects_conflicting_state_for_one_logical_identity(
+    field: str,
+    value: object,
+) -> None:
+    source = DecisionProvenance(
+        strategy_id="alpha",
+        symbol="XYZ",
+        decision_hash="a" * 64,
+        decision_timestamp=pd.Timestamp("2026-08-21 10:01Z"),
+        signal=1,
+        strength=0.6,
+    )
+
+    with pytest.raises(ValueError, match="conflicting source decision"):
+        OrderIntent(
+            order_id="conflict",
+            strategy_id="alpha",
+            symbol="XYZ",
+            decision_timestamp=pd.Timestamp("2026-08-21 10:01Z"),
+            side="buy",
+            quantity=1,
+            source_decisions=(source, replace(source, **{field: value})),
+        )
+
+
+@pytest.mark.parametrize("timestamp_column", ["open_timestamp", "close_timestamp", "available_at"])
+def test_execution_rejects_naive_raw_bar_timestamps(timestamp_column: str) -> None:
+    bars = _bars()
+    values = list(bars[timestamp_column].dt.to_pydatetime())
+    values[0] = datetime(2026, 8, 21, 10)
+    bars[timestamp_column] = pd.Series(values, dtype=object)
+
+    with pytest.raises(ValueError, match="timezone-aware"):
+        run_execution(bars, [], ExecutionAssumptions())
+
+
+def test_execution_preserves_aware_offset_bar_timestamp_conversion() -> None:
+    bars = _bars()
+    for column in ("open_timestamp", "close_timestamp", "available_at"):
+        bars[column] = bars[column].dt.tz_convert("Europe/London")
+    order = OrderIntent(
+        order_id="aware-offset",
+        strategy_id="alpha",
+        symbol="XYZ",
+        decision_timestamp=pd.Timestamp("2026-08-21 10:01Z"),
+        side="buy",
+        quantity=1,
+    )
+
+    fill = run_execution(bars, [order], ExecutionAssumptions()).fills[0]
+
+    assert fill.execution_timestamp == pd.Timestamp("2026-08-21 10:01Z")

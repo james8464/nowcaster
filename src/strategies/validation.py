@@ -55,6 +55,37 @@ class ValidationConfig:
         return max(self.embargo, self.forecast_horizon + self.publication_delay)
 
 
+def promotion_reasons(inputs: Mapping[str, Any], config: ValidationConfig) -> tuple[str, ...]:
+    reasons: list[str] = []
+    if inputs["status"] != EvaluationStatus.EVALUATED.value:
+        reasons.append("strategy evaluation did not complete")
+    if int(inputs["observations"]) < config.minimum_development_observations:
+        reasons.append("insufficient development observations")
+    if int(inputs["trades"]) < config.minimum_trades:
+        reasons.append("insufficient development trades")
+    development_sharpe = inputs["development_sharpe"]
+    if development_sharpe is None or not math.isfinite(float(development_sharpe)) or float(development_sharpe) <= 0:
+        reasons.append("development Sharpe is not positive")
+    maximum_drawdown = inputs["maximum_drawdown"]
+    if maximum_drawdown is None or not math.isfinite(float(maximum_drawdown)) or abs(float(maximum_drawdown)) > float(
+        config.maximum_drawdown
+    ):
+        reasons.append("development drawdown exceeds the gate")
+    fold_stability = inputs["fold_stability"]
+    if fold_stability is None or not math.isfinite(float(fold_stability)) or float(fold_stability) < 0.5:
+        reasons.append("walk-forward fold stability failed")
+    if inputs["cost_survives"] is not True:
+        reasons.append("doubled-cost survival failed")
+    dsr_probability = inputs["dsr_probability"]
+    if dsr_probability is None:
+        reasons.append("observed trial Sharpe vector is unavailable")
+    elif not math.isfinite(float(dsr_probability)) or float(dsr_probability) < config.minimum_dsr_probability:
+        reasons.append("Deflated Sharpe probability failed")
+    if inputs["causal_audit_passed"] is not True:
+        reasons.append("causal audit failed")
+    return tuple(reasons)
+
+
 @dataclass(frozen=True, slots=True)
 class FinalBoundary:
     final_start: pd.Timestamp
@@ -134,6 +165,7 @@ class StrategyEvaluation:
     development_sharpe: float | None = None
     final_sharpe: float | None = None
     downside_risk: float | None = None
+    development_maximum_drawdown: float | None = None
     calibration_error: float | None = None
     fold_stability: float | None = None
     cost_survives: bool | None = None
@@ -700,35 +732,15 @@ def evaluate_registry(request: EvaluationRequest) -> tuple[StrategyEvaluation, .
                 )
                 continue
         stability = sealed_evidence.fold_stability
-        reasons: list[str] = []
-        if len(development_returns) < request.config.minimum_development_observations:
-            reasons.append("insufficient development observations")
-        if development.trades < request.config.minimum_trades:
-            reasons.append("insufficient development trades")
-        if development.sharpe != development.sharpe or development.sharpe <= 0:
-            reasons.append("development Sharpe is not positive")
-        invalid_drawdown = development.maximum_drawdown != development.maximum_drawdown
-        excessive_drawdown = abs(development.maximum_drawdown) > request.config.maximum_drawdown
-        if invalid_drawdown or excessive_drawdown:
-            reasons.append("development drawdown exceeds the gate")
-        if stability < 0.5:
-            reasons.append("walk-forward fold stability failed")
-        if not cost_survives:
-            reasons.append("doubled-cost survival failed")
-        if dsr is None:
-            reasons.append("observed trial Sharpe vector is unavailable")
-        elif dsr < request.config.minimum_dsr_probability:
-            reasons.append("Deflated Sharpe probability failed")
-        if not evidence.causal_audit_passed:
-            reasons.append("causal audit failed")
         signal, strength, decision_timestamp, data_through = _latest_signal(evidence, request.as_of)
         development_sharpe = _finite_or_none(development.sharpe)
+        development_maximum_drawdown = _finite_or_none(development.maximum_drawdown)
         final_sharpe = _finite_or_none(final.sharpe)
-        promotion = PromotionDecision(not reasons, tuple(reasons))
         promotion_inputs = {
             "status": EvaluationStatus.EVALUATED.value,
             "development_sharpe": development_sharpe,
             "downside_risk": downside_risk,
+            "maximum_drawdown": development_maximum_drawdown,
             "calibration_error": sealed_evidence.calibration_error,
             "fold_stability": stability,
             "cost_survives": cost_survives,
@@ -738,6 +750,8 @@ def evaluate_registry(request: EvaluationRequest) -> tuple[StrategyEvaluation, .
             "trial_sharpes": sealed_evidence.trial_sharpes,
             "causal_audit_passed": evidence.causal_audit_passed,
         }
+        reasons = promotion_reasons(promotion_inputs, request.config)
+        promotion = PromotionDecision(not reasons, reasons)
         promotion_record = {"promoted": promotion.promoted, "reasons": promotion.reasons}
         promotion_payload = {
             "promotion_inputs": promotion_inputs,
@@ -794,6 +808,7 @@ def evaluate_registry(request: EvaluationRequest) -> tuple[StrategyEvaluation, .
                 development_sharpe=development_sharpe,
                 final_sharpe=final_sharpe,
                 downside_risk=downside_risk,
+                development_maximum_drawdown=development_maximum_drawdown,
                 calibration_error=sealed_evidence.calibration_error,
                 fold_stability=stability,
                 cost_survives=cost_survives,
