@@ -8,6 +8,8 @@ import yaml
 from dotenv import load_dotenv
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from src.strategies.types import StrategyFamily, StrategySpec
+
 
 class CompanyConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -117,6 +119,36 @@ class InstrumentsConfig(BaseModel):
         return self
 
 
+class StrategiesConfig(BaseModel):
+    """Configuration only; signal callables are an explicit code-level registry."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    strategy_weight_cap: float = Field(default=0.25, gt=0, le=1)
+    family_weight_caps: dict[StrategyFamily, float] = {}
+    strategies: tuple[StrategySpec, ...] = ()
+
+    @field_validator("family_weight_caps")
+    @classmethod
+    def valid_family_caps(cls, value: dict[StrategyFamily, float]) -> dict[StrategyFamily, float]:
+        if any(cap <= 0 or cap > 1 for cap in value.values()):
+            raise ValueError("family weight caps must be in (0, 1]")
+        return dict(value)
+
+    @model_validator(mode="after")
+    def consistent_caps_and_ids(self) -> StrategiesConfig:
+        if any(self.strategy_weight_cap > cap for cap in self.family_weight_caps.values()):
+            raise ValueError("strategy weight cap must not exceed a family weight cap")
+        strategy_ids = [spec.strategy_id for spec in self.strategies]
+        if len(strategy_ids) != len(set(strategy_ids)):
+            raise ValueError("strategy IDs must be unique")
+        return self
+
+    @property
+    def enabled(self) -> tuple[StrategySpec, ...]:
+        return tuple(spec for spec in self.strategies if spec.enabled)
+
+
 class Settings(BaseModel):
     project_root: Path
     mode: Literal["live", "demo", "test"] = "live"
@@ -129,6 +161,7 @@ class Settings(BaseModel):
     model: ModelConfig
     features: FeatureConfig
     instruments: InstrumentsConfig = InstrumentsConfig()
+    strategies: StrategiesConfig = StrategiesConfig()
 
     @classmethod
     def load(cls, project_root: Path | None = None, *, mode: str | None = None) -> Settings:
@@ -156,6 +189,7 @@ class Settings(BaseModel):
             model=ModelConfig.model_validate(read_yaml("model.yaml")),
             features=FeatureConfig.model_validate(read_yaml("features.yaml")),
             instruments=InstrumentsConfig.model_validate(read_yaml("instruments.yaml", required=False)),
+            strategies=StrategiesConfig.model_validate(read_yaml("strategies.yaml", required=False)),
         )
 
     def config_hash_payload(self) -> dict[str, Any]:

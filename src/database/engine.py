@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -8,7 +9,9 @@ import pandas as pd
 from sqlalchemy import Engine, create_engine, insert, inspect, select, text
 from sqlalchemy.exc import SQLAlchemyError
 
-from src.database.schema import NATURAL_KEYS, TABLES, metadata
+from src.database.schema import NATURAL_KEYS, TABLES, metadata, schema_versions
+
+SCHEMA_VERSION = 2
 
 
 class Database:
@@ -25,6 +28,18 @@ class Database:
 
     def initialize(self) -> None:
         metadata.create_all(self.engine)
+        with self.engine.begin() as connection:
+            applied = connection.execute(
+                select(schema_versions.c.version).where(schema_versions.c.version == SCHEMA_VERSION)
+            ).scalar_one_or_none()
+            if applied is None:
+                connection.execute(insert(schema_versions).values(version=SCHEMA_VERSION, applied_at=datetime.now(UTC)))
+
+    def schema_version(self) -> int:
+        with self.engine.connect() as connection:
+            statement = select(schema_versions.c.version).order_by(schema_versions.c.version.desc())
+            version = connection.execute(statement).scalar()
+        return int(version or 0)
 
     def table_names(self) -> list[str]:
         return inspect(self.engine).get_table_names()

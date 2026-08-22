@@ -1,0 +1,141 @@
+strategy_weight_cap: 0.25
+family_weight_caps:
+  trend: 0.50
+  mean_reversion: 0.50
+  volatility_volume: 0.50
+  session: 0.50
+  relative_value: 0.50
+strategies:
+  - strategy_id: ema_adx_trend
+    family: trend
+    version: 1.0.0
+    intervals: [5m, 15m, 1h]
+    warmup_bars: 50
+    parameters: {fast_period: 12, slow_period: 26, adx_period: 14, adx_threshold: 20}
+    enabled: true
+  - strategy_id: macd_histogram_trend
+    family: trend
+    version: 1.0.0
+    intervals: [5m, 15m, 1h]
+    warmup_bars: 35
+    parameters: {fast_period: 12, slow_period: 26, signal_period: 9}
+    enabled: true
+  - strategy_id: donchian_breakout
+    family: trend
+    version: 1.0.0
+    intervals: [15m, 1h]
+    warmup_bars: 20
+    parameters: {lookback: 20}
+    enabled: true
+  - strategy_id: supertrend
+    family: trend
+    version: 1.0.0
+    intervals: [15m, 1h]
+    warmup_bars: 14
+    parameters: {atr_period: 14, multiplier: 3.0}
+    enabled: true
+  - strategy_id: vwap_trend_continuation
+    family: trend
+    version: 1.0.0
+    intervals: [5m, 15m]
+    warmup_bars: 20
+    parameters: {slope_bars: 5}
+    enabled: true
+  - strategy_id: rsi_reversal
+    family: mean_reversion
+    version: 1.0.0
+    intervals: [5m, 15m, 1h]
+    warmup_bars: 14
+    parameters: {period: 14, oversold: 30, overbought: 70}
+    enabled: true
+  - strategy_id: connors_rsi
+    family: mean_reversion
+    version: 1.0.0
+    intervals: [5m, 15m]
+    warmup_bars: 100
+    parameters: {rsi_period: 3, streak_period: 2, rank_period: 100}
+    enabled: true
+  - strategy_id: bollinger_reversion
+    family: mean_reversion
+    version: 1.0.0
+    intervals: [5m, 15m, 1h]
+    warmup_bars: 20
+    parameters: {period: 20, deviations: 2.0}
+    enabled: true
+  - strategy_id: vwap_zscore_reversion
+    family: mean_reversion
+    version: 1.0.0
+    intervals: [5m, 15m]
+    warmup_bars: 30
+    parameters: {lookback: 30, entry_zscore: 2.0}
+    enabled: true
+  - strategy_id: stochastic_reversal
+    family: mean_reversion
+    version: 1.0.0
+    intervals: [5m, 15m]
+    warmup_bars: 14
+    parameters: {k_period: 14, d_period: 3}
+    enabled: true
+  - strategy_id: extreme_return_reversal
+    family: mean_reversion
+    version: 1.0.0
+    intervals: [5m, 15m, 1h]
+    warmup_bars: 20
+    parameters: {lookback: 20, entry_zscore: 2.5}
+    enabled: true
+  - strategy_id: bollinger_keltner_squeeze
+    family: volatility_volume
+    version: 1.0.0
+    intervals: [5m, 15m, 1h]
+    warmup_bars: 20
+    parameters: {period: 20, atr_period: 20}
+    enabled: true
+  - strategy_id: volume_spike_breakout
+    family: volatility_volume
+    version: 1.0.0
+    intervals: [5m, 15m]
+    warmup_bars: 20
+    parameters: {volume_lookback: 20, volume_multiple: 2.0}
+    enabled: true
+  - strategy_id: volatility_scaled_trend
+    family: volatility_volume
+    version: 1.0.0
+    intervals: [15m, 1h]
+    warmup_bars: 20
+    parameters: {trend_lookback: 20, volatility_lookback: 20}
+    enabled: true
+  - strategy_id: opening_range_breakout
+    family: session
+    version: 1.0.0
+    intervals: [5m]
+    warmup_bars: 12
+    parameters: {range_minutes: 30, relative_volume_lookback: 20}
+    enabled: true
+  - strategy_id: etf_last_half_hour_momentum
+    family: session
+    version: 1.0.0
+    intervals: [5m]
+    warmup_bars: 20
+    parameters: {lookback: 20}
+    enabled: true
+  - strategy_id: bitcoin_active_session_momentum
+    family: session
+    version: 1.0.0
+    intervals: [15m, 1h]
+    warmup_bars: 20
+    parameters: {lookback: 20}
+    enabled: true
+  - strategy_id: rolling_cointegration_pairs
+    family: relative_value
+    version: 1.0.0
+    intervals: [1h]
+    warmup_bars: 120
+    parameters: {lookback: 120, entry_zscore: 2.0}
+    enabled: true
+  - strategy_id: crypto_cross_sectional_momentum
+    family: relative_value
+    version: 1.0.0
+    intervals: [1h, 4h]
+    warmup_bars: 24
+    parameters: {lookback: 24, minimum_universe: 5}
+    enabled: true
