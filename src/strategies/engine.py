@@ -41,7 +41,14 @@ def generate_current_decision(
         validation_config=validation_config,
     )
     if modes and StrategyMode.FROZEN not in modes:
-        weights = fixed_share_update(weights, resolved_outcomes, as_of=as_of, config=config)
+        weights = fixed_share_update(
+            weights,
+            resolved_outcomes,
+            evaluations=evaluations,
+            as_of=as_of,
+            validation_config=validation_config,
+            config=config,
+        )
     if database is not None:
         persist_evidence_weights(database, weights)
     return combine_current_signals(

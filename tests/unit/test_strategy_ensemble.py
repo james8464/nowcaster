@@ -13,10 +13,10 @@ from src.strategies.ensemble import (
     EnsembleConfig,
     EnsembleDecision,
     EvidenceWeight,
-    fixed_share_update,
 )
 from src.strategies.ensemble import combine_current_signals as _combine_current_signals
 from src.strategies.ensemble import compute_evidence_weights as _compute_evidence_weights
+from src.strategies.ensemble import fixed_share_update as _fixed_share_update
 from src.strategies.types import BarInterval, StrategyFamily, StrategyMode, canonical_hash
 from src.strategies.validation import EvaluationStatus, PromotionDecision, StrategyEvaluation, ValidationConfig
 
@@ -73,6 +73,25 @@ def generate_current_decision(
         as_of,
         config=config,
         validation_config=TEST_VALIDATION_CONFIG,
+    )
+
+
+def fixed_share_update(
+    weights: Sequence[EvidenceWeight],
+    resolved_outcomes: pd.DataFrame,
+    *,
+    evaluations: Sequence[StrategyEvaluation],
+    as_of: datetime,
+    config: EnsembleConfig,
+    validation_config: ValidationConfig = TEST_VALIDATION_CONFIG,
+) -> tuple[EvidenceWeight, ...]:
+    return _fixed_share_update(
+        weights,
+        resolved_outcomes,
+        evaluations=evaluations,
+        as_of=as_of,
+        config=config,
+        validation_config=validation_config,
     )
 
 
@@ -296,6 +315,58 @@ def _thaw(value: object) -> object:
     if isinstance(value, tuple):
         return tuple(_thaw(item) for item in value)
     return value
+
+
+def _with_mode(evaluation: StrategyEvaluation, mode: StrategyMode) -> StrategyEvaluation:
+    provenance = _thaw(evaluation.evidence_provenance)
+    assert isinstance(provenance, dict)
+    snapshot = dict(provenance["validation_snapshot"])
+    context = dict(snapshot["context"])
+    context["mode"] = mode.value
+    snapshot["context"] = context
+    provenance["validation_snapshot"] = snapshot
+    provenance["validation_snapshot_hash"] = canonical_hash(snapshot)
+    return replace(evaluation, mode=mode, evidence_provenance=provenance)
+
+
+def _forge_offline_weight_state(
+    weights: tuple[EvidenceWeight, ...],
+    *,
+    current_values: tuple[float, ...] | None = None,
+    base_values: tuple[float, ...] | None = None,
+    prior_values: tuple[float, ...] | None = None,
+) -> tuple[EvidenceWeight, ...]:
+    snapshot = _thaw(weights[0].provenance["weight_cohort_snapshot"])
+    assert isinstance(snapshot, dict)
+    members = [dict(member) for member in snapshot["members"]]
+    current_rows = [dict(row) for row in snapshot["current_weights"]]
+    public_values = current_values or tuple(weight.weight for weight in weights)
+    public_priors = prior_values or tuple(weight.prior_weight for weight in weights)
+    for index, (member, row) in enumerate(zip(members, current_rows, strict=True)):
+        row["weight"] = public_values[index]
+        if base_values is not None:
+            member["base_weight"] = base_values[index]
+        if prior_values is not None:
+            member["prior_weight"] = prior_values[index]
+    snapshot["members"] = tuple(members)
+    snapshot["current_weights"] = tuple(current_rows)
+    snapshot["current_weights_hash"] = canonical_hash(snapshot["current_weights"])
+    snapshot_hash = canonical_hash(snapshot)
+    forged = []
+    for index, weight in enumerate(weights):
+        provenance = _thaw(weight.provenance)
+        assert isinstance(provenance, dict)
+        provenance["weight_cohort_snapshot"] = snapshot
+        provenance["weight_cohort_hash"] = snapshot_hash
+        forged.append(
+            replace(
+                weight,
+                weight=public_values[index],
+                prior_weight=public_priors[index],
+                provenance=provenance,
+            )
+        )
+    return tuple(forged)
 
 
 def _replace_online_state(
@@ -652,10 +723,22 @@ def test_fixed_share_updates_only_resolved_outcomes_and_conserves_mass() -> None
         evaluations,
     )
 
-    first = fixed_share_update(initial, outcomes, as_of=datetime(2026, 8, 22, 11, tzinfo=UTC), config=config)
+    first = fixed_share_update(
+        initial,
+        outcomes,
+        evaluations=evaluations,
+        as_of=datetime(2026, 8, 22, 11, tzinfo=UTC),
+        config=config,
+    )
     changed = outcomes.copy()
     changed.loc[changed["outcome_available_at"] > pd.Timestamp("2026-08-22 11:00Z"), "realized_return"] *= -100
-    unchanged = fixed_share_update(initial, changed, as_of=datetime(2026, 8, 22, 11, tzinfo=UTC), config=config)
+    unchanged = fixed_share_update(
+        initial,
+        changed,
+        evaluations=evaluations,
+        as_of=datetime(2026, 8, 22, 11, tzinfo=UTC),
+        config=config,
+    )
 
     assert first == unchanged
     assert sum(weight.weight for weight in first) == pytest.approx(1)
@@ -700,6 +783,7 @@ def test_adahedge_learning_rate_adapts_to_accumulated_mixability_gap() -> None:
     updated = fixed_share_update(
         initial,
         outcomes,
+        evaluations=evaluations,
         as_of=datetime(2026, 8, 22, 11, tzinfo=UTC),
         config=config,
     )
@@ -746,18 +830,21 @@ def test_adahedge_state_makes_batch_and_incremental_updates_equivalent() -> None
     batch = fixed_share_update(
         initial,
         outcomes,
+        evaluations=evaluations,
         as_of=datetime(2026, 8, 22, 11, tzinfo=UTC),
         config=config,
     )
     first = fixed_share_update(
         initial,
         outcomes,
+        evaluations=evaluations,
         as_of=datetime(2026, 8, 22, 10, tzinfo=UTC),
         config=config,
     )
     incremental = fixed_share_update(
         first,
         outcomes,
+        evaluations=evaluations,
         as_of=datetime(2026, 8, 22, 11, tzinfo=UTC),
         config=config,
     )
@@ -792,22 +879,31 @@ def test_same_timestamp_partial_feedback_is_partition_invariant_and_replay_idemp
         evaluations,
     )
 
-    batch = fixed_share_update(initial, outcomes, as_of=datetime(2026, 8, 22, 10, tzinfo=UTC), config=config)
+    batch = fixed_share_update(
+        initial,
+        outcomes,
+        evaluations=evaluations,
+        as_of=datetime(2026, 8, 22, 10, tzinfo=UTC),
+        config=config,
+    )
     partial = fixed_share_update(
         initial,
         outcomes.iloc[[0]],
+        evaluations=evaluations,
         as_of=datetime(2026, 8, 22, 10, tzinfo=UTC),
         config=config,
     )
     incremental = fixed_share_update(
         partial,
         outcomes.iloc[[1, 2]],
+        evaluations=evaluations,
         as_of=datetime(2026, 8, 22, 10, tzinfo=UTC),
         config=config,
     )
     replayed = fixed_share_update(
         incremental,
         outcomes,
+        evaluations=evaluations,
         as_of=datetime(2026, 8, 22, 10, tzinfo=UTC),
         config=config,
     )
@@ -833,6 +929,7 @@ def test_feedback_rejects_mutated_or_noncausal_persisted_outcome_records(field: 
     updated = fixed_share_update(
         initial,
         outcomes,
+        evaluations=evaluations,
         as_of=datetime(2026, 8, 22, 10, tzinfo=UTC),
         config=config,
     )
@@ -862,16 +959,18 @@ def test_feedback_rejects_mutated_or_noncausal_persisted_outcome_records(field: 
         fixed_share_update(
             tampered,
             next_outcome,
+            evaluations=evaluations,
             as_of=datetime(2026, 8, 22, 11, tzinfo=UTC),
             config=config,
         )
 
 
 def test_feedback_rejects_as_of_rollback_before_the_weight_snapshot() -> None:
-    _evaluations, config, initial, outcomes = _feedback_fixture()
+    evaluations, config, initial, outcomes = _feedback_fixture()
     updated = fixed_share_update(
         initial,
         outcomes,
+        evaluations=evaluations,
         as_of=datetime(2026, 8, 22, 10, tzinfo=UTC),
         config=config,
     )
@@ -880,6 +979,7 @@ def test_feedback_rejects_as_of_rollback_before_the_weight_snapshot() -> None:
         fixed_share_update(
             updated,
             pd.DataFrame(),
+            evaluations=evaluations,
             as_of=datetime(2026, 8, 22, 9, tzinfo=UTC),
             config=config,
         )
@@ -887,10 +987,11 @@ def test_feedback_rejects_as_of_rollback_before_the_weight_snapshot() -> None:
 
 @pytest.mark.parametrize("mutation", ["base_weight", "prior", "cohort"])
 def test_feedback_rejects_mutated_original_weight_cohort(mutation: str) -> None:
-    _evaluations, config, initial, outcomes = _feedback_fixture()
+    evaluations, config, initial, outcomes = _feedback_fixture()
     updated = fixed_share_update(
         initial,
         outcomes,
+        evaluations=evaluations,
         as_of=datetime(2026, 8, 22, 10, tzinfo=UTC),
         config=config,
     )
@@ -906,10 +1007,11 @@ def test_feedback_rejects_mutated_original_weight_cohort(mutation: str) -> None:
     else:
         tampered = (replace(updated[0], strategy_version="forged-version"), *updated[1:])
 
-    with pytest.raises(ValueError, match="cohort"):
+    with pytest.raises(ValueError, match="cohort|identity"):
         fixed_share_update(
             tampered,
             pd.DataFrame(),
+            evaluations=evaluations,
             as_of=datetime(2026, 8, 22, 11, tzinfo=UTC),
             config=config,
         )
@@ -920,7 +1022,13 @@ def test_empty_feedback_and_combination_reject_mutated_offline_current_mass() ->
     tampered = (replace(initial[0], weight=99.0), *initial[1:])
 
     with pytest.raises(ValueError, match="weight|mass|cohort"):
-        fixed_share_update(tampered, pd.DataFrame(), as_of=AS_OF, config=config)
+        fixed_share_update(
+            tampered,
+            pd.DataFrame(),
+            evaluations=evaluations,
+            as_of=AS_OF,
+            config=config,
+        )
     with pytest.raises(ValueError, match="weight|mass|cohort"):
         combine_current_signals(
             evaluations,
@@ -936,6 +1044,7 @@ def test_combination_rejects_mutated_authenticated_online_current_mass() -> None
     updated = fixed_share_update(
         initial,
         outcomes,
+        evaluations=evaluations,
         as_of=datetime(2026, 8, 22, 10, tzinfo=UTC),
         config=config,
     )
@@ -948,7 +1057,13 @@ def test_combination_rejects_mutated_authenticated_online_current_mass() -> None
     literal = (replace(updated[0], weight=0.99), *updated[1:])
 
     with pytest.raises(ValueError, match="weight|mass|state"):
-        fixed_share_update(literal, pd.DataFrame(), as_of=AS_OF, config=config)
+        fixed_share_update(
+            literal,
+            pd.DataFrame(),
+            evaluations=evaluations,
+            as_of=AS_OF,
+            config=config,
+        )
     with pytest.raises(ValueError, match="weight|mass|state"):
         combine_current_signals(
             evaluations,
@@ -993,6 +1108,7 @@ def test_combination_rederivation_rejects_self_consistent_public_hash_reconstruc
     updated = fixed_share_update(
         initial,
         outcomes,
+        evaluations=evaluations,
         as_of=datetime(2026, 8, 22, 10, tzinfo=UTC),
         config=config,
     )
@@ -1021,6 +1137,85 @@ def test_combination_rederivation_rejects_self_consistent_public_hash_reconstruc
             config=config,
             validation_config=TEST_VALIDATION_CONFIG,
         )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["current_99", "sum", "cap", "base", "prior"],
+)
+def test_direct_feedback_rederives_trusted_offline_state_before_empty_return(mutation: str) -> None:
+    evaluations, config, initial, _outcomes = _feedback_fixture()
+    if mutation == "current_99":
+        forged = _forge_offline_weight_state(initial, current_values=(99.0, initial[1].weight, initial[2].weight))
+    elif mutation == "sum":
+        forged = _forge_offline_weight_state(initial, current_values=(0.2, 0.2, 0.2))
+    elif mutation == "cap":
+        forged = _forge_offline_weight_state(initial, current_values=(0.9, 0.05, 0.05))
+    elif mutation == "base":
+        forged = _forge_offline_weight_state(
+            initial,
+            current_values=(0.4, 0.3, 0.3),
+            base_values=(0.4, 0.3, 0.3),
+        )
+    else:
+        forged = _forge_offline_weight_state(initial, prior_values=(0.5, 0.25, 0.25))
+
+    with pytest.raises(ValueError, match="weight|mass|cap|rederived"):
+        fixed_share_update(
+            forged,
+            pd.DataFrame(),
+            evaluations=evaluations,
+            as_of=AS_OF,
+            config=config,
+            validation_config=TEST_VALIDATION_CONFIG,
+        )
+
+
+def test_direct_feedback_requires_trusted_evaluations_and_validation_policy() -> None:
+    evaluations, config, initial, _outcomes = _feedback_fixture()
+
+    with pytest.raises(TypeError):
+        fixed_share_update(initial, pd.DataFrame(), as_of=AS_OF, config=config)
+    with pytest.raises(TypeError):
+        _fixed_share_update(
+            initial,
+            pd.DataFrame(),
+            evaluations=evaluations,
+            as_of=AS_OF,
+            config=config,
+        )
+
+
+def test_direct_feedback_empty_and_authenticated_online_replay_are_exact() -> None:
+    evaluations, config, initial, outcomes = _feedback_fixture()
+
+    empty = fixed_share_update(
+        initial,
+        pd.DataFrame(),
+        evaluations=evaluations,
+        as_of=AS_OF,
+        config=config,
+        validation_config=TEST_VALIDATION_CONFIG,
+    )
+    updated = fixed_share_update(
+        initial,
+        outcomes,
+        evaluations=evaluations,
+        as_of=datetime(2026, 8, 22, 10, tzinfo=UTC),
+        config=config,
+        validation_config=TEST_VALIDATION_CONFIG,
+    )
+    replayed = fixed_share_update(
+        updated,
+        pd.DataFrame(),
+        evaluations=evaluations,
+        as_of=AS_OF,
+        config=config,
+        validation_config=TEST_VALIDATION_CONFIG,
+    )
+
+    assert empty == initial
+    assert replayed == updated
 
 
 @pytest.mark.parametrize("weights", [(0.99, 0.005, 0.005), (0.2, 0.2, 0.2)])
@@ -1065,6 +1260,7 @@ def test_outcome_feedback_requires_exact_strategy_and_dataset_context() -> None:
         fixed_share_update(
             weights,
             outcomes,
+            evaluations=evaluations,
             as_of=datetime(2026, 8, 22, 10, tzinfo=UTC),
             config=config,
         )
@@ -1084,10 +1280,22 @@ def test_fixed_share_directly_rejects_frozen_and_mixed_weight_modes() -> None:
     empty = pd.DataFrame()
 
     with pytest.raises(ValueError, match="frozen"):
-        fixed_share_update(frozen, empty, as_of=AS_OF, config=config)
+        fixed_share_update(
+            frozen,
+            empty,
+            evaluations=evaluations,
+            as_of=AS_OF,
+            config=config,
+        )
     mixed = (frozen[0], replace(frozen[1], mode=StrategyMode.PAPER), frozen[2])
     with pytest.raises(ValueError, match="homogeneous"):
-        fixed_share_update(mixed, empty, as_of=AS_OF, config=config)
+        fixed_share_update(
+            mixed,
+            empty,
+            evaluations=evaluations,
+            as_of=AS_OF,
+            config=config,
+        )
 
 
 @pytest.mark.parametrize(
@@ -1125,6 +1333,7 @@ def test_online_outcome_validation_rejects_invalid_numeric_state(field: str, val
         fixed_share_update(
             weights,
             outcomes,
+            evaluations=evaluations,
             as_of=datetime(2026, 8, 22, 10, tzinfo=UTC),
             config=config,
         )
@@ -1160,6 +1369,7 @@ def test_online_outcome_validation_rejects_naive_causal_timestamps(timestamp_col
         fixed_share_update(
             weights,
             outcomes,
+            evaluations=evaluations,
             as_of=datetime(2026, 8, 22, 10, tzinfo=UTC),
             config=config,
         )
@@ -1245,6 +1455,26 @@ def test_current_decision_rejects_component_data_from_after_the_as_of_boundary()
     weights = compute_evidence_weights(evaluations, as_of=AS_OF, config=config)
 
     with pytest.raises(ValueError, match="future component data"):
+        combine_current_signals(evaluations, weights, as_of=AS_OF, config=config)
+
+
+def test_current_decision_rejects_future_frozen_weight_snapshot_before_mode_branch() -> None:
+    evaluations = tuple(
+        _with_mode(evaluation, StrategyMode.FROZEN)
+        for evaluation in (
+            _evaluation("alpha", StrategyFamily.TREND),
+            _evaluation("beta", StrategyFamily.MEAN_REVERSION),
+            _evaluation("gamma", StrategyFamily.SESSION),
+        )
+    )
+    config = EnsembleConfig(maximum_strategy_weight=0.8, maximum_family_weight=0.8)
+    weights = compute_evidence_weights(
+        evaluations,
+        as_of=AS_OF + timedelta(hours=1),
+        config=config,
+    )
+
+    with pytest.raises(ValueError, match="as_of|future|chronology"):
         combine_current_signals(evaluations, weights, as_of=AS_OF, config=config)
 
 
@@ -1369,6 +1599,7 @@ def test_weight_provenance_is_deeply_immutable() -> None:
     updated = fixed_share_update(
         weights,
         outcomes,
+        evaluations=evaluations,
         as_of=datetime(2026, 8, 22, 10, tzinfo=UTC),
         config=config,
     )

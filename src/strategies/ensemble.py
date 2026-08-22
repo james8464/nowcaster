@@ -1115,7 +1115,7 @@ def _replay_outcome_history(
     return current, outcomes_through, tuple(adaptive_learning_rates), cumulative_mixability_gap
 
 
-def fixed_share_update(
+def _fixed_share_update(
     weights: Sequence[EvidenceWeight],
     resolved_outcomes: pd.DataFrame,
     *,
@@ -1454,7 +1454,30 @@ def _validate_current_weights_for_decision(
     as_of: datetime,
     config: EnsembleConfig,
     validation_config: ValidationConfig,
-) -> None:
+) -> _EnsembleContext:
+    _require_utc(as_of, "as_of")
+    evaluation_context = _evaluation_context(evaluations)
+    weight_context = _weight_context(weights)
+    if evaluation_context != weight_context:
+        raise ValueError("evaluation and weight context must match exactly")
+    evaluation_identity = {
+        evaluation.strategy_id: (evaluation.strategy_version, evaluation.family) for evaluation in evaluations
+    }
+    weight_identity = {weight.strategy_id: (weight.strategy_version, weight.family) for weight in weights}
+    if evaluation_identity != weight_identity:
+        raise ValueError("evaluation and weight strategy identity must match exactly")
+    for weight in weights:
+        if weight.effective_at > as_of or (
+            weight.outcomes_through is not None and weight.outcomes_through > as_of
+        ):
+            raise ValueError("evidence weight chronology cannot follow the requested as_of")
+        if weight.outcomes_through is not None and weight.outcomes_through > weight.effective_at:
+            raise ValueError("an outcome watermark cannot follow its effective weight timestamp")
+        provenance_watermark = weight.provenance.get("outcomes_through")
+        if provenance_watermark is not None:
+            normalized_watermark = _utc_evidence_timestamp(provenance_watermark).to_pydatetime()
+            if normalized_watermark != weight.outcomes_through or normalized_watermark > as_of:
+                raise ValueError("persisted replay watermark does not match current weight chronology")
     cohort = _validated_weight_cohort(weights, config=config)
     _validate_current_weight_mass(weights, config)
     _validate_rederived_offline_cohort(
@@ -1465,7 +1488,31 @@ def _validate_current_weights_for_decision(
         validation_config=validation_config,
     )
     if weights[0].mode is not StrategyMode.FROZEN:
-        fixed_share_update(weights, pd.DataFrame(), as_of=as_of, config=config)
+        _fixed_share_update(weights, pd.DataFrame(), as_of=as_of, config=config)
+    return evaluation_context
+
+
+def fixed_share_update(
+    weights: Sequence[EvidenceWeight],
+    resolved_outcomes: pd.DataFrame,
+    *,
+    evaluations: Sequence[StrategyEvaluation],
+    as_of: datetime,
+    validation_config: ValidationConfig,
+    config: EnsembleConfig = DEFAULT_ENSEMBLE_CONFIG,
+) -> tuple[EvidenceWeight, ...]:
+    """Apply resolved feedback after independently authenticating its sealed weight cohort."""
+
+    ordered_evaluations = tuple(sorted(evaluations, key=lambda item: (item.strategy_id, item.strategy_version)))
+    ordered_weights = tuple(sorted(weights, key=lambda item: (item.strategy_id, item.strategy_version)))
+    _validate_current_weights_for_decision(
+        ordered_evaluations,
+        ordered_weights,
+        as_of=as_of,
+        config=config,
+        validation_config=validation_config,
+    )
+    return _fixed_share_update(ordered_weights, resolved_outcomes, as_of=as_of, config=config)
 
 
 def combine_current_signals(
@@ -1477,19 +1524,9 @@ def combine_current_signals(
     validation_config: ValidationConfig = DEFAULT_VALIDATION_CONFIG,
 ) -> EnsembleDecision:
     _require_utc(as_of, "as_of")
-    context = _evaluation_context(evaluations)
-    weight_context = _weight_context(weights)
-    if context != weight_context:
-        raise ValueError("evaluation and weight context must match exactly")
     ordered_evaluations = tuple(sorted(evaluations, key=lambda item: (item.strategy_id, item.strategy_version)))
     ordered_weights = tuple(sorted(weights, key=lambda item: (item.strategy_id, item.strategy_version)))
-    evaluation_identity = {
-        evaluation.strategy_id: (evaluation.strategy_version, evaluation.family) for evaluation in ordered_evaluations
-    }
-    weight_identity = {weight.strategy_id: (weight.strategy_version, weight.family) for weight in ordered_weights}
-    if evaluation_identity != weight_identity:
-        raise ValueError("evaluation and weight strategy identity must match exactly")
-    _validate_current_weights_for_decision(
+    context = _validate_current_weights_for_decision(
         ordered_evaluations,
         ordered_weights,
         as_of=as_of,
