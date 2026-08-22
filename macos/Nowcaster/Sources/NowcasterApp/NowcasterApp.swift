@@ -1,9 +1,17 @@
+import AppKit
 import SwiftUI
 
 @main
 struct NowcasterApp: App {
     @State private var settings = AppSettings()
     @State private var model = AppModel()
+
+    init() {
+        guard let iconURL = Bundle.module.url(forResource: "AppIcon", withExtension: "png"),
+              let icon = NSImage(contentsOf: iconURL)
+        else { return }
+        NSApplication.shared.applicationIconImage = icon
+    }
 
     var body: some Scene {
         WindowGroup {

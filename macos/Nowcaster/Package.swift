@@ -11,7 +11,10 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "NowcasterApp",
-            resources: [.copy("Resources/Fixtures")]
+            resources: [
+                .copy("Resources/AppIcon.png"),
+                .copy("Resources/Fixtures"),
+            ]
         ),
         .testTarget(name: "NowcasterAppTests", dependencies: ["NowcasterApp"]),
     ]
