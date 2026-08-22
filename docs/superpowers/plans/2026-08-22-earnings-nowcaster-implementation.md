@@ -108,7 +108,7 @@ git commit -m "feat: establish nowcaster foundation"
 - Produces: `normalize_company_facts(payload: Mapping, company: CompanyConfig) -> list[QuarterlyFinancial]`
 - Produces: `validate_financials(frame: pd.DataFrame) -> list[QualityIssue]`
 
-- [ ] **Step 1: Write failing SEC parser and normalization tests**
+- [x] **Step 1: Write failing SEC parser and normalization tests**
 
 ```python
 def test_normalizer_prefers_standard_revenue_and_standalone_quarter(sec_companyfacts):
@@ -124,11 +124,11 @@ def test_ytd_facts_are_differenced_only_when_components_tie(sec_ytd_facts):
     assert quarter(rows, "2024Q2").revenue == Decimal("240")
 ```
 
-- [ ] **Step 2: Verify tests fail before implementation**
+- [x] **Step 2: Verify tests fail before implementation**
 
 Run: `pytest tests/unit/test_sec.py tests/unit/test_fundamental_validation.py -q`
 
-- [ ] **Step 3: Implement compliant cached HTTP and SEC normalization with issuer overrides**
+- [x] **Step 3: Implement compliant cached HTTP and SEC normalization with issuer overrides**
 
 ```python
 class SecClient:
@@ -152,11 +152,11 @@ class SecClient:
         )
 ```
 
-- [ ] **Step 4: Add data-quality rules and persisted issue report**
+- [x] **Step 4: Add data-quality rules and persisted issue report**
 
 Run: `pytest tests/unit/test_sec.py tests/unit/test_fundamental_validation.py tests/integration/test_sec_pipeline.py -q`
 
-- [ ] **Step 5: Commit fundamental pipeline**
+- [x] **Step 5: Commit fundamental pipeline**
 
 ```bash
 git add src/ingestion src/validation data/demo/sec data/demo/manifest.json tests

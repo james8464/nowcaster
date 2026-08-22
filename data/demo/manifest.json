@@ -1,0 +1,25 @@
+{
+  "data_mode": "demo_real_snapshot",
+  "retrieved_at": "2026-08-22T12:43:52Z",
+  "license_and_access_notes": "Source snapshots retain their provider terms. SEC EDGAR public facts were downloaded from data.sec.gov with an identifying research user-agent.",
+  "files": [
+    {
+      "path": "sec/SBUX_companyfacts.json",
+      "source": "SEC EDGAR Company Facts API",
+      "url": "https://data.sec.gov/api/xbrl/companyfacts/CIK0000829224.json",
+      "sha256": "2488674b57020c5281665b0ff271a29da71da64a2c9fa66bec6a9118772970bb"
+    },
+    {
+      "path": "sec/MCD_companyfacts.json",
+      "source": "SEC EDGAR Company Facts API",
+      "url": "https://data.sec.gov/api/xbrl/companyfacts/CIK0000063908.json",
+      "sha256": "0394e814d75510be107679b026e2df6e5d02d4f2029166911aa4924f9556681f"
+    },
+    {
+      "path": "sec/COST_companyfacts.json",
+      "source": "SEC EDGAR Company Facts API",
+      "url": "https://data.sec.gov/api/xbrl/companyfacts/CIK0000909832.json",
+      "sha256": "71a4fd99c86f27c3aa27b8f05b3a9705c16f0060b425395bb1a367ce239b7d1f"
+    }
+  ]
+}

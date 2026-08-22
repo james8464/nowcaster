@@ -1,0 +1,43 @@
+{
+  "cik": 829224,
+  "entityName": "Starbucks Corporation",
+  "facts": {
+    "us-gaap": {
+      "RevenueFromContractWithCustomerExcludingAssessedTax": {
+        "label": "Revenue",
+        "units": {
+          "USD": [
+            {"start": "2023-10-02", "end": "2023-12-31", "val": 9350000000, "accn": "0000829224-24-000010", "fy": 2024, "fp": "Q1", "form": "10-Q", "filed": "2024-01-31", "frame": "CY2023Q4"},
+            {"start": "2023-10-02", "end": "2024-03-31", "val": 17990000000, "accn": "0000829224-24-000025", "fy": 2024, "fp": "Q2", "form": "10-Q", "filed": "2024-05-01"},
+            {"start": "2023-10-02", "end": "2024-06-30", "val": 27100000000, "accn": "0000829224-24-000040", "fy": 2024, "fp": "Q3", "form": "10-Q", "filed": "2024-07-31"}
+          ]
+        }
+      },
+      "SalesRevenueNet": {
+        "label": "Legacy Revenue",
+        "units": {
+          "USD": [
+            {"start": "2023-10-02", "end": "2023-12-31", "val": 9990000000, "accn": "legacy", "fy": 2024, "fp": "Q1", "form": "10-Q", "filed": "2024-01-31", "frame": "CY2023Q4"}
+          ]
+        }
+      },
+      "OperatingIncomeLoss": {
+        "label": "Operating Income",
+        "units": {"USD": [{"start": "2023-10-02", "end": "2023-12-31", "val": 1410000000, "accn": "0000829224-24-000010", "fy": 2024, "fp": "Q1", "form": "10-Q", "filed": "2024-01-31", "frame": "CY2023Q4"}]}
+      },
+      "NetIncomeLoss": {
+        "label": "Net Income",
+        "units": {"USD": [{"start": "2023-10-02", "end": "2023-12-31", "val": 1020000000, "accn": "0000829224-24-000010", "fy": 2024, "fp": "Q1", "form": "10-Q", "filed": "2024-01-31", "frame": "CY2023Q4"}]}
+      },
+      "EarningsPerShareDiluted": {
+        "label": "Diluted EPS",
+        "units": {"USD/shares": [{"start": "2023-10-02", "end": "2023-12-31", "val": 0.9, "accn": "0000829224-24-000010", "fy": 2024, "fp": "Q1", "form": "10-Q", "filed": "2024-01-31", "frame": "CY2023Q4"}]}
+      },
+      "WeightedAverageNumberOfDilutedSharesOutstanding": {
+        "label": "Diluted Shares",
+        "units": {"shares": [{"start": "2023-10-02", "end": "2023-12-31", "val": 1130000000, "accn": "0000829224-24-000010", "fy": 2024, "fp": "Q1", "form": "10-Q", "filed": "2024-01-31", "frame": "CY2023Q4"}]}
+      }
+    }
+  }
+}
+
