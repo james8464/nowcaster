@@ -423,7 +423,7 @@ git commit -m "feat: load research snapshots in Swift"
 **Interfaces:**
 - Produces: `EngineJob`, `EngineProgressEvent`, `EngineRunner.run(_:configuration:) -> AsyncThrowingStream<EngineProgressEvent, Error>`, cancellation, and persisted nonsecret `AppSettings`.
 
-- [ ] **Step 1: Write failing argument-safety and progress tests**
+- [x] **Step 1: Write failing argument-safety and progress tests**
 
 ```swift
 @Test func engineArgumentsNeverUseAShell() {
@@ -439,21 +439,21 @@ git commit -m "feat: load research snapshots in Swift"
 }
 ```
 
-- [ ] **Step 2: Verify red**
+- [x] **Step 2: Verify red**
 
 Run: `make macos-test`
 Expected: missing runner types.
 
-- [ ] **Step 3: Implement Process runner, cancellation, health check, and Settings scene**
+- [x] **Step 3: Implement Process runner, cancellation, health check, and Settings scene**
 
 Pass executable and argument arrays directly to `Process`. Read newline-delimited JSON from stdout and bounded plain diagnostics from stderr. Terminate on cancellation and wait for exit. Settings validates project root, Python executable, and snapshot path without storing provider secrets.
 
-- [ ] **Step 4: Run runner tests with a fixture executable**
+- [x] **Step 4: Run runner tests with a fixture executable**
 
 Run: `make macos-test`
 Expected: PASS for progress, nonzero exit, cancellation, invalid path, and last-known-good reload.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add macos/Nowcaster

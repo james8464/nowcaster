@@ -2,6 +2,8 @@ import SwiftUI
 
 @main
 struct NowcasterApp: App {
+    @State private var settings = AppSettings()
+
     var body: some Scene {
         WindowGroup {
             NavigationSplitView {
@@ -21,11 +23,7 @@ struct NowcasterApp: App {
         .defaultSize(width: 1_280, height: 820)
 
         Settings {
-            Form {
-                Text("Engine settings will appear after the native data bridge is configured.")
-            }
-            .padding()
-            .frame(width: 520)
+            SettingsView(settings: settings)
         }
     }
 }
