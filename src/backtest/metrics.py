@@ -48,13 +48,20 @@ def calculate_backtest_metrics(
         return BacktestMetrics(*([float("nan")] * 12), trades=0, average_holding_period_days=float("nan"))
     wealth = (1 + returns).cumprod()
     cumulative = float(wealth.iloc[-1] - 1)
-    years = len(returns) / periods_per_year
+    effective_periods = float(periods_per_year)
+    years = len(returns) / effective_periods
+    if "date" in curve and len(curve) > 1:
+        dates = pd.to_datetime(curve.loc[returns.index, "date"], errors="coerce").dropna().sort_values()
+        if len(dates) > 1 and (dates.iloc[-1] - dates.iloc[0]).days > 0:
+            elapsed_days = float((dates.iloc[-1] - dates.iloc[0]).days)
+            effective_periods = (len(dates) - 1) * 365.25 / elapsed_days
+            years = elapsed_days / 365.25
     cagr = float(wealth.iloc[-1] ** (1 / years) - 1) if years > 0 and wealth.iloc[-1] > 0 else float("nan")
-    annual_return = float(returns.mean() * periods_per_year)
-    annual_volatility = float(returns.std(ddof=1) * np.sqrt(periods_per_year))
+    annual_return = float(returns.mean() * effective_periods)
+    annual_volatility = float(returns.std(ddof=1) * np.sqrt(effective_periods))
     downside = returns[returns < 0]
     downside_deviation = (
-        float(np.sqrt(np.mean(np.square(downside))) * np.sqrt(periods_per_year)) if len(downside) else 0
+        float(np.sqrt(np.mean(np.square(downside))) * np.sqrt(effective_periods)) if len(downside) else 0
     )
     drawdown = maximum_drawdown(returns)
     profit = float(returns[returns > 0].sum())

@@ -44,7 +44,7 @@ demo:
 	$(VENV)/bin/python -m src.cli demo
 
 clean-generated:
-	rm -f data/nowcaster.duckdb data/test.duckdb reports/latest_research_report.md reports/resume_bullets.md
+	rm -f data/nowcaster.duckdb data/test.duckdb data/app/nowcaster-snapshot.json reports/latest_research_report.md reports/resume_bullets.md
 
 macos-build:
 	cd macos/Nowcaster && swift build

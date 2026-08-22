@@ -327,7 +327,7 @@ git commit -m "feat: harden walk-forward backtests"
 - Consumes: completed equity, crypto, backtest, and snapshot services.
 - Produces: one restartable `make demo` that rebuilds every native-app dataset and exports the final snapshot.
 
-- [ ] **Step 1: Write failing end-to-end native demo contract**
+- [x] **Step 1: Write failing end-to-end native demo contract**
 
 ```python
 def test_demo_populates_native_equity_crypto_and_backtest_sections(demo_database, tmp_path):
@@ -339,21 +339,21 @@ def test_demo_populates_native_equity_crypto_and_backtest_sections(demo_database
     assert all(signal.posture in {"long_research", "short_research", "abstain"} for signal in snapshot.signals)
 ```
 
-- [ ] **Step 2: Verify red**
+- [x] **Step 2: Verify red**
 
 Run: `.venv/bin/pytest tests/integration/test_native_snapshot_demo.py -q`
 Expected: missing native sections.
 
-- [ ] **Step 3: Wire stages and truth-preserving report copy**
+- [x] **Step 3: Wire stages and truth-preserving report copy**
 
 Add explicit `ingest_crypto`, `build_crypto_features`, `train_crypto`, `backtest_crypto`, and `export_native_snapshot` stages. Make run hashes include the relevant instrument/model/backtest configuration. Preserve last-known-good snapshots on failed rebuilds. Update generated reports to separate development and final-test results and to label all non-ready strategies.
 
-- [ ] **Step 4: Rebuild and audit**
+- [x] **Step 4: Rebuild and audit**
 
 Run: `make clean-generated && make demo && .venv/bin/pytest tests/integration/test_demo.py tests/integration/test_native_snapshot_demo.py tests/integration/test_report_pipeline.py -q`
 Expected: all stages succeed from clean state; snapshots validate; no source, chronology, or join invariant fails.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src tests Makefile reports/.gitkeep

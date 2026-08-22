@@ -37,3 +37,16 @@ def test_metrics_cover_risk_return_and_execution() -> None:
     assert metrics.maximum_drawdown <= 0
     assert metrics.profit_factor > 0
     assert metrics.average_holding_period_days == 5
+
+
+def test_overlapping_positions_do_not_reuse_the_same_capital() -> None:
+    positions = _positions().iloc[:8].copy()
+    dates = pd.date_range("2024-01-01", periods=len(positions), freq="D")
+    positions["decision_date"] = dates.date
+    positions["execution_date"] = (dates + pd.Timedelta(days=1)).date
+    positions["label_end_date"] = (dates + pd.Timedelta(days=6)).date
+    result = simulate_crypto_portfolio(positions)
+    assert len(result.positions) == 2
+    ordered = result.positions.sort_values("execution_date")
+    prior_exits = pd.to_datetime(ordered["label_end_date"]).shift(1)
+    assert (pd.to_datetime(ordered["execution_date"])[1:] >= prior_exits[1:]).all()

@@ -8,6 +8,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from src.app_snapshot import build_app_snapshot, write_snapshot_atomic
 from src.backtest.event_study import run_event_study
 from src.backtest.metrics import calculate_backtest_metrics
 from src.backtest.portfolio import simulate_crypto_portfolio
@@ -44,6 +45,7 @@ DEMO_STAGES = (
     "backtest_crypto",
     "variant",
     "backtest",
+    "export_native_snapshot",
 )
 DEMO_TICKERS = ("SBUX", "MCD", "COST")
 
@@ -644,6 +646,12 @@ class DemoStages:
             "created_at",
         ]
         return {"backtest_results": self.database.insert("backtest_results", _records(results, columns))}
+
+    def export_native_snapshot(self) -> dict[str, int]:
+        snapshot = build_app_snapshot(self.database, self.settings)
+        destination = self.settings.project_root / "data" / "app" / "nowcaster-snapshot.json"
+        write_snapshot_atomic(snapshot, destination)
+        return {"native_snapshot": 1}
 
 
 def demo_pipeline(settings: Settings) -> Pipeline:

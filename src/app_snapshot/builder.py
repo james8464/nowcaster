@@ -9,6 +9,7 @@ import pandas as pd
 
 from src.app_snapshot.models import (
     AppSnapshot,
+    BacktestPoint,
     BacktestSnapshot,
     EarningsSnapshot,
     InstrumentSnapshot,
@@ -68,16 +69,24 @@ def _metadata(database: Database, settings: Settings) -> SnapshotMetadata:
 
 def _instruments(database: Database) -> list[InstrumentSnapshot]:
     companies = database.frame("select company_id, ticker, name from companies order by ticker")
+    configured = database.frame(
+        "select instrument_id, symbol, name, asset_class from instruments where enabled = true order by symbol"
+    )
     prices = database.frame(
         "select symbol, trading_date, adjusted_close, volume from market_prices_daily order by symbol, trading_date"
     )
     company_lookup = {
-        str(row.ticker): (str(row.company_id), str(row.name)) for row in companies.itertuples(index=False)
+        str(row.ticker): (str(row.company_id), str(row.name), "equity") for row in companies.itertuples(index=False)
     }
+    configured_lookup = {
+        str(row.symbol): (str(row.instrument_id), str(row.name), str(row.asset_class))
+        for row in configured.itertuples(index=False)
+    }
+    instrument_lookup = {**company_lookup, **configured_lookup}
     instruments: list[InstrumentSnapshot] = []
     for symbol, group in prices.groupby("symbol", sort=True):
         symbol = str(symbol)
-        if symbol not in company_lookup:
+        if symbol not in instrument_lookup:
             continue
         ordered = group.sort_values("trading_date").tail(260).reset_index(drop=True)
         closes = pd.to_numeric(ordered["adjusted_close"], errors="coerce")
@@ -85,13 +94,18 @@ def _instruments(database: Database) -> list[InstrumentSnapshot]:
         last_price = _finite(closes.iloc[-1]) if not closes.empty else None
         daily_return = _finite(returns.iloc[-1]) if len(returns) >= 2 else None
         weekly_return = _finite(closes.iloc[-1] / closes.iloc[-6] - 1) if len(closes) >= 6 else None
-        volatility = _finite(returns.tail(20).std(ddof=1) * np.sqrt(252)) if len(returns.dropna()) >= 20 else None
+        instrument_id, name, asset_class = instrument_lookup[symbol]
+        annualization = 365 if asset_class == "crypto" else 252
+        volatility = (
+            _finite(returns.tail(20).std(ddof=1) * np.sqrt(annualization))
+            if len(returns.dropna()) >= 20
+            else None
+        )
         trend = "insufficient"
         if len(closes.dropna()) >= 100:
             short = closes.tail(20).mean()
             long = closes.tail(100).mean()
             trend = "uptrend" if short > long else "downtrend"
-        instrument_id, name = company_lookup[symbol]
         history = [
             PricePoint(
                 date=_python_date(row.trading_date),
@@ -106,7 +120,7 @@ def _instruments(database: Database) -> list[InstrumentSnapshot]:
                 instrument_id=instrument_id,
                 symbol=symbol,
                 display_name=name,
-                asset_class="equity",
+                asset_class=asset_class,
                 last_price=last_price,
                 daily_return=daily_return,
                 weekly_return=weekly_return,
@@ -156,7 +170,7 @@ def _earnings(database: Database) -> list[EarningsSnapshot]:
     ]
 
 
-def _signals(database: Database) -> list[ResearchSignalSnapshot]:
+def _equity_signals(database: Database) -> list[ResearchSignalSnapshot]:
     frame = database.frame(
         """
         select v.signal_id, v.company_id, v.forecast_cutoff_date, v.horizon_days,
@@ -203,6 +217,56 @@ def _signals(database: Database) -> list[ResearchSignalSnapshot]:
     return signals
 
 
+def _crypto_signals(database: Database) -> list[ResearchSignalSnapshot]:
+    frame = database.frame(
+        """
+        select signal_id, instrument_id, decision_date, horizon_days, posture,
+               direction_probability, expected_return, confidence_score,
+               training_samples, calibration_status, explanation
+        from market_signals_daily
+        where asset_class = 'crypto'
+        order by decision_date desc, confidence_score desc
+        limit 1000
+        """
+    )
+    signals: list[ResearchSignalSnapshot] = []
+    for row in frame.itertuples(index=False):
+        reasons: list[str] = []
+        if str(row.posture) == "abstain":
+            reasons.append("Model probability, expected return, and directional agreement did not all clear gates")
+        reasons.append("Signal is research-only and does not estimate realized trading profits")
+        signals.append(
+            ResearchSignalSnapshot(
+                signal_id=str(row.signal_id),
+                instrument_id=str(row.instrument_id),
+                asset_class="crypto",
+                decision_date=_python_date(row.decision_date),
+                horizon=f"{int(row.horizon_days)}d close-to-close",
+                posture=str(row.posture),
+                eligibility="research_only",
+                strength=_finite(row.expected_return),
+                calibrated_probability=_finite(row.direction_probability),
+                confidence_score=_finite(row.confidence_score),
+                catalyst="Daily point-in-time trend, momentum, volatility, and volume features",
+                invalidation="Direction or expected return no longer clears the fixed evidence gate",
+                evidence_summary=(
+                    f"Calibrated logistic/HGB ensemble · {int(row.training_samples)} prior samples · "
+                    f"{row.calibration_status}"
+                ),
+                reasons=reasons,
+            )
+        )
+    return signals
+
+
+def _signals(database: Database) -> list[ResearchSignalSnapshot]:
+    return sorted(
+        [*_equity_signals(database), *_crypto_signals(database)],
+        key=lambda signal: (signal.decision_date, signal.confidence_score or 0),
+        reverse=True,
+    )
+
+
 def _model_diagnostics(database: Database) -> list[ModelDiagnosticSnapshot]:
     frame = database.frame(
         """
@@ -232,7 +296,7 @@ def _backtests(database: Database, statistics: dict[str, int | float | None]) ->
     observations = int(statistics["backtest_observations"] or 0)
     if observations == 0:
         return []
-    return [
+    snapshots = [
         BacktestSnapshot(
             backtest_id="equity_event_variant_demo_v1",
             asset_class="equity",
@@ -253,6 +317,60 @@ def _backtests(database: Database, statistics: dict[str, int | float | None]) ->
             ],
         )
     ]
+    runs = database.frame(
+        """
+        select backtest_run_id, asset_class, strategy_name, readiness,
+               full_metrics, development_metrics, final_test_metrics,
+               protocol, readiness_reasons
+        from backtest_runs order by strategy_name
+        """
+    )
+    for row in runs.itertuples(index=False):
+        full_metrics = row.full_metrics if isinstance(row.full_metrics, dict) else {}
+        development_metrics = row.development_metrics if isinstance(row.development_metrics, dict) else {}
+        final_test_metrics = row.final_test_metrics if isinstance(row.final_test_metrics, dict) else {}
+        protocol = row.protocol if isinstance(row.protocol, dict) else {}
+        warnings = list(row.readiness_reasons) if isinstance(row.readiness_reasons, list) else []
+        curve = database.frame(
+            """
+            select curve_date, net_equity, drawdown from backtest_curve
+            where backtest_run_id = :run_id order by curve_date
+            """,
+            {"run_id": str(row.backtest_run_id)},
+        )
+        snapshots.append(
+            BacktestSnapshot(
+                backtest_id=str(row.backtest_run_id),
+                asset_class=str(row.asset_class),
+                strategy_name=str(row.strategy_name),
+                readiness=str(row.readiness),
+                verdict={
+                    "decision_ready": (
+                        "Passed the declared statistical research gates; live validation is still required"
+                    ),
+                    "research_only": "Promising or mixed evidence that does not clear every promotion gate",
+                    "not_ready": "Failed one or more hard evidence or risk gates",
+                }.get(str(row.readiness), "Unclassified research result"),
+                sample_size=int(full_metrics.get("trades") or 0),
+                development_metrics={str(key): _finite(value) for key, value in development_metrics.items()},
+                final_test_metrics={str(key): _finite(value) for key, value in final_test_metrics.items()},
+                assumptions=[
+                    f"One-bar execution lag; {protocol.get('horizon_days', '?')}-day holding horizon",
+                    f"Fees {protocol.get('fee_bps', '?')} bps and slippage {protocol.get('slippage_bps', '?')} bps",
+                    "15% volatility target with a 100% gross-exposure cap",
+                ],
+                warnings=[*warnings, "Historical results do not guarantee live profitability"],
+                equity_curve=[
+                    BacktestPoint(date=_python_date(item.curve_date), value=float(item.net_equity))
+                    for item in curve.itertuples(index=False)
+                ],
+                drawdown_curve=[
+                    BacktestPoint(date=_python_date(item.curve_date), value=float(item.drawdown))
+                    for item in curve.itertuples(index=False)
+                ],
+            )
+        )
+    return snapshots
 
 
 def _quality_issues(database: Database) -> list[QualityIssueSnapshot]:

@@ -15,6 +15,8 @@ REQUIRED_REPORT_SECTIONS = (
     "Incremental Value of Alternative Data",
     "Variant-Perception Analysis",
     "Event-Study Results",
+    "Crypto Walk-Forward Results",
+    "Strategy Readiness",
     "Example Investment Case",
     "Risks and Limitations",
     "Conclusion",
@@ -58,6 +60,28 @@ def generate_research_report(database: Database, output_path: Path) -> Path:
             else f"Adding attention signals increased MAE by {abs(incremental):.1%} versus fundamentals-only Ridge."
         )
     )
+    crypto_runs = database.frame(
+        """
+        select strategy_name, readiness, development_metrics, final_test_metrics, readiness_reasons
+        from backtest_runs where asset_class = 'crypto' order by strategy_name
+        """
+    )
+    crypto_lines: list[str] = []
+    readiness_lines: list[str] = []
+    for row in crypto_runs.itertuples(index=False):
+        development = row.development_metrics if isinstance(row.development_metrics, dict) else {}
+        final_test = row.final_test_metrics if isinstance(row.final_test_metrics, dict) else {}
+        development_sharpe = development.get("sharpe")
+        final_sharpe = final_test.get("sharpe")
+        crypto_lines.append(
+            f"{row.strategy_name}: development Sharpe {_format_metric(development_sharpe)}, "
+            f"isolated final-test Sharpe {_format_metric(final_sharpe)}, status {row.readiness}."
+        )
+        reasons = row.readiness_reasons if isinstance(row.readiness_reasons, list) else []
+        reason_text = "; ".join(str(reason) for reason in reasons) or "all declared gates passed"
+        readiness_lines.append(f"{row.strategy_name} is {row.readiness}; {reason_text}.")
+    crypto_summary = " ".join(crypto_lines) or "No crypto walk-forward run is available."
+    readiness_summary = " ".join(readiness_lines) or "No strategy readiness assessment is available."
     sections = [
         (
             "Executive Summary",
@@ -108,6 +132,16 @@ def generate_research_report(database: Database, output_path: Path) -> Path:
             "Market and sector adjustments use identical trading dates. Bootstrap and Newey-West diagnostics are "
             "exploratory and do not eliminate event overlap, selection bias, or multiple testing.",
         ),
+        (
+            "Crypto Walk-Forward Results",
+            f"{crypto_summary} These are one-bar-lagged, cost-adjusted out-of-sample simulations. "
+            "The final 20% is reported separately and is never blended into development metrics.",
+        ),
+        (
+            "Strategy Readiness",
+            f"{readiness_summary} Readiness also checks sample size, block-bootstrap evidence, deflated Sharpe, "
+            "subperiod stability, stressed costs, and drawdown. No label constitutes an assurance of future profit.",
+        ),
         ("Example Investment Case", case_text),
         (
             "Risks and Limitations",
@@ -127,3 +161,10 @@ def generate_research_report(database: Database, output_path: Path) -> Path:
     text += "\n\n---\n\nThis report is for research and education only and is not investment advice.\n"
     output_path.write_text(text, encoding="utf-8")
     return output_path
+
+
+def _format_metric(value: object) -> str:
+    try:
+        return f"{float(value):.2f}"
+    except (TypeError, ValueError):
+        return "unavailable"

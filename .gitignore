@@ -6,6 +6,7 @@
 data/raw/
 data/cache/
 data/processed/
+data/app/*.json
 logs/
 reports/*.md
 !reports/.gitkeep

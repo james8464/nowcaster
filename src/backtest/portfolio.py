@@ -151,6 +151,16 @@ def simulate_crypto_portfolio(
     if min(fee_bps, slippage_bps, borrow_bps_annual, target_volatility, maximum_gross_exposure) < 0:
         raise ValueError("Costs, volatility target, and exposure cannot be negative")
     positions = signals.copy().sort_values(["execution_date", "symbol"]).reset_index(drop=True)
+    positions = positions[positions["posture"] != "abstain"].copy()
+    keep: list[int] = []
+    for _symbol, group in positions.groupby("symbol", sort=False):
+        capital_available = pd.Timestamp.min
+        for index, row in group.iterrows():
+            execution_date = pd.Timestamp(row["execution_date"])
+            if execution_date >= capital_available:
+                keep.append(index)
+                capital_available = pd.Timestamp(row["label_end_date"])
+    positions = positions.loc[sorted(keep)].reset_index(drop=True)
     decision = pd.to_datetime(positions["decision_date"])
     execution = pd.to_datetime(positions["execution_date"])
     label_end = pd.to_datetime(positions["label_end_date"])
