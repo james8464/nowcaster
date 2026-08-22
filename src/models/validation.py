@@ -16,9 +16,12 @@ from src.utils.provenance import canonical_hash
 METADATA_COLUMNS = {
     "company_id",
     "fiscal_quarter",
+    "earnings_date",
     "forecast_cutoff_date",
     "horizon_days",
+    "maximum_input_available_date",
     "actual_revenue",
+    "target_revenue_yoy_log_growth",
     "actual_acceleration",
     "forecast_acceleration",
 }
@@ -126,7 +129,9 @@ def expanding_window_forecasts(
         test = data.loc[fold.test_indices]
         for spec in model_specs:
             run_id = canonical_hash([spec.name, spec.ablation, fold.test_start, seed])[:24]
-            feature_columns = feature_columns_for_ablation(data, spec.ablation)
+            feature_columns = [
+                column for column in feature_columns_for_ablation(data, spec.ablation) if train[column].notna().any()
+            ]
             fitted_model = None
             if spec.name == "seasonal_naive":
                 forecasts = test.apply(seasonal_naive_forecast, axis=1).to_numpy(dtype=float)

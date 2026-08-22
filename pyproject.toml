@@ -17,6 +17,7 @@ dependencies = [
   "pandas>=2.2",
   "platformdirs>=4.3",
   "plotly>=6.0",
+  "pytz>=2025.2",
   "pydantic>=2.10",
   "python-dotenv>=1.0",
   "pyyaml>=6.0",
@@ -56,4 +57,3 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
-

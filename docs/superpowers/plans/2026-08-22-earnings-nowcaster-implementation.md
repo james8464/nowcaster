@@ -493,7 +493,7 @@ git commit -m "feat: evaluate earnings-event signals"
 - Produces: `Pipeline.run(stages: Sequence[str], mode: str) -> PipelineSummary`
 - Produces: CLI commands required by the specification and `make demo`
 
-- [ ] **Step 1: Write failing stage-order, restart, failure-propagation, and demo-truthfulness tests**
+- [x] **Step 1: Write failing stage-order, restart, failure-propagation, and demo-truthfulness tests**
 
 ```python
 def test_demo_builds_all_required_tables_and_labels_sources(demo_project):
@@ -509,11 +509,11 @@ def test_demo_builds_all_required_tables_and_labels_sources(demo_project):
     }
 ```
 
-- [ ] **Step 2: Verify failures**
+- [x] **Step 2: Verify failures**
 
 Run: `pytest tests/unit/test_pipeline.py tests/integration/test_cli.py tests/integration/test_demo.py -q`
 
-- [ ] **Step 3: Implement all CLI commands, stage manifests, restartability, pipeline run records, and demo orchestration**
+- [x] **Step 3: Implement all CLI commands, stage manifests, restartability, pipeline run records, and demo orchestration**
 
 ```python
 @app.command("run-all")
@@ -525,11 +525,11 @@ def run_all(project_root: Path = Path.cwd(), mode: str = "live") -> None:
         raise typer.Exit(code=1)
 ```
 
-- [ ] **Step 4: Run CLI integration and `make demo`**
+- [x] **Step 4: Run CLI integration and `make demo`**
 
 Run: `pytest tests/unit/test_pipeline.py tests/integration/test_cli.py tests/integration/test_demo.py -q && make demo`
 
-- [ ] **Step 5: Commit orchestration**
+- [x] **Step 5: Commit orchestration**
 
 ```bash
 git add src/cli.py src/pipeline.py src/demo.py Makefile tests
