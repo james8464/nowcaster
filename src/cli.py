@@ -8,6 +8,8 @@ import typer
 from src.config.settings import Settings
 from src.database.engine import Database
 from src.demo import DEMO_STAGES, demo_pipeline, live_pipeline, run_demo
+from src.reporting.recruiter import generate_resume_bullets
+from src.reporting.research_report import generate_research_report
 from src.utils.logging import configure_logging
 
 app = typer.Typer(help="Alternative-data earnings nowcasting research pipeline.", no_args_is_help=True)
@@ -63,6 +65,9 @@ def demo(
     if summary.failed:
         typer.echo(summary.concise_message, err=True)
         raise typer.Exit(code=1)
+    database = Database.from_url(settings.database_url)
+    generate_research_report(database, settings.project_root / "reports" / "latest_research_report.md")
+    generate_resume_bullets(database, settings.project_root / "reports" / "resume_bullets.md")
     typer.echo(f"Demo complete. {summary.concise_message}")
 
 
@@ -130,6 +135,28 @@ def backtest(
 ) -> None:
     """Construct expectation variants and evaluate earnings-event returns."""
     _run_stages(project_root, database_url, mode, ("variant", "backtest"), force)
+
+
+@app.command("report")
+def report(
+    project_root: Annotated[Path, typer.Option(exists=True, file_okay=False)] = DEFAULT_PROJECT_ROOT,
+    database_url: Annotated[str | None, typer.Option()] = None,
+    mode: Annotated[str, typer.Option()] = "demo",
+    output_dir: Annotated[Path | None, typer.Option(file_okay=False)] = None,
+) -> None:
+    """Generate the measured research note and resume bullets."""
+    settings = _load_settings(project_root, database_url, mode)
+    database = Database.from_url(settings.database_url)
+    database.initialize()
+    if mode == "demo" and not database.scalar("select count(*) from forecasts"):
+        summary = run_demo(settings)
+        if summary.failed:
+            typer.echo(summary.concise_message, err=True)
+            raise typer.Exit(code=1)
+    destination = output_dir or settings.project_root / "reports"
+    report_path = generate_research_report(database, destination / "latest_research_report.md")
+    bullet_path = generate_resume_bullets(database, destination / "resume_bullets.md")
+    typer.echo(f"Generated {report_path} and {bullet_path}")
 
 
 @app.command("run-all")

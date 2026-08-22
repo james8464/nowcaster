@@ -548,7 +548,7 @@ git commit -m "feat: orchestrate complete research pipeline"
 - Produces: `select_case_study(db) -> CaseStudy | None`
 - Produces: `generate_resume_bullets(db, output_path) -> Path`
 
-- [ ] **Step 1: Write failing section, evidence, case-selection, and no-fabrication tests**
+- [x] **Step 1: Write failing section, evidence, case-selection, and no-fabrication tests**
 
 ```python
 def test_report_contains_all_required_sections_and_measured_counts(demo_db):
@@ -563,11 +563,11 @@ def test_resume_bullets_refuse_missing_metrics(empty_db):
     assert "X%" not in text
 ```
 
-- [ ] **Step 2: Verify failures**
+- [x] **Step 2: Verify failures**
 
 Run: `pytest tests/unit/test_reporting.py -q`
 
-- [ ] **Step 3: Implement professional Markdown templates driven only by persisted evidence**
+- [x] **Step 3: Implement professional Markdown templates driven only by persisted evidence**
 
 ```python
 def recruiter_statistics(db: Database) -> dict[str, int | float | None]:
@@ -581,11 +581,11 @@ def recruiter_statistics(db: Database) -> dict[str, int | float | None]:
     }
 ```
 
-- [ ] **Step 4: Generate demo reports and run integration assertions**
+- [x] **Step 4: Generate demo reports and run integration assertions**
 
 Run: `pytest tests/unit/test_reporting.py tests/integration/test_report_pipeline.py -q && python -m src.cli report --mode demo`
 
-- [ ] **Step 5: Commit reporting**
+- [x] **Step 5: Commit reporting**
 
 ```bash
 git add src/reporting reports tests
