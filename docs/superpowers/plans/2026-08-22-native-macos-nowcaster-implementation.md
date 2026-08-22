@@ -39,7 +39,7 @@
 - Consumes: macOS 15+ SwiftUI runtime.
 - Produces: `AppDestination: String, CaseIterable, Identifiable`, `NowcasterApp`, `build/Nowcaster.app`, and `make macos-build|macos-test|macos-app|macos-open`.
 
-- [ ] **Step 1: Write the failing Swift destination test**
+- [x] **Step 1: Write the failing Swift destination test**
 
 ```swift
 import Testing
@@ -53,12 +53,12 @@ import Testing
 }
 ```
 
-- [ ] **Step 2: Run the test to verify the package is absent**
+- [x] **Step 2: Run the test to verify the package is absent**
 
 Run: `cd macos/Nowcaster && swift test`
 Expected: FAIL because `Package.swift` and `AppDestination` do not exist.
 
-- [ ] **Step 3: Implement the package, destinations, minimal app, and bundle builder**
+- [x] **Step 3: Implement the package, destinations, minimal app, and bundle builder**
 
 ```swift
 public enum AppDestination: String, CaseIterable, Identifiable, Sendable {
@@ -71,12 +71,12 @@ public enum AppDestination: String, CaseIterable, Identifiable, Sendable {
 
 The build script must call `swift build -c release`, assemble `Contents/MacOS`, `Contents/Resources`, and `Contents/Info.plist`, then run `codesign --force --deep --sign "${NOWCASTER_CODESIGN_IDENTITY:--}"` without using an unresolved path.
 
-- [ ] **Step 4: Run focused Swift verification**
+- [x] **Step 4: Run focused Swift verification**
 
 Run: `make macos-test && make macos-app && codesign --verify --deep --strict build/Nowcaster.app`
 Expected: tests pass and the app bundle verifies.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add macos/Nowcaster scripts/build_macos_app.sh Makefile
