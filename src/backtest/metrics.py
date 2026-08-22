@@ -72,9 +72,7 @@ def calculate_backtest_metrics(
         else pd.Series(dtype="timedelta64[ns]")
     )
     turnover = float(pd.to_numeric(positions.get("turnover", pd.Series(dtype=float)), errors="coerce").sum())
-    exposure = float(
-        pd.to_numeric(positions.get("gross_exposure", pd.Series(dtype=float)), errors="coerce").mean()
-    )
+    exposure = float(pd.to_numeric(positions.get("gross_exposure", pd.Series(dtype=float)), errors="coerce").mean())
     return BacktestMetrics(
         cumulative_return=cumulative,
         cagr=cagr,

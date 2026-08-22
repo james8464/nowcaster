@@ -20,5 +20,10 @@ htmlcov/
 .ipynb_checkpoints/
 .DS_Store
 build/
+*.dSYM/
+*.xcresult/
+*.keychain-db
+*.zip
+*.zip.sha256
 macos/**/.build/
 macos/**/.swiftpm/

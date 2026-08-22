@@ -36,4 +36,3 @@ def test_crypto_models_are_deterministic_and_probabilities_are_bounded() -> None
     assert len(first.predictions) > 100
     assert first.predictions["direction_probability"].between(0, 1).all()
     assert first.predictions["training_samples"].min() >= 180
-

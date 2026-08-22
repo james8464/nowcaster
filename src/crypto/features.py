@@ -68,8 +68,7 @@ def build_crypto_features(prices: pd.DataFrame, *, horizon_days: int = 5) -> pd.
                 "feature_return_5d": log_known.diff(5),
                 "feature_momentum_20d": log_known.diff(20),
                 "feature_trend_20_100": (
-                    known_close.rolling(20, min_periods=20).mean()
-                    / known_close.rolling(100, min_periods=100).mean()
+                    known_close.rolling(20, min_periods=20).mean() / known_close.rolling(100, min_periods=100).mean()
                     - 1
                 ),
                 "feature_volatility_20d": daily_returns.rolling(20, min_periods=20).std(ddof=1),

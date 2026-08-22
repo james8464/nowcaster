@@ -117,14 +117,10 @@ def run_crypto_models(
             calibrator = RollingProbabilityCalibrator(minimum_observations=100)
             calibrator.fit(np.asarray(past_probabilities), np.asarray(past_outcomes))
             probability = calibrator.predict(raw_probability)
-            trend_return = test["feature_momentum_20d"].to_numpy(float) * (
-                test["horizon_days"].to_numpy(float) / 20
-            )
+            trend_return = test["feature_momentum_20d"].to_numpy(float) * (test["horizon_days"].to_numpy(float) / 20)
             expected_return = 0.8 * learned_return + 0.2 * trend_return
             confidence = np.clip(np.abs(probability - 0.5) * 2, 0, 1)
-            agreement = (
-                np.sign(learned_return) == np.sign(test["feature_momentum_20d"].to_numpy(float))
-            ).astype(float)
+            agreement = (np.sign(learned_return) == np.sign(test["feature_momentum_20d"].to_numpy(float))).astype(float)
             posture = np.where(
                 (probability >= 0.58) & (expected_return > 0) & (agreement > 0),
                 "long_research",

@@ -29,4 +29,3 @@ def test_protocol_rejects_invalid_dates() -> None:
         assert "date" in str(error).lower()
     else:
         raise AssertionError("invalid dates should fail")
-

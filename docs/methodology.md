@@ -2,80 +2,59 @@
 
 ## Research questions
 
-1. Fundamental forecast: does alternative data improve quarterly revenue forecasts?
-2. Variant perception: how far is a model forecast from the expectation observable before the event?
-3. Return association: is the pre-event variant associated with later abnormal returns?
+Nowcaster evaluates two distinct systems:
 
-Success at one link does not imply success at another.
+1. **Equities:** can information observable before a company report improve a revenue forecast, differ from the then-observable expectation, and associate with later event returns?
+2. **Crypto:** can shifted daily market features estimate a five-day directional distribution that survives purged walk-forward evaluation after costs?
+
+Success at any one link does not imply a profitable strategy. The native app distinguishes model confidence, calibration, eligibility, and backtest readiness.
 
 ## Point-in-time clock
 
-For event date `E` and horizon `h`, the forecast cutoff is `C = E - h`. A feature row is admissible only when:
+For equity event date `E` and horizon `h`, cutoff `C = E - h`. Every feature row must satisfy:
 
 ```text
 maximum_input_available_date <= forecast_cutoff_date
 ```
 
-SEC facts become available on filing date. Wikimedia observations use an explicit one-day lag. Historical estimate selection uses the latest revision with `as_of_date <= C`. Macro features accept ALFRED-style vintages only; latest-revised series are rejected. Automated mutation tests alter post-cutoff inputs and require historical features to remain unchanged.
+SEC facts become available on filing date; Wikimedia features receive a publication lag; historical expectations use the latest revision at or before `C`. Labels join training only once the corresponding reported result is observable.
 
-## Fundamentals and features
+For crypto, all predictors are shifted one full daily bar and the target is future log return over the declared horizon. A signal generated at bar `t` cannot become a position until `t+1`.
 
-Revenue tags follow a per-period precedence: `RevenueFromContractWithCustomerExcludingAssessedTax`, `SalesRevenueNet`, then `Revenues`. YTD facts are differenced into standalone quarters where necessary. Features include lagged revenue, quarter seasonality, QoQ/YoY log growth, prior-year same-quarter revenue, and 28-day attention level, maximum, momentum, abnormal z-score, and YoY growth where history permits.
+## Equity research
 
-Missing inputs remain missing. The system does not backfill future values. Fold-local median imputation and scaling are learned only on training observations.
+Revenue tags follow a documented period-level precedence and year-to-date facts are differenced into standalone quarters where required. The target is revenue log growth, reconstructed to a strictly positive revenue forecast. Features include lagged revenue, seasonality, prior growth, and lagged public-attention aggregates.
 
-## Forecast models
+Baselines include seasonal naive and historical growth. Linear and nonlinear candidates use fold-local preprocessing. Expanding windows are independent by forecast horizon. Prediction intervals and calibration are learned only from past residuals. The primary ablation compares matched fundamentals-plus-attention and fundamentals-only models.
 
-- Seasonal naive: prior-year same-quarter revenue.
-- Historical growth: applies the last observable YoY growth to prior-year revenue.
-- OLS, Ridge, Elastic Net: interpretable linear pipelines with company one-hot encoding.
-- Histogram gradient boosting: nonlinear benchmark gated by sample size.
+The expectation source is explicit. The bundled demo uses prior-year seasonality labelled `expectation_proxy`; it is not Wall Street consensus. Variants are normalized forecast-minus-expectation differences. Event returns use identical company, market, and sector dates.
 
-Evaluation uses independent expanding windows for each forecast horizon. A target row becomes eligible for training only when its `earnings_date < test_start`; an earlier-cutoff row for the same unresolved quarter therefore cannot leak its future result into a shorter-horizon fold. Every fold satisfies `training_end < test_start`. No random split is used. Metrics include MAE, RMSE, MAPE, bias, and directional accuracy. Intervals are residual-based research intervals; confidence combines empirical residual dispersion and coverage and is not calibrated as a probability of profit.
+## Crypto research
 
-## Ablation logic
+BTC-USD and ETH-USD use their own frozen adjusted-price histories. Candidate features include lagged returns, momentum, rolling volatility, drawdown, volume behavior, trend, and regime context. The ensemble combines regularized logistic regression and histogram gradient boosting where the training sample supports it. Probability calibration and abstention thresholds are fit inside historical folds.
 
-The primary incremental-data comparison is:
+The system can emit long research, short research, or abstain. The output is a research posture with evidence and invalidation—not an instruction to trade.
 
-```text
-Ridge(fundamentals + attention) vs Ridge(fundamentals only)
-```
+## Backtest design
 
-Comparing a full Ridge model with seasonal naive measures total modelling improvement, not the incremental contribution of attention. In the verified demo the full model beat seasonal naive, while adding attention to Ridge worsened matched MAE. The report displays both results.
+The final 20% of chronology is isolated once. Development uses expanding purged walk-forward folds with embargo where applicable. Preprocessing, calibration, model fitting, and thresholds occur inside training data. Positions are lagged, non-overlapping per instrument, costed for turnover/slippage/borrow, volatility-targeted, and gross-exposure-capped. Calendar duration drives annualization.
 
-## Expectations and variant
+Reported evidence includes development, final-test, and full-period metrics; equity/drawdown/risk/exposure/turnover curves; monthly results; block bootstrap; deflated Sharpe with trial adjustment; HAC or clustered inference; multiple-testing correction; stability; regimes; and sensitivities. Details and readiness gates are in [backtest_protocol.md](backtest_protocol.md).
 
-Real consensus can be imported with:
+## Bundled findings
 
-```text
-ticker,fiscal_quarter,as_of_date,consensus_revenue,consensus_eps,number_of_analysts
-```
+- Equity: the full revenue model beat seasonal naive, but public-attention features did not add value versus the matched fundamentals-only model. The event spread was near zero and negative.
+- BTC-USD: positive historical result but only two-thirds of subperiods profitable, so status is research-only.
+- ETH-USD: sample, development Sharpe, bootstrap, deflated-Sharpe, and stability gates fail; status is not ready.
 
-When unavailable, demo mode uses prior-year same-quarter revenue as an `expectation_proxy`. It is never labelled actual consensus.
-
-```text
-Revenue variant = (forecast revenue - expectation revenue) / expectation revenue
-```
-
-Variants are z-scored within forecast cutoff and horizon and bucketed as strongly positive, positive, neutral, negative, or strongly negative.
-
-## Event study and portfolio research
-
-The price anchor is the first trading date on or after the event proxy. Company and benchmark returns use identical start/end trading dates. Reported fields include raw, SPY-adjusted, and sector-ETF-adjusted returns for `[-1,+1]`, `[0,+1]`, `[0,+3]`, and `[0,+5]`.
-
-Bucket summaries report mean, median, hit rate, standard deviation, t-statistic, sample size, and seeded bootstrap intervals. The cross-sectional regression uses Newey-West covariance but remains exploratory given repeated model signals, overlapping events, small cross-sections, selection, and multiple testing.
-
-The optional portfolio research takes equal-weight positive and negative legs, caps positions, removes duplicate company-events, filters explicit liquidity failures, and subtracts round-trip transaction cost and slippage. It omits borrow availability, intraday fills, taxes, capacity, latency, and financing; it is not an executable strategy.
+No bundled system is decision-ready.
 
 ## Known limitations
 
-- Three-company demo universe and public-data survivorship.
-- SEC filing dates rather than precise earnings timestamps.
-- Expectation proxy rather than historical sell-side consensus.
-- Wikimedia pageviews are a noisy attention measure with coverage only from July 2015.
-- Unofficial Yahoo chart endpoint and daily rather than intraday prices.
-- Revenue tag and fiscal-calendar complexity.
-- Repeated model variants for a single event reduce effective sample size.
-- Hyperparameter selection and exploratory slicing can overstate evidence.
+- Small equity universe, filing-date event proxies, and no bundled historical sell-side consensus.
+- Public-data and asset survivorship.
+- Unofficial daily price endpoint, with no exchange-level execution or intraday microstructure.
+- Regime change, capacity, latency, taxes, borrow, outages, and stressed spreads remain incompletely modelled.
+- Model/threshold search and exploratory slicing create researcher degrees of freedom despite statistical correction.
 
-No result should be interpreted as a promise of profitability or investment advice.
+This is reproducible educational research and not investment advice. Historical results do not guarantee future profitability.

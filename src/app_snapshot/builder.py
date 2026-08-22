@@ -98,9 +98,7 @@ def _instruments(database: Database) -> list[InstrumentSnapshot]:
         instrument_id, name, asset_class = instrument_lookup[symbol]
         annualization = 365 if asset_class == "crypto" else 252
         volatility = (
-            _finite(returns.tail(20).std(ddof=1) * np.sqrt(annualization))
-            if len(returns.dropna()) >= 20
-            else None
+            _finite(returns.tail(20).std(ddof=1) * np.sqrt(annualization)) if len(returns.dropna()) >= 20 else None
         )
         trend = "insufficient"
         if len(closes.dropna()) >= 100:
@@ -346,9 +344,11 @@ def _backtests(database: Database, statistics: dict[str, int | float | None]) ->
         rolling_mean = returns.rolling(30, min_periods=15).mean()
         rolling_std = returns.rolling(30, min_periods=15).std(ddof=1).replace(0, np.nan)
         curve["rolling_sharpe"] = rolling_mean / rolling_std * np.sqrt(cadence)
-        monthly = curve.assign(month=pd.to_datetime(curve["curve_date"]).dt.to_period("M")).groupby("month")[
-            "net_return"
-        ].apply(lambda values: float((1 + values).prod() - 1))
+        monthly = (
+            curve.assign(month=pd.to_datetime(curve["curve_date"]).dt.to_period("M"))
+            .groupby("month")["net_return"]
+            .apply(lambda values: float((1 + values).prod() - 1))
+        )
         sensitivity = database.frame(
             """
             select scenario, parameters, metrics from backtest_sensitivity

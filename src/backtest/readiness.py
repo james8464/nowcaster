@@ -58,4 +58,3 @@ def evaluate_readiness(inputs: ReadinessInputs) -> ReadinessAssessment:
     else:
         readiness = "research_only"
     return ReadinessAssessment(readiness, score, tuple([*hard_failures, *reasons]), inputs)
-

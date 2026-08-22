@@ -107,6 +107,7 @@ def test_snapshot_contract_is_versioned_and_never_calls_confidence_profit_probab
     assert snapshot.metadata.data_mode in {"demo_real_snapshot", "live_provider"}
     assert "probability of profit" not in snapshot.model_dump_json().lower()
 
+
 def test_atomic_writer_replaces_complete_document(tmp_path, snapshot):
     path = write_snapshot_atomic(snapshot, tmp_path / "nowcaster-snapshot.json")
     assert AppSnapshot.model_validate_json(path.read_text()).schema_version == 1
@@ -167,11 +168,17 @@ def test_log_growth_round_trip_is_positive():
     assert decode_revenue_growth(growth, 100.0) == pytest.approx(125.0)
     assert decode_revenue_growth(-100.0, 100.0) > 0
 
+
 def test_inverse_error_weights_use_only_prior_fold_metrics():
-    assert inverse_error_weights({"ridge": 2.0, "elastic_net": 1.0}) == pytest.approx({"ridge": 1 / 3, "elastic_net": 2 / 3})
+    assert inverse_error_weights({"ridge": 2.0, "elastic_net": 1.0}) == pytest.approx(
+        {"ridge": 1 / 3, "elastic_net": 2 / 3}
+    )
+
 
 def test_wide_interval_forces_abstention():
-    result = assess_signal_eligibility(interval_width_ratio=0.8, model_agreement=0.9, completeness=1, extrapolation=0, observations=100)
+    result = assess_signal_eligibility(
+        interval_width_ratio=0.8, model_agreement=0.9, completeness=1, extrapolation=0, observations=100
+    )
     assert result.posture == "abstain"
     assert "interval" in result.reasons[0].lower()
 ```
@@ -227,6 +234,7 @@ def test_crypto_features_use_only_prior_closes(price_frame):
     rebuilt = build_crypto_features(changed)
     pd.testing.assert_series_equal(features.iloc[20], rebuilt.iloc[20])
 
+
 def test_crypto_return_is_realized_after_decision(crypto_matrix):
     folds = make_crypto_walk_forward_folds(crypto_matrix, horizon_days=5, embargo_days=5)
     assert all(fold.training_label_end < fold.test_decision_start for fold in folds)
@@ -281,10 +289,12 @@ def test_protocol_reserves_final_test_and_embargoes_overlap(rows):
     assert all(fold.train_label_end < fold.validation_start for fold in folds)
     assert min(protocol.final_test_indices) > max(protocol.development_indices)
 
+
 def test_costs_and_one_bar_lag_reduce_crypto_return(position_frame):
     result = simulate_crypto_portfolio(position_frame, fee_bps=10, slippage_bps=5, target_volatility=0.15)
     assert result.net_cumulative_return < result.gross_cumulative_return
     assert result.positions.iloc[0].execution_date > result.positions.iloc[0].decision_date
+
 
 def test_false_discovery_adjustment_is_monotonic():
     adjusted = benjamini_hochberg([0.01, 0.04, 0.2])
@@ -677,7 +687,7 @@ git commit -m "test: verify macOS accessibility and visuals"
 **Interfaces:**
 - Produces: primary native-product documentation, deterministic CI, zipped app artifact, checksums, and optional signing/notarization path.
 
-- [ ] **Step 1: Write failing documentation and workflow tests**
+- [x] **Step 1: Write failing documentation and workflow tests**
 
 ```python
 def test_readme_is_native_first_and_documents_no_web_runtime():
@@ -687,27 +697,28 @@ def test_readme_is_native_first_and_documents_no_web_runtime():
     assert "WebView" in text
     assert "not investment advice" in text.lower()
 
+
 def test_ci_runs_both_language_suites():
     workflow = yaml.safe_load(Path(".github/workflows/ci.yml").read_text())
     rendered = json.dumps(workflow)
     assert "pytest" in rendered and "swift test" in rendered and "make demo" in rendered
 ```
 
-- [ ] **Step 2: Verify red**
+- [x] **Step 2: Verify red**
 
 Run: `.venv/bin/pytest tests/unit/test_documentation.py -q`
 Expected: native docs/workflow assertions fail.
 
-- [ ] **Step 3: Implement CI, release workflow, and native-first documentation**
+- [x] **Step 3: Implement CI, release workflow, and native-first documentation**
 
 CI uses a pinned Python range and a current macOS runner, installs from the public PyPI index, runs Ruff, pytest with coverage, clean demo, snapshot validation, Swift tests, and app assembly. Release zips `Nowcaster.app`, produces SHA-256, uploads artifacts, and conditionally signs/notarizes only when secrets exist. README leads with the native app and measured evidence; Streamlit is documented only as a deprecated research fallback or removed.
 
-- [ ] **Step 4: Validate workflows and documentation**
+- [x] **Step 4: Validate workflows and documentation**
 
 Run: `.venv/bin/pytest tests/unit/test_documentation.py -q && make lint && make macos-test && make macos-app`
 Expected: PASS and generated app matches documented commands.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add .github README.md docs Makefile .gitignore tests/unit/test_documentation.py

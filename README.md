@@ -1,144 +1,104 @@
-# Alternative-Data Earnings Nowcaster
+# Nowcaster for macOS
 
-Can publicly observable alternative data identify earnings expectations that are too high or too low before a company reports?
+Nowcaster is a native SwiftUI research workstation for monitoring equities and crypto, reviewing evidence-ranked long/short research postures, and auditing leakage-resistant backtests. It is a decision-support application—not an order router, signal-selling service, or promise of profit.
 
-This is a point-in-time investment-research platform, not a signal-selling app. It ingests SEC fundamentals, Wikimedia attention, adjusted prices, and optional vintage-safe macro data; constructs leakage-audited pre-event features; produces expanding-window revenue forecasts; compares them with a user-supplied expectation or a clearly labelled proxy; and evaluates subsequent event returns.
+The app is built with SwiftUI, Swift Charts, and native macOS navigation. It contains no browser shell, WebView, JavaScript frontend, account login, or brokerage integration. A local Python research engine produces a versioned JSON snapshot that the app reads without running a server.
 
-The repository is a standalone project inside a downloaded GS Quant source tree. It uses the local `gs_quant` package only for an optional return-calculation cross-check. This project is not affiliated with or endorsed by Goldman Sachs.
+![Nowcaster Today view](docs/images/macos/today-light.png)
 
-## Measured demo results
+## What it does
 
-The bundled demo uses real public snapshots for SBUX, MCD, and COST—never synthetic “live” results.
+- Monitors SBUX, MCD, COST, BTC-USD, and ETH-USD from bundled, checksum-verified public snapshots.
+- Shows research postures only when declared evidence gates clear; otherwise it abstains.
+- Keeps confidence, calibrated direction, catalyst, invalidation, and eligibility separate.
+- Forecasts equity revenue from point-in-time fundamentals and public attention data.
+- Researches crypto direction in a separate, shifted-feature ensemble—never by applying an earnings model to crypto.
+- Exposes development and final-test results, costs, lag, drawdown, stability, sensitivity, and data quality.
+- Rebuilds local research through a shell-free `Process` runner and preserves the last-known-good snapshot on failure.
 
-| Measure | Verified demo value |
-|---|---:|
-| SEC company-quarters | 155 |
-| Daily Wikimedia observations | 12,210 |
-| Adjusted-price observations | 26,616 |
-| Expanding-window forecasts | 2,047 |
-| Event signal-window observations | 8,188 |
-| Fundamentals-plus-attention Ridge MAE vs seasonal baseline | 28.3% lower |
-| Incremental attention-data MAE vs fundamentals-only Ridge | 8.4% worse |
-| [0,+3] top-minus-bottom abnormal-return spread | -0.04% |
+## Measured bundled results
 
-The central finding is deliberately unvarnished: the full model beat a naive seasonal baseline, but the attention features did not add value relative to the matched fundamentals-only model. The small event spread is not evidence of a profitable strategy.
+These are frozen demo measurements through 22 August 2026, not selected live claims.
 
-## Investment thesis
+| Research system | Status | Development Sharpe | Final-test Sharpe | Full Sharpe | Trades | Full max drawdown |
+|---|---|---:|---:|---:|---:|---:|
+| BTC-USD calibrated ensemble | Research only | 0.758 | 0.571 | 0.666 | 173 | -26.1% |
+| ETH-USD calibrated ensemble | Not ready | 0.198 | 0.593 | 0.272 | 57 | -16.8% |
 
-The research question has three separate links:
+BTC remains research-only because fewer than 75% of subperiods were profitable. ETH fails the declared promotion gates, including sample size and development performance. The equity event study is also research-only: the bundled three-company universe uses a seasonal expectation proxy—not Wall Street consensus—and its [0,+3] abnormal-return top-minus-bottom spread is about -0.04%.
 
-1. Can public attention improve a forecast of the next reported fundamental?
-2. Does the forecast differ from the expectation observable before the event?
-3. Is that divergence associated with post-event returns after market and sector adjustment?
+Historical performance can be overfit and may not persist. Confidence is evidence quality, not a probability of profit. This software is educational research and not investment advice.
 
-The platform never treats these as interchangeable. Demo mode uses a prior-year seasonal expectation proxy, which is not Wall Street consensus. Event dates are SEC filing-date proxies. Confidence is a research-quality score, not a probability of profit.
+## Build and run
+
+Requirements: macOS 14 or later, Xcode Command Line Tools, and Python 3.11–3.13. The bundled demo needs no API keys.
+
+```bash
+xcode-select --install
+brew install uv
+git clone https://github.com/james8464/nowcaster.git
+cd nowcaster
+make setup
+make demo
+make macos-app
+open build/Nowcaster.app
+```
+
+`build/Nowcaster.app` is ad-hoc signed for local use. macOS may require Control-click → Open for an unsigned download. Release workflows support optional Developer ID signing and notarization when repository secrets are configured.
+
+## Verification commands
+
+```bash
+make lint               # Ruff formatting and static analysis
+make test               # Python suite
+make demo               # deterministic engine run and native snapshot export
+make macos-test         # Swift model, decoding, security, and accessibility tests
+make macos-ui-test      # launch the signed app and verify a real window
+make macos-screenshots  # all primary screens, light/dark, plus narrow layouts
+make release-archive    # app ZIP and SHA-256 checksum
+```
+
+The legacy Streamlit dashboard remains only as a deprecated research-migration aid via `make dashboard`; it is not the product runtime.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    A[SEC / Wikimedia / prices / optional ALFRED] --> B[Validation + provenance]
-    B --> C[(DuckDB normalized store)]
-    C --> D[Point-in-time feature engine]
-    D --> E[Expanding-window models]
-    E --> F[Expectation variant]
-    F --> G[Event study + portfolio research]
-    C --> H[Streamlit dashboard]
-    E --> H
-    G --> H
-    G --> I[Research note + resume evidence]
+    A[SEC / Wikimedia / adjusted prices] --> B[Checksums + validation]
+    B --> C[(DuckDB research store)]
+    C --> D[Point-in-time equity engine]
+    C --> E[Shifted-feature crypto engine]
+    D --> F[Purged walk-forward backtests]
+    E --> F
+    F --> G[Versioned atomic JSON snapshot]
+    G --> H[Native SwiftUI macOS app]
 ```
 
-The CLI is restartable: each stage records its configuration hash, Git revision, timestamps, status, and row counts. Derived rows retain their source, source version, and creation time. See [architecture](docs/architecture.md), [methodology](docs/methodology.md), and [data dictionary](docs/data_dictionary.md).
+The two runtimes share a strict snapshot contract. No HTTP service is required. See [architecture](docs/architecture.md), [methodology](docs/methodology.md), [backtest protocol](docs/backtest_protocol.md), [macOS guide](docs/macos_app.md), [privacy](docs/privacy.md), and [data dictionary](docs/data_dictionary.md).
 
-## Dashboard
+## Data and research caveats
 
-| Overview | Forecast monitor |
-|---|---|
-| ![Overview](docs/images/overview.png) | ![Forecast monitor](docs/images/forecast_monitor.png) |
-
-| Model performance | Event study |
-|---|---|
-| ![Model performance](docs/images/model_performance.png) | ![Event study](docs/images/event_study.png) |
-
-Additional pages cover [company research](docs/images/company_research.png) and [data quality](docs/images/data_quality.png).
-
-## Data sources
-
-| Source | Use | Point-in-time treatment | Important limitation |
+| Source | Use | Point-in-time treatment | Limitation |
 |---|---|---|---|
-| SEC EDGAR Company Facts | Quarterly revenue and reported metrics | Filing date is `available_date` | XBRL tag transitions and filing-date event proxy |
-| Wikimedia Analytics | Daily company-page attention | One-day publication lag | Attention is noisy and begins July 2015 |
-| Yahoo chart endpoint | Adjusted company, SPY, and sector-ETF closes | Daily price dates | Unofficial endpoint; no SLA or institutional license |
-| FRED/ALFRED | Optional macro context | Only vintage-specific observations accepted | Bundled latest-revised CSVs are excluded from historical modelling |
-| User CSV / optional API | Historical consensus | Latest revision at or before cutoff | Demo has no real historical consensus |
+| SEC EDGAR Company Facts | Reported equity fundamentals | Filing date is availability date | Filing date proxies event timing |
+| Wikimedia Analytics | Public-attention features | Explicit publication lag | Noisy and non-causal |
+| Yahoo chart endpoint snapshots | Adjusted equity/crypto prices | Frozen files, dates, and SHA-256 | Unofficial endpoint; no SLA |
+| User CSV / optional API | Historical expectations | Latest revision at or before cutoff | Bundled demo has no real consensus |
 
-Snapshot manifests record retrieval URLs, timestamps, source notes, and SHA-256 hashes. Users remain responsible for provider terms and any production-market-data license.
-
-## Forecasting and backtesting
-
-- Forecast cutoffs: configurable; the demo evaluates 1, 7, 14, and 30 calendar days before the event proxy.
-- Feature rule: `maximum_input_available_date <= forecast_cutoff_date` for every row.
-- Validation: separate expanding windows by horizon; a label becomes trainable only after its reported-result date, and all preprocessing is fit inside each fold.
-- Models: seasonal naive, historical growth, OLS/Ridge/Elastic Net, and histogram gradient boosting.
-- Ablations: fundamentals only, alternative only, fundamentals + alternative, and optional vintage-safe macro.
-- Variant: `(model forecast - expectation) / expectation`, plus within-cohort z-scores and five buckets.
-- Event windows: `[-1,+1]`, `[0,+1]`, `[0,+3]`, and `[0,+5]`, with identical-date market and sector adjustment.
-- Robustness: bootstrap intervals, hit rates, t-statistics, Newey-West regression, overlap disclosure, and transaction-cost-aware long/short research simulation.
-
-The exact definitions and failure modes are in [methodology.md](docs/methodology.md).
-
-## macOS setup
-
-Supported: Apple Silicon and Intel Macs with Python 3.11–3.13.
-
-```bash
-xcode-select --install
-brew install uv
-git clone <repository-url>
-cd alternative-data-earnings-nowcaster
-make setup
-cp .env.example .env
-make demo
-make test
-make dashboard
-```
-
-Open `http://localhost:8501`. Demo mode needs no API keys. The optional live path requires an identifying `SEC_USER_AGENT` containing contact information; optional vintage macro ingestion also requires `FRED_API_KEY`.
-
-If `uv` is unavailable, create a virtual environment with Python 3.11–3.13 and run `pip install -e '.[dev]'`.
-
-## Commands
-
-```bash
-make demo          # build the real-snapshot database and reports without API keys
-make test          # run the complete automated suite
-make lint          # Ruff formatting and static checks
-make fetch         # load bundled demo source snapshots stage by stage
-make features      # build point-in-time quarterly features
-make train         # generate expanding-window forecasts
-make backtest      # construct variants and event returns
-make dashboard     # launch the six-page Streamlit app
-make report        # regenerate evidence-backed Markdown outputs
-```
-
-Equivalent commands are available through `python -m src.cli --help`. Live execution is opt-in with `--mode live`; it never silently substitutes demo data.
+Users are responsible for provider terms and production data licensing. The application stores no brokerage credentials and never places orders.
 
 ## Project map
 
 ```text
-src/            ingestion, validation, feature, model, consensus, backtest, reporting
-dashboard/      six-page Streamlit research UI
-config/         typed universe, feature, model, and backtest configuration
-data/demo/      bundled real public snapshots and manifests
-notebooks/      thin reproducible exploration clients; no pipeline logic
-reports/        generated research note and measured resume bullets
-docs/           architecture, methodology, dictionary, interview guide, images
-tests/          unit, integration, leakage, CLI, notebook, and dashboard tests
+macos/Nowcaster/    native SwiftUI application and tests
+src/                ingestion, features, modelling, backtests, snapshot export
+config/             typed research and universe configuration
+data/demo/          frozen real public source snapshots and manifests
+data/app/           generated native application snapshot
+docs/               architecture, methodology, operations, privacy, screenshots
+tests/              unit, integration, leakage, CLI, and documentation tests
+.github/workflows/  macOS CI and checksumed release packaging
+dashboard/          deprecated Streamlit research fallback
 ```
 
-## Interview guide and limitations
-
-Use [interview_guide.md](docs/interview_guide.md) for a concise walkthrough of decisions, strongest and weakest results, and sensible institutional extensions. Generated claims live in `reports/latest_research_report.md` and `reports/resume_bullets.md`; they are deliberately ignored by Git because they must be regenerated from the current database.
-
-This project is educational research and not investment advice. It does not place orders, promise “high-confidence” profits, model intraday execution, or establish that public alternative data creates durable alpha. Historical performance can be overfit and may not persist.
+This standalone project was originally developed inside a downloaded GS Quant source tree. It can optionally cross-check returns with `gs_quant`, but it is not affiliated with or endorsed by Goldman Sachs.

@@ -174,9 +174,7 @@ class DemoStages:
                 continue
             path = self.demo_root / "crypto" / f"{instrument.symbol}.json"
             frame = parse_yahoo_chart(path.read_text(encoding="utf-8"))
-            rows.extend(
-                price_rows(frame, source="yahoo_chart_public_snapshot", source_version="snapshot-2026-08-22")
-            )
+            rows.extend(price_rows(frame, source="yahoo_chart_public_snapshot", source_version="snapshot-2026-08-22"))
         return {
             "instruments": instrument_count,
             "market_prices_daily_crypto": self.database.insert("market_prices_daily", rows),
@@ -385,9 +383,7 @@ class DemoStages:
             development_metrics = calculate_backtest_metrics(
                 development_result.curve, development_result.positions, periods_per_year=365
             )
-            final_metrics = calculate_backtest_metrics(
-                final_result.curve, final_result.positions, periods_per_year=365
-            )
+            final_metrics = calculate_backtest_metrics(final_result.curve, final_result.positions, periods_per_year=365)
             full_metrics = calculate_backtest_metrics(full_result.curve, full_result.positions, periods_per_year=365)
             bootstrap = run_block_bootstrap(
                 full_result.curve["net_return"].to_numpy(),
@@ -408,9 +404,11 @@ class DemoStages:
                 slippage_bps=instrument.slippage_bps * 2,
                 target_volatility=0.15,
             )
-            by_year = full_result.curve.assign(
-                year=pd.to_datetime(full_result.curve["date"]).dt.year
-            ).groupby("year")["net_return"].sum()
+            by_year = (
+                full_result.curve.assign(year=pd.to_datetime(full_result.curve["date"]).dt.year)
+                .groupby("year")["net_return"]
+                .sum()
+            )
             readiness = evaluate_readiness(
                 ReadinessInputs(
                     trades=full_metrics.trades,
@@ -475,10 +473,19 @@ class DemoStages:
                         "backtest_run_id": run_id,
                         "curve_date": row["date"],
                         "phase": row["phase"],
-                        **{key: float(row[key]) for key in (
-                            "gross_return", "net_return", "gross_equity", "net_equity", "drawdown",
-                            "gross_exposure", "turnover", "costs"
-                        )},
+                        **{
+                            key: float(row[key])
+                            for key in (
+                                "gross_return",
+                                "net_return",
+                                "gross_equity",
+                                "net_equity",
+                                "drawdown",
+                                "gross_exposure",
+                                "turnover",
+                                "costs",
+                            )
+                        },
                         "source": "out_of_sample_crypto_backtest",
                         "source_version": "purged-oos-v1",
                         "created_at": created_at,
@@ -500,10 +507,18 @@ class DemoStages:
                         "execution_date": row["execution_date"],
                         "label_end_date": row["label_end_date"],
                         "posture": row["posture"],
-                        **{key: float(row[key]) for key in (
-                            "weight", "gross_exposure", "turnover", "realized_return", "gross_return",
-                            "net_return", "cost"
-                        )},
+                        **{
+                            key: float(row[key])
+                            for key in (
+                                "weight",
+                                "gross_exposure",
+                                "turnover",
+                                "realized_return",
+                                "gross_return",
+                                "net_return",
+                                "cost",
+                            )
+                        },
                         "source": "out_of_sample_crypto_backtest",
                         "source_version": "purged-oos-v1",
                         "created_at": created_at,

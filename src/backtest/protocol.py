@@ -64,9 +64,7 @@ class WalkForwardProtocol:
             end = min(start + self.validation_size, development_size)
             validation_start = ordered_decisions.iloc[start]
             purge_before = validation_start - pd.Timedelta(days=self.embargo)
-            train_ordered = np.flatnonzero(
-                (np.arange(len(rows)) < start) & (ordered_labels < purge_before).to_numpy()
-            )
+            train_ordered = np.flatnonzero((np.arange(len(rows)) < start) & (ordered_labels < purge_before).to_numpy())
             if len(train_ordered) >= self.minimum_train:
                 validation_ordered = np.arange(start, end)
                 folds.append(
@@ -80,4 +78,3 @@ class WalkForwardProtocol:
                 )
             start = end
         return folds
-
