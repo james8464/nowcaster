@@ -370,8 +370,11 @@ class DemoStages:
             if len(signals) < 20:
                 continue
             split = max(1, int(len(signals) * 0.8))
-            development = signals.iloc[:split].copy()
             final_test = signals.iloc[split:].copy()
+            final_start_timestamp = pd.Timestamp(final_test["decision_date"].min())
+            development = signals.iloc[:split].copy()
+            development = development[pd.to_datetime(development["label_end_date"]) < final_start_timestamp].copy()
+            eligible_signals = pd.concat([development, final_test], ignore_index=True)
             costs = {
                 "fee_bps": instrument.fee_bps,
                 "slippage_bps": instrument.slippage_bps,
@@ -379,7 +382,7 @@ class DemoStages:
             }
             development_result = simulate_crypto_portfolio(development, **costs)
             final_result = simulate_crypto_portfolio(final_test, **costs)
-            full_result = simulate_crypto_portfolio(signals, **costs)
+            full_result = simulate_crypto_portfolio(eligible_signals, **costs)
             development_metrics = calculate_backtest_metrics(
                 development_result.curve, development_result.positions, periods_per_year=365
             )
@@ -399,7 +402,7 @@ class DemoStages:
                 kurtosis=float(full_result.curve["net_return"].kurtosis() + 3),
             )
             stressed = simulate_crypto_portfolio(
-                signals,
+                eligible_signals,
                 fee_bps=instrument.fee_bps * 2,
                 slippage_bps=instrument.slippage_bps * 2,
                 target_volatility=0.15,
@@ -424,7 +427,7 @@ class DemoStages:
             run_id = canonical_hash(
                 [instrument.symbol, "crypto_daily_ensemble", "purged-oos-v1", instrument.primary_horizon]
             )[:24]
-            final_start = pd.Timestamp(final_test["decision_date"].min()).date()
+            final_start = final_start_timestamp.date()
             run_rows.append(
                 {
                     "backtest_run_id": run_id,
@@ -526,7 +529,7 @@ class DemoStages:
                 )
             for name, multiplier in (("base_costs", 1.0), ("double_costs", 2.0), ("triple_costs", 3.0)):
                 result = simulate_crypto_portfolio(
-                    signals,
+                    eligible_signals,
                     fee_bps=instrument.fee_bps * multiplier,
                     slippage_bps=instrument.slippage_bps * multiplier,
                     target_volatility=0.15,

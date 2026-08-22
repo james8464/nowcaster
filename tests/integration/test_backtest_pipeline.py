@@ -59,3 +59,15 @@ def test_demo_crypto_backtests_preserve_final_test_and_cost_sensitivity(demo_dat
     assert database.scalar("select count(*) from backtest_curve where phase = 'final_test'") > 0
     assert database.scalar("select count(*) from backtest_sensitivity") == 3 * len(runs)
     assert database.scalar("select count(*) from backtest_positions where execution_date <= decision_date") == 0
+    assert (
+        database.scalar(
+            """
+            select count(*)
+            from backtest_positions positions
+            join backtest_runs runs using (backtest_run_id)
+            where positions.phase = 'development'
+              and positions.label_end_date >= runs.final_test_start
+            """
+        )
+        == 0
+    )
