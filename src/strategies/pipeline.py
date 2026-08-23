@@ -232,6 +232,16 @@ class EvaluationBatch:
     resolved_outcomes: pd.DataFrame
 
 
+@dataclass(frozen=True, slots=True)
+class SealedResearchSnapshot:
+    query: BarQuery
+    manifest: DatasetManifest
+    coverage_manifest: EvaluationCoverageManifest
+    as_of: datetime
+    signal_bars: pd.DataFrame
+    causal_bars: pd.DataFrame
+
+
 _RESOLVED_OUTCOME_DTYPES: tuple[tuple[str, str], ...] = (
     ("strategy_id", "string"),
     ("decision_timestamp", "datetime64[ns, UTC]"),
@@ -395,8 +405,11 @@ class StrategyPipeline:
                     )
                 )
                 fetched_count += len(fetched)
-                append_identity = canonical_hash(
-                    ["market_bar_append", query.provider, query.feed, query.symbol, query.interval.value]
+                append_identity = _market_bar_lock_identity(
+                    query.provider,
+                    query.feed,
+                    query.symbol,
+                    query.interval,
                 )
                 with _lock_for(append_identity):
                     inserted += self.bars.append(fetched)
@@ -434,78 +447,110 @@ class StrategyPipeline:
 
     def evaluate(self, options: EvaluationOptions, emit: EventSink | None = None) -> StageOutcome:
         registered = self._registered_many(options.scope)
-        query, manifest, coverage_manifest, unavailable = self._authenticated_coverage(options.scope)
-        if query is None or manifest is None:
-            return StageOutcome("unavailable", unavailable or "requested coverage is unavailable")
-        assert coverage_manifest is not None
-        as_of = self._query_as_of(query)
-        cohort = self._cohort_payload(options.scope, registered, manifest.dataset_hash, as_of)
-        cohort_id = canonical_hash(cohort)
-        cohort["coverage_manifest"] = coverage_manifest.model_dump(mode="json")
-        cached, run_contexts, cohort_generation = self._claim_evaluation_cohort(
-            options.scope,
-            registered,
-            manifest.dataset_hash,
-            cohort,
-            cohort_id,
-            force=options.force,
-        )
-        if cached:
-            self._emit(emit, "progress", "evaluate", 1.0, "reused cached evaluation")
-            return StageOutcome(
-                "reused",
-                "reused cached evaluation",
-                dataset_hash=manifest.dataset_hash,
-                strategy_run_id=cached[0],
-                strategy_run_ids=cached,
-            )
-        self._emit(emit, "progress", "evaluate", 0.1, "loaded all locally available compatible history")
-        batch: EvaluationBatch | None = None
-        try:
-            batch = self._evaluate_engines(options.scope, registered, query, manifest, as_of)
-            self._persist_evaluation_batch(
+        for source_attempt in range(3):
+            snapshot, unavailable = self._capture_research_snapshot(options.scope)
+            if snapshot is None:
+                return StageOutcome("unavailable", unavailable or "requested coverage is unavailable")
+            cohort = self._cohort_payload(
                 options.scope,
-                manifest,
-                run_contexts,
-                batch,
+                registered,
+                snapshot.manifest.dataset_hash,
+                snapshot.as_of,
+            )
+            cohort_id = canonical_hash(cohort)
+            cohort["coverage_manifest"] = snapshot.coverage_manifest.model_dump(mode="json")
+            cached, run_contexts, cohort_generation = self._claim_evaluation_cohort(
+                options.scope,
+                registered,
+                snapshot.manifest.dataset_hash,
                 cohort,
                 cohort_id,
-                cohort_generation,
+                force=options.force,
             )
-        except Exception as error:
-            committed = batch is not None and self._evaluation_cohort_is_complete(
-                options.scope,
-                manifest.dataset_hash,
-                run_contexts,
-                batch,
-                cohort_id,
-            )
-            if not committed:
-                for item, run_id, run_timestamp in run_contexts:
-                    try:
+            if cached:
+                if not self._source_snapshot_is_current(options.scope, snapshot):
+                    continue
+                self._emit(emit, "progress", "evaluate", 1.0, "reused cached evaluation")
+                return StageOutcome(
+                    "reused",
+                    "reused cached evaluation",
+                    dataset_hash=snapshot.manifest.dataset_hash,
+                    strategy_run_id=cached[0],
+                    strategy_run_ids=cached,
+                )
+            self._emit(emit, "progress", "evaluate", 0.1, "loaded one sealed compatible-history snapshot")
+            batch: EvaluationBatch | None = None
+            try:
+                batch = self._evaluate_engines(
+                    options.scope,
+                    registered,
+                    snapshot.query,
+                    snapshot.manifest,
+                    snapshot.as_of,
+                    signal_bars=snapshot.signal_bars,
+                    bars=snapshot.causal_bars,
+                )
+                if not self._persist_evaluation_batch_if_current(
+                    options.scope,
+                    snapshot,
+                    run_contexts,
+                    batch,
+                    cohort,
+                    cohort_id,
+                    cohort_generation,
+                ):
+                    for item, run_id, run_timestamp in run_contexts:
                         self._persist_failed_run(
                             options.scope,
                             item,
-                            manifest.dataset_hash,
+                            snapshot.manifest.dataset_hash,
                             run_id,
                             run_timestamp,
-                            str(error),
+                            "source bar generation changed before terminal commit",
+                            stage="source_snapshot",
                         )
-                    except Exception as persistence_error:
-                        error.add_note(f"failed to persist evaluation failure: {persistence_error}")
-                raise
-        assert batch is not None
-        statuses = {component.evaluation.status.value for component in batch.components}
-        message = "evaluation completed" if statuses == {"evaluated"} else f"evaluation statuses: {sorted(statuses)}"
-        self._emit(emit, "progress", "evaluate", 1.0, message)
-        run_ids = tuple(run_id for _, run_id, _ in run_contexts)
-        return StageOutcome(
-            "completed",
-            message,
-            dataset_hash=manifest.dataset_hash,
-            strategy_run_id=run_ids[0],
-            strategy_run_ids=run_ids,
-        )
+                    if source_attempt < 2:
+                        continue
+                    return StageOutcome("unavailable", "source bars changed repeatedly; retry evaluation")
+            except Exception as error:
+                committed = batch is not None and self._evaluation_cohort_is_complete(
+                    options.scope,
+                    snapshot.manifest.dataset_hash,
+                    run_contexts,
+                    batch,
+                    cohort_id,
+                )
+                if committed:
+                    pass
+                else:
+                    for item, run_id, run_timestamp in run_contexts:
+                        try:
+                            self._persist_failed_run(
+                                options.scope,
+                                item,
+                                snapshot.manifest.dataset_hash,
+                                run_id,
+                                run_timestamp,
+                                str(error),
+                            )
+                        except Exception as persistence_error:
+                            error.add_note(f"failed to persist evaluation failure: {persistence_error}")
+                    raise
+            assert batch is not None
+            statuses = {component.evaluation.status.value for component in batch.components}
+            message = (
+                "evaluation completed" if statuses == {"evaluated"} else f"evaluation statuses: {sorted(statuses)}"
+            )
+            self._emit(emit, "progress", "evaluate", 1.0, message)
+            run_ids = tuple(run_id for _, run_id, _ in run_contexts)
+            return StageOutcome(
+                "completed",
+                message,
+                dataset_hash=snapshot.manifest.dataset_hash,
+                strategy_run_id=run_ids[0],
+                strategy_run_ids=run_ids,
+            )
+        return StageOutcome("unavailable", "source bars changed repeatedly; retry evaluation")
 
     def _claim_evaluation_cohort(
         self,
@@ -645,47 +690,49 @@ class StrategyPipeline:
 
     def learn(self, options: LearningOptions, emit: EventSink | None = None) -> StageOutcome:
         registered = self._registered(options.scope)
-        query, manifest, _coverage_manifest, unavailable = self._authenticated_coverage(options.scope)
-        if query is None or manifest is None:
-            return StageOutcome("unavailable", unavailable or "requested coverage is unavailable")
-        bars = self.bars.causal_bars_as_of(query, self._query_as_of(query))
-        experiment, development = self._learning_experiment(
-            options,
-            registered,
-            manifest,
-            bars,
-            self._raw_final_boundary(bars),
-        )
-        if not options.force and self.database.scalar(
-            "select count(*) from learning_trials where learning_run_id = :run_id",
-            {"run_id": experiment.learning_run_id},
-        ):
-            existing = int(
-                self.database.scalar(
-                    "select count(*) from learning_trials where learning_run_id = :run_id",
-                    {"run_id": experiment.learning_run_id},
-                )
-                or 0
+        with _lock_for(_scope_bar_lock_identity(options.scope)):
+            query, manifest, _coverage_manifest, unavailable = self._authenticated_coverage(options.scope)
+            if query is None or manifest is None:
+                return StageOutcome("unavailable", unavailable or "requested coverage is unavailable")
+            as_of = self._query_as_of(query)
+            bars = self.bars.causal_bars_as_of(query, as_of).copy(deep=True)
+            experiment, development = self._learning_experiment(
+                options,
+                registered,
+                manifest,
+                bars,
+                self._raw_final_boundary(bars),
             )
-            if existing == options.evaluation_budget:
-                self._emit(emit, "progress", "learn", 1.0, "reused observed learning trial ledger")
-                return StageOutcome(
-                    "reused",
-                    "reused observed learning trial ledger",
-                    dataset_hash=manifest.dataset_hash,
-                    learning_run_id=experiment.learning_run_id,
-                    evaluated_candidates=existing,
+            if not options.force and self.database.scalar(
+                "select count(*) from learning_trials where learning_run_id = :run_id",
+                {"run_id": experiment.learning_run_id},
+            ):
+                existing = int(
+                    self.database.scalar(
+                        "select count(*) from learning_trials where learning_run_id = :run_id",
+                        {"run_id": experiment.learning_run_id},
+                    )
+                    or 0
                 )
-        self._emit(emit, "progress", "learn", 0.1, "sealed final boundary before bounded search")
-        result = discover_rules(experiment, development)
-        self._emit(emit, "progress", "learn", 1.0, f"observed {result.trial_count} trial ledger rows")
-        return StageOutcome(
-            "completed",
-            f"observed {result.trial_count} trial ledger rows",
-            dataset_hash=manifest.dataset_hash,
-            learning_run_id=result.learning_run_id,
-            evaluated_candidates=result.trial_count,
-        )
+                if existing == options.evaluation_budget:
+                    self._emit(emit, "progress", "learn", 1.0, "reused observed learning trial ledger")
+                    return StageOutcome(
+                        "reused",
+                        "reused observed learning trial ledger",
+                        dataset_hash=manifest.dataset_hash,
+                        learning_run_id=experiment.learning_run_id,
+                        evaluated_candidates=existing,
+                    )
+            self._emit(emit, "progress", "learn", 0.1, "sealed final boundary before bounded search")
+            result = discover_rules(experiment, development)
+            self._emit(emit, "progress", "learn", 1.0, f"observed {result.trial_count} trial ledger rows")
+            return StageOutcome(
+                "completed",
+                f"observed {result.trial_count} trial ledger rows",
+                dataset_hash=manifest.dataset_hash,
+                learning_run_id=result.learning_run_id,
+                evaluated_candidates=result.trial_count,
+            )
 
     def export(self, options: ExportOptions, emit: EventSink | None = None) -> StageOutcome:
         settings = self._settings
@@ -741,6 +788,44 @@ class StrategyPipeline:
     def _requested_coverage(self, scope: StrategyScope) -> tuple[BarQuery | None, DatasetManifest | None, str | None]:
         query, manifest, _evidence, unavailable = self._authenticated_coverage(scope)
         return query, manifest, unavailable
+
+    def _capture_research_snapshot(self, scope: StrategyScope) -> tuple[SealedResearchSnapshot | None, str | None]:
+        with _lock_for(_scope_bar_lock_identity(scope)):
+            query, manifest, coverage_manifest, unavailable = self._authenticated_coverage(scope)
+            if query is None or manifest is None or coverage_manifest is None:
+                return None, unavailable
+            as_of = self._query_as_of(query)
+            signal_bars = self.bars.revision_ledger_as_of(query, as_of).copy(deep=True)
+            causal_bars = self.bars.causal_bars_as_of(query, as_of).copy(deep=True)
+            return (
+                SealedResearchSnapshot(
+                    query=query,
+                    manifest=manifest,
+                    coverage_manifest=coverage_manifest,
+                    as_of=as_of,
+                    signal_bars=signal_bars,
+                    causal_bars=causal_bars,
+                ),
+                None,
+            )
+
+    def _source_snapshot_is_current(self, scope: StrategyScope, snapshot: SealedResearchSnapshot) -> bool:
+        with _lock_for(_scope_bar_lock_identity(scope)):
+            return self._source_snapshot_is_current_unlocked(scope, snapshot)
+
+    def _source_snapshot_is_current_unlocked(
+        self,
+        scope: StrategyScope,
+        snapshot: SealedResearchSnapshot,
+    ) -> bool:
+        current_query = self._local_query(scope)
+        if (
+            current_query is None
+            or current_query.start != snapshot.query.start
+            or current_query.end != snapshot.query.end
+        ):
+            return False
+        return self.bars.manifest(current_query).dataset_hash == snapshot.manifest.dataset_hash
 
     def _authenticated_coverage(
         self, scope: StrategyScope
@@ -1174,9 +1259,13 @@ class StrategyPipeline:
         query: BarQuery,
         manifest: DatasetManifest,
         as_of: datetime,
+        *,
+        signal_bars: pd.DataFrame,
+        bars: pd.DataFrame,
     ) -> EvaluationBatch:
-        signal_bars = self.bars.revision_ledger_as_of(query, as_of)
-        bars = self.bars.causal_bars_as_of(query, as_of)
+        del query
+        signal_bars = signal_bars.copy(deep=True)
+        bars = bars.copy(deep=True)
         if len(bars) < max(max(item.spec.warmup_bars for item in registered) + 2, 3):
             raise ValueError("insufficient locally available compatible history")
         chronology, outcomes, boundary = self._raw_validation_context(bars)
@@ -1424,6 +1513,30 @@ class StrategyPipeline:
                 )
             )
         return tuple(evidence)
+
+    def _persist_evaluation_batch_if_current(
+        self,
+        scope: StrategyScope,
+        snapshot: SealedResearchSnapshot,
+        run_contexts: Sequence[tuple[RegisteredStrategy, str, datetime]],
+        batch: EvaluationBatch,
+        cohort: Mapping[str, Any],
+        cohort_id: str,
+        cohort_generation: int,
+    ) -> bool:
+        with _lock_for(_scope_bar_lock_identity(scope)):
+            if not self._source_snapshot_is_current_unlocked(scope, snapshot):
+                return False
+            self._persist_evaluation_batch(
+                scope,
+                snapshot.manifest,
+                run_contexts,
+                batch,
+                cohort,
+                cohort_id,
+                cohort_generation,
+            )
+        return True
 
     def _persist_evaluation_batch(
         self,
@@ -2008,6 +2121,14 @@ def _merge_ranges(ranges: Sequence[tuple[datetime, datetime]]) -> list[tuple[dat
 
 def _range_is_covered(start: datetime, end: datetime, ranges: Sequence[tuple[datetime, datetime]]) -> bool:
     return any(covered_start <= start and covered_end >= end for covered_start, covered_end in _merge_ranges(ranges))
+
+
+def _market_bar_lock_identity(provider: str, feed: str, symbol: str, interval: BarInterval) -> str:
+    return canonical_hash(["market_bar_append", provider, feed, symbol, interval.value])
+
+
+def _scope_bar_lock_identity(scope: StrategyScope) -> str:
+    return _market_bar_lock_identity(scope.provider.value, scope.feed, scope.symbol, scope.interval)
 
 
 def _strategy_execution_id(

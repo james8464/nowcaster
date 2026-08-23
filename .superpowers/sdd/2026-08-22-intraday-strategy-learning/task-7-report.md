@@ -316,3 +316,39 @@ Both linked final findings against `b3c92cd2696655f9c09bf83590202b76297604e1` ar
 - Coverage union currently treats requested ranges as continuous intervals. This matches the provider request contract and tested contiguous ranges; users who intentionally ingest disjoint exchange sessions should request a calendar-spanning range so the versioned exchange calendar can authenticate the non-session gap.
 - Aggregate manifests are stored in immutable terminal cohort JSON evidence rather than a separately indexed table. This is atomic with the existing cohort transaction and adequate for the bounded native snapshot, but large analytical scans would benefit from a future normalized manifest table.
 - No credentialed live Binance or Alpaca request was made in this deterministic exceptional cycle.
+
+## Exceptional independent-review hardening round 7 addendum
+
+All three final findings against `33aaa0f540acdff51387ba9c83279906e701db21` are addressed.
+
+### Behavior and files
+
+- `src/strategies/pipeline.py` captures one same-instrument sealed research snapshot under the ingestion append lock: authenticated aggregate/request evidence, aggregate manifest, as-of timestamp, revision ledger, and causally resolved execution bars. Evaluation engines receive deep copies of those captured frames and no longer re-query bars after authentication. Before terminal persistence, the pipeline reacquires the same instrument lock, re-derives the source manifest/range, and commits only if the generation is unchanged; otherwise it records the reserved run as a source-snapshot failure and retries from a fresh authenticated capture up to three times.
+- Learning now holds the same instrument lock from coverage authentication and causal-bar capture through its bounded search persistence, so learner inputs and terminal trial/rule evidence cannot straddle an ingestion append. Ingestion append uses the shared canonical provider/feed/symbol/interval lock identity.
+- `src/app_snapshot/builder.py` distinguishes legacy terminal runs with no aggregate manifest from terminal runs whose aggregate evidence is present but rejected. Stale or malformed aggregate evidence now yields no complete coverage instead of falling through to an unrelated current request that was never evaluated.
+- Dataset coverage now has one canonical bounded DTO projection. Terminal aggregate rows are projected first, deduplicated by serialized projection identity, then capped at 200; gap history remains capped at 100. Contributor-only refresh differences therefore collapse to one exported coverage record.
+- Ensemble snapshot evidence replaces the raw aggregate `contributing_requests` list with the same canonical coverage projection plus manifest hash, contributor count, and contributor-ledger hash. The exported ensemble evidence remains constant-size even when the immutable contributor ledger is large.
+- Regressions were added in `tests/integration/test_strategy_cli.py` and `tests/integration/test_app_snapshot_export.py`. No Swift or ledger files were edited.
+
+### RED/GREEN evidence
+
+- Initial focused RED: **3 failed, 0 passed in 3.35s**. A revision inserted between authentication and engine input produced an old aggregate hash with an 81-event signal ledger; rejected XNYS aggregate evidence fell through to a never-evaluated request; and 205 contributor-only refresh variants exported 200 duplicate coverage rows while ensemble evidence retained all 205 raw contributors.
+- Initial focused GREEN: **3 passed in 4.46s**.
+- Malformed-projection hardening RED: **1 failed in 2.03s** because a string-valued gap ledger was treated as an empty complete gap list. Requiring the canonical list shape restored the final focused GREEN: **3 passed in 4.27s**.
+- Task 7 CLI/snapshot compatibility slice: **52 passed in 138.33s**.
+- Complete Python suite: `.venv/bin/pytest -q` — **460 passed in 164.02s**.
+
+### Fix-round self-review
+
+- TOCTOU/data consistency: capture and final compare use the exact same instrument lock as ingestion append. Dataset hash and local range are revalidated while that lock remains held through atomic evaluation persistence. A changed generation never writes signals/executions/weights under the old hash; its empty reservation becomes terminal failed before a fresh capture is attempted.
+- Engine/learner reads: Task 4, validation, ensemble feedback, prefix audit, and learning boundary construction consume only the captured frames. Deep copies isolate generators/backtests from the sealed originals; no repository bar read remains inside `_evaluate_engines`.
+- Cache/lifecycle: cached cohorts are generation-checked before reuse. Retry allocations retain full natural cache/cohort identities, stale reservations are auditable failures without children, and the prior ambiguous post-commit reconciliation path remains intact.
+- Snapshot truthfulness: aggregate-evidence presence is tracked independently of successful projection. Calendar-version drift, dataset mismatch, malformed time/gap fields, or wrong schema cannot authorize request fallback. Legacy databases with no aggregate field retain the compatible request/bar fallback.
+- Projection/bounds: dataset coverage and ensemble summaries share one strict `DatasetCoverageSnapshot` projection; contributor IDs are excluded from projection identity, deduplication precedes the 200 bound, and only counts/hashes—not raw contributors—reach ensemble snapshot evidence.
+- Leakage/licensing/scope: sealed frames are used only inside the causal engines and are not exported. Snapshot evidence contains bounded aggregate provenance, no raw bars, no sealed final learner feedback, and no confidence/profit promises.
+
+### Remaining concerns
+
+- The same-instrument lock is process-local, matching the native app's threaded DuckDB deployment. Cross-process writers would require database snapshot isolation or a durable source-generation compare-and-set.
+- Learning intentionally holds the instrument lock for the bounded search so its current persistence API stays generation-atomic; a future longer-running/distributed learner should separate compute from one transactional compare-and-set commit.
+- Source churn is retried three times and then reported unavailable. No credentialed live Binance or Alpaca request was made in this deterministic hardening cycle.

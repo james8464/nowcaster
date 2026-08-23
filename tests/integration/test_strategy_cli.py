@@ -448,6 +448,79 @@ def test_terminal_evaluation_persists_and_exports_exact_aggregate_coverage_manif
     assert exported.complete is True
 
 
+def test_revision_between_authentication_and_engine_never_mixes_dataset_hash_and_signal_ledger(
+    project_root, tmp_path
+) -> None:
+    _configure_strategy(project_root)
+    bars_path = tmp_path / "sealed-evaluation-bars.csv"
+    _write_bars(bars_path, 80)
+    database_url = f"duckdb:///{tmp_path / 'sealed-evaluation.duckdb'}"
+    pipeline, database = _csv_pipeline(project_root, database_url, bars_path)
+    scope = _scope("rsi_reversal")
+    options = _ingest_options(scope)
+    configured = pipeline.registry.resolve("rsi_reversal")
+    engine_ledger_sizes: list[int] = []
+
+    def capture_engine_ledger(spec, bars, context):
+        engine_ledger_sizes.append(len(bars))
+        return configured.generator(spec, bars, context)
+
+    registry = StrategyRegistry()
+    registry.register(configured.spec, capture_engine_ledger, configured.metadata)
+    pipeline.registry = registry
+    initial = pipeline.ingest(options)
+    assert initial.status == "completed"
+    old_hash = initial.dataset_hash
+    inserted = False
+    original = pipeline._evaluate_engines
+
+    def append_revision_after_authentication(*args, **kwargs):
+        nonlocal inserted
+        if not inserted:
+            inserted = True
+            assert (
+                pipeline.bars.append(
+                    [
+                        _market_bar(
+                            datetime(2026, 8, 20, 1, 40, tzinfo=UTC),
+                            provider="csv",
+                            feed="local",
+                            symbol="BTCUSDT",
+                            close=1_000,
+                            retrieved_at=datetime(2026, 8, 20, 6, 32, tzinfo=UTC),
+                            payload_suffix="between-auth-and-engine",
+                        )
+                    ]
+                )
+                == 1
+            )
+            assert pipeline.ingest(options).status == "reused"
+        return original(*args, **kwargs)
+
+    pipeline._evaluate_engines = append_revision_after_authentication  # type: ignore[method-assign]
+    outcome = pipeline.evaluate(EvaluationOptions(scope=scope, force=True))
+    current_query = pipeline._local_query(scope)
+    assert current_query is not None
+    new_hash = pipeline.bars.manifest(current_query).dataset_hash
+    evaluated = database.frame(
+        "select strategy_run_id, dataset_hash from strategy_runs where status = 'evaluated' order by run_timestamp"
+    )
+    assert len(evaluated) == 1
+    run = evaluated.iloc[0]
+    persisted_signal_count = int(
+        database.scalar(
+            "select count(*) from strategy_run_signal_links where strategy_run_id = :run_id",
+            {"run_id": str(run.strategy_run_id)},
+        )
+        or 0
+    )
+
+    assert outcome.status == "completed"
+    assert (str(run.dataset_hash), engine_ledger_sizes[-1]) in {(str(old_hash), 80), (new_hash, 81)}
+    assert (str(run.dataset_hash), engine_ledger_sizes[-1]) != (str(old_hash), 81)
+    assert persisted_signal_count == engine_ledger_sizes[-1]
+
+
 def test_live_adapter_history_keeps_per_bar_causal_decisions_and_evaluates(project_root, tmp_path) -> None:
     _configure_strategy(project_root)
     start = datetime(2026, 8, 20, tzinfo=UTC)

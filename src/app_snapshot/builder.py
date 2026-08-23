@@ -685,6 +685,7 @@ def _ensemble_components(database: Database) -> list[EnsembleComponentSnapshot]:
     rows: list[EnsembleComponentSnapshot] = []
     for row in latest.itertuples(index=False):
         evidence = row.evidence if isinstance(row.evidence, dict) else {}
+        evidence = _bounded_ensemble_evidence(evidence, str(row.dataset_hash))
         rows.append(
             EnsembleComponentSnapshot(
                 strategy_id=str(row.strategy_id),
@@ -722,31 +723,25 @@ def _coverage_gaps(frame: pd.DataFrame, interval: BarInterval) -> list[DatasetGa
     return gaps
 
 
-def _evaluation_dataset_coverage(database: Database) -> list[DatasetCoverageSnapshot]:
-    runs = database.frame(
-        "select strategy_run_id, dataset_hash, run_timestamp, metrics from strategy_runs "
-        "where status != 'running' order by run_timestamp desc, dataset_hash desc, strategy_run_id desc"
-    )
-    snapshots: list[DatasetCoverageSnapshot] = []
-    seen: set[str] = set()
-    for row in runs.itertuples(index=False):
-        metrics = row.metrics if isinstance(row.metrics, dict) else {}
-        evidence = metrics.get("coverage_manifest")
-        if not isinstance(evidence, dict) or evidence.get("dataset_hash") != str(row.dataset_hash):
-            continue
-        provider = str(evidence.get("provider", ""))
-        feed = str(evidence.get("feed", ""))
-        calendar = calendar_for(provider, feed)
-        if evidence.get("calendar_id") != calendar.calendar_id or evidence.get("calendar_version") != calendar.version:
-            continue
-        identity = canonical_hash(evidence)
-        if identity in seen:
-            continue
-        requested_start = _optional_utc(evidence.get("requested_start"))
-        requested_end = _optional_utc(evidence.get("requested_end"))
-        if requested_start is None or requested_end is None:
-            continue
-        raw_gaps = evidence.get("gaps") if isinstance(evidence.get("gaps"), list) else []
+def _coverage_snapshot_projection(
+    evidence: dict[str, Any],
+    expected_dataset_hash: str,
+) -> DatasetCoverageSnapshot | None:
+    if evidence.get("schema_version") != 1 or evidence.get("dataset_hash") != expected_dataset_hash:
+        return None
+    provider = str(evidence.get("provider", ""))
+    feed = str(evidence.get("feed", ""))
+    calendar = calendar_for(provider, feed)
+    if evidence.get("calendar_id") != calendar.calendar_id or evidence.get("calendar_version") != calendar.version:
+        return None
+    if not isinstance(evidence.get("gaps"), list):
+        return None
+    requested_start = _optional_utc(evidence.get("requested_start"))
+    requested_end = _optional_utc(evidence.get("requested_end"))
+    if requested_start is None or requested_end is None:
+        return None
+    raw_gaps = evidence["gaps"]
+    try:
         gaps = [
             DatasetGapSnapshot(
                 start=item["start"],
@@ -756,34 +751,82 @@ def _evaluation_dataset_coverage(database: Database) -> list[DatasetCoverageSnap
             for item in raw_gaps[:100]
             if isinstance(item, dict)
         ]
-        snapshots.append(
-            DatasetCoverageSnapshot(
-                dataset_hash=str(evidence["dataset_hash"]),
-                provider=provider,
-                feed=feed,
-                symbol=str(evidence.get("symbol", "")),
-                interval=str(evidence.get("interval", "")),
-                requested_start=requested_start,
-                requested_end=requested_end,
-                coverage_start=_optional_utc(evidence.get("coverage_start")),
-                coverage_end=_optional_utc(evidence.get("coverage_end")),
-                row_count=max(int(evidence.get("row_count", 0)), 0),
-                gaps=gaps,
-                complete=not gaps,
-                calendar_id=calendar.calendar_id,
-                calendar_version=calendar.version,
-            )
+        return DatasetCoverageSnapshot(
+            dataset_hash=expected_dataset_hash,
+            provider=provider,
+            feed=feed,
+            symbol=str(evidence.get("symbol", "")),
+            interval=str(evidence.get("interval", "")),
+            requested_start=requested_start,
+            requested_end=requested_end,
+            coverage_start=_optional_utc(evidence.get("coverage_start")),
+            coverage_end=_optional_utc(evidence.get("coverage_end")),
+            row_count=max(int(evidence.get("row_count", 0)), 0),
+            gaps=gaps,
+            complete=not gaps,
+            calendar_id=calendar.calendar_id,
+            calendar_version=calendar.version,
         )
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _bounded_ensemble_evidence(evidence: dict[str, Any], dataset_hash: str) -> dict[str, Any]:
+    result = dict(evidence)
+    raw_manifest = result.get("coverage_manifest")
+    if not isinstance(raw_manifest, dict):
+        return result
+    contributors = raw_manifest.get("contributing_requests")
+    contributor_rows = contributors if isinstance(contributors, list) else []
+    projection = _coverage_snapshot_projection(raw_manifest, dataset_hash)
+    summary: dict[str, Any] = {
+        "manifest_hash": canonical_hash(raw_manifest),
+        "contributing_request_count": len(contributor_rows),
+        "contributing_requests_hash": canonical_hash(contributor_rows),
+    }
+    if projection is None:
+        summary["status"] = "unavailable"
+    else:
+        summary.update(projection.model_dump(mode="json"))
+    result["coverage_manifest"] = summary
+    return result
+
+
+def _evaluation_dataset_coverage(database: Database) -> tuple[list[DatasetCoverageSnapshot], bool]:
+    runs = database.frame(
+        "select strategy_run_id, dataset_hash, run_timestamp, metrics from strategy_runs "
+        "where status != 'running' order by run_timestamp desc, dataset_hash desc, strategy_run_id desc"
+    )
+    snapshots: list[DatasetCoverageSnapshot] = []
+    seen: set[str] = set()
+    aggregate_evidence_present = False
+    for row in runs.itertuples(index=False):
+        metrics = row.metrics if isinstance(row.metrics, dict) else {}
+        if "coverage_manifest" not in metrics:
+            continue
+        aggregate_evidence_present = True
+        evidence = metrics.get("coverage_manifest")
+        if not isinstance(evidence, dict):
+            continue
+        projection = _coverage_snapshot_projection(evidence, str(row.dataset_hash))
+        if projection is None:
+            continue
+        identity = canonical_hash(projection.model_dump(mode="json"))
+        if identity in seen:
+            continue
+        snapshots.append(projection)
         seen.add(identity)
         if len(snapshots) == 200:
             break
-    return snapshots
+    return snapshots, aggregate_evidence_present
 
 
 def _dataset_coverage(database: Database) -> list[DatasetCoverageSnapshot]:
-    evaluated = _evaluation_dataset_coverage(database)
+    evaluated, aggregate_evidence_present = _evaluation_dataset_coverage(database)
     if evaluated:
         return evaluated
+    if aggregate_evidence_present:
+        return []
     frame = database.frame(
         """
         select provider, feed, symbol, interval, open_timestamp, close_timestamp,

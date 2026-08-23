@@ -267,7 +267,6 @@ def test_snapshot_v2_builds_strategy_ensemble_coverage_learning_and_causal_audit
             }
         ],
     )
-
     snapshot = build_app_snapshot(database, settings)
 
     assert snapshot.schema_version == 2
@@ -285,6 +284,262 @@ def test_snapshot_v2_builds_strategy_ensemble_coverage_learning_and_causal_audit
     assert snapshot.learning_runs[0].best_rule_detail.rule_id == "rule-2"
     assert snapshot.learning_runs[0].final_boundary == datetime(2026, 8, 23, tzinfo=UTC)
     assert [(item.audit_id, item.outer_block_consumed) for item in snapshot.causal_audits] == [("audit-1", True)]
+
+
+def test_snapshot_does_not_fallback_when_terminal_aggregate_coverage_is_stale(tmp_path) -> None:
+    settings, database = _empty_snapshot_database(tmp_path)
+    created_at = datetime(2026, 8, 23, 12, tzinfo=UTC)
+    database.insert(
+        "strategy_runs",
+        [
+            {
+                "strategy_run_id": "stale-xnys-run",
+                "dataset_hash": "o" * 64,
+                "strategy_id": "rsi_reversal",
+                "strategy_version": "1",
+                "family": "mean_reversion",
+                "symbol": "AAPL",
+                "interval": "5m",
+                "mode": "paper",
+                "run_timestamp": created_at,
+                "parameters": {},
+                "status": "evaluated",
+                "metrics": {
+                    "coverage_manifest": {
+                        "schema_version": 1,
+                        "dataset_hash": "o" * 64,
+                        "provider": "alpaca",
+                        "feed": "iex",
+                        "symbol": "AAPL",
+                        "interval": "5m",
+                        "requested_start": "2026-08-21T13:30:00Z",
+                        "requested_end": "2026-08-21T20:00:00Z",
+                        "coverage_start": "2026-08-21T13:30:00Z",
+                        "coverage_end": "2026-08-21T20:00:00Z",
+                        "row_count": 78,
+                        "gaps": [],
+                        "calendar_id": "XNYS",
+                        "calendar_version": "offline-rules-2026.2",
+                        "contributing_requests": [],
+                    }
+                },
+                "started_at": created_at,
+                "ended_at": created_at,
+                "source": "strategy_pipeline",
+                "source_version": "2",
+                "created_at": created_at,
+            }
+        ],
+    )
+    database.insert(
+        "dataset_coverage_requests",
+        [
+            {
+                "coverage_request_id": "current-never-evaluated",
+                "provider": "alpaca",
+                "feed": "iex",
+                "symbol": "AAPL",
+                "interval": "5m",
+                "requested_start": created_at,
+                "requested_end": created_at + timedelta(hours=6, minutes=30),
+                "requested_at": created_at,
+                "force": False,
+                "status": "complete",
+                "dataset_hash": "n" * 64,
+                "row_count": 78,
+                "gaps": {
+                    "calendar_id": "XNYS",
+                    "calendar_version": "offline-rules-2026.3",
+                    "missing": [],
+                },
+                "source": "strategy_pipeline_coverage",
+                "source_version": "2",
+                "created_at": created_at,
+            }
+        ],
+    )
+    database.insert(
+        "strategy_runs",
+        [
+            {
+                "strategy_run_id": "malformed-xnys-run",
+                "dataset_hash": "m" * 64,
+                "strategy_id": "rsi_reversal",
+                "strategy_version": "2",
+                "family": "mean_reversion",
+                "symbol": "AAPL",
+                "interval": "5m",
+                "mode": "paper",
+                "run_timestamp": created_at + timedelta(microseconds=1),
+                "parameters": {},
+                "status": "failed",
+                "metrics": {
+                    "coverage_manifest": {
+                        "schema_version": 1,
+                        "dataset_hash": "m" * 64,
+                        "provider": "alpaca",
+                        "feed": "iex",
+                        "symbol": "AAPL",
+                        "interval": "5m",
+                        "requested_start": "not-a-datetime",
+                        "requested_end": "2026-08-21T20:00:00Z",
+                        "row_count": 78,
+                        "gaps": [],
+                        "calendar_id": "XNYS",
+                        "calendar_version": "offline-rules-2026.3",
+                    }
+                },
+                "started_at": created_at,
+                "ended_at": created_at,
+                "source": "strategy_pipeline",
+                "source_version": "2",
+                "created_at": created_at,
+            }
+        ],
+    )
+    database.insert(
+        "strategy_runs",
+        [
+            {
+                "strategy_run_id": "malformed-gaps-xnys-run",
+                "dataset_hash": "g" * 64,
+                "strategy_id": "rsi_reversal",
+                "strategy_version": "3",
+                "family": "mean_reversion",
+                "symbol": "AAPL",
+                "interval": "5m",
+                "mode": "paper",
+                "run_timestamp": created_at + timedelta(microseconds=2),
+                "parameters": {},
+                "status": "failed",
+                "metrics": {
+                    "coverage_manifest": {
+                        "schema_version": 1,
+                        "dataset_hash": "g" * 64,
+                        "provider": "alpaca",
+                        "feed": "iex",
+                        "symbol": "AAPL",
+                        "interval": "5m",
+                        "requested_start": "2026-08-21T13:30:00Z",
+                        "requested_end": "2026-08-21T20:00:00Z",
+                        "coverage_start": "2026-08-21T13:30:00Z",
+                        "coverage_end": "2026-08-21T20:00:00Z",
+                        "row_count": 78,
+                        "gaps": "malformed",
+                        "calendar_id": "XNYS",
+                        "calendar_version": "offline-rules-2026.3",
+                    }
+                },
+                "started_at": created_at,
+                "ended_at": created_at,
+                "source": "strategy_pipeline",
+                "source_version": "2",
+                "created_at": created_at,
+            }
+        ],
+    )
+
+    snapshot = build_app_snapshot(database, settings)
+
+    assert snapshot.dataset_coverage == []
+
+
+def test_snapshot_uses_one_bounded_coverage_projection_and_summarizes_ensemble_contributors(tmp_path) -> None:
+    settings, database = _empty_snapshot_database(tmp_path)
+    created_at = datetime(2026, 8, 23, 12, tzinfo=UTC)
+    dataset_hash = "d" * 64
+
+    def coverage_manifest(contributors):
+        return {
+            "schema_version": 1,
+            "dataset_hash": dataset_hash,
+            "provider": "binance",
+            "feed": "spot",
+            "symbol": "BTCUSDT",
+            "interval": "5m",
+            "requested_start": "2026-08-20T00:00:00Z",
+            "requested_end": "2026-08-20T06:40:00Z",
+            "coverage_start": "2026-08-20T00:00:00Z",
+            "coverage_end": "2026-08-20T06:40:00Z",
+            "row_count": 80,
+            "gaps": [],
+            "calendar_id": "24x7",
+            "calendar_version": "continuous-v1",
+            "contributing_requests": contributors,
+        }
+
+    runs = []
+    for index in range(205):
+        run_at = created_at + timedelta(microseconds=index)
+        runs.append(
+            {
+                "strategy_run_id": f"refresh-run-{index:03d}",
+                "dataset_hash": dataset_hash,
+                "strategy_id": "rsi_reversal",
+                "strategy_version": "1",
+                "family": "mean_reversion",
+                "symbol": "BTCUSDT",
+                "interval": "5m",
+                "mode": "paper",
+                "run_timestamp": run_at,
+                "parameters": {},
+                "status": "failed",
+                "metrics": {
+                    "coverage_manifest": coverage_manifest(
+                        [
+                            {
+                                "coverage_request_id": f"refresh-{index:03d}",
+                                "dataset_hash": dataset_hash,
+                            }
+                        ]
+                    )
+                },
+                "started_at": run_at,
+                "ended_at": run_at,
+                "source": "strategy_pipeline",
+                "source_version": "2",
+                "created_at": run_at,
+            }
+        )
+    database.insert("strategy_runs", runs)
+    all_contributors = [
+        {"coverage_request_id": f"refresh-{index:03d}", "dataset_hash": dataset_hash} for index in range(205)
+    ]
+    database.insert(
+        "ensemble_weights",
+        [
+            {
+                "weight_id": "bounded-ensemble-weight",
+                "strategy_run_id": "refresh-run-204",
+                "dataset_hash": dataset_hash,
+                "strategy_id": "rsi_reversal",
+                "strategy_version": "1",
+                "family": "mean_reversion",
+                "symbol": "BTCUSDT",
+                "interval": "5m",
+                "mode": "paper",
+                "effective_at": created_at + timedelta(seconds=1),
+                "weight": 0.5,
+                "evidence": {
+                    "contribution": 0.0,
+                    "coverage_manifest": coverage_manifest(all_contributors),
+                },
+                "source": "evidence_ensemble",
+                "source_version": "1",
+                "created_at": created_at,
+            }
+        ],
+    )
+
+    snapshot = build_app_snapshot(database, settings)
+    ensemble_manifest = snapshot.ensemble_components[0].evidence["coverage_manifest"]
+
+    assert len(snapshot.dataset_coverage) == 1
+    assert snapshot.dataset_coverage[0].dataset_hash == dataset_hash
+    assert "contributing_requests" not in ensemble_manifest
+    assert ensemble_manifest["contributing_request_count"] == 205
+    assert len(ensemble_manifest["contributing_requests_hash"]) == 64
+    assert len(json.dumps(ensemble_manifest, sort_keys=True)) < 2_000
 
 
 def test_snapshot_rejects_legacy_frozen_online_state(tmp_path) -> None:
