@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "metadata": {
     "generated_at": "2026-08-22T16:22:12.965419Z",
     "git_commit": "b3024cc2bcddf21f9fbab074e4a06405080972a7",
@@ -64328,6 +64328,195 @@
         "earnings_calendar": 155
       },
       "error_summary": null
+    }
+  ],
+  "strategies": [
+    {
+      "strategy_id": "rsi_reversal",
+      "version": "1.0.0-demo",
+      "family": "mean_reversion",
+      "symbol": "BTCUSDT",
+      "interval": "5m",
+      "state": "evaluated",
+      "weight": 0.35,
+      "development_metrics": {
+        "sharpe": 1.25,
+        "maximum_drawdown": -0.09,
+        "trade_count": 84
+      },
+      "final_test_metrics": {
+        "sharpe": 0.48,
+        "maximum_drawdown": -0.12,
+        "trade_count": 21
+      },
+      "warnings": [
+        "Historical evidence is not live proof",
+        "The sealed final sample is small"
+      ],
+      "generation": 1,
+      "progress": 1.0,
+      "complexity": 3,
+      "promotion_state": "research_only",
+      "causal_audit_passed": true,
+      "no_repaint_badge": "passed",
+      "latest_run_at": "2026-08-22T16:20:00Z"
+    },
+    {
+      "strategy_id": "ema_adx_trend",
+      "version": "1.0.0-demo",
+      "family": "trend",
+      "symbol": "BTCUSDT",
+      "interval": "5m",
+      "state": "evaluated",
+      "weight": 0.2,
+      "development_metrics": {
+        "sharpe": 0.72,
+        "maximum_drawdown": -0.14,
+        "trade_count": 66
+      },
+      "final_test_metrics": {
+        "sharpe": -0.08,
+        "maximum_drawdown": -0.18,
+        "trade_count": 17
+      },
+      "warnings": [
+        "Final-test evidence did not clear promotion gates"
+      ],
+      "generation": 1,
+      "progress": 1.0,
+      "complexity": 4,
+      "promotion_state": "rejected",
+      "causal_audit_passed": true,
+      "no_repaint_badge": "passed",
+      "latest_run_at": "2026-08-22T16:20:00Z"
+    }
+  ],
+  "ensemble_components": [
+    {
+      "strategy_id": "rsi_reversal",
+      "version": "1.0.0-demo",
+      "family": "mean_reversion",
+      "symbol": "BTCUSDT",
+      "interval": "5m",
+      "mode": "paper",
+      "effective_at": "2026-08-22T16:20:00Z",
+      "weight": 0.35,
+      "contribution": 0.18,
+      "evidence": {
+        "gate": "development_only",
+        "cost_survived": true,
+        "trial_count": 4
+      }
+    },
+    {
+      "strategy_id": "ema_adx_trend",
+      "version": "1.0.0-demo",
+      "family": "trend",
+      "symbol": "BTCUSDT",
+      "interval": "5m",
+      "mode": "paper",
+      "effective_at": "2026-08-22T16:20:00Z",
+      "weight": 0.2,
+      "contribution": -0.06,
+      "evidence": {
+        "gate": "development_only",
+        "cost_survived": false,
+        "trial_count": 4
+      }
+    }
+  ],
+  "dataset_coverage": [
+    {
+      "dataset_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "provider": "binance",
+      "feed": "spot",
+      "symbol": "BTCUSDT",
+      "interval": "5m",
+      "requested_start": "2026-08-01T00:00:00Z",
+      "requested_end": "2026-08-22T16:20:00Z",
+      "coverage_start": "2026-08-01T00:00:00Z",
+      "coverage_end": "2026-08-22T16:15:00Z",
+      "row_count": 6235,
+      "gaps": [],
+      "complete": true,
+      "calendar_id": "24/7",
+      "calendar_version": "always-open-v1"
+    }
+  ],
+  "learning_runs": [
+    {
+      "learning_run_id": "learn-demo-1",
+      "state": "completed",
+      "evaluated_candidates": 12,
+      "evaluation_budget": 20,
+      "best_rule": "Prior-bar RSI is below 30 and volume is above its trailing average",
+      "best_rule_detail": {
+        "rule_id": "rule-demo-1",
+        "strategy_id": "learned-rsi-volume",
+        "version": "1.0.0-demo",
+        "state": "shadow",
+        "rule_text": "Prior-bar RSI is below 30 and volume is above its trailing average",
+        "fitness": 0.31,
+        "complexity": 5,
+        "discovered_at": "2026-08-22T15:40:00Z",
+        "evidence_through": "2026-08-20T00:00:00Z",
+        "promotion_state": "shadow",
+        "causal_audit_id": "audit-demo-1",
+        "no_repaint_badge": "passed"
+      },
+      "final_boundary": "2026-08-20T00:00:00Z",
+      "generation": 3,
+      "progress": 0.6,
+      "trials": [
+        {
+          "trial_id": "trial-demo-1",
+          "candidate_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "status": "succeeded",
+          "fitness": 0.31,
+          "evaluated_at": "2026-08-22T15:40:00Z",
+          "rule_text": "Prior-bar RSI is below 30 and volume is above its trailing average",
+          "complexity": 5,
+          "error_summary": null
+        }
+      ],
+      "discovered_rules": [
+        {
+          "rule_id": "rule-demo-1",
+          "strategy_id": "learned-rsi-volume",
+          "version": "1.0.0-demo",
+          "state": "shadow",
+          "rule_text": "Prior-bar RSI is below 30 and volume is above its trailing average",
+          "fitness": 0.31,
+          "complexity": 5,
+          "discovered_at": "2026-08-22T15:40:00Z",
+          "evidence_through": "2026-08-20T00:00:00Z",
+          "promotion_state": "shadow",
+          "causal_audit_id": "audit-demo-1",
+          "no_repaint_badge": "passed"
+        }
+      ],
+      "promotion_state": "shadow",
+      "causal_audit_id": "audit-demo-1",
+      "no_repaint_badge": "passed"
+    }
+  ],
+  "causal_audits": [
+    {
+      "audit_id": "audit-demo-1",
+      "dataset_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "strategy_id": "rsi_reversal",
+      "version": "1.0.0-demo",
+      "symbol": "BTCUSDT",
+      "interval": "5m",
+      "mode": "paper",
+      "audited_at": "2026-08-22T16:20:00Z",
+      "passed": true,
+      "outer_block_consumed": false,
+      "details": {
+        "prefix_invariant": true,
+        "closed_bars_only": true
+      },
+      "no_repaint_badge": "passed"
     }
   ]
 }

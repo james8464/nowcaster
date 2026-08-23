@@ -1,6 +1,23 @@
 import AppKit
 import SwiftUI
 
+struct NowcasterWindowPresentation: Sendable {
+    let defaultWidth: CGFloat
+    let defaultHeight: CGFloat
+    let minimumWidth: CGFloat = 820
+    let minimumHeight: CGFloat = 620
+
+    init(arguments: [String]) {
+        if arguments.contains("--ui-narrow") {
+            defaultWidth = 900
+            defaultHeight = 700
+        } else {
+            defaultWidth = 1_440
+            defaultHeight = 900
+        }
+    }
+}
+
 @main
 struct NowcasterApp: App {
     @State private var settings = AppSettings()
@@ -19,17 +36,17 @@ struct NowcasterApp: App {
         return nil
     }
 
-    private var defaultWindowSize: (width: CGFloat, height: CGFloat) {
-        ProcessInfo.processInfo.arguments.contains("--ui-narrow") ? (1_080, 720) : (1_440, 900)
+    private var windowPresentation: NowcasterWindowPresentation {
+        NowcasterWindowPresentation(arguments: ProcessInfo.processInfo.arguments)
     }
 
     var body: some Scene {
         WindowGroup {
             RootView(model: model, settings: settings)
             .preferredColorScheme(forcedColorScheme)
-            .frame(minWidth: 1_080, minHeight: 720)
+            .frame(minWidth: windowPresentation.minimumWidth, minHeight: windowPresentation.minimumHeight)
         }
-        .defaultSize(width: defaultWindowSize.width, height: defaultWindowSize.height)
+        .defaultSize(width: windowPresentation.defaultWidth, height: windowPresentation.defaultHeight)
         .commands {
             SidebarCommands()
             CommandMenu("Research") {

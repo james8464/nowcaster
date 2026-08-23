@@ -6,6 +6,7 @@ enum AppDestination: String, CaseIterable, Identifiable, Sendable {
     case earnings
     case signals
     case backtests
+    case strategyLab
     case modelLab
     case dataQuality
     case pipelineRuns
@@ -19,6 +20,7 @@ enum AppDestination: String, CaseIterable, Identifiable, Sendable {
         case .earnings: "Earnings"
         case .signals: "Signals"
         case .backtests: "Backtests"
+        case .strategyLab: "Strategy Lab"
         case .modelLab: "Model Lab"
         case .dataQuality: "Data Quality"
         case .pipelineRuns: "Pipeline Runs"
@@ -32,6 +34,7 @@ enum AppDestination: String, CaseIterable, Identifiable, Sendable {
         case .earnings: "calendar.badge.clock"
         case .signals: "waveform.path.ecg"
         case .backtests: "chart.xyaxis.line"
+        case .strategyLab: "point.3.connected.trianglepath.dotted"
         case .modelLab: "slider.horizontal.3"
         case .dataQuality: "checkmark.shield"
         case .pipelineRuns: "clock.arrow.trianglehead.counterclockwise.rotate.90"

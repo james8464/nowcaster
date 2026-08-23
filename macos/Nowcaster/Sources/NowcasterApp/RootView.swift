@@ -1,7 +1,12 @@
+import AppKit
 import SwiftUI
 
 extension Notification.Name {
     static let focusGlobalSearch = Notification.Name("Nowcaster.focusGlobalSearch")
+}
+
+enum RootSidebarPresentation {
+    static let sectionHeaderLeadingPadding: CGFloat = 24
 }
 
 struct RootView: View {
@@ -31,13 +36,20 @@ struct RootView: View {
                 model.destination = destination
             }
             await model.loadBundledSnapshot()
+            if screenshotMode {
+                let presentation = NowcasterWindowPresentation(arguments: ProcessInfo.processInfo.arguments)
+                NSApplication.shared.keyWindow?.setContentSize(
+                    NSSize(width: presentation.defaultWidth, height: presentation.defaultHeight)
+                )
+                NSApplication.shared.keyWindow?.center()
+            }
         }
         .onChange(of: model.destination) { _, destination in storedDestination = destination.rawValue }
         .onReceive(NotificationCenter.default.publisher(for: .focusGlobalSearch)) { _ in searchIsFocused = true }
     }
 
     private var usesInspector: Bool {
-        [.markets, .earnings, .signals, .backtests].contains(model.destination)
+        [.markets, .earnings, .signals, .backtests, .strategyLab].contains(model.destination)
     }
 
     @ViewBuilder private var navigationLayout: some View {
@@ -62,24 +74,35 @@ struct RootView: View {
 
     private var sidebar: some View {
         List(selection: $model.destination) {
-            Section("Monitor") {
+            Section {
                 destinationRow(.today)
                 destinationRow(.markets)
                 destinationRow(.earnings)
                 destinationRow(.signals)
+            } header: {
+                sidebarSectionHeader("Monitor")
             }
-            Section("Research") {
+            Section {
                 destinationRow(.backtests)
+                destinationRow(.strategyLab)
                 destinationRow(.modelLab)
+            } header: {
+                sidebarSectionHeader("Research")
             }
-            Section("System") {
+            Section {
                 destinationRow(.dataQuality)
                 destinationRow(.pipelineRuns)
+            } header: {
+                sidebarSectionHeader("System")
             }
         }
         .navigationTitle("Research")
         .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 280)
         .accessibilityIdentifier("sidebar")
+    }
+
+    private func sidebarSectionHeader(_ title: String) -> some View {
+        Text(title).padding(.leading, RootSidebarPresentation.sectionHeaderLeadingPadding)
     }
 
     private func destinationRow(_ destination: AppDestination) -> some View {
@@ -101,6 +124,8 @@ struct RootView: View {
                 SignalsView(model: model, snapshot: snapshot)
             case .backtests:
                 BacktestsView(model: model, snapshot: snapshot)
+            case .strategyLab:
+                StrategyLabView(model: model, settings: settings, snapshot: snapshot)
             case .modelLab:
                 ModelLabView(snapshot: snapshot)
             case .dataQuality:
@@ -151,6 +176,16 @@ struct RootView: View {
                 BacktestDetailView(backtest: backtest)
             } else {
                 selectionPlaceholder("Select a backtest to inspect final-test evidence, robustness, and assumptions.")
+            }
+        case .strategyLab:
+            if let snapshot = model.snapshot,
+               let strategy = model.selectedStrategy,
+               let presentation = StrategyLabPresentation(snapshot: snapshot)
+                .strategies.first(where: { $0.id == strategy.id }) {
+                StrategyDetailView(presentation: presentation)
+                    .navigationSplitViewColumnWidth(min: 360, ideal: 480, max: 600)
+            } else {
+                selectionPlaceholder("Select one or more strategies; the first selected row appears here for inspection.")
             }
         default:
             selectionPlaceholder("Select a row to inspect its research evidence.")

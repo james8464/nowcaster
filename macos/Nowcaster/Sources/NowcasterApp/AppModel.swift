@@ -10,6 +10,8 @@ final class AppModel {
     var selectedEarningsID: String?
     var selectedSignalID: String?
     var selectedBacktestID: String?
+    var selectedStrategyIDs: Set<String> = []
+    var selectedLearningRunID: String?
     private(set) var snapshot: NowcasterSnapshot?
     private(set) var loadState: SnapshotLoadState = .idle
     private(set) var isRunningJob = false
@@ -76,6 +78,18 @@ final class AppModel {
         snapshot?.backtests.first { $0.id == selectedBacktestID }
     }
 
+    var selectedStrategies: [StrategySnapshot] {
+        snapshot?.strategies.filter { selectedStrategyIDs.contains($0.id) } ?? []
+    }
+
+    var selectedStrategy: StrategySnapshot? {
+        selectedStrategies.first
+    }
+
+    var selectedLearningRun: LearningRunSnapshot? {
+        snapshot?.learningRuns.first { $0.id == selectedLearningRunID }
+    }
+
     func selectSearchResult(_ instrument: InstrumentSnapshot) {
         selectedInstrumentID = instrument.id
         destination = .markets
@@ -85,6 +99,10 @@ final class AppModel {
     func selectSignal(_ signal: ResearchSignalSnapshot) {
         selectedSignalID = signal.id
         destination = .signals
+    }
+
+    func selectStrategies(_ identifiers: Set<String>) {
+        selectedStrategyIDs = identifiers
     }
 
     func loadBundledSnapshot() async {
@@ -137,5 +155,13 @@ final class AppModel {
         selectedEarningsID = selectedEarningsID ?? snapshot.earnings.first?.id
         selectedSignalID = selectedSignalID ?? SignalListModel(signals: snapshot.signals).visibleSignals.first?.id
         selectedBacktestID = selectedBacktestID ?? snapshot.backtests.last?.id
+        let availableStrategyIDs = Set(snapshot.strategies.map(\.id))
+        selectedStrategyIDs.formIntersection(availableStrategyIDs)
+        if selectedStrategyIDs.isEmpty, let first = snapshot.strategies.first {
+            selectedStrategyIDs = [first.id]
+        }
+        if !snapshot.learningRuns.contains(where: { $0.id == selectedLearningRunID }) {
+            selectedLearningRunID = snapshot.learningRuns.first?.id
+        }
     }
 }

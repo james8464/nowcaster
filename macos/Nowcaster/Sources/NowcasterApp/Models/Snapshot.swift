@@ -98,6 +98,11 @@ struct NowcasterSnapshot: Decodable, Sendable {
     let backtests: [BacktestSnapshot]
     let qualityIssues: [QualityIssueSnapshot]
     let pipelineRuns: [PipelineRunSnapshot]
+    let strategies: [StrategySnapshot]
+    let ensembleComponents: [EnsembleComponentSnapshot]
+    let datasetCoverage: [DatasetCoverageSnapshot]
+    let learningRuns: [LearningRunSnapshot]
+    let causalAudits: [CausalAuditSnapshot]
 }
 
 struct SnapshotMetadata: Decodable, Sendable {
@@ -261,6 +266,209 @@ struct PipelineRunSnapshot: Decodable, Identifiable, Sendable {
     let errorSummary: String?
 
     var id: String { pipelineRunId }
+}
+
+indirect enum JSONValue: Codable, Equatable, Sendable {
+    case string(String)
+    case number(Double)
+    case bool(Bool)
+    case object([String: JSONValue])
+    case array([JSONValue])
+    case null
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if container.decodeNil() {
+            self = .null
+        } else if let value = try? container.decode(Bool.self) {
+            self = .bool(value)
+        } else if let value = try? container.decode(Double.self) {
+            self = .number(value)
+        } else if let value = try? container.decode(String.self) {
+            self = .string(value)
+        } else if let value = try? container.decode([String: JSONValue].self) {
+            self = .object(value)
+        } else if let value = try? container.decode([JSONValue].self) {
+            self = .array(value)
+        } else {
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unsupported JSON value")
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case let .string(value): try container.encode(value)
+        case let .number(value): try container.encode(value)
+        case let .bool(value): try container.encode(value)
+        case let .object(value): try container.encode(value)
+        case let .array(value): try container.encode(value)
+        case .null: try container.encodeNil()
+        }
+    }
+}
+
+enum NoRepaintBadge: String, Codable, Sendable {
+    case passed
+    case failed
+    case notAudited = "not_audited"
+}
+
+struct StrategySnapshot: Decodable, Identifiable, Sendable {
+    let strategyId: String
+    let version: String
+    let family: String
+    let symbol: String
+    let interval: String
+    let state: String
+    let weight: Double
+    let developmentMetrics: [String: Double?]
+    let finalTestMetrics: [String: Double?]
+    let warnings: [String]
+    let generation: Int
+    let progress: Double
+    let complexity: Int?
+    let promotionState: String
+    let causalAuditPassed: Bool?
+    let noRepaintBadge: NoRepaintBadge
+    let latestRunAt: Date?
+
+    var id: String { "\(strategyId)-\(version)-\(symbol)-\(interval)" }
+}
+
+struct EnsembleComponentSnapshot: Decodable, Identifiable, Sendable {
+    let strategyId: String
+    let version: String
+    let family: String
+    let symbol: String
+    let interval: String
+    let mode: String
+    let effectiveAt: Date
+    let weight: Double
+    let contribution: Double?
+    let evidence: [String: JSONValue]
+
+    var id: String { "\(strategyId)-\(version)-\(symbol)-\(interval)-\(mode)-\(effectiveAt.timeIntervalSince1970)" }
+}
+
+struct DatasetGapSnapshot: Decodable, Identifiable, Sendable {
+    let start: Date
+    let end: Date
+    let missingBars: Int
+
+    var id: String { "\(start.timeIntervalSince1970)-\(end.timeIntervalSince1970)" }
+}
+
+struct DatasetCoverageSnapshot: Decodable, Identifiable, Sendable {
+    let datasetHash: String
+    let provider: String
+    let feed: String
+    let symbol: String
+    let interval: String
+    let requestedStart: Date
+    let requestedEnd: Date
+    let coverageStart: Date?
+    let coverageEnd: Date?
+    let rowCount: Int
+    let gaps: [DatasetGapSnapshot]
+    let complete: Bool
+    let calendarId: String
+    let calendarVersion: String
+
+    var id: String { "\(datasetHash)-\(provider)-\(feed)-\(symbol)-\(interval)" }
+}
+
+struct LearningTrialSnapshot: Decodable, Identifiable, Sendable {
+    let trialId: String
+    let candidateHash: String
+    let status: String
+    let fitness: Double?
+    let evaluatedAt: Date
+    let ruleText: String
+    let complexity: Int
+    let errorSummary: String?
+
+    var id: String { trialId }
+}
+
+struct DiscoveredRuleSnapshot: Decodable, Identifiable, Sendable {
+    let ruleId: String
+    let strategyId: String
+    let version: String
+    let state: String
+    let ruleText: String
+    let fitness: Double?
+    let complexity: Int
+    let discoveredAt: Date
+    let evidenceThrough: Date?
+    let promotionState: String
+    let causalAuditId: String?
+    let noRepaintBadge: NoRepaintBadge
+
+    var id: String { ruleId }
+}
+
+struct LearningRunSnapshot: Decodable, Identifiable, Sendable {
+    let learningRunId: String
+    let state: String
+    let evaluatedCandidates: Int
+    let evaluationBudget: Int
+    let bestRule: String?
+    let bestRuleDetail: DiscoveredRuleSnapshot?
+    let finalBoundary: Date
+    let generation: Int
+    let progress: Double
+    let trials: [LearningTrialSnapshot]
+    let discoveredRules: [DiscoveredRuleSnapshot]
+    let promotionState: String
+    let causalAuditId: String?
+    let noRepaintBadge: NoRepaintBadge
+
+    var id: String { learningRunId }
+}
+
+struct CausalAuditSnapshot: Decodable, Identifiable, Sendable {
+    let auditId: String
+    let datasetHash: String
+    let strategyId: String
+    let version: String
+    let symbol: String
+    let interval: String
+    let mode: String
+    let auditedAt: Date
+    let passed: Bool
+    let outerBlockConsumed: Bool
+    let details: [String: JSONValue]
+    let noRepaintBadge: NoRepaintBadge
+
+    var id: String { auditId }
+}
+
+extension NowcasterSnapshot {
+    func validateSchemaV2() throws {
+        guard schemaVersion == 2 else { throw SnapshotValidationError.unsupportedSchema(schemaVersion) }
+        guard strategies.allSatisfy({
+            $0.weight >= 0 && (0 ... 1).contains($0.progress) && $0.generation >= 1 && ($0.complexity ?? 0) >= 0
+        }) else { throw SnapshotValidationError.invalidResearchEvidence("strategy bounds") }
+        guard ensembleComponents.allSatisfy({ $0.weight >= 0 }) else {
+            throw SnapshotValidationError.invalidResearchEvidence("ensemble weight")
+        }
+        guard datasetCoverage.allSatisfy({ coverage in
+            coverage.rowCount >= 0 && coverage.requestedStart < coverage.requestedEnd
+                && coverage.gaps.allSatisfy { $0.missingBars > 0 && $0.start < $0.end }
+        }) else { throw SnapshotValidationError.invalidResearchEvidence("dataset coverage") }
+        guard learningRuns.allSatisfy({ run in
+            run.evaluationBudget > 0 && run.evaluatedCandidates >= 0
+                && run.evaluatedCandidates <= run.evaluationBudget && run.generation >= 1
+                && (0 ... 1).contains(run.progress) && run.trials.allSatisfy { $0.complexity >= 0 }
+                && run.discoveredRules.allSatisfy { $0.complexity >= 0 }
+        }) else { throw SnapshotValidationError.invalidResearchEvidence("learning run bounds") }
+    }
+}
+
+enum SnapshotValidationError: Error {
+    case unsupportedSchema(Int)
+    case invalidResearchEvidence(String)
 }
 
 extension JSONDecoder {

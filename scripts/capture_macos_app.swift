@@ -6,13 +6,14 @@ import Foundation
 
 let arguments = CommandLine.arguments
 guard arguments.count >= 3 else {
-    FileHandle.standardError.write(Data("Usage: capture_macos_app.swift APP_PATH OUTPUT_DIR [--verify-only]\n".utf8))
+    FileHandle.standardError.write(Data("Usage: capture_macos_app.swift APP_PATH OUTPUT_DIR [--verify-only|--strategy-lab-only]\n".utf8))
     exit(2)
 }
 
 let appURL = URL(fileURLWithPath: arguments[1]).standardizedFileURL
 let outputDirectory = URL(fileURLWithPath: arguments[2]).standardizedFileURL
 let verifyOnly = arguments.contains("--verify-only")
+let strategyLabOnly = arguments.contains("--strategy-lab-only")
 let bundleIdentifier = "com.james8464.nowcaster"
 try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
 
@@ -24,14 +25,17 @@ struct Capture {
     var name: String { "\(destination)-\(appearance)\(narrow ? "-narrow" : "")" }
 }
 
-let destinations = ["today", "markets", "earnings", "signals", "backtests", "modelLab", "dataQuality", "pipelineRuns"]
+let destinations = ["today", "markets", "earnings", "signals", "backtests", "strategyLab", "modelLab", "dataQuality", "pipelineRuns"]
 var captures = destinations.flatMap { destination in
     [Capture(destination: destination, appearance: "light", narrow: false),
      Capture(destination: destination, appearance: "dark", narrow: false)]
 }
 captures.append(Capture(destination: "today", appearance: "light", narrow: true))
 captures.append(Capture(destination: "backtests", appearance: "dark", narrow: true))
-if verifyOnly { captures = [Capture(destination: "today", appearance: "light", narrow: true)] }
+captures.append(Capture(destination: "strategyLab", appearance: "light", narrow: true))
+captures.append(Capture(destination: "strategyLab", appearance: "dark", narrow: true))
+if strategyLabOnly { captures = captures.filter { $0.destination == "strategyLab" } }
+if verifyOnly { captures = [Capture(destination: "strategyLab", appearance: "light", narrow: true)] }
 
 func terminateExisting() {
     for app in NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier) {
