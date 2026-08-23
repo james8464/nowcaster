@@ -309,6 +309,20 @@ def _development_frame(experiment: LearningExperiment, bars: pd.DataFrame) -> pd
         frame["close_timestamp"] = _utc_column(frame, "close_timestamp")
         if not frame["symbol"].astype(str).str.upper().eq(experiment.symbol).all():
             raise ValueError("development execution bars must match the experiment symbol")
+        execution_timestamps = frame[
+            [
+                "open_timestamp",
+                "close_timestamp",
+                experiment.availability_column,
+                experiment.timestamp_column,
+            ]
+        ]
+        if (execution_timestamps >= experiment.sealed_final_start).any().any():
+            raise ValueError("execution timestamps must precede the sealed final boundary")
+        if (execution_timestamps > experiment.as_of).any().any():
+            raise ValueError("execution timestamps must be available as-of the learning experiment")
+        if (frame["close_timestamp"] > frame[experiment.availability_column]).any():
+            raise ValueError("execution bar close must be available no later than its decision")
         execution_numeric = ("open", "high", "low", "close", "volume")
         for column in execution_numeric:
             frame[column] = pd.to_numeric(frame[column], errors="coerce")

@@ -492,3 +492,42 @@ def test_default_fold_metrics_exclude_prepended_training_only_returns() -> None:
 
     assert with_extra_train.trials[0].fold_metrics == base.trials[0].fold_metrics
     assert with_extra_train.trials[0].fitness == base.trials[0].fitness
+
+
+@pytest.mark.parametrize("close_hours", [1, 2])
+def test_post_seal_execution_rows_are_rejected_before_search(close_hours: int) -> None:
+    leaked = _bars()
+    post_seal_opens = pd.date_range("2026-08-21T00:00:00Z", periods=4, freq="h")
+    leaked.loc[8:, "open_timestamp"] = post_seal_opens
+    leaked.loc[8:, "close_timestamp"] = post_seal_opens + pd.Timedelta(hours=close_hours)
+
+    with pytest.raises(ValueError, match="execution.*sealed"):
+        discover_rules(_experiment(evaluation_budget=1), leaked)
+
+
+def test_execution_row_after_experiment_as_of_is_rejected_before_search() -> None:
+    leaked = _bars()
+    leaked.loc[8, "open_timestamp"] = pd.Timestamp("2026-08-20T22:01:00Z")
+    leaked.loc[8, "close_timestamp"] = pd.Timestamp("2026-08-20T23:00:00Z")
+
+    with pytest.raises(ValueError, match="execution.*as-of"):
+        discover_rules(_experiment(evaluation_budget=1), leaked)
+
+
+@pytest.mark.parametrize(
+    ("close_timestamp", "available_at"),
+    [
+        ("2026-08-20T18:30:00Z", "2026-08-20T18:00:00Z"),
+        ("2026-08-20T18:00:00Z", "2026-08-20T17:59:00Z"),
+    ],
+)
+def test_finalized_execution_close_must_precede_availability_and_decision(
+    close_timestamp: str,
+    available_at: str,
+) -> None:
+    malformed = _bars()
+    malformed.loc[8, "close_timestamp"] = pd.Timestamp(close_timestamp)
+    malformed.loc[8, "available_at"] = pd.Timestamp(available_at)
+
+    with pytest.raises(ValueError, match="execution.*available.*decision"):
+        discover_rules(_experiment(evaluation_budget=1), malformed)

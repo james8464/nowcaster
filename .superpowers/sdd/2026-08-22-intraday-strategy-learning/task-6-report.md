@@ -124,11 +124,20 @@ All commands below were run after activating the repository `.venv` so the comma
 6. Seed normalization: semantic duplicates are deterministically represented, deduplicated, and sorted before hashing/generation.
 7. Outcome availability: `outcome_available_at <= decision_timestamp` is rejected.
 
+### Review fix round 2/5: execution chronology boundary
+
+- The remaining critical probe showed that the feature decision chronology was bounded but Task 4 `open_timestamp`/`close_timestamp` values were not. A last inner-validation decision could therefore borrow a post-`as_of` or post-seal execution bar and change fitness.
+- RED command: `.venv/bin/pytest tests/unit/test_learning_search.py::test_post_seal_execution_rows_are_rejected_before_search tests/unit/test_learning_search.py::test_execution_row_after_experiment_as_of_is_rejected_before_search tests/unit/test_learning_search.py::test_finalized_execution_close_must_precede_availability_and_decision -v`.
+- RED result: **5 failed**. Both post-seal close variants, the post-`as_of` execution row, close after decision/availability, and availability before close all incorrectly completed without raising.
+- GREEN result for the same command: **5 passed in 0.58s**.
+- Every Task 4 row is now preflighted before fold construction/candidate querying: all execution timestamps must be explicit UTC; `open_timestamp < close_timestamp <= available_at <= decision_timestamp`; open/close/availability/decision must be no later than experiment `as_of` and strictly before `sealed_final_start`; bars must be finalized, numeric, and symbol-consistent. Existing decision/outcome/as-of invariants remain in force.
+- `_default_evaluator` receives only this validated development frame. If no legal next actionable bar exists inside it, Task 4 deterministically rejects/abstains; post-boundary rows fail the whole evidence contract and are never projected into fitness.
+
 ## Verification
 
-- Task 6 focused: `.venv/bin/pytest tests/unit/test_learning_grammar.py tests/unit/test_learning_search.py tests/integration/test_learning_mode.py -q` -> **46 passed in 3.55s**.
-- Relevant Task 3-5 compatibility: indicators, strategy library, no-repaint, execution engine, intraday backtest, strategy validation, ensemble, strategy engine integration, and schema integration -> **196 passed in 14.87s**.
-- Fresh full Python suite after final executable change: `.venv/bin/pytest -q` -> **401 passed in 81.69s**.
+- Task 6 focused: `.venv/bin/pytest tests/unit/test_learning_grammar.py tests/unit/test_learning_search.py tests/integration/test_learning_mode.py -q` -> **51 passed in 3.22s**.
+- Relevant Task 3-5 compatibility: indicators, strategy library, no-repaint, execution engine, intraday backtest, strategy validation, ensemble, strategy engine integration, and schema integration -> **196 passed in 14.98s**.
+- Fresh full Python suite after final executable change: `.venv/bin/pytest -q` -> **406 passed in 83.24s**.
 - Changed-file Ruff: `.venv/bin/ruff check src/learning/grammar.py src/learning/search.py tests/unit/test_learning_grammar.py tests/unit/test_learning_search.py tests/integration/test_learning_mode.py` -> **All checks passed**.
 - Working-tree and staged diff checks: `git diff --check` and `git diff --cached --check` -> **passed with no output**.
 
