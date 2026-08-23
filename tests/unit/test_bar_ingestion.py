@@ -160,7 +160,31 @@ def test_xnys_calendar_matches_alpaca_buckets_dst_early_close_and_daily_labels()
     assert black_friday[-1] == datetime(2026, 11, 27, 17, 55, tzinfo=UTC)
     assert daily == (datetime(2026, 11, 27, 5, tzinfo=UTC),)
     assert XNYS_CALENDAR.close_for(daily[0], BarInterval.ONE_DAY) == datetime(2026, 11, 27, 18, tzinfo=UTC)
-    assert XNYS_CALENDAR.version == "offline-rules-2026.2"
+    assert XNYS_CALENDAR.version == "offline-rules-2026.3"
+
+
+def test_xnys_new_year_keeps_friday_session_for_saturday_holiday_and_observes_sunday_on_monday() -> None:
+    saturday_new_year_daily = XNYS_CALENDAR.expected_opens(
+        datetime(2027, 12, 31, tzinfo=UTC),
+        datetime(2028, 1, 1, tzinfo=UTC),
+        BarInterval.ONE_DAY,
+    )
+    saturday_new_year_minutes = XNYS_CALENDAR.expected_opens(
+        datetime(2027, 12, 31, tzinfo=UTC),
+        datetime(2028, 1, 1, tzinfo=UTC),
+        BarInterval.ONE_MINUTE,
+    )
+    sunday_new_year_observed = XNYS_CALENDAR.expected_opens(
+        datetime(2023, 1, 2, tzinfo=UTC),
+        datetime(2023, 1, 3, tzinfo=UTC),
+        BarInterval.ONE_DAY,
+    )
+
+    assert saturday_new_year_daily == (datetime(2027, 12, 31, 5, tzinfo=UTC),)
+    assert len(saturday_new_year_minutes) == 390
+    assert saturday_new_year_minutes[0] == datetime(2027, 12, 31, 14, 30, tzinfo=UTC)
+    assert saturday_new_year_minutes[-1] == datetime(2027, 12, 31, 20, 59, tzinfo=UTC)
+    assert sunday_new_year_observed == ()
 
 
 def test_alpaca_daily_bar_uses_session_close_instead_of_a_fixed_day(monkeypatch) -> None:

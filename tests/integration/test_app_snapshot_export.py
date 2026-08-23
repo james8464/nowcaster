@@ -387,9 +387,62 @@ def test_snapshot_searches_past_more_than_one_thousand_incomplete_cohorts(tmp_pa
         ("older-b", 0.5),
     ]
     assert {item.evidence["cohort_id"] for item in snapshot.ensemble_components} == {"complete-older"}
-    assert {item.evidence["cohort_decision_hash"] for item in snapshot.ensemble_components} == {
-        "complete-decision"
-    }
+    assert {item.evidence["cohort_decision_hash"] for item in snapshot.ensemble_components} == {"complete-decision"}
+
+
+def test_snapshot_complete_cohort_tie_is_independent_of_insertion_order(tmp_path) -> None:
+    created_at = datetime(2026, 8, 22, 12, tzinfo=UTC)
+    members = [
+        {"strategy_id": "alpha", "strategy_version": "1", "family": "mean_reversion"},
+        {"strategy_id": "beta", "strategy_version": "1", "family": "mean_reversion"},
+    ]
+
+    def cohort_rows(dataset_hash: str, cohort_id: str, decision_hash: str) -> list[dict[str, object]]:
+        evidence = {
+            "cohort_id": cohort_id,
+            "cohort_members": members,
+            "cohort_decision_hash": decision_hash,
+            "cohort_generation": 1,
+        }
+        return [
+            {
+                "weight_id": f"{cohort_id}-{strategy_id}",
+                "strategy_run_id": f"{cohort_id}-run-{strategy_id}",
+                "dataset_hash": dataset_hash,
+                "strategy_id": strategy_id,
+                "strategy_version": "1",
+                "family": "mean_reversion",
+                "symbol": "BTCUSDT",
+                "interval": "5m",
+                "mode": "paper",
+                "effective_at": created_at,
+                "weight": 0.5,
+                "evidence": evidence,
+                "source": "test",
+                "source_version": "1",
+                "created_at": created_at,
+            }
+            for strategy_id in ("alpha", "beta")
+        ]
+
+    selected: list[tuple[tuple[str, str], ...]] = []
+    alpha = cohort_rows("a" * 64, "cohort-alpha", "decision-alpha")
+    omega = cohort_rows("f" * 64, "cohort-omega", "decision-omega")
+    for index, rows in enumerate((omega + alpha, alpha + omega)):
+        settings, database = _empty_snapshot_database(tmp_path / f"tie-{index}")
+        database.insert("ensemble_weights", rows)
+        snapshot = build_app_snapshot(database, settings)
+        selected.append(
+            tuple(
+                (item.evidence["cohort_id"], item.evidence["cohort_decision_hash"])
+                for item in snapshot.ensemble_components
+            )
+        )
+
+    assert selected == [
+        (("cohort-alpha", "decision-alpha"), ("cohort-alpha", "decision-alpha")),
+        (("cohort-alpha", "decision-alpha"), ("cohort-alpha", "decision-alpha")),
+    ]
 
 
 def test_crypto_backtest_exports_when_equity_event_observations_are_zero(tmp_path) -> None:

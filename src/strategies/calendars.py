@@ -20,6 +20,12 @@ from pandas.tseries.holiday import (
 from src.strategies.types import BarInterval
 
 
+def _xnys_new_year_observance(value: datetime) -> datetime:
+    """XNYS observes Sunday New Year's Day on Monday, but not Saturday on Friday."""
+
+    return value + timedelta(days=1) if value.weekday() == 6 else value
+
+
 @dataclass(frozen=True, slots=True)
 class ExpectedBarCalendar:
     calendar_id: str
@@ -59,7 +65,7 @@ class ContinuousCalendar(ExpectedBarCalendar):
 
 class _XNYSRegularHolidays(AbstractHolidayCalendar):
     rules = [
-        Holiday("New Year's Day", month=1, day=1, observance=nearest_workday),
+        Holiday("New Year's Day", month=1, day=1, observance=_xnys_new_year_observance),
         USMartinLutherKingJr,
         USPresidentsDay,
         GoodFriday,
@@ -144,9 +150,7 @@ class XNYSCalendar(ExpectedBarCalendar):
     @staticmethod
     def _is_early_close(session_date: date) -> bool:
         thanksgiving = max(
-            day
-            for day in (date(session_date.year, 11, value) for value in range(22, 29))
-            if day.weekday() == 3
+            day for day in (date(session_date.year, 11, value) for value in range(22, 29)) if day.weekday() == 3
         )
         return session_date in {
             thanksgiving + timedelta(days=1),
@@ -156,7 +160,7 @@ class XNYSCalendar(ExpectedBarCalendar):
 
 
 CONTINUOUS_CALENDAR = ContinuousCalendar("24x7", "continuous-v1")
-XNYS_CALENDAR = XNYSCalendar("XNYS", "offline-rules-2026.2")
+XNYS_CALENDAR = XNYSCalendar("XNYS", "offline-rules-2026.3")
 
 
 def calendar_for(provider: str, feed: str) -> ExpectedBarCalendar:

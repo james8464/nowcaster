@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import threading
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import suppress
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -10,6 +12,7 @@ import httpx
 import pandas as pd
 import pytest
 from sqlalchemy import event
+from sqlalchemy.exc import IntegrityError
 from typer.testing import CliRunner
 
 from src.app_snapshot.models import AppSnapshot
@@ -461,19 +464,22 @@ def test_mid_history_correction_feedback_uses_final_state_for_the_actual_executi
     scope = _scope("rsi_reversal")
     assert pipeline.ingest(_ingest_options(scope)).status == "completed"
     correction_receipt = datetime(2026, 8, 20, 2, 36, tzinfo=UTC)
-    assert pipeline.bars.append(
-        [
-            _market_bar(
-                datetime(2026, 8, 20, 1, 40, tzinfo=UTC),
-                provider="csv",
-                feed="local",
-                symbol="BTCUSDT",
-                close=1_000,
-                retrieved_at=correction_receipt,
-                payload_suffix="mid-history-correction",
-            )
-        ]
-    ) == 1
+    assert (
+        pipeline.bars.append(
+            [
+                _market_bar(
+                    datetime(2026, 8, 20, 1, 40, tzinfo=UTC),
+                    provider="csv",
+                    feed="local",
+                    symbol="BTCUSDT",
+                    close=1_000,
+                    retrieved_at=correction_receipt,
+                    payload_suffix="mid-history-correction",
+                )
+            ]
+        )
+        == 1
+    )
 
     captured: list[pd.DataFrame] = []
     original = pipeline._resolved_outcomes
@@ -496,13 +502,90 @@ def test_mid_history_correction_feedback_uses_final_state_for_the_actual_executi
     assert outcome.status == "completed"
     assert ordinary["outcome_available_at"] == pd.Timestamp("2026-08-20T03:30:00Z")
     assert ordinary["realized_return"] == pytest.approx(121.0 / 120.0 - 1)
-    assert shared_execution["decision_timestamp"].tolist() == [pd.Timestamp("2026-08-20T02:40:00Z")]
+    assert shared_execution.empty
+    assert not resolved.duplicated(["strategy_id", "source_execution_hash"]).any()
     assert resolved["source_decision_hash"].str.len().eq(64).all()
     assert resolved["source_execution_hash"].str.len().eq(64).all()
     assert resolved["source_execution_hash"].is_unique
     assert provenance["record_count"] == len(resolved)
     assert provenance["records_hash"] == canonical_hash(provenance["records"])
     assert {row["source_decision_hash"] for row in provenance["records"]} == set(resolved["source_decision_hash"])
+
+
+def test_feedback_uses_task4_delayed_fills_and_excludes_outcomes_crossing_the_final_boundary(
+    project_root, tmp_path
+) -> None:
+    _configure_strategy(project_root)
+    bars_path = tmp_path / "delayed-fill-bars.csv"
+    _write_bars(bars_path, 80)
+    raw = pd.read_csv(bars_path)
+    raw.loc[[21, 22, 62, 63], "volume"] = 0
+    raw.to_csv(bars_path, index=False)
+    database_url = f"duckdb:///{tmp_path / 'delayed-fill.duckdb'}"
+    pipeline, database = _csv_pipeline(project_root, database_url, bars_path)
+    configured = pipeline.registry.resolve("rsi_reversal")
+
+    def sparse_transitions(_spec, bars, _context):
+        rows = []
+        for index, signal in ((20, 1), (61, -1)):
+            if len(bars) <= index:
+                continue
+            decision = pd.Timestamp(bars.iloc[index]["available_at"])
+            rows.append(
+                {
+                    "decision_timestamp": decision,
+                    "data_through": pd.Timestamp(bars.iloc[index]["close_timestamp"]),
+                    "signal": signal,
+                    "strength": 1.0,
+                    "reason": "test transition",
+                }
+            )
+        return pd.DataFrame(
+            rows,
+            columns=["decision_timestamp", "data_through", "signal", "strength", "reason"],
+        )
+
+    registry = StrategyRegistry()
+    registry.register(configured.spec, sparse_transitions, configured.metadata)
+    pipeline.registry = registry
+    scope = _scope("rsi_reversal")
+    assert pipeline.ingest(_ingest_options(scope)).status == "completed"
+    captured: dict[str, object] = {}
+    original = pipeline._resolved_outcomes
+
+    def capture(bars, components, evaluations, boundary):
+        resolved = original(bars, components, evaluations, boundary)
+        captured.update(components=components, boundary=boundary, resolved=resolved.copy())
+        return resolved
+
+    pipeline._resolved_outcomes = capture  # type: ignore[method-assign]
+    outcome = pipeline.evaluate(EvaluationOptions(scope=scope, force=True))
+    components = captured["components"]
+    signals = components[0][1]  # type: ignore[index]
+    ledger = components[0][2].trade_ledger  # type: ignore[index]
+    boundary = captured["boundary"]
+    resolved = captured["resolved"]
+    first_hash, sealed_hash = signals["decision_hash"].tolist()
+    first_fill = ledger.loc[ledger["source_decision_hashes"].map(lambda hashes: first_hash in hashes)].iloc[0]
+    sealed_fill = ledger.loc[ledger["source_decision_hashes"].map(lambda hashes: sealed_hash in hashes)].iloc[0]
+    first_feedback = resolved.loc[resolved["source_decision_hash"] == first_hash].iloc[0]
+    persisted = database.frame(
+        "select execution_id, decision_timestamp, execution_timestamp from strategy_executions "
+        "where execution_timestamp = :executed and decision_timestamp = :decision",
+        {
+            "executed": first_fill.execution_timestamp,
+            "decision": first_fill.decision_timestamp,
+        },
+    )
+
+    assert outcome.status == "completed"
+    assert first_fill.execution_timestamp == pd.Timestamp("2026-08-20T01:55:00Z")
+    assert first_feedback["execution_timestamp"] == first_fill.execution_timestamp
+    assert first_feedback["source_execution_hash"] == persisted.iloc[0]["execution_id"]
+    assert sealed_fill.execution_timestamp == boundary.final_start  # type: ignore[union-attr]
+    assert sealed_hash not in set(resolved["source_decision_hash"])
+    assert (resolved["execution_timestamp"] < boundary.final_start).all()  # type: ignore[union-attr]
+    assert (resolved["outcome_available_at"] < boundary.final_start).all()  # type: ignore[union-attr]
 
 
 def test_concurrent_forced_plural_evaluations_allocate_complete_atomic_cohorts(project_root, tmp_path) -> None:
@@ -558,6 +641,120 @@ def test_concurrent_forced_plural_evaluations_allocate_complete_atomic_cohorts(p
     )
     assert reused.status == "reused"
     assert set(reused.strategy_run_ids) == newest_run_ids
+
+
+def test_overlapping_scalar_and_plural_cohorts_serialize_component_reservations(project_root, tmp_path) -> None:
+    _configure_plural_strategies(project_root)
+    bars = tmp_path / "overlapping-cohort-bars.csv"
+    _write_bars(bars, 80)
+    database_url = f"duckdb:///{tmp_path / 'overlapping-cohort.duckdb'}"
+    pipeline, database = _csv_pipeline(project_root, database_url, bars)
+    pipeline.clock = lambda: datetime(2026, 8, 23, 12, tzinfo=UTC)
+    plural_scope = _scope("rsi_reversal", "extreme_return_reversal")
+    scalar_scope = _scope("rsi_reversal")
+    assert pipeline.ingest(_ingest_options(plural_scope)).status == "completed"
+    original_timestamp = pipeline._cohort_run_timestamp
+    reservation_barrier = threading.Barrier(2)
+
+    def synchronize_after_timestamp(*args, **kwargs):
+        timestamp = original_timestamp(*args, **kwargs)
+        with suppress(threading.BrokenBarrierError):
+            reservation_barrier.wait(timeout=0.5)
+        return timestamp
+
+    pipeline._cohort_run_timestamp = synchronize_after_timestamp  # type: ignore[method-assign]
+    outcomes: list[StageOutcome] = []
+    errors: list[Exception] = []
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(pipeline.evaluate, EvaluationOptions(scope=plural_scope, force=True)),
+            executor.submit(pipeline.evaluate, EvaluationOptions(scope=scalar_scope, force=True)),
+        ]
+        for future in futures:
+            try:
+                outcomes.append(future.result(timeout=30))
+            except Exception as error:
+                errors.append(error)
+    pipeline._cohort_run_timestamp = original_timestamp  # type: ignore[method-assign]
+    plural_reuse = pipeline.evaluate(EvaluationOptions(scope=plural_scope))
+    scalar_reuse = pipeline.evaluate(EvaluationOptions(scope=scalar_scope))
+    runs = database.frame(
+        "select strategy_run_id, strategy_id, run_timestamp, status, metrics from strategy_runs "
+        "order by run_timestamp, strategy_id"
+    )
+
+    assert errors == []
+    assert [item.status for item in outcomes] == ["completed", "completed"]
+    assert len(runs) == 3
+    assert set(runs["status"]) == {"evaluated"}
+    assert runs["strategy_run_id"].is_unique
+    rsi_runs = runs.loc[runs["strategy_id"] == "rsi_reversal"]
+    assert len(rsi_runs) == 2
+    assert rsi_runs["run_timestamp"].is_unique
+    assert {len(item["cohort_members"]) for item in runs["metrics"]} == {1, 2}
+    assert plural_reuse.status == scalar_reuse.status == "reused"
+    assert len(plural_reuse.strategy_run_ids) == 2
+    assert len(scalar_reuse.strategy_run_ids) == 1
+
+
+def test_cohort_reservation_failure_is_persisted_as_terminal_failure(project_root, tmp_path) -> None:
+    _configure_plural_strategies(project_root)
+    bars = tmp_path / "reservation-failure-bars.csv"
+    _write_bars(bars, 80)
+    database_url = f"duckdb:///{tmp_path / 'reservation-failure.duckdb'}"
+    pipeline, database = _csv_pipeline(project_root, database_url, bars)
+    scope = _scope("rsi_reversal", "extreme_return_reversal")
+    assert pipeline.ingest(_ingest_options(scope)).status == "completed"
+    injected = False
+
+    def fail_reservation(_connection, _cursor, statement, _parameters, _context, _executemany):
+        nonlocal injected
+        if not injected and "INSERT INTO strategy_runs" in statement:
+            injected = True
+            raise RuntimeError("injected cohort reservation failure")
+
+    event.listen(database.engine, "before_cursor_execute", fail_reservation)
+    try:
+        with pytest.raises(RuntimeError, match="injected cohort reservation failure"):
+            pipeline.evaluate(EvaluationOptions(scope=scope, force=True))
+    finally:
+        event.remove(database.engine, "before_cursor_execute", fail_reservation)
+    runs = database.frame("select strategy_id, status, metrics, ended_at from strategy_runs order by strategy_id")
+
+    assert len(runs) == 2
+    assert set(runs["status"]) == {"failed"}
+    assert runs["ended_at"].notna().all()
+    assert all(item["reservation_error"] == "injected cohort reservation failure" for item in runs["metrics"])
+
+
+def test_transient_cohort_reservation_conflict_retries_from_fresh_database_state(project_root, tmp_path) -> None:
+    _configure_plural_strategies(project_root)
+    bars = tmp_path / "reservation-retry-bars.csv"
+    _write_bars(bars, 80)
+    database_url = f"duckdb:///{tmp_path / 'reservation-retry.duckdb'}"
+    pipeline, database = _csv_pipeline(project_root, database_url, bars)
+    scope = _scope("rsi_reversal", "extreme_return_reversal")
+    assert pipeline.ingest(_ingest_options(scope)).status == "completed"
+    injected = False
+
+    def conflict_once(_connection, _cursor, statement, parameters, _context, _executemany):
+        nonlocal injected
+        if not injected and "INSERT INTO strategy_runs" in statement:
+            injected = True
+            raise IntegrityError(statement, parameters, RuntimeError("injected reservation conflict"))
+
+    event.listen(database.engine, "before_cursor_execute", conflict_once)
+    try:
+        outcome = pipeline.evaluate(EvaluationOptions(scope=scope, force=True))
+    finally:
+        event.remove(database.engine, "before_cursor_execute", conflict_once)
+    runs = database.frame("select strategy_id, status, metrics from strategy_runs order by strategy_id")
+
+    assert injected is True
+    assert outcome.status == "completed"
+    assert len(runs) == 2
+    assert set(runs["status"]) == {"evaluated"}
+    assert not any("reservation_error" in item for item in runs["metrics"])
 
 
 def test_concurrent_fixed_clock_forced_ingests_reserve_independent_terminal_requests(project_root, tmp_path) -> None:
@@ -1272,8 +1469,7 @@ def test_configured_caps_are_persisted_and_policy_change_invalidates_cohort_cach
     assert len(first_weights) == 2 and len(all_weights) == 4
     assert all(row["ensemble_config"]["maximum_strategy_weight"] == 0.6 for row in first_weights["evidence"])
     assert all(
-        row["ensemble_config"]["family_weight_caps"] == {"mean_reversion": 1.0}
-        for row in first_weights["evidence"]
+        row["ensemble_config"]["family_weight_caps"] == {"mean_reversion": 1.0} for row in first_weights["evidence"]
     )
     assert first_weights["weight"].max() <= 0.6
     assert len({row["cohort_id"] for row in all_weights["evidence"]}) == 2

@@ -621,13 +621,30 @@ def _ensemble_components(database: Database) -> list[EnsembleComponentSnapshot]:
         select dataset_hash, strategy_id, strategy_version, family, symbol, interval,
                mode, effective_at, weight, evidence
         from ensemble_weights
-        order by effective_at desc, strategy_id, strategy_version, symbol, interval, mode
+        order by effective_at desc, dataset_hash, strategy_id, strategy_version, symbol, interval, mode
         """
     )
     if frame.empty:
         return []
     key_columns = ["dataset_hash", "strategy_id", "strategy_version", "symbol", "interval", "mode"]
     frame["effective_at"] = pd.to_datetime(frame["effective_at"], utc=True)
+    frame["_cohort_id"] = frame["evidence"].map(
+        lambda value: str(value.get("cohort_id", "")) if isinstance(value, dict) else ""
+    )
+    frame = frame.sort_values(
+        [
+            "effective_at",
+            "dataset_hash",
+            "_cohort_id",
+            "strategy_id",
+            "strategy_version",
+            "symbol",
+            "interval",
+            "mode",
+        ],
+        ascending=[False, True, True, True, True, True, True, True],
+        kind="stable",
+    )
     cohort_rows = frame[frame["evidence"].map(lambda value: isinstance(value, dict) and bool(value.get("cohort_id")))]
     latest = frame.drop_duplicates(key_columns, keep="first").head(1000)
     if not cohort_rows.empty:
@@ -643,8 +660,9 @@ def _ensemble_components(database: Database) -> list[EnsembleComponentSnapshot]:
             inspected.add(identity)
             selected = cohort_rows[
                 cohort_rows["evidence"].map(
-                    lambda value, selected_cohort=cohort_id: isinstance(value, dict)
-                    and str(value.get("cohort_id")) == selected_cohort
+                    lambda value, selected_cohort=cohort_id: (
+                        isinstance(value, dict) and str(value.get("cohort_id")) == selected_cohort
+                    )
                 )
                 & (cohort_rows["effective_at"] == effective_at)
             ]

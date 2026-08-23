@@ -205,3 +205,42 @@ All five Important findings against `5bc6224417a7af95a6f21e90073d40b5082746d8` a
 
 - The offline calendar intentionally covers repeatable NYSE holiday/early-close rules, not emergency or one-off closures. A future authoritative calendar update must bump the persisted version, which deterministically invalidates affected dataset/cohort identities.
 - Alpaca and NYSE behavior was verified against their official documentation with deterministic fixtures; no credentialed live request was made.
+
+## Independent-review fix round 4/5 addendum
+
+All four Important findings against `bae60e72159f52a5626d4f21a4a89fd468199874` are addressed.
+
+### Behavior and files
+
+- `src/strategies/pipeline.py` now derives adaptive ensemble feedback from Task 4's actual fill ledger and its immutable `source_decisions`, rather than independently matching signal timestamps to the first chronological bar. Zero-volume/capacity-delayed transitions inherit Task 4's real execution timestamp and decision provenance. The resolved execution hash is the same full-context ID persisted for that Task 4 execution.
+- Feedback is eligible for development learning only when both the actual Task 4 execution timestamp and its causal bar outcome availability are strictly before the sealed `final_start`. A decision made before the boundary but delayed into the final block is therefore excluded.
+- Cohort reservation acquires the cohort lock and every full component cache-key lock in one deterministic global order. Overlapping `[A, B]` and `[A]` reservations cannot allocate the same component timestamp/identity, while disjoint cohorts remain independent. Transient integrity/operational conflicts re-read cache and generation state before retrying. A non-retryable or exhausted reservation-write exception creates terminal failed component-run records with explicit `reservation_error` evidence before the original exception is re-raised.
+- `src/strategies/calendars.py` replaces generic nearest-weekday New Year handling with the XNYS rule: Sunday January 1 is observed Monday, while Saturday January 1 is not observed on Friday. December 31, 2027 remains a full regular session for January 1, 2028. The persisted calendar version is now `offline-rules-2026.3`.
+- `src/app_snapshot/builder.py` uses a stable total cohort order over effective time, dataset hash, cohort ID, and component context before scanning for the newest complete cohort. Equal-time complete cohorts export identically regardless of database insertion order, while the previous newest-complete fallback and post-selection bound remain intact.
+- Regressions were added to `tests/integration/test_strategy_cli.py`, `tests/unit/test_bar_ingestion.py`, and `tests/integration/test_app_snapshot_export.py`. No Swift files were edited, and the ignored progress ledger was preserved.
+
+### RED/GREEN evidence
+
+- Initial focused RED: five tests covering the four findings and the explicit reservation-failure lifecycle — **5 failed, 0 passed in 5.90s**. Failures were the incorrect Friday New Year closure, pre-actionability feedback timestamp/hash, an overlapping-cohort duplicate key, zero durable failed reservations, and insertion-order-dependent snapshot selection.
+- Focused GREEN after the production fixes: the same five regressions — **5 passed, 0 failed in 5.77s**.
+- Retry/re-read hardening RED: an injected first-attempt integrity conflict — **1 failed** because it immediately entered failure lifecycle instead of retrying. GREEN with the overlap/failure/concurrent-plural slice — **4 passed in 9.79s**.
+- The first surrounding Task 7 compatibility run produced **1 failed, 52 passed in 155.11s**: the earlier correction test still expected timestamp-only feedback at a bar where Task 4 had no fill. Its assertion was updated to require no unactionable feedback and unique execution provenance.
+- Final combined actionability/correction/concurrency/calendar/snapshot slice — **6 passed in 8.73s**.
+- Complete Python suite: `.venv/bin/pytest -q` — **452 passed in 158.30s**.
+- Changed-file Ruff check and format check — **passed**.
+- `git diff --check` — **passed**.
+
+### Fix-round self-review
+
+- Feedback causality/leakage: the source signal comes from the fill's Task 4 state-transition provenance; zero-volume delays are not re-simulated in the pipeline. Both execution and outcome availability must precede the frozen boundary, so a pre-boundary decision cannot leak a delayed final-block result into Task 5 weights.
+- Execution provenance: `_strategy_execution_id` is shared by feedback resolution and persistence, and seals dataset, strategy ID/version, symbol, interval, mode, decision timestamp, and actual execution timestamp.
+- Overlapping concurrency: component lock identities contain the full evaluation cache key and are acquired together with the cohort lock in sorted hash order, preventing lock inversion/deadlock and duplicate component keys for scalar/plural overlap. Successful workers end evaluated; reservation failures end failed rather than running or absent.
+- Calendar correctness: the Saturday and Sunday New Year cases are independently asserted for daily/minute session output, and the version bump propagates through existing calendar-backed manifest/snapshot evidence.
+- Snapshot stability: deterministic tie-breaking occurs before complete-cohort scanning and before the 1,000-component output bound; equal-time cohorts cannot depend on insertion order.
+- Compatibility/scope: all 452 Python tests pass; no Swift files, provider payload contracts, Task 4 engine behavior, or ignored ledger files were changed.
+
+### Remaining concerns
+
+- Cohort/component reservation locks are process-local, matching the native app's threaded DuckDB execution model. Cross-process writers remain governed by DuckDB's single-writer deployment constraint.
+- The offline XNYS calendar still intentionally models documented repeatable holiday/early-close rules rather than emergency one-off exchange closures; its versioned evidence makes future audited rule upgrades cache-invalidating.
+- No credentialed live Binance or Alpaca request was made in this deterministic fix round.

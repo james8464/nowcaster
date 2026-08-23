@@ -4,6 +4,7 @@ import json
 import math
 import threading
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import ExitStack
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
@@ -455,67 +456,128 @@ class StrategyPipeline:
         *,
         force: bool,
     ) -> tuple[tuple[str, ...], list[tuple[RegisteredStrategy, str, datetime]], int]:
-        lock_identity = canonical_hash(["strategy_evaluation_cohort_reservation", cohort_id])
-        with _lock_for(lock_identity):
-            cached = self._cached_cohort(scope, registered, dataset_hash, cohort_id)
-            if cached and not force:
-                return cached, [], 0
-            prior = self.database.frame(
-                "select metrics from strategy_runs where dataset_hash = :dataset_hash "
-                "and symbol = :symbol and interval = :interval and mode = :mode",
-                {
-                    "dataset_hash": dataset_hash,
-                    "symbol": scope.symbol,
-                    "interval": scope.interval.value,
-                    "mode": scope.mode.value,
-                },
-            )
-            generations = [
-                int(metrics["cohort_generation"])
-                for metrics in prior.get("metrics", [])
-                if isinstance(metrics, dict)
-                and metrics.get("cohort_id") == cohort_id
-                and isinstance(metrics.get("cohort_generation"), int)
-            ]
-            cohort_generation = max(generations, default=0) + 1
-            run_timestamp = self._cohort_run_timestamp(scope, registered, dataset_hash)
+        lock_identities = {
+            canonical_hash(["strategy_evaluation_cohort_reservation", cohort_id]),
+            *(
+                canonical_hash(
+                    ["strategy_evaluation_component_reservation", *self._cache_key(scope, item, dataset_hash)]
+                )
+                for item in registered
+            ),
+        }
+        with ExitStack() as locks:
+            for lock_identity in sorted(lock_identities):
+                locks.enter_context(_lock_for(lock_identity))
+            retry_error: Exception | None = None
             contexts: list[tuple[RegisteredStrategy, str, datetime]] = []
-            rows: list[dict[str, Any]] = []
-            for item in registered:
-                component_generation = self._exact_run_count(scope, item, dataset_hash) + 1
-                run_id = canonical_hash(
-                    {
-                        "cache_key": self._cache_key(scope, item, dataset_hash),
-                        "cohort_id": cohort_id,
-                        "cohort_generation": cohort_generation,
-                        "run_timestamp": run_timestamp,
-                        "component_generation": component_generation,
-                    }
+            for _attempt in range(5):
+                cached = self._cached_cohort(scope, registered, dataset_hash, cohort_id)
+                if cached and not force:
+                    return cached, [], 0
+                contexts, rows, cohort_generation = self._evaluation_cohort_reservation_plan(
+                    scope,
+                    registered,
+                    dataset_hash,
+                    cohort,
+                    cohort_id,
                 )
-                metrics = {
-                    "reservation_generation": component_generation,
-                    "cohort_generation": cohort_generation,
+                try:
+                    with self.database.engine.begin() as connection:
+                        connection.execute(insert(strategy_runs), rows)
+                except (IntegrityError, OperationalError) as error:
+                    retry_error = error
+                    continue
+                except Exception as error:
+                    self._persist_cohort_reservation_failure(scope, dataset_hash, contexts, error)
+                    raise
+                return (), contexts, cohort_generation
+            assert retry_error is not None
+            self._persist_cohort_reservation_failure(scope, dataset_hash, contexts, retry_error)
+            raise retry_error
+
+    def _evaluation_cohort_reservation_plan(
+        self,
+        scope: StrategyScope,
+        registered: Sequence[RegisteredStrategy],
+        dataset_hash: str,
+        cohort: Mapping[str, Any],
+        cohort_id: str,
+    ) -> tuple[list[tuple[RegisteredStrategy, str, datetime]], list[dict[str, Any]], int]:
+        prior = self.database.frame(
+            "select metrics from strategy_runs where dataset_hash = :dataset_hash "
+            "and symbol = :symbol and interval = :interval and mode = :mode",
+            {
+                "dataset_hash": dataset_hash,
+                "symbol": scope.symbol,
+                "interval": scope.interval.value,
+                "mode": scope.mode.value,
+            },
+        )
+        generations = [
+            int(metrics["cohort_generation"])
+            for metrics in prior.get("metrics", [])
+            if isinstance(metrics, dict)
+            and metrics.get("cohort_id") == cohort_id
+            and isinstance(metrics.get("cohort_generation"), int)
+        ]
+        cohort_generation = max(generations, default=0) + 1
+        run_timestamp = self._cohort_run_timestamp(scope, registered, dataset_hash)
+        contexts: list[tuple[RegisteredStrategy, str, datetime]] = []
+        rows: list[dict[str, Any]] = []
+        for item in registered:
+            component_generation = self._exact_run_count(scope, item, dataset_hash) + 1
+            run_id = canonical_hash(
+                {
+                    "cache_key": self._cache_key(scope, item, dataset_hash),
                     "cohort_id": cohort_id,
-                    "cohort_members": cohort["members"],
-                    "cohort_effective_at": run_timestamp.isoformat(),
-                    "state": scope.mode.value,
+                    "cohort_generation": cohort_generation,
+                    "run_timestamp": run_timestamp,
+                    "component_generation": component_generation,
                 }
-                rows.append(
-                    self._strategy_run_row(
-                        scope,
-                        item,
-                        dataset_hash,
-                        run_id,
-                        run_timestamp,
-                        status="running",
-                        metrics=metrics,
-                        ended_at=None,
-                    )
+            )
+            metrics = {
+                "reservation_generation": component_generation,
+                "cohort_generation": cohort_generation,
+                "cohort_id": cohort_id,
+                "cohort_members": cohort["members"],
+                "cohort_effective_at": run_timestamp.isoformat(),
+                "state": scope.mode.value,
+            }
+            rows.append(
+                self._strategy_run_row(
+                    scope,
+                    item,
+                    dataset_hash,
+                    run_id,
+                    run_timestamp,
+                    status="running",
+                    metrics=metrics,
+                    ended_at=None,
                 )
-                contexts.append((item, run_id, run_timestamp))
-            with self.database.engine.begin() as connection:
-                connection.execute(insert(strategy_runs), rows)
-            return (), contexts, cohort_generation
+            )
+            contexts.append((item, run_id, run_timestamp))
+        return contexts, rows, cohort_generation
+
+    def _persist_cohort_reservation_failure(
+        self,
+        scope: StrategyScope,
+        dataset_hash: str,
+        contexts: Sequence[tuple[RegisteredStrategy, str, datetime]],
+        error: Exception,
+    ) -> None:
+        for item, run_id, run_timestamp in contexts:
+            try:
+                self._persist_failed_run(
+                    scope,
+                    item,
+                    dataset_hash,
+                    run_id,
+                    run_timestamp,
+                    str(error),
+                    stage="reservation",
+                )
+            except Exception as persistence_error:
+                error.add_note(f"failed to persist reservation failure: {persistence_error}")
 
     def learn(self, options: LearningOptions, emit: EventSink | None = None) -> StageOutcome:
         registered = self._registered(options.scope)
@@ -855,9 +917,11 @@ class StrategyPipeline:
         expected = tuple(sorted(item.spec.strategy_id for item in registered))
         matches = frame[
             frame["metrics"].map(
-                lambda value: isinstance(value, dict)
-                and value.get("cohort_id") == cohort_id
-                and tuple(sorted(item["strategy_id"] for item in value.get("cohort_members", []))) == expected
+                lambda value: (
+                    isinstance(value, dict)
+                    and value.get("cohort_id") == cohort_id
+                    and tuple(sorted(item["strategy_id"] for item in value.get("cohort_members", []))) == expected
+                )
             )
         ]
         if not matches.empty:
@@ -870,9 +934,10 @@ class StrategyPipeline:
         if len(matches) != len(expected) or tuple(sorted(matches["strategy_id"].astype(str))) != expected:
             return ()
         metrics = list(matches["metrics"])
-        if len({item.get("cohort_decision_hash") for item in metrics}) != 1 or len(
-            {item.get("cohort_effective_at") for item in metrics}
-        ) != 1:
+        if (
+            len({item.get("cohort_decision_hash") for item in metrics}) != 1
+            or len({item.get("cohort_effective_at") for item in metrics}) != 1
+        ):
             return ()
         by_strategy = {str(row.strategy_id): str(row.strategy_run_id) for row in matches.itertuples(index=False)}
         return tuple(by_strategy[item.spec.strategy_id] for item in registered)
@@ -1097,51 +1162,59 @@ class StrategyPipeline:
         ordered["available_at"] = pd.to_datetime(ordered["available_at"], utc=True)
         by_strategy = {item.strategy_id: item for item in evaluations}
         rows: list[dict[str, Any]] = []
-        for registered, signals, backtest, _audit in components:
+        for registered, _signals, backtest, _audit in components:
             evaluation = by_strategy[registered.spec.strategy_id]
-            executable_states: dict[int, Any] = {}
-            for signal in signals.sort_values("decision_timestamp", kind="stable").itertuples(index=False):
-                decision = pd.Timestamp(signal.decision_timestamp)
-                eligible = ordered.index[
-                    (ordered["open_timestamp"] >= decision) & (ordered["close_timestamp"] > decision)
-                ]
-                if len(eligible):
-                    executable_states[int(eligible[0])] = signal
             fills = backtest.trade_ledger.copy()
-            if not fills.empty:
-                fills["execution_timestamp"] = pd.to_datetime(fills["execution_timestamp"], utc=True)
-            for bar_index, signal in sorted(executable_states.items()):
-                bar = ordered.iloc[bar_index]
-                outcome_available_at = pd.Timestamp(bar["available_at"])
-                if outcome_available_at >= boundary.final_start:
+            if fills.empty:
+                continue
+            fills["decision_timestamp"] = pd.to_datetime(fills["decision_timestamp"], utc=True)
+            fills["execution_timestamp"] = pd.to_datetime(fills["execution_timestamp"], utc=True)
+            fills = fills.sort_values(["execution_timestamp", "order_id"], kind="stable")
+            for fill in fills.itertuples(index=False):
+                sources = [
+                    source
+                    for source in fill.source_decisions
+                    if str(source.get("strategy_id")) == registered.spec.strategy_id
+                ]
+                if not sources:
                     continue
-                decision = pd.Timestamp(signal.decision_timestamp)
-                execution_timestamp = pd.Timestamp(bar["open_timestamp"])
-                matching_fills = fills.loc[fills["execution_timestamp"] == execution_timestamp]
-                gross_notional = float(pd.to_numeric(matching_fills.get("notional"), errors="coerce").abs().sum())
-                total_cost = float(pd.to_numeric(matching_fills.get("total_cost"), errors="coerce").sum())
-                cost = total_cost / gross_notional if gross_notional > 0 else 0.0
-                execution_identity = {
-                    "dataset_hash": evaluation.dataset_hash,
-                    "provider": str(bar["provider"]),
-                    "feed": str(bar["feed"]),
-                    "symbol": evaluation.symbol,
-                    "interval": evaluation.interval.value,
-                    "open_timestamp": _utc_datetime(bar["open_timestamp"]),
-                    "close_timestamp": _utc_datetime(bar["close_timestamp"]),
-                    "payload_hash": str(bar["payload_hash"]),
-                }
+                source = max(
+                    sources,
+                    key=lambda item: (pd.Timestamp(item["decision_timestamp"]), str(item["decision_hash"])),
+                )
+                execution_timestamp = pd.Timestamp(fill.execution_timestamp)
+                matching = ordered.loc[ordered["open_timestamp"] == execution_timestamp]
+                if matching.empty:
+                    matching = ordered.loc[ordered["close_timestamp"] == execution_timestamp]
+                if matching.empty:
+                    raise ValueError("Task 4 execution does not map to one causal finalized bar")
+                bar = matching.iloc[0]
+                outcome_available_at = pd.Timestamp(bar["available_at"])
+                if execution_timestamp >= boundary.final_start or outcome_available_at >= boundary.final_start:
+                    continue
+                decision = pd.Timestamp(source["decision_timestamp"])
+                notional = abs(float(fill.notional))
+                cost = float(fill.total_cost) / notional if notional > 0 else 0.0
                 rows.append(
                     {
                         "strategy_id": registered.spec.strategy_id,
                         "decision_timestamp": decision,
                         "execution_timestamp": execution_timestamp,
                         "outcome_available_at": outcome_available_at,
-                        "signal": int(signal.signal),
+                        "signal": int(source["signal"]),
                         "realized_return": float(float(bar["close"]) / float(bar["open"]) - 1),
                         "cost": cost,
-                        "source_decision_hash": str(signal.decision_hash),
-                        "source_execution_hash": canonical_hash(execution_identity),
+                        "source_decision_hash": str(source["decision_hash"]),
+                        "source_execution_hash": _strategy_execution_id(
+                            evaluation.dataset_hash,
+                            registered.spec.strategy_id,
+                            evaluation.strategy_version,
+                            evaluation.symbol,
+                            evaluation.interval,
+                            evaluation.mode,
+                            _utc_datetime(fill.decision_timestamp),
+                            _utc_datetime(fill.execution_timestamp),
+                        ),
                         "dataset_hash": evaluation.dataset_hash,
                         "strategy_version": evaluation.strategy_version,
                         "symbol": evaluation.symbol,
@@ -1385,17 +1458,15 @@ class StrategyPipeline:
             executed = _utc_datetime(row.execution_timestamp)
             execution_rows.append(
                 {
-                    "execution_id": canonical_hash(
-                        [
-                            manifest.dataset_hash,
-                            registered.spec.strategy_id,
-                            registered.spec.deterministic_version,
-                            scope.symbol,
-                            scope.interval.value,
-                            scope.mode.value,
-                            decision,
-                            executed,
-                        ]
+                    "execution_id": _strategy_execution_id(
+                        manifest.dataset_hash,
+                        registered.spec.strategy_id,
+                        registered.spec.deterministic_version,
+                        scope.symbol,
+                        scope.interval,
+                        scope.mode,
+                        decision,
+                        executed,
                     ),
                     "strategy_run_id": run_id,
                     "dataset_hash": manifest.dataset_hash,
@@ -1522,8 +1593,13 @@ class StrategyPipeline:
         run_id: str,
         run_timestamp: datetime,
         reason: str,
+        *,
+        stage: str | None = None,
     ) -> None:
         ended_at = max(self._run_timestamp(), run_timestamp)
+        failure_metrics = {"error_summary": reason}
+        if stage is not None:
+            failure_metrics[f"{stage}_error"] = reason
         with self.database.engine.begin() as connection:
             existing = connection.execute(
                 select(strategy_runs.c.strategy_run_id, strategy_runs.c.metrics).where(
@@ -1540,7 +1616,7 @@ class StrategyPipeline:
                             run_id,
                             run_timestamp,
                             status="failed",
-                            metrics={"error_summary": reason},
+                            metrics=failure_metrics,
                             ended_at=ended_at,
                         )
                     )
@@ -1552,7 +1628,7 @@ class StrategyPipeline:
                     .where(strategy_runs.c.strategy_run_id == run_id)
                     .values(
                         status="failed",
-                        metrics={**prior_metrics, "error_summary": reason},
+                        metrics={**prior_metrics, **failure_metrics},
                         ended_at=ended_at,
                     )
                 )
@@ -1705,6 +1781,30 @@ def _utc_datetime(value: Any) -> datetime:
     if timestamp.tzinfo is None:
         timestamp = timestamp.tz_localize("UTC")
     return timestamp.tz_convert("UTC").to_pydatetime().replace(tzinfo=UTC)
+
+
+def _strategy_execution_id(
+    dataset_hash: str,
+    strategy_id: str,
+    strategy_version: str,
+    symbol: str,
+    interval: BarInterval,
+    mode: StrategyMode,
+    decision_timestamp: datetime,
+    execution_timestamp: datetime,
+) -> str:
+    return canonical_hash(
+        [
+            dataset_hash,
+            strategy_id,
+            strategy_version,
+            symbol,
+            interval.value,
+            mode.value,
+            decision_timestamp,
+            execution_timestamp,
+        ]
+    )
 
 
 def _finite(value: Any) -> float | None:
