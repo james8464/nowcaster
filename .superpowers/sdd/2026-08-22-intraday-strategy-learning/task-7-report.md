@@ -281,3 +281,38 @@ All three Important findings against `51102ac8b98d1ffc333b83a904803fb20b1baae9` 
 - An ambiguous success reconciliation performs read-after-write checks through new DuckDB connections, which is appropriate for the single-process native app and DuckDB transaction model; distributed databases would require database-specific commit tokens.
 - Snapshot provider/feed alignment relies on the versioned runtime calendar registry and terminal dataset hashes; exceptional one-off exchange closures still require an audited calendar version bump and refreshed ingestion.
 - No credentialed live Binance or Alpaca request was made in this deterministic final cycle.
+
+## Exceptional independent-review fix round 6 addendum
+
+Both linked final findings against `b3c92cd2696655f9c09bf83590202b76297604e1` are addressed.
+
+### Behavior and files
+
+- `src/strategies/pipeline.py` now authenticates the complete local evaluation range with a deterministic newest-first union of immutable coverage requests. Every contributing request must be terminal-complete and match its freshly reconstructed requested-range dataset hash, row count, calendar ID/version, and zero-gap manifest. An older stale or failed range blocks evaluate and learn unless newer valid evidence fully supersedes that range; contiguous independently ingested ranges are combined without trusting only the latest request.
+- The pipeline creates a typed `EvaluationCoverageManifest` for the exact aggregate query. It seals aggregate dataset hash, full requested and covered range, provider/feed/symbol/interval, row count, gaps, calendar provenance, and chronologically ordered contributing request IDs/hashes/ranges. The coverage manifest is attached to initial cohort reservations, completed cohort metrics, ensemble evidence, and terminal reservation-failure evidence without changing the dataset/cohort cache identity.
+- `src/app_snapshot/builder.py` reads aggregate manifests from terminal evaluation evidence before considering legacy single-request fallback rows. It deduplicates identical component/cohort manifests, uses a total newest-first order, filters obsolete calendar-policy evidence, caps exported aggregate history at 200 and each gap history at 100, and exports the exact persisted aggregate dataset hash/range rather than substituting one contributing request.
+- `tests/integration/test_strategy_cli.py` adds two-request union, old-range revision invalidation, learn/evaluate blocking, stale-range refresh recovery, exact aggregate persistence, contributor ordering, compact snapshot selection, and reservation-failure provenance regressions. No Swift or ledger files were edited.
+
+### RED/GREEN evidence
+
+- Initial focused RED: **2 failed, 0 passed in 5.94s**. A correction in the older of two contributing ranges was admitted by both evaluate and learn because only the latest request was authenticated, and terminal run metrics had no aggregate coverage manifest.
+- Focused GREEN for the two linked regressions: **2 passed in 5.68s**.
+- Terminal reservation provenance RED: **1 failed in 2.40s** because a pre-insert reservation failure created terminal rows without `coverage_manifest`. After carrying the authenticated manifest into fallback failure metrics, the combined focused GREEN was **3 passed in 5.29s**.
+- Complete Task 7 CLI integration file: **38 passed in 68.72s**.
+- Snapshot unit/integration slice: **11 passed in 71.71s**.
+- Complete Python suite: `.venv/bin/pytest -q` — **457 passed in 158.41s**.
+- Changed-file Ruff check and format check, `python -m compileall -q src`, and `git diff --check` — **passed**.
+
+### Fix-round self-review
+
+- Complete-range authentication: coverage selection processes a stable `requested_at, coverage_request_id` total order, only ignores an older record after its entire evaluated intersection is already covered by newer valid evidence, merges overlap/adjacency deterministically, and rejects any uncovered aggregate interval. A revision changes both the affected request manifest and aggregate hash, so neither cache reuse nor learning can bypass refreshed evidence.
+- Aggregate identity: the evaluation cache remains keyed by the Task 7 dataset/cohort context rather than mutable request IDs. The separately persisted manifest records the exact proof used for the terminal cohort, including every contributor, while re-ingesting byte-identical data does not spuriously change strategy cache identity.
+- Atomicity: the aggregate proof is present in reservation rows before engines run and is replaced atomically with completed evaluation metrics and child evidence. Normal failures retain it through compare-and-set lifecycle merging; even a reservation insert failure carries it into the durable terminal fallback rows.
+- Snapshot determinism/bounds: duplicate component copies of one aggregate proof collapse by canonical manifest hash; stable run/dataset/ID ordering happens before the 200-manifest bound, and gap history is capped at 100. Snapshot coverage uses persisted evaluation ranges and hashes rather than recalculating them from later bar revisions or choosing an independent latest request.
+- Leakage/licensing/scope: contributing evidence contains identifiers, hashes, ranges, counts, and calendar provenance only—no raw licensed bars or sealed final outcomes. Strategy/learning engines, CLI compatibility, Swift sources, and ignored progress ledgers were unchanged.
+
+### Remaining concerns
+
+- Coverage union currently treats requested ranges as continuous intervals. This matches the provider request contract and tested contiguous ranges; users who intentionally ingest disjoint exchange sessions should request a calendar-spanning range so the versioned exchange calendar can authenticate the non-session gap.
+- Aggregate manifests are stored in immutable terminal cohort JSON evidence rather than a separately indexed table. This is atomic with the existing cohort transaction and adequate for the bounded native snapshot, but large analytical scans would benefit from a future normalized manifest table.
+- No credentialed live Binance or Alpaca request was made in this deterministic exceptional cycle.

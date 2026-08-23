@@ -346,6 +346,108 @@ def test_evaluation_uses_all_contiguous_local_history_across_completed_requests(
     assert database.scalar("select count(*) from strategy_signals") == 80
 
 
+def test_contiguous_coverage_union_blocks_a_stale_contributing_range_until_refreshed(project_root, tmp_path) -> None:
+    _configure_strategy(project_root)
+    bars_path = tmp_path / "coverage-union-bars.csv"
+    _write_bars(bars_path, 80)
+    database_url = f"duckdb:///{tmp_path / 'coverage-union.duckdb'}"
+    pipeline, _database = _csv_pipeline(project_root, database_url, bars_path)
+    scope = _scope("rsi_reversal")
+    first = _ingest_options(scope, count=40)
+    second = first.model_copy(
+        update={
+            "start": first.end,
+            "end": first.end + timedelta(minutes=5 * 40),
+        }
+    )
+    assert pipeline.ingest(first).status == "completed"
+    assert pipeline.ingest(second).status == "completed"
+    assert pipeline.evaluate(EvaluationOptions(scope=scope)).status == "completed"
+
+    correction_receipt = datetime(2026, 8, 20, 6, 45, tzinfo=UTC)
+    assert (
+        pipeline.bars.append(
+            [
+                _market_bar(
+                    datetime(2026, 8, 20, 1, 40, tzinfo=UTC),
+                    provider="csv",
+                    feed="local",
+                    symbol="BTCUSDT",
+                    close=1_000,
+                    retrieved_at=correction_receipt,
+                    payload_suffix="stale-first-segment",
+                )
+            ]
+        )
+        == 1
+    )
+
+    blocked_evaluation = pipeline.evaluate(EvaluationOptions(scope=scope))
+    blocked_learning = pipeline.learn(LearningOptions(scope=scope, evaluation_budget=1))
+    refreshed = pipeline.ingest(first)
+    recovered = pipeline.evaluate(EvaluationOptions(scope=scope))
+
+    assert blocked_evaluation.status == blocked_learning.status == "unavailable"
+    assert "coverage" in blocked_evaluation.message
+    assert refreshed.status == "reused"
+    assert recovered.status == "completed"
+
+
+def test_terminal_evaluation_persists_and_exports_exact_aggregate_coverage_manifest(project_root, tmp_path) -> None:
+    _configure_strategy(project_root)
+    bars_path = tmp_path / "aggregate-manifest-bars.csv"
+    _write_bars(bars_path, 80)
+    database_url = f"duckdb:///{tmp_path / 'aggregate-manifest.duckdb'}"
+    pipeline, database = _csv_pipeline(project_root, database_url, bars_path)
+    scope = _scope("rsi_reversal")
+    first = _ingest_options(scope, count=40)
+    second = first.model_copy(
+        update={
+            "start": first.end,
+            "end": first.end + timedelta(minutes=5 * 40),
+        }
+    )
+    assert pipeline.ingest(first).status == "completed"
+    assert pipeline.ingest(second).status == "completed"
+
+    outcome = pipeline.evaluate(EvaluationOptions(scope=scope))
+    run = database.frame(
+        "select dataset_hash, metrics from strategy_runs where status = 'evaluated' order by run_timestamp desc"
+    ).iloc[0]
+    requests = database.frame(
+        "select coverage_request_id from dataset_coverage_requests order by requested_start, requested_end, "
+        "requested_at, coverage_request_id"
+    )
+    evidence = run.metrics["coverage_manifest"]
+    snapshot_path = tmp_path / "aggregate-manifest-snapshot.json"
+    pipeline.export(
+        ExportOptions(
+            snapshot_path=snapshot_path,
+            report_path=tmp_path / "aggregate-manifest-report.md",
+        )
+    )
+    snapshot = AppSnapshot.model_validate_json(snapshot_path.read_text(encoding="utf-8"))
+
+    assert outcome.status == "completed"
+    assert evidence["dataset_hash"] == run.dataset_hash == outcome.dataset_hash
+    assert evidence["requested_start"] == "2026-08-20T00:00:00Z"
+    assert evidence["requested_end"] == "2026-08-20T06:40:00Z"
+    assert evidence["row_count"] == 80
+    assert evidence["gaps"] == []
+    assert [item["coverage_request_id"] for item in evidence["contributing_requests"]] == requests[
+        "coverage_request_id"
+    ].tolist()
+    assert len(snapshot.dataset_coverage) == 1
+    exported = snapshot.dataset_coverage[0]
+    assert exported.dataset_hash == outcome.dataset_hash
+    assert exported.requested_start.isoformat() == "2026-08-20T00:00:00+00:00"
+    assert exported.requested_end.isoformat() == "2026-08-20T06:40:00+00:00"
+    assert exported.coverage_start.isoformat() == "2026-08-20T00:00:00+00:00"
+    assert exported.coverage_end.isoformat() == "2026-08-20T06:40:00+00:00"
+    assert exported.row_count == 80
+    assert exported.complete is True
+
+
 def test_live_adapter_history_keeps_per_bar_causal_decisions_and_evaluates(project_root, tmp_path) -> None:
     _configure_strategy(project_root)
     start = datetime(2026, 8, 20, tzinfo=UTC)
@@ -802,6 +904,7 @@ def test_cohort_reservation_failure_is_persisted_as_terminal_failure(project_roo
     assert set(runs["status"]) == {"failed"}
     assert runs["ended_at"].notna().all()
     assert all(item["reservation_error"] == "injected cohort reservation failure" for item in runs["metrics"])
+    assert all(item["coverage_manifest"]["row_count"] == 80 for item in runs["metrics"])
 
 
 def test_transient_cohort_reservation_conflict_retries_from_fresh_database_state(project_root, tmp_path) -> None:

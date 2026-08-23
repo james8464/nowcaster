@@ -722,7 +722,68 @@ def _coverage_gaps(frame: pd.DataFrame, interval: BarInterval) -> list[DatasetGa
     return gaps
 
 
+def _evaluation_dataset_coverage(database: Database) -> list[DatasetCoverageSnapshot]:
+    runs = database.frame(
+        "select strategy_run_id, dataset_hash, run_timestamp, metrics from strategy_runs "
+        "where status != 'running' order by run_timestamp desc, dataset_hash desc, strategy_run_id desc"
+    )
+    snapshots: list[DatasetCoverageSnapshot] = []
+    seen: set[str] = set()
+    for row in runs.itertuples(index=False):
+        metrics = row.metrics if isinstance(row.metrics, dict) else {}
+        evidence = metrics.get("coverage_manifest")
+        if not isinstance(evidence, dict) or evidence.get("dataset_hash") != str(row.dataset_hash):
+            continue
+        provider = str(evidence.get("provider", ""))
+        feed = str(evidence.get("feed", ""))
+        calendar = calendar_for(provider, feed)
+        if evidence.get("calendar_id") != calendar.calendar_id or evidence.get("calendar_version") != calendar.version:
+            continue
+        identity = canonical_hash(evidence)
+        if identity in seen:
+            continue
+        requested_start = _optional_utc(evidence.get("requested_start"))
+        requested_end = _optional_utc(evidence.get("requested_end"))
+        if requested_start is None or requested_end is None:
+            continue
+        raw_gaps = evidence.get("gaps") if isinstance(evidence.get("gaps"), list) else []
+        gaps = [
+            DatasetGapSnapshot(
+                start=item["start"],
+                end=item["end"],
+                missing_bars=int(item["missing_bars"]),
+            )
+            for item in raw_gaps[:100]
+            if isinstance(item, dict)
+        ]
+        snapshots.append(
+            DatasetCoverageSnapshot(
+                dataset_hash=str(evidence["dataset_hash"]),
+                provider=provider,
+                feed=feed,
+                symbol=str(evidence.get("symbol", "")),
+                interval=str(evidence.get("interval", "")),
+                requested_start=requested_start,
+                requested_end=requested_end,
+                coverage_start=_optional_utc(evidence.get("coverage_start")),
+                coverage_end=_optional_utc(evidence.get("coverage_end")),
+                row_count=max(int(evidence.get("row_count", 0)), 0),
+                gaps=gaps,
+                complete=not gaps,
+                calendar_id=calendar.calendar_id,
+                calendar_version=calendar.version,
+            )
+        )
+        seen.add(identity)
+        if len(snapshots) == 200:
+            break
+    return snapshots
+
+
 def _dataset_coverage(database: Database) -> list[DatasetCoverageSnapshot]:
+    evaluated = _evaluation_dataset_coverage(database)
+    if evaluated:
+        return evaluated
     frame = database.frame(
         """
         select provider, feed, symbol, interval, open_timestamp, close_timestamp,

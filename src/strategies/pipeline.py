@@ -169,6 +169,37 @@ class ExportOptions(BaseModel):
     report_path: Path
 
 
+class CoverageRequestEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    coverage_request_id: str
+    dataset_hash: str
+    requested_start: datetime
+    requested_end: datetime
+    requested_at: datetime
+    row_count: int = Field(ge=0)
+
+
+class EvaluationCoverageManifest(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal[1] = 1
+    dataset_hash: str
+    provider: str
+    feed: str
+    symbol: str
+    interval: str
+    requested_start: datetime
+    requested_end: datetime
+    coverage_start: datetime | None
+    coverage_end: datetime | None
+    row_count: int = Field(ge=0)
+    gaps: tuple[DatasetGap, ...]
+    calendar_id: str
+    calendar_version: str
+    contributing_requests: tuple[CoverageRequestEvidence, ...]
+
+
 @dataclass(frozen=True, slots=True)
 class StageOutcome:
     status: Literal["completed", "reused", "unavailable"]
@@ -403,12 +434,14 @@ class StrategyPipeline:
 
     def evaluate(self, options: EvaluationOptions, emit: EventSink | None = None) -> StageOutcome:
         registered = self._registered_many(options.scope)
-        query, manifest, unavailable = self._requested_coverage(options.scope)
+        query, manifest, coverage_manifest, unavailable = self._authenticated_coverage(options.scope)
         if query is None or manifest is None:
             return StageOutcome("unavailable", unavailable or "requested coverage is unavailable")
+        assert coverage_manifest is not None
         as_of = self._query_as_of(query)
         cohort = self._cohort_payload(options.scope, registered, manifest.dataset_hash, as_of)
         cohort_id = canonical_hash(cohort)
+        cohort["coverage_manifest"] = coverage_manifest.model_dump(mode="json")
         cached, run_contexts, cohort_generation = self._claim_evaluation_cohort(
             options.scope,
             registered,
@@ -516,11 +549,11 @@ class StrategyPipeline:
                     retry_error = error
                     continue
                 except Exception as error:
-                    self._persist_cohort_reservation_failure(scope, dataset_hash, contexts, error)
+                    self._persist_cohort_reservation_failure(scope, dataset_hash, contexts, cohort, error)
                     raise
                 return (), contexts, cohort_generation
             assert retry_error is not None
-            self._persist_cohort_reservation_failure(scope, dataset_hash, contexts, retry_error)
+            self._persist_cohort_reservation_failure(scope, dataset_hash, contexts, cohort, retry_error)
             raise retry_error
 
     def _evaluation_cohort_reservation_plan(
@@ -569,6 +602,7 @@ class StrategyPipeline:
                 "cohort_id": cohort_id,
                 "cohort_members": cohort["members"],
                 "cohort_effective_at": run_timestamp.isoformat(),
+                "coverage_manifest": cohort["coverage_manifest"],
                 "state": scope.mode.value,
             }
             rows.append(
@@ -591,6 +625,7 @@ class StrategyPipeline:
         scope: StrategyScope,
         dataset_hash: str,
         contexts: Sequence[tuple[RegisteredStrategy, str, datetime]],
+        cohort: Mapping[str, Any],
         error: Exception,
     ) -> None:
         for item, run_id, run_timestamp in contexts:
@@ -603,13 +638,14 @@ class StrategyPipeline:
                     run_timestamp,
                     str(error),
                     stage="reservation",
+                    initial_metrics={"coverage_manifest": cohort["coverage_manifest"]},
                 )
             except Exception as persistence_error:
                 error.add_note(f"failed to persist reservation failure: {persistence_error}")
 
     def learn(self, options: LearningOptions, emit: EventSink | None = None) -> StageOutcome:
         registered = self._registered(options.scope)
-        query, manifest, unavailable = self._requested_coverage(options.scope)
+        query, manifest, _coverage_manifest, unavailable = self._authenticated_coverage(options.scope)
         if query is None or manifest is None:
             return StageOutcome("unavailable", unavailable or "requested coverage is unavailable")
         bars = self.bars.causal_bars_as_of(query, self._query_as_of(query))
@@ -703,10 +739,24 @@ class StrategyPipeline:
         return tuple(resolved)
 
     def _requested_coverage(self, scope: StrategyScope) -> tuple[BarQuery | None, DatasetManifest | None, str | None]:
+        query, manifest, _evidence, unavailable = self._authenticated_coverage(scope)
+        return query, manifest, unavailable
+
+    def _authenticated_coverage(
+        self, scope: StrategyScope
+    ) -> tuple[BarQuery | None, DatasetManifest | None, EvaluationCoverageManifest | None, str | None]:
+        query = self._local_query(scope)
+        if query is None:
+            return None, None, None, "requested coverage is unavailable; no finalized bars are stored"
+        aggregate = self.bars.manifest(query)
+        aggregate_missing = sum(gap.missing_bars for gap in aggregate.gaps)
+        if aggregate_missing:
+            return None, None, None, f"local compatible history is incomplete: {aggregate_missing} bars unavailable"
         frame = self.database.frame(
-            "select requested_start, requested_end, status, dataset_hash, gaps from dataset_coverage_requests "
+            "select coverage_request_id, requested_start, requested_end, requested_at, status, "
+            "dataset_hash, row_count, gaps from dataset_coverage_requests "
             "where provider = :provider and feed = :feed and symbol = :symbol and interval = :interval "
-            "order by requested_at desc, coverage_request_id desc limit 1",
+            "order by requested_at desc, coverage_request_id desc",
             {
                 "provider": scope.provider.value,
                 "feed": scope.feed,
@@ -715,34 +765,83 @@ class StrategyPipeline:
             },
         )
         if frame.empty:
-            return None, None, "requested coverage is unavailable; run strategy ingest first"
-        requested_query = BarQuery(
-            provider=scope.provider.value,
-            feed=scope.feed,
-            symbol=scope.symbol,
-            interval=scope.interval,
-            start=_utc_datetime(frame.iloc[0]["requested_start"]),
-            end=_utc_datetime(frame.iloc[0]["requested_end"]),
+            return None, None, None, "requested coverage is unavailable; run strategy ingest first"
+
+        covered: list[tuple[datetime, datetime]] = []
+        contributors: list[CoverageRequestEvidence] = []
+        for row in frame.itertuples(index=False):
+            requested_start = max(_utc_datetime(row.requested_start), query.start)
+            requested_end = min(_utc_datetime(row.requested_end), query.end)
+            if requested_end <= requested_start or _range_is_covered(requested_start, requested_end, covered):
+                continue
+            requested_query = BarQuery(
+                provider=scope.provider.value,
+                feed=scope.feed,
+                symbol=scope.symbol,
+                interval=scope.interval,
+                start=_utc_datetime(row.requested_start),
+                end=_utc_datetime(row.requested_end),
+            )
+            current = self.bars.manifest(requested_query)
+            stored = row.gaps if isinstance(row.gaps, dict) else {}
+            missing = sum(gap.missing_bars for gap in current.gaps)
+            valid = (
+                str(row.status) == "complete"
+                and str(row.dataset_hash) == current.dataset_hash
+                and int(row.row_count) == current.row_count
+                and stored.get("calendar_id") == current.calendar_id
+                and stored.get("calendar_version") == current.calendar_version
+                and missing == 0
+            )
+            if not valid:
+                return (
+                    None,
+                    None,
+                    None,
+                    "requested coverage is incomplete or stale; run strategy ingest to refresh every range",
+                )
+            covered = _merge_ranges((*covered, (requested_start, requested_end)))
+            contributors.append(
+                CoverageRequestEvidence(
+                    coverage_request_id=str(row.coverage_request_id),
+                    dataset_hash=current.dataset_hash,
+                    requested_start=requested_query.start,
+                    requested_end=requested_query.end,
+                    requested_at=_utc_datetime(row.requested_at),
+                    row_count=current.row_count,
+                )
+            )
+
+        if not _range_is_covered(query.start, query.end, covered):
+            return None, None, None, "requested coverage is incomplete; ingest the missing local history ranges"
+        ordered_contributors = tuple(
+            sorted(
+                contributors,
+                key=lambda item: (
+                    item.requested_start,
+                    item.requested_end,
+                    item.requested_at,
+                    item.coverage_request_id,
+                ),
+            )
         )
-        requested_manifest = self.bars.manifest(requested_query)
-        stored_evidence = frame.iloc[0]["gaps"] if isinstance(frame.iloc[0]["gaps"], dict) else {}
-        if (
-            str(frame.iloc[0]["dataset_hash"]) != requested_manifest.dataset_hash
-            or stored_evidence.get("calendar_id") != requested_manifest.calendar_id
-            or stored_evidence.get("calendar_version") != requested_manifest.calendar_version
-        ):
-            return None, None, "requested coverage uses stale calendar evidence; run strategy ingest to refresh"
-        missing = sum(gap.missing_bars for gap in requested_manifest.gaps)
-        if str(frame.iloc[0]["status"]) != "complete" or missing:
-            return None, None, f"requested coverage is incomplete: {missing} bars unavailable"
-        query = self._local_query(scope)
-        if query is None:
-            return None, None, "requested coverage is unavailable; no finalized bars are stored"
-        manifest = self.bars.manifest(query)
-        missing = sum(gap.missing_bars for gap in manifest.gaps)
-        if missing:
-            return None, None, f"local compatible history is incomplete: {missing} bars unavailable"
-        return query, manifest, None
+        evidence = EvaluationCoverageManifest(
+            dataset_hash=aggregate.dataset_hash,
+            provider=aggregate.provider,
+            feed=aggregate.feed,
+            symbol=aggregate.symbol,
+            interval=aggregate.interval.value,
+            requested_start=query.start,
+            requested_end=query.end,
+            coverage_start=aggregate.coverage_start,
+            coverage_end=aggregate.coverage_end,
+            row_count=aggregate.row_count,
+            gaps=aggregate.gaps,
+            calendar_id=aggregate.calendar_id,
+            calendar_version=aggregate.calendar_version,
+            contributing_requests=ordered_contributors,
+        )
+        return query, aggregate, evidence, None
 
     def _local_query(self, scope: StrategyScope) -> BarQuery | None:
         frame = self.database.frame(
@@ -1349,6 +1448,7 @@ class StrategyPipeline:
             "cohort_effective_at": cohort_effective_at.isoformat(),
             "ensemble_policy_hash": canonical_hash(cohort["ensemble_policy"]),
             "validation_policy_hash": cohort["validation_policy_hash"],
+            "coverage_manifest": cohort["coverage_manifest"],
         }
         outcome_records = [
             {
@@ -1706,9 +1806,10 @@ class StrategyPipeline:
         reason: str,
         *,
         stage: str | None = None,
+        initial_metrics: Mapping[str, Any] | None = None,
     ) -> None:
         ended_at = max(self._run_timestamp(), run_timestamp)
-        failure_metrics = {"error_summary": reason}
+        failure_metrics = {**dict(initial_metrics or {}), "error_summary": reason}
         if stage is not None:
             failure_metrics[f"{stage}_error"] = reason
         with self.database.engine.begin() as connection:
@@ -1893,6 +1994,20 @@ def _utc_datetime(value: Any) -> datetime:
     if timestamp.tzinfo is None:
         timestamp = timestamp.tz_localize("UTC")
     return timestamp.tz_convert("UTC").to_pydatetime().replace(tzinfo=UTC)
+
+
+def _merge_ranges(ranges: Sequence[tuple[datetime, datetime]]) -> list[tuple[datetime, datetime]]:
+    merged: list[tuple[datetime, datetime]] = []
+    for start, end in sorted(ranges):
+        if not merged or start > merged[-1][1]:
+            merged.append((start, end))
+        else:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+    return merged
+
+
+def _range_is_covered(start: datetime, end: datetime, ranges: Sequence[tuple[datetime, datetime]]) -> bool:
+    return any(covered_start <= start and covered_end >= end for covered_start, covered_end in _merge_ranges(ranges))
 
 
 def _strategy_execution_id(
