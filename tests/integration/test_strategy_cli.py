@@ -11,7 +11,7 @@ from pathlib import Path
 import httpx
 import pandas as pd
 import pytest
-from sqlalchemy import event
+from sqlalchemy import event, update
 from sqlalchemy.exc import IntegrityError
 from typer.testing import CliRunner
 
@@ -19,6 +19,7 @@ from src.app_snapshot.models import AppSnapshot
 from src.cli import app
 from src.config.settings import Settings
 from src.database.engine import Database
+from src.database.schema import dataset_coverage_requests
 from src.ingestion.bars import BarRequest, MarketBar
 from src.learning.grammar import RuleNode
 from src.learning.promotion import ForwardEvidence
@@ -30,6 +31,7 @@ from src.strategies.pipeline import (
     EvaluationOptions,
     ExportOptions,
     IngestOptions,
+    LearningOptions,
     StageOutcome,
     StrategyScope,
     create_strategy_pipeline,
@@ -427,6 +429,7 @@ def test_corrected_refetch_preserves_signal_prefix_and_adds_receipt_decision(pro
         payload_suffix="correction",
     )
     assert pipeline.bars.append([correction]) == 1
+    assert pipeline.ingest(options).status == "reused"
 
     seen_ledgers: list[pd.DataFrame] = []
 
@@ -480,6 +483,7 @@ def test_mid_history_correction_feedback_uses_final_state_for_the_actual_executi
         )
         == 1
     )
+    assert pipeline.ingest(_ingest_options(scope)).status == "reused"
 
     captured: list[pd.DataFrame] = []
     original = pipeline._resolved_outcomes
@@ -586,6 +590,79 @@ def test_feedback_uses_task4_delayed_fills_and_excludes_outcomes_crossing_the_fi
     assert sealed_hash not in set(resolved["source_decision_hash"])
     assert (resolved["execution_timestamp"] < boundary.final_start).all()  # type: ignore[union-attr]
     assert (resolved["outcome_available_at"] < boundary.final_start).all()  # type: ignore[union-attr]
+
+
+def test_valid_abstention_without_fills_persists_typed_no_feedback_evidence(project_root, tmp_path) -> None:
+    _configure_strategy(project_root)
+    bars_path = tmp_path / "abstention-bars.csv"
+    _write_bars(bars_path, 80)
+    database_url = f"duckdb:///{tmp_path / 'abstention.duckdb'}"
+    pipeline, database = _csv_pipeline(project_root, database_url, bars_path)
+    configured = pipeline.registry.resolve("rsi_reversal")
+
+    def always_abstain(_spec, bars, _context):
+        return pd.DataFrame(
+            {
+                "decision_timestamp": pd.to_datetime(bars["available_at"], utc=True),
+                "data_through": pd.to_datetime(bars["close_timestamp"], utc=True),
+                "signal": pd.Series(0, index=bars.index, dtype="int8"),
+                "strength": pd.Series(0.0, index=bars.index, dtype="float64"),
+                "reason": "abstain: no actionable state",
+            }
+        )
+
+    registry = StrategyRegistry()
+    registry.register(configured.spec, always_abstain, configured.metadata)
+    pipeline.registry = registry
+    scope = _scope("rsi_reversal")
+    assert pipeline.ingest(_ingest_options(scope)).status == "completed"
+    captured: list[pd.DataFrame] = []
+    original = pipeline._resolved_outcomes
+
+    def capture(*args, **kwargs):
+        resolved = original(*args, **kwargs)
+        captured.append(resolved.copy())
+        return resolved
+
+    pipeline._resolved_outcomes = capture  # type: ignore[method-assign]
+    evaluated = pipeline.evaluate(EvaluationOptions(scope=scope))
+    repeated = pipeline.evaluate(EvaluationOptions(scope=scope))
+    resolved = captured[0]
+    weight = database.frame("select weight, evidence from ensemble_weights").iloc[0]
+    provenance = weight["evidence"]["resolved_outcome_provenance"]
+
+    assert evaluated.status == "completed"
+    assert repeated.status == "reused"
+    assert resolved.empty
+    assert resolved.columns.tolist() == [
+        "strategy_id",
+        "decision_timestamp",
+        "execution_timestamp",
+        "outcome_available_at",
+        "signal",
+        "realized_return",
+        "cost",
+        "source_decision_hash",
+        "source_execution_hash",
+        "dataset_hash",
+        "strategy_version",
+        "symbol",
+        "interval",
+        "mode",
+    ]
+    assert str(resolved["decision_timestamp"].dtype) == "datetime64[ns, UTC]"
+    assert str(resolved["signal"].dtype) == "int8"
+    assert str(resolved["realized_return"].dtype) == "float64"
+    assert database.scalar("select count(*) from strategy_runs where status = 'evaluated'") == 1
+    assert database.scalar("select count(*) from strategy_executions") == 0
+    assert provenance == {
+        "record_count": 0,
+        "records": [],
+        "records_hash": canonical_hash([]),
+        "feedback_status": "no_observed_outcomes",
+    }
+    assert weight["evidence"]["outcomes_through"] is None
+    assert weight["evidence"]["current_decision"]["status"] == "abstain"
 
 
 def test_concurrent_forced_plural_evaluations_allocate_complete_atomic_cohorts(project_root, tmp_path) -> None:
@@ -989,6 +1066,100 @@ def test_alpaca_exchange_calendar_skips_weekend_and_detects_only_in_session_gap(
     ]
 
 
+def test_stale_calendar_coverage_blocks_research_until_reingest_and_snapshot_uses_current_evidence(
+    project_root, tmp_path
+) -> None:
+    class StaticProvider:
+        def __init__(self, bars: list[MarketBar]):
+            self.bars = bars
+
+        def fetch(self, request: BarRequest) -> list[MarketBar]:
+            return [bar for bar in self.bars if request.start <= bar.open_timestamp < request.end]
+
+    _configure_strategy(project_root)
+    opens = pd.date_range("2027-12-31T14:30:00Z", periods=78, freq="5min")
+    bars = [
+        _market_bar(
+            opened_at.to_pydatetime(),
+            provider="alpaca",
+            feed="iex",
+            symbol="AAPL",
+            close=100 + index / 100,
+        )
+        for index, opened_at in enumerate(opens)
+    ]
+    database_url = f"duckdb:///{tmp_path / 'stale-calendar.duckdb'}"
+    pipeline, database = _csv_pipeline(project_root, database_url, tmp_path / "unused.csv")
+    pipeline.providers[BarProviderName.ALPACA] = StaticProvider(bars)
+    scope = StrategyScope(
+        strategy_id="rsi_reversal",
+        provider=BarProviderName.ALPACA,
+        feed="iex",
+        symbol="AAPL",
+        interval=BarInterval.FIVE_MINUTES,
+        mode=StrategyMode.PAPER,
+    )
+    options = IngestOptions(
+        scope=scope,
+        start=datetime(2027, 12, 31, 14, 30, tzinfo=UTC),
+        end=datetime(2027, 12, 31, 21, 0, tzinfo=UTC),
+    )
+    initial = pipeline.ingest(options)
+    stale = database.frame("select coverage_request_id, gaps from dataset_coverage_requests").iloc[0]
+    stale_evidence = dict(stale.gaps)
+    stale_evidence["calendar_version"] = "offline-rules-2026.2"
+    with database.engine.begin() as connection:
+        connection.execute(
+            update(dataset_coverage_requests)
+            .where(dataset_coverage_requests.c.coverage_request_id == stale.coverage_request_id)
+            .values(dataset_hash="e" * 64, gaps=stale_evidence)
+        )
+
+    blocked_evaluation = pipeline.evaluate(EvaluationOptions(scope=scope))
+    blocked_learning = pipeline.learn(LearningOptions(scope=scope, evaluation_budget=1))
+    runs_before_refresh = database.scalar("select count(*) from strategy_runs")
+    recovered = pipeline.ingest(options)
+    evaluated = pipeline.evaluate(EvaluationOptions(scope=scope))
+    current_request = database.frame(
+        "select coverage_request_id, dataset_hash, gaps from dataset_coverage_requests "
+        "where coverage_request_id != :stale_id order by requested_at desc limit 1",
+        {"stale_id": str(stale.coverage_request_id)},
+    ).iloc[0]
+    mismatched_current_evidence = dict(stale_evidence)
+    mismatched_current_evidence["calendar_version"] = "offline-rules-2026.3"
+    with database.engine.begin() as connection:
+        connection.execute(
+            update(dataset_coverage_requests)
+            .where(dataset_coverage_requests.c.coverage_request_id == stale.coverage_request_id)
+            .values(
+                requested_at=datetime(2030, 1, 1, tzinfo=UTC),
+                gaps=mismatched_current_evidence,
+            )
+        )
+    snapshot_path = tmp_path / "current-calendar-snapshot.json"
+    pipeline.export(
+        ExportOptions(
+            snapshot_path=snapshot_path,
+            report_path=tmp_path / "current-calendar-report.md",
+        )
+    )
+    snapshot = AppSnapshot.model_validate_json(snapshot_path.read_text(encoding="utf-8"))
+    evaluated_hash = database.scalar("select dataset_hash from strategy_runs")
+
+    assert initial.status == "completed"
+    assert blocked_evaluation.status == blocked_learning.status == "unavailable"
+    assert runs_before_refresh == 0
+    assert recovered.status == "reused"
+    assert evaluated.status == "completed"
+    assert current_request.gaps["calendar_id"] == "XNYS"
+    assert current_request.gaps["calendar_version"] == "offline-rules-2026.3"
+    assert current_request.dataset_hash == evaluated_hash == evaluated.dataset_hash
+    assert len(snapshot.dataset_coverage) == 1
+    assert snapshot.dataset_coverage[0].dataset_hash == evaluated_hash
+    assert snapshot.dataset_coverage[0].calendar_id == "XNYS"
+    assert snapshot.dataset_coverage[0].calendar_version == "offline-rules-2026.3"
+
+
 def test_strategy_evaluation_reuses_exact_cache_key_and_force_appends_only_that_key(
     project_root, tmp_path, monkeypatch
 ) -> None:
@@ -1220,6 +1391,8 @@ def test_evaluation_later_write_failure_rolls_back_children_marks_failed_and_ret
     assert database.scalar("select count(*) from strategy_runs where status = 'failed'") == 1
     assert database.scalar("select count(*) from strategy_signals") == 0
     assert database.scalar("select count(*) from strategy_executions") == 0
+    assert database.scalar("select count(*) from strategy_run_signal_links") == 0
+    assert database.scalar("select count(*) from strategy_run_execution_links") == 0
     assert database.scalar("select count(*) from causal_audits") == 0
     assert database.scalar("select count(*) from ensemble_weights") == 0
 
@@ -1228,6 +1401,48 @@ def test_evaluation_later_write_failure_rolls_back_children_marks_failed_and_ret
     assert retried.status == "completed"
     assert database.scalar("select count(*) from strategy_runs where status = 'evaluated'") == 1
     assert database.scalar("select count(*) from strategy_signals") > 0
+    assert database.scalar("select count(*) from causal_audits") == 1
+    assert database.scalar("select count(*) from ensemble_weights") == 1
+
+
+def test_post_commit_exception_reconciles_complete_cohort_and_failure_handler_cannot_downgrade_it(
+    project_root, tmp_path
+) -> None:
+    _configure_strategy(project_root)
+    bars = tmp_path / "post-commit-bars.csv"
+    _write_bars(bars, 80)
+    database_url = f"duckdb:///{tmp_path / 'post-commit.duckdb'}"
+    pipeline, database = _csv_pipeline(project_root, database_url, bars)
+    scope = _scope("rsi_reversal")
+    assert pipeline.ingest(_ingest_options(scope)).status == "completed"
+    original = pipeline._persist_evaluation_batch
+
+    def commit_then_raise(*args, **kwargs):
+        original(*args, **kwargs)
+        raise RuntimeError("simulated lost acknowledgement after commit")
+
+    pipeline._persist_evaluation_batch = commit_then_raise  # type: ignore[method-assign]
+    evaluated = pipeline.evaluate(EvaluationOptions(scope=scope, force=True))
+    repeated = pipeline.evaluate(EvaluationOptions(scope=scope))
+    run = database.frame(
+        "select strategy_run_id, dataset_hash, run_timestamp, status, metrics from strategy_runs"
+    ).iloc[0]
+    pipeline._persist_failed_run(
+        scope,
+        pipeline.registry.resolve("rsi_reversal"),
+        str(run.dataset_hash),
+        str(run.strategy_run_id),
+        run.run_timestamp.to_pydatetime(),
+        "late failure handler",
+    )
+    reconciled = database.frame("select status, metrics from strategy_runs").iloc[0]
+
+    assert evaluated.status == "completed"
+    assert repeated.status == "reused"
+    assert reconciled.status == "evaluated"
+    assert "error_summary" not in reconciled.metrics
+    assert database.scalar("select count(*) from strategy_run_signal_links") == 80
+    assert database.scalar("select count(*) from strategy_run_execution_links") > 0
     assert database.scalar("select count(*) from causal_audits") == 1
     assert database.scalar("select count(*) from ensemble_weights") == 1
 

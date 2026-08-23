@@ -34,6 +34,7 @@ from src.config.settings import Settings
 from src.database.engine import Database
 from src.ingestion.bars import INTERVAL_DURATION
 from src.reporting.summary import research_statistics
+from src.strategies.calendars import calendar_for
 from src.strategies.types import BarInterval, canonical_hash
 from src.utils.provenance import git_commit
 
@@ -740,7 +741,30 @@ def _dataset_coverage(database: Database) -> list[DatasetCoverageSnapshot]:
         """
     )
     if not requests.empty:
-        requests = requests.drop_duplicates(["provider", "feed", "symbol", "interval"], keep="first")
+        requests = requests.loc[
+            requests.apply(
+                lambda row: (
+                    isinstance(row["gaps"], dict)
+                    and row["gaps"].get("calendar_id")
+                    == calendar_for(str(row["provider"]), str(row["feed"])).calendar_id
+                    and row["gaps"].get("calendar_version")
+                    == calendar_for(str(row["provider"]), str(row["feed"])).version
+                ),
+                axis=1,
+            )
+        ]
+        if requests.empty:
+            return []
+        evaluated_hashes = set(
+            database.frame("select distinct dataset_hash from strategy_runs where status != 'running'").get(
+                "dataset_hash", []
+            )
+        )
+        selected_requests = []
+        for _key, group in requests.groupby(["provider", "feed", "symbol", "interval"], sort=True):
+            matching = group.loc[group["dataset_hash"].isin(evaluated_hashes)]
+            selected_requests.append((matching if not matching.empty else group).iloc[0])
+        requests = pd.DataFrame(selected_requests).reset_index(drop=True)
         snapshots: list[DatasetCoverageSnapshot] = []
         for row in requests.itertuples(index=False):
             requested_start = _python_datetime(row.requested_start)

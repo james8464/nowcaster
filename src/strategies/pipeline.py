@@ -201,6 +201,24 @@ class EvaluationBatch:
     resolved_outcomes: pd.DataFrame
 
 
+_RESOLVED_OUTCOME_DTYPES: tuple[tuple[str, str], ...] = (
+    ("strategy_id", "string"),
+    ("decision_timestamp", "datetime64[ns, UTC]"),
+    ("execution_timestamp", "datetime64[ns, UTC]"),
+    ("outcome_available_at", "datetime64[ns, UTC]"),
+    ("signal", "int8"),
+    ("realized_return", "float64"),
+    ("cost", "float64"),
+    ("source_decision_hash", "string"),
+    ("source_execution_hash", "string"),
+    ("dataset_hash", "string"),
+    ("strategy_version", "string"),
+    ("symbol", "string"),
+    ("interval", "string"),
+    ("mode", "string"),
+)
+
+
 _CONSUMPTION_LOCKS: dict[str, threading.Lock] = {}
 _CONSUMPTION_LOCKS_GUARD = threading.Lock()
 
@@ -409,6 +427,7 @@ class StrategyPipeline:
                 strategy_run_ids=cached,
             )
         self._emit(emit, "progress", "evaluate", 0.1, "loaded all locally available compatible history")
+        batch: EvaluationBatch | None = None
         try:
             batch = self._evaluate_engines(options.scope, registered, query, manifest, as_of)
             self._persist_evaluation_batch(
@@ -421,19 +440,28 @@ class StrategyPipeline:
                 cohort_generation,
             )
         except Exception as error:
-            for item, run_id, run_timestamp in run_contexts:
-                try:
-                    self._persist_failed_run(
-                        options.scope,
-                        item,
-                        manifest.dataset_hash,
-                        run_id,
-                        run_timestamp,
-                        str(error),
-                    )
-                except Exception as persistence_error:
-                    error.add_note(f"failed to persist evaluation failure: {persistence_error}")
-            raise
+            committed = batch is not None and self._evaluation_cohort_is_complete(
+                options.scope,
+                manifest.dataset_hash,
+                run_contexts,
+                batch,
+                cohort_id,
+            )
+            if not committed:
+                for item, run_id, run_timestamp in run_contexts:
+                    try:
+                        self._persist_failed_run(
+                            options.scope,
+                            item,
+                            manifest.dataset_hash,
+                            run_id,
+                            run_timestamp,
+                            str(error),
+                        )
+                    except Exception as persistence_error:
+                        error.add_note(f"failed to persist evaluation failure: {persistence_error}")
+                raise
+        assert batch is not None
         statuses = {component.evaluation.status.value for component in batch.components}
         message = "evaluation completed" if statuses == {"evaluated"} else f"evaluation statuses: {sorted(statuses)}"
         self._emit(emit, "progress", "evaluate", 1.0, message)
@@ -676,7 +704,7 @@ class StrategyPipeline:
 
     def _requested_coverage(self, scope: StrategyScope) -> tuple[BarQuery | None, DatasetManifest | None, str | None]:
         frame = self.database.frame(
-            "select requested_start, requested_end, status from dataset_coverage_requests "
+            "select requested_start, requested_end, status, dataset_hash, gaps from dataset_coverage_requests "
             "where provider = :provider and feed = :feed and symbol = :symbol and interval = :interval "
             "order by requested_at desc, coverage_request_id desc limit 1",
             {
@@ -697,6 +725,13 @@ class StrategyPipeline:
             end=_utc_datetime(frame.iloc[0]["requested_end"]),
         )
         requested_manifest = self.bars.manifest(requested_query)
+        stored_evidence = frame.iloc[0]["gaps"] if isinstance(frame.iloc[0]["gaps"], dict) else {}
+        if (
+            str(frame.iloc[0]["dataset_hash"]) != requested_manifest.dataset_hash
+            or stored_evidence.get("calendar_id") != requested_manifest.calendar_id
+            or stored_evidence.get("calendar_version") != requested_manifest.calendar_version
+        ):
+            return None, None, "requested coverage uses stale calendar evidence; run strategy ingest to refresh"
         missing = sum(gap.missing_bars for gap in requested_manifest.gaps)
         if str(frame.iloc[0]["status"]) != "complete" or missing:
             return None, None, f"requested coverage is incomplete: {missing} bars unavailable"
@@ -1222,6 +1257,8 @@ class StrategyPipeline:
                         "mode": evaluation.mode.value,
                     }
                 )
+        if not rows:
+            return pd.DataFrame({name: pd.Series(dtype=dtype) for name, dtype in _RESOLVED_OUTCOME_DTYPES})
         return pd.DataFrame(rows)
 
     def _raw_validation_context(self, bars: pd.DataFrame) -> tuple[pd.Series, pd.Series, FinalBoundary]:
@@ -1330,6 +1367,7 @@ class StrategyPipeline:
             "record_count": len(outcome_records),
             "records": outcome_records,
             "records_hash": canonical_hash(outcome_records),
+            "feedback_status": "observed_outcomes" if outcome_records else "no_observed_outcomes",
         }
         with _lock_for("strategy_evaluation_persistence"), self.database.engine.begin() as connection:
             for registered, run_id, run_timestamp in run_contexts:
@@ -1379,6 +1417,79 @@ class StrategyPipeline:
                     }
                 )
             self._insert_missing(connection, "ensemble_weights", weight_rows)
+
+    def _evaluation_cohort_is_complete(
+        self,
+        scope: StrategyScope,
+        dataset_hash: str,
+        run_contexts: Sequence[tuple[RegisteredStrategy, str, datetime]],
+        batch: EvaluationBatch,
+        cohort_id: str,
+    ) -> bool:
+        run_ids = tuple(run_id for _registered, run_id, _timestamp in run_contexts)
+        components = {item.registered.spec.strategy_id: item for item in batch.components}
+        runs = self.database.frame(
+            "select strategy_run_id, strategy_id, status, metrics from strategy_runs "
+            "where dataset_hash = :dataset_hash",
+            {"dataset_hash": dataset_hash},
+        )
+        selected = runs.loc[runs["strategy_run_id"].isin(run_ids)] if not runs.empty else runs
+        if len(selected) != len(run_ids) or set(selected["status"]) != {"evaluated"}:
+            return False
+        for registered, run_id, _run_timestamp in run_contexts:
+            run = selected.loc[selected["strategy_run_id"] == run_id]
+            if len(run) != 1:
+                return False
+            metrics = run.iloc[0]["metrics"]
+            if (
+                not isinstance(metrics, dict)
+                or metrics.get("cohort_id") != cohort_id
+                or metrics.get("cohort_decision_hash") != batch.ensemble_decision.decision_hash
+            ):
+                return False
+            component = components.get(registered.spec.strategy_id)
+            if component is None:
+                return False
+            signal_count = int(
+                self.database.scalar(
+                    "select count(*) from strategy_run_signal_links l "
+                    "join strategy_signals s on s.strategy_signal_id = l.strategy_signal_id "
+                    "where l.strategy_run_id = :run_id",
+                    {"run_id": run_id},
+                )
+                or 0
+            )
+            execution_count = int(
+                self.database.scalar(
+                    "select count(*) from strategy_run_execution_links l "
+                    "join strategy_executions e on e.execution_id = l.execution_id "
+                    "where l.strategy_run_id = :run_id",
+                    {"run_id": run_id},
+                )
+                or 0
+            )
+            if signal_count != len(component.signals) or execution_count != len(component.backtest.trade_ledger):
+                return False
+            weights = self.database.frame(
+                "select evidence from ensemble_weights where strategy_run_id = :run_id",
+                {"run_id": run_id},
+            )
+            if len(weights) != 1:
+                return False
+            evidence = weights.iloc[0]["evidence"]
+            if (
+                not isinstance(evidence, dict)
+                or evidence.get("cohort_id") != cohort_id
+                or evidence.get("cohort_decision_hash") != batch.ensemble_decision.decision_hash
+            ):
+                return False
+            audit_id = canonical_hash(["prefix_invariance", *self._cache_key(scope, registered, dataset_hash)])
+            if not self.database.scalar(
+                "select count(*) from causal_audits where audit_id = :audit_id",
+                {"audit_id": audit_id},
+            ):
+                return False
+        return True
 
     def _persist_evaluation(
         self,
@@ -1602,7 +1713,7 @@ class StrategyPipeline:
             failure_metrics[f"{stage}_error"] = reason
         with self.database.engine.begin() as connection:
             existing = connection.execute(
-                select(strategy_runs.c.strategy_run_id, strategy_runs.c.metrics).where(
+                select(strategy_runs.c.strategy_run_id, strategy_runs.c.status, strategy_runs.c.metrics).where(
                     strategy_runs.c.strategy_run_id == run_id
                 )
             ).one_or_none()
@@ -1621,11 +1732,12 @@ class StrategyPipeline:
                         )
                     )
                 )
-            else:
+            elif existing.status == "running":
                 prior_metrics = existing.metrics if isinstance(existing.metrics, dict) else {}
                 connection.execute(
                     update(strategy_runs)
                     .where(strategy_runs.c.strategy_run_id == run_id)
+                    .where(strategy_runs.c.status == "running")
                     .values(
                         status="failed",
                         metrics={**prior_metrics, **failure_metrics},

@@ -244,3 +244,40 @@ All four Important findings against `bae60e72159f52a5626d4f21a4a89fd468199874` a
 - Cohort/component reservation locks are process-local, matching the native app's threaded DuckDB execution model. Cross-process writers remain governed by DuckDB's single-writer deployment constraint.
 - The offline XNYS calendar still intentionally models documented repeatable holiday/early-close rules rather than emergency one-off exchange closures; its versioned evidence makes future audited rule upgrades cache-invalidating.
 - No credentialed live Binance or Alpaca request was made in this deterministic fix round.
+
+## Independent-review fix round 5/5 addendum
+
+All three Important findings against `51102ac8b98d1ffc333b83a904803fb20b1baae9` are addressed.
+
+### Behavior and files
+
+- `src/strategies/pipeline.py` now returns a full typed resolved-outcome schema even when Task 4 produces no fills or every real outcome is excluded by the final boundary. Task 5 receives a valid empty frame, retains conservative base evidence weights, and persists explicit `no_observed_outcomes` provenance with a canonical empty-record hash. A valid always-abstain strategy therefore completes, is cacheable, and fabricates no execution or outcome.
+- Evaluation persistence exceptions are reconciled against the exact reserved cohort before failure handling. Reconciliation verifies every run is evaluated with the expected cohort/decision hash, each run has its complete joined signal and execution link set, each run has its matching weight evidence, and each component audit exists. A simulated exception after the transaction commit is treated as acknowledged success; a true in-transaction exception still rolls everything back and marks only the reserved running row failed.
+- `_persist_failed_run` is now a compare-and-set lifecycle transition. It inserts a missing failure record when reservation itself never committed, or updates only `running -> failed`; an evaluated or already terminal row is never downgraded or contaminated with a later error summary.
+- `_requested_coverage` authenticates the latest request against the current requested-range manifest: stored dataset hash, calendar ID, and calendar version must all match current provider/feed policy. Stale XNYS `offline-rules-2026.2` evidence under runtime `offline-rules-2026.3`, or a mismatched hash under the current version, returns unavailable for both evaluate and learn until `strategy ingest` appends refreshed evidence.
+- `src/app_snapshot/builder.py` discards coverage requests whose calendar provenance is stale at runtime. Where terminal strategy evidence exists, it prefers a current-policy coverage row whose dataset hash matches a terminal evaluation run, rather than a newer mismatched request. Snapshot coverage therefore reports the current calendar version and evaluation dataset identity.
+- `tests/integration/test_strategy_cli.py` adds end-to-end no-fill, post-commit reconciliation/CAS, and stale-calendar recovery/snapshot regressions. Existing correction tests now explicitly append refreshed coverage evidence after directly inserting a revision, matching the production ingestion contract. No Swift or ledger files were edited.
+
+### RED/GREEN evidence
+
+- Initial focused RED: four tests — **3 failed, 1 passed in 13.35s**. The valid abstention crashed while sorting a schema-less empty frame; the simulated post-commit exception was re-raised through the downgrade path; stale v2026.2 coverage was admitted into learning. The existing true pre-commit rollback test remained green.
+- First GREEN pass isolated a fixture-status assumption after the three production defects were fixed — **3 passed, 1 failed in 12.79s**. The Alpaca fixture produced a terminal failed validation row rather than status `evaluated`; the dataset-alignment assertion was corrected to cover all terminal evaluation evidence and then strengthened with a newer current-version but hash-mismatched request.
+- Focused GREEN: the same four behavior groups — **4 passed in 12.97s**.
+- The surrounding Task 7 suite exposed **2 failed, 55 passed in 132.80s**: two revision tests directly appended bars after their complete request, which correctly made the stored dataset hash stale. They now perform the required evidence-only reingest before evaluation.
+- Final combined no-fill/reconciliation/rollback/calendar/revision slice — **6 passed in 17.79s**.
+- Complete Python suite: `.venv/bin/pytest -q` — **455 passed in 157.10s**.
+- Changed-file Ruff check/format, `python -m compileall -q src`, and `git diff --check` — **passed**.
+
+### Fix-round self-review
+
+- Empty feedback: column order and dtypes are explicit, including UTC decision/execution/outcome timestamps, integer signal, finite float returns/costs, and string provenance/context fields. Empty feedback keeps `outcomes_through = null`, the current decision abstains, and the persisted record count is exactly zero.
+- Ambiguous commit handling: success is accepted only after run status, cohort identity, decision hash, run-scoped child links, weight evidence, and audit evidence all reconcile. Otherwise the original exception is preserved and only still-running reservations receive failure state. The pre-commit regression proves no signals, executions, links, audits, or weights survive on a failed row.
+- Calendar provenance: coverage admission compares the stored requested range to a freshly derived current-policy manifest, so both policy-version drift and data/hash drift require a new append-only request. Direct revision insertions can no longer silently inherit an older complete request.
+- Snapshot alignment: stale calendar rows are excluded before selection; a terminal run-matching dataset hash wins among current-policy rows. The test inserts a newer mismatched current-version row to prove selection is based on evaluation identity rather than request recency alone.
+- Compatibility/scope: all 455 Python tests pass; legacy CLI behavior, Task 4 execution, Task 5 weighting, provider adapters, Swift sources, and ignored progress ledgers were not modified.
+
+### Remaining concerns
+
+- An ambiguous success reconciliation performs read-after-write checks through new DuckDB connections, which is appropriate for the single-process native app and DuckDB transaction model; distributed databases would require database-specific commit tokens.
+- Snapshot provider/feed alignment relies on the versioned runtime calendar registry and terminal dataset hashes; exceptional one-off exchange closures still require an audited calendar version bump and refreshed ingestion.
+- No credentialed live Binance or Alpaca request was made in this deterministic final cycle.
