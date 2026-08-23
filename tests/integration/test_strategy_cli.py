@@ -6,15 +6,29 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import httpx
+import pytest
+from sqlalchemy import event
 from typer.testing import CliRunner
 
+from src.app_snapshot.models import AppSnapshot
 from src.cli import app
+from src.config.settings import Settings
 from src.database.engine import Database
+from src.ingestion.bars import BarRequest, MarketBar
 from src.learning.grammar import RuleNode
 from src.learning.promotion import ForwardEvidence
 from src.learning.search import RuleCandidate
 from src.pipeline import PipelineSummary
 from src.strategies import pipeline as strategy_pipeline
+from src.strategies.pipeline import (
+    BarProviderName,
+    EvaluationOptions,
+    IngestOptions,
+    StageOutcome,
+    StrategyScope,
+    create_strategy_pipeline,
+)
 from src.strategies.types import BarInterval, StrategyMode, canonical_hash
 from src.strategies.validation import PromotionDecision
 
@@ -36,6 +50,32 @@ strategies:
     parameters: {period: 2, oversold: 30, overbought: 70}
     enabled: true
 """.replace("VERSION", version).lstrip(),
+        encoding="utf-8",
+    )
+
+
+def _configure_plural_strategies(project_root: Path) -> None:
+    (project_root / "config" / "strategies.yaml").write_text(
+        """
+strategy_weight_cap: 0.5
+family_weight_caps:
+  mean_reversion: 1.0
+strategies:
+  - strategy_id: rsi_reversal
+    family: mean_reversion
+    version: 1.0.0
+    intervals: [5m]
+    warmup_bars: 3
+    parameters: {period: 2, oversold: 30, overbought: 70}
+    enabled: true
+  - strategy_id: extreme_return_reversal
+    family: mean_reversion
+    version: 1.0.0
+    intervals: [5m]
+    warmup_bars: 3
+    parameters: {lookback: 2, entry_zscore: 0.5}
+    enabled: true
+""".lstrip(),
         encoding="utf-8",
     )
 
@@ -80,6 +120,36 @@ def _base_arguments(project_root: Path, database_url: str, bars: Path) -> list[s
 
 def _events(output: str) -> list[dict[str, object]]:
     return [json.loads(line) for line in output.splitlines() if line.strip()]
+
+
+def _settings(project_root: Path, database_url: str) -> Settings:
+    return Settings.load(project_root, mode="test").model_copy(update={"database_url": database_url})
+
+
+def _csv_pipeline(project_root: Path, database_url: str, bars: Path):
+    database = Database.from_url(database_url)
+    return create_strategy_pipeline(_settings(project_root, database_url), database, csv_path=bars), database
+
+
+def _scope(*strategy_ids: str) -> StrategyScope:
+    return StrategyScope(
+        strategy_id=strategy_ids[0] if len(strategy_ids) == 1 else strategy_ids,
+        provider=BarProviderName.CSV,
+        feed="local",
+        symbol="BTCUSDT",
+        interval=BarInterval.FIVE_MINUTES,
+        mode=StrategyMode.PAPER,
+    )
+
+
+def _ingest_options(scope: StrategyScope, count: int = 80, *, force: bool = False) -> IngestOptions:
+    start = datetime(2026, 8, 20, tzinfo=UTC)
+    return IngestOptions(
+        scope=scope,
+        start=start,
+        end=start + timedelta(minutes=5 * count),
+        force=force,
+    )
 
 
 def test_strategy_cli_is_nested_without_removing_legacy_earnings_commands() -> None:
@@ -208,6 +278,165 @@ def test_strategy_ingest_fetches_only_missing_coverage_and_appends(project_root,
     assert Database.from_url(database_url).scalar("select count(*) from market_bars") == 4
 
 
+def test_evaluation_uses_all_contiguous_local_history_across_completed_requests(project_root, tmp_path) -> None:
+    _configure_strategy(project_root)
+    bars = tmp_path / "contiguous-bars.csv"
+    _write_bars(bars, 80)
+    database_url = f"duckdb:///{tmp_path / 'contiguous.duckdb'}"
+    common = _base_arguments(project_root, database_url, bars)
+
+    for start, end in (
+        ("2026-08-20T00:00:00Z", "2026-08-20T03:20:00Z"),
+        ("2026-08-20T03:20:00Z", "2026-08-20T06:40:00Z"),
+    ):
+        ingested = RUNNER.invoke(
+            app,
+            ["strategy", "ingest", *common, "--start", start, "--end", end],
+        )
+        assert ingested.exit_code == 0, ingested.output
+
+    evaluated = RUNNER.invoke(app, ["strategy", "evaluate", *common, "--mode", "paper"])
+    database = Database.from_url(database_url)
+
+    assert evaluated.exit_code == 0, evaluated.output
+    assert database.scalar("select count(*) from strategy_signals") == 80
+
+
+def test_live_adapter_history_keeps_per_bar_causal_decisions_and_evaluates(project_root, tmp_path) -> None:
+    _configure_strategy(project_root)
+    start = datetime(2026, 8, 20, tzinfo=UTC)
+    count = 80
+    payload: list[list[object]] = []
+    previous = 100.0
+    for index in range(count):
+        opened_at = start + timedelta(minutes=5 * index)
+        close = previous + (1.0 if index % 3 else -0.5)
+        open_ms = int(opened_at.timestamp() * 1_000)
+        close_ms = int((opened_at + timedelta(minutes=5)).timestamp() * 1_000) - 1
+        payload.append(
+            [
+                open_ms,
+                str(previous),
+                str(max(previous, close) + 0.2),
+                str(min(previous, close) - 0.2),
+                str(close),
+                "1000",
+                close_ms,
+                "100000",
+                10,
+                "500",
+                "50000",
+                "0",
+            ]
+        )
+        previous = close
+
+    client = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json=payload)))
+    database_url = f"duckdb:///{tmp_path / 'live-shaped.duckdb'}"
+    database = Database.from_url(database_url)
+    pipeline = create_strategy_pipeline(
+        _settings(project_root, database_url),
+        database,
+        http_client=client,
+    )
+    scope = StrategyScope(
+        strategy_id="rsi_reversal",
+        provider=BarProviderName.BINANCE,
+        feed="spot",
+        symbol="BTCUSDT",
+        interval=BarInterval.FIVE_MINUTES,
+        mode=StrategyMode.PAPER,
+    )
+
+    ingested = pipeline.ingest(IngestOptions(scope=scope, start=start, end=start + timedelta(minutes=5 * count)))
+    evaluated = pipeline.evaluate(EvaluationOptions(scope=scope))
+    signals = database.frame("select decision_timestamp from strategy_signals order by decision_timestamp")
+
+    assert ingested.status == evaluated.status == "completed"
+    assert len(signals) == signals["decision_timestamp"].nunique() == count
+    assert database.scalar("select count(*) from strategy_runs where status = 'evaluated'") == 1
+
+
+def test_partial_requested_coverage_is_persisted_and_blocks_cli_evaluation(project_root, tmp_path) -> None:
+    _configure_strategy(project_root)
+    bars = tmp_path / "partial-bars.csv"
+    _write_bars(bars, 60)
+    database_url = f"duckdb:///{tmp_path / 'partial.duckdb'}"
+    common = _base_arguments(project_root, database_url, bars)
+
+    ingested = RUNNER.invoke(
+        app,
+        [
+            "strategy",
+            "ingest",
+            *common,
+            "--start",
+            "2026-08-20T00:00:00Z",
+            "--end",
+            "2026-08-20T06:40:00Z",
+        ],
+    )
+    evaluated = RUNNER.invoke(app, ["strategy", "evaluate", *common, "--mode", "paper"])
+    database = Database.from_url(database_url)
+    requests = database.frame("select status, requested_start, requested_end, gaps from dataset_coverage_requests")
+    snapshot_path = tmp_path / "partial-snapshot.json"
+    exported = RUNNER.invoke(
+        app,
+        [
+            "strategy",
+            "export",
+            "--project-root",
+            str(project_root),
+            "--database-url",
+            database_url,
+            "--output",
+            str(snapshot_path),
+            "--report-output",
+            str(tmp_path / "partial-report.md"),
+        ],
+    )
+    snapshot = AppSnapshot.model_validate_json(snapshot_path.read_text(encoding="utf-8"))
+
+    assert ingested.exit_code != 0
+    assert _events(ingested.stdout)[-1]["event"] == "error"
+    assert "unavailable" in str(_events(ingested.stdout)[-1]["message"])
+    assert evaluated.exit_code != 0
+    assert _events(evaluated.stdout)[-1]["event"] == "error"
+    assert "coverage" in str(_events(evaluated.stdout)[-1]["message"])
+    assert requests["status"].tolist() == ["incomplete"]
+    assert requests.iloc[0]["gaps"]
+    assert exported.exit_code == 0, exported.output
+    assert snapshot.dataset_coverage[0].requested_end.isoformat() == "2026-08-20T06:40:00+00:00"
+    assert snapshot.dataset_coverage[0].complete is False
+    assert snapshot.dataset_coverage[0].gaps
+    assert database.scalar("select count(*) from strategy_runs") == 0
+
+
+def test_empty_forced_refresh_is_unavailable_even_when_prior_coverage_exists(project_root, tmp_path) -> None:
+    class EmptyProvider:
+        def fetch(self, request: BarRequest) -> list[MarketBar]:
+            return []
+
+    _configure_strategy(project_root)
+    bars = tmp_path / "complete-bars.csv"
+    _write_bars(bars, 80)
+    database_url = f"duckdb:///{tmp_path / 'empty-force.duckdb'}"
+    pipeline, database = _csv_pipeline(project_root, database_url, bars)
+    scope = _scope("rsi_reversal")
+    options = _ingest_options(scope)
+    assert pipeline.ingest(options).status == "completed"
+    pipeline.providers[BarProviderName.CSV] = EmptyProvider()
+
+    refreshed = pipeline.ingest(options.model_copy(update={"force": True}))
+    persisted = database.frame(
+        "select status from dataset_coverage_requests order by requested_at, coverage_request_id"
+    )
+
+    assert refreshed.status == "unavailable"
+    assert "empty" in refreshed.message
+    assert persisted["status"].tolist() == ["complete", "unavailable"]
+
+
 def test_strategy_evaluation_reuses_exact_cache_key_and_force_appends_only_that_key(
     project_root, tmp_path, monkeypatch
 ) -> None:
@@ -314,6 +543,101 @@ def test_strategy_evaluation_reuses_exact_cache_key_and_force_appends_only_that_
     ]
 
 
+def test_concurrent_fixed_clock_forced_evaluations_reserve_distinct_runs(project_root, tmp_path) -> None:
+    _configure_strategy(project_root)
+    bars = tmp_path / "concurrent-bars.csv"
+    _write_bars(bars, 80)
+    database_url = f"duckdb:///{tmp_path / 'concurrent-force.duckdb'}"
+    pipeline, database = _csv_pipeline(project_root, database_url, bars)
+    pipeline.clock = lambda: datetime(2026, 8, 23, 12, tzinfo=UTC)
+    scope = _scope("rsi_reversal")
+    assert pipeline.ingest(_ingest_options(scope)).status == "completed"
+    registered = pipeline.registry.resolve("rsi_reversal")
+    created_at = datetime(2026, 8, 23, 11, tzinfo=UTC)
+    database.insert(
+        "strategy_runs",
+        [
+            {
+                "strategy_run_id": "unrelated-concurrent-sentinel",
+                "dataset_hash": "f" * 64,
+                "strategy_id": registered.spec.strategy_id,
+                "strategy_version": registered.spec.deterministic_version,
+                "family": registered.spec.family.value,
+                "symbol": scope.symbol,
+                "interval": scope.interval.value,
+                "mode": scope.mode.value,
+                "run_timestamp": created_at,
+                "parameters": {},
+                "status": "unrelated_sentinel",
+                "metrics": {"sentinel": True},
+                "started_at": created_at,
+                "ended_at": created_at,
+                "source": "test",
+                "source_version": "1",
+                "created_at": created_at,
+            }
+        ],
+    )
+
+    def force_evaluate() -> StageOutcome:
+        return pipeline.evaluate(EvaluationOptions(scope=scope, force=True))
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = list(executor.map(lambda _: force_evaluate(), range(2)))
+
+    runs = database.frame(
+        "select strategy_run_id, dataset_hash, status, run_timestamp from strategy_runs order by run_timestamp"
+    )
+    selected = runs.loc[runs["dataset_hash"] != "f" * 64]
+    weights = database.frame("select strategy_run_id, effective_at from ensemble_weights order by effective_at")
+    assert [outcome.status for outcome in outcomes] == ["completed", "completed"]
+    assert len(selected) == 2
+    assert selected["strategy_run_id"].nunique() == selected["run_timestamp"].nunique() == 2
+    assert len(weights) == weights["strategy_run_id"].nunique() == weights["effective_at"].nunique() == 2
+    assert set(weights["strategy_run_id"]) == set(selected["strategy_run_id"])
+    assert runs.loc[runs["strategy_run_id"] == "unrelated-concurrent-sentinel", "status"].tolist() == [
+        "unrelated_sentinel"
+    ]
+
+
+def test_evaluation_later_write_failure_rolls_back_children_marks_failed_and_retries(project_root, tmp_path) -> None:
+    _configure_strategy(project_root)
+    bars = tmp_path / "atomic-bars.csv"
+    _write_bars(bars, 80)
+    database_url = f"duckdb:///{tmp_path / 'atomic-evaluation.duckdb'}"
+    pipeline, database = _csv_pipeline(project_root, database_url, bars)
+    scope = _scope("rsi_reversal")
+    assert pipeline.ingest(_ingest_options(scope)).status == "completed"
+    injected = False
+
+    def fail_late(_connection, _cursor, statement, _parameters, _context, _executemany) -> None:
+        nonlocal injected
+        if not injected and "INSERT INTO causal_audits" in statement:
+            injected = True
+            raise RuntimeError("injected later-write failure")
+
+    event.listen(database.engine, "before_cursor_execute", fail_late)
+    try:
+        with pytest.raises(RuntimeError, match="injected later-write failure"):
+            pipeline.evaluate(EvaluationOptions(scope=scope, force=True))
+    finally:
+        event.remove(database.engine, "before_cursor_execute", fail_late)
+
+    assert database.scalar("select count(*) from strategy_runs where status = 'failed'") == 1
+    assert database.scalar("select count(*) from strategy_signals") == 0
+    assert database.scalar("select count(*) from strategy_executions") == 0
+    assert database.scalar("select count(*) from causal_audits") == 0
+    assert database.scalar("select count(*) from ensemble_weights") == 0
+
+    retried = pipeline.evaluate(EvaluationOptions(scope=scope))
+
+    assert retried.status == "completed"
+    assert database.scalar("select count(*) from strategy_runs where status = 'evaluated'") == 1
+    assert database.scalar("select count(*) from strategy_signals") > 0
+    assert database.scalar("select count(*) from causal_audits") == 1
+    assert database.scalar("select count(*) from ensemble_weights") == 1
+
+
 def test_strategy_learning_uses_observed_bounded_trial_ledger_and_jsonl_progress(project_root, tmp_path) -> None:
     _configure_strategy(project_root)
     bars = tmp_path / "bars.csv"
@@ -346,6 +670,63 @@ def test_strategy_learning_uses_observed_bounded_trial_ledger_and_jsonl_progress
     assert Database.from_url(database_url).scalar("select count(*) from learning_trials") == 2
 
 
+def test_learning_and_evaluation_share_raw_sealed_boundary_and_adaptive_trials(project_root, tmp_path) -> None:
+    _configure_strategy(project_root)
+    bars = tmp_path / "boundary-bars.csv"
+    _write_bars(bars, 100)
+    database_url = f"duckdb:///{tmp_path / 'boundary.duckdb'}"
+    common = _base_arguments(project_root, database_url, bars)
+    ingested = RUNNER.invoke(
+        app,
+        [
+            "strategy",
+            "ingest",
+            *common,
+            "--start",
+            "2026-08-20T00:00:00Z",
+            "--end",
+            "2026-08-20T08:20:00Z",
+        ],
+    )
+    learned = RUNNER.invoke(
+        app,
+        ["strategy", "learn", *common, "--evaluation-budget", "2", "--seed", "17"],
+    )
+    evaluated = RUNNER.invoke(app, ["strategy", "evaluate", *common, "--mode", "paper"])
+    output = tmp_path / "boundary-snapshot.json"
+    report = tmp_path / "boundary-report.md"
+    exported = RUNNER.invoke(
+        app,
+        [
+            "strategy",
+            "export",
+            "--project-root",
+            str(project_root),
+            "--database-url",
+            database_url,
+            "--output",
+            str(output),
+            "--report-output",
+            str(report),
+        ],
+    )
+    database = Database.from_url(database_url)
+    trial_payloads = database.frame("select candidate from learning_trials order by evaluated_at")["candidate"]
+    metrics = database.frame("select metrics from strategy_runs where status = 'evaluated'").iloc[0]["metrics"]
+    expected_boundary = "2026-08-20T06:40:00+00:00"
+    snapshot = AppSnapshot.model_validate_json(output.read_text(encoding="utf-8"))
+
+    assert ingested.exit_code == learned.exit_code == evaluated.exit_code == exported.exit_code == 0
+    assert {payload["sealed_final_start"] for payload in trial_payloads} == {expected_boundary}
+    assert metrics["final_boundary"] == expected_boundary
+    assert metrics["trial_count"] == sum(
+        payload["status"] == "succeeded" and bool(payload["fold_metrics"]) for payload in trial_payloads
+    )
+    assert metrics["trial_count"] > 0
+    assert snapshot.learning_runs[0].final_boundary.isoformat() == expected_boundary
+    assert isinstance(snapshot.learning_runs[0].best_rule, str)
+
+
 def test_execution_ids_include_strategy_version_interval_and_mode_natural_context(project_root, tmp_path) -> None:
     _configure_strategy(project_root, version="1.0.0")
     bars = tmp_path / "bars.csv"
@@ -375,6 +756,60 @@ def test_execution_ids_include_strategy_version_interval_and_mode_natural_contex
     assert ingested.exit_code == first.exit_code == second.exit_code == 0, second.output
     assert executions["strategy_version"].nunique() == 2
     assert executions["execution_id"].nunique() == len(executions)
+
+
+def test_plural_strategy_evaluation_persists_ensemble_decision_and_snapshot_provenance(project_root, tmp_path) -> None:
+    _configure_plural_strategies(project_root)
+    bars = tmp_path / "plural-bars.csv"
+    _write_bars(bars, 80)
+    database_url = f"duckdb:///{tmp_path / 'plural.duckdb'}"
+    common = _base_arguments(project_root, database_url, bars)
+    common.extend(["--strategy-id", "extreme_return_reversal"])
+    ingested = RUNNER.invoke(
+        app,
+        [
+            "strategy",
+            "ingest",
+            *common,
+            "--start",
+            "2026-08-20T00:00:00Z",
+            "--end",
+            "2026-08-20T06:40:00Z",
+        ],
+    )
+    evaluated = RUNNER.invoke(app, ["strategy", "evaluate", *common, "--mode", "paper"])
+    output = tmp_path / "plural-snapshot.json"
+    report = tmp_path / "plural-report.md"
+    exported = RUNNER.invoke(
+        app,
+        [
+            "strategy",
+            "export",
+            "--project-root",
+            str(project_root),
+            "--database-url",
+            database_url,
+            "--output",
+            str(output),
+            "--report-output",
+            str(report),
+        ],
+    )
+    database = Database.from_url(database_url)
+    runs = database.frame("select strategy_id from strategy_runs where status = 'evaluated' order by strategy_id")
+    weights = database.frame("select strategy_id, evidence from ensemble_weights order by strategy_id")
+    snapshot = AppSnapshot.model_validate_json(output.read_text(encoding="utf-8"))
+
+    assert ingested.exit_code == evaluated.exit_code == exported.exit_code == 0, evaluated.output
+    assert runs["strategy_id"].tolist() == ["extreme_return_reversal", "rsi_reversal"]
+    assert weights["strategy_id"].tolist() == ["extreme_return_reversal", "rsi_reversal"]
+    assert all(item["current_decision"]["decision_hash"] for item in weights["evidence"])
+    assert all("contribution" in item for item in weights["evidence"])
+    assert [item.strategy_id for item in snapshot.ensemble_components] == [
+        "extreme_return_reversal",
+        "rsi_reversal",
+    ]
+    assert all(item.evidence["current_decision"]["decision_hash"] for item in snapshot.ensemble_components)
 
 
 def test_strategy_export_writes_snapshot_and_cautious_compact_report(project_root, tmp_path) -> None:

@@ -487,6 +487,35 @@ market_bars = Table(
     ),
 )
 
+dataset_coverage_requests = Table(
+    "dataset_coverage_requests",
+    metadata,
+    Column("coverage_request_id", String, primary_key=True),
+    Column("provider", String, nullable=False),
+    Column("feed", String, nullable=False),
+    Column("symbol", String, nullable=False),
+    Column("interval", String, nullable=False),
+    Column("requested_start", DateTime(timezone=True), nullable=False),
+    Column("requested_end", DateTime(timezone=True), nullable=False),
+    Column("requested_at", DateTime(timezone=True), nullable=False),
+    Column("force", Boolean, nullable=False),
+    Column("status", String, nullable=False),
+    Column("dataset_hash", String, nullable=False),
+    Column("row_count", Integer, nullable=False),
+    Column("gaps", JSON, nullable=False),
+    *common_columns(),
+    UniqueConstraint(
+        "provider",
+        "feed",
+        "symbol",
+        "interval",
+        "requested_start",
+        "requested_end",
+        "requested_at",
+        name="uq_dataset_coverage_request_timestamp",
+    ),
+)
+
 strategy_runs = Table(
     "strategy_runs",
     metadata,
@@ -703,6 +732,15 @@ NATURAL_KEYS: dict[str, tuple[str, ...]] = {
     "backtest_positions": ("backtest_run_id", "signal_id"),
     "backtest_sensitivity": ("backtest_run_id", "scenario"),
     "market_bars": ("provider", "feed", "symbol", "interval", "open_timestamp", "revision", "available_at"),
+    "dataset_coverage_requests": (
+        "provider",
+        "feed",
+        "symbol",
+        "interval",
+        "requested_start",
+        "requested_end",
+        "requested_at",
+    ),
     "strategy_runs": ("dataset_hash", "strategy_id", "strategy_version", "symbol", "interval", "mode", "run_timestamp"),
     "strategy_signals": (
         "dataset_hash",

@@ -197,7 +197,7 @@ def export_app_snapshot(
 
 
 def _strategy_scope(
-    strategy_id: str,
+    strategy_id: list[str] | None,
     provider: str,
     feed: str,
     symbol: str,
@@ -205,7 +205,7 @@ def _strategy_scope(
     mode: str,
 ) -> StrategyScope:
     return StrategyScope(
-        strategy_id=strategy_id,
+        strategy_ids=strategy_id or (),
         provider=provider,
         feed=feed,
         symbol=symbol,
@@ -237,6 +237,9 @@ def _run_strategy_stage(stage: str, operation: Callable[[Callable[[PipelineEvent
             PipelineEvent(event="error", stage=stage, progress=1, message=f"{type(error).__name__}: {error}")
         )
         raise typer.Exit(code=1) from error
+    if outcome.status == "unavailable":
+        _emit_strategy_event(PipelineEvent(event="error", stage=stage, progress=1, message=outcome.message))
+        raise typer.Exit(code=1)
     _emit_strategy_event(PipelineEvent(event="complete", stage=stage, progress=1, message=outcome.message))
 
 
@@ -244,7 +247,7 @@ def _run_strategy_stage(stage: str, operation: Callable[[Callable[[PipelineEvent
 def strategy_ingest(
     project_root: Annotated[Path, typer.Option(exists=True, file_okay=False)] = DEFAULT_PROJECT_ROOT,
     database_url: Annotated[str | None, typer.Option()] = None,
-    strategy_id: Annotated[str, typer.Option()] = "",
+    strategy_id: Annotated[list[str] | None, typer.Option()] = None,
     provider: Annotated[str, typer.Option()] = BarProviderName.BINANCE.value,
     feed: Annotated[str, typer.Option()] = "spot",
     symbol: Annotated[str, typer.Option()] = "BTCUSDT",
@@ -274,7 +277,7 @@ def strategy_ingest(
 def strategy_evaluate(
     project_root: Annotated[Path, typer.Option(exists=True, file_okay=False)] = DEFAULT_PROJECT_ROOT,
     database_url: Annotated[str | None, typer.Option()] = None,
-    strategy_id: Annotated[str, typer.Option()] = "",
+    strategy_id: Annotated[list[str] | None, typer.Option()] = None,
     provider: Annotated[str, typer.Option()] = BarProviderName.BINANCE.value,
     feed: Annotated[str, typer.Option()] = "spot",
     symbol: Annotated[str, typer.Option()] = "BTCUSDT",
@@ -300,7 +303,7 @@ def strategy_evaluate(
 def strategy_learn(
     project_root: Annotated[Path, typer.Option(exists=True, file_okay=False)] = DEFAULT_PROJECT_ROOT,
     database_url: Annotated[str | None, typer.Option()] = None,
-    strategy_id: Annotated[str, typer.Option()] = "",
+    strategy_id: Annotated[list[str] | None, typer.Option()] = None,
     provider: Annotated[str, typer.Option()] = BarProviderName.BINANCE.value,
     feed: Annotated[str, typer.Option()] = "spot",
     symbol: Annotated[str, typer.Option()] = "BTCUSDT",

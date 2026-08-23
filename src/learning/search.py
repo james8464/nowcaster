@@ -192,9 +192,7 @@ class LearningExperiment:
             )
         if any(not isinstance(rule, RuleNode) for rule in self.seed_rules):
             raise ValueError("seed rules must be typed RuleNode instances")
-        ordered_seed_rules = tuple(
-            sorted(self.seed_rules, key=lambda rule: (rule.semantic_hash, rule.render()))
-        )
+        ordered_seed_rules = tuple(sorted(self.seed_rules, key=lambda rule: (rule.semantic_hash, rule.render())))
         object.__setattr__(
             self,
             "seed_rules",
@@ -326,9 +324,10 @@ def _development_frame(experiment: LearningExperiment, bars: pd.DataFrame) -> pd
         execution_numeric = ("open", "high", "low", "close", "volume")
         for column in execution_numeric:
             frame[column] = pd.to_numeric(frame[column], errors="coerce")
-        if frame[list(execution_numeric)].isna().any().any() or not np.isfinite(
-            frame[list(execution_numeric)].to_numpy(dtype=float)
-        ).all():
+        if (
+            frame[list(execution_numeric)].isna().any().any()
+            or not np.isfinite(frame[list(execution_numeric)].to_numpy(dtype=float)).all()
+        ):
             raise ValueError("development execution prices and volume must be finite numbers")
         if (frame["close_timestamp"] <= frame["open_timestamp"]).any() or (frame["volume"] < 0).any():
             raise ValueError("development execution bar chronology or volume is malformed")
@@ -362,9 +361,7 @@ def _validate_rule_domain(experiment: LearningExperiment, rule: RuleNode) -> Non
             if node.name not in experiment.indicators:
                 raise ValueError(f"indicator '{node.name}' is not a declared indicator")
             if node.lag < 1 or node.lag > experiment.maximum_lag:
-                raise ValueError(
-                    f"indicator lag {node.lag} is outside maximum lag {experiment.maximum_lag}"
-                )
+                raise ValueError(f"indicator lag {node.lag} is outside maximum lag {experiment.maximum_lag}")
             if node.parameters:
                 raise ValueError("indicator parameters are outside the declared bounded domain")
         elif node.operator.value == "number" and node.value not in experiment.thresholds:
@@ -485,9 +482,7 @@ def _default_evaluator(
     validation: pd.DataFrame,
     execution_frame: pd.DataFrame,
 ) -> FoldMetrics:
-    causal_warmup = train.sort_values(experiment.timestamp_column, kind="stable").tail(
-        experiment.maximum_lag + 1
-    )
+    causal_warmup = train.sort_values(experiment.timestamp_column, kind="stable").tail(experiment.maximum_lag + 1)
     combined = pd.concat([causal_warmup, validation], ignore_index=True).sort_values(
         experiment.timestamp_column, kind="stable"
     )
@@ -504,8 +499,7 @@ def _default_evaluator(
     last_decision = pd.Timestamp(validation[experiment.timestamp_column].max())
     eligible_at = last_decision + experiment.execution_assumptions.latency
     future_execution = execution_frame.loc[
-        (execution_frame["open_timestamp"] >= eligible_at)
-        & (execution_frame["close_timestamp"] > last_decision)
+        (execution_frame["open_timestamp"] >= eligible_at) & (execution_frame["close_timestamp"] > last_decision)
     ].sort_values("open_timestamp", kind="stable")
     execution_end = (
         pd.Timestamp(future_execution.iloc[0]["close_timestamp"])
@@ -513,9 +507,8 @@ def _default_evaluator(
         else pd.Timestamp(combined["close_timestamp"].max())
     )
     execution_start = pd.Timestamp(causal_warmup["open_timestamp"].min())
-    execution_mask = (
-        (execution_frame["open_timestamp"] >= execution_start)
-        & (execution_frame["close_timestamp"] <= execution_end)
+    execution_mask = (execution_frame["open_timestamp"] >= execution_start) & (
+        execution_frame["close_timestamp"] <= execution_end
     )
     execution_bars = execution_frame.loc[
         execution_mask,
@@ -654,6 +647,7 @@ def _trial_payload(
         "evaluated_at": _timestamp_text(trial.evaluated_at),
         "learning_run_id": experiment.learning_run_id,
         "dataset_hash": experiment.dataset_hash,
+        "sealed_final_start": experiment.sealed_final_start.isoformat(),
         "symbol": experiment.symbol,
         "interval": experiment.interval.value,
         "mode": StrategyMode.WALK_FORWARD_LEARNING.value,
@@ -782,9 +776,7 @@ def _resume_trials(experiment: LearningExperiment, development_digest: str) -> l
             raise ValueError("persisted learning trial ordinal is malformed")
         row_fitness = None if pd.isna(row["fitness"]) else float(row["fitness"])
         payload_fitness = payload.get("fitness")
-        fitness_matches = (
-            row_fitness is None and payload_fitness is None
-        ) or (
+        fitness_matches = (row_fitness is None and payload_fitness is None) or (
             row_fitness is not None
             and isinstance(payload_fitness, (float, int))
             and not isinstance(payload_fitness, bool)
@@ -946,6 +938,7 @@ def _persist_discovery(
                 },
                 "evidence": {
                     "development_evidence_through": experiment.as_of.isoformat(),
+                    "final_boundary": experiment.sealed_final_start.isoformat(),
                     "development_evidence_digest": development_digest,
                     "experiment_hash": _experiment_hash(experiment),
                     "fitness": best.fitness,

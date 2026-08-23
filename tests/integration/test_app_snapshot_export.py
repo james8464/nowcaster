@@ -281,7 +281,8 @@ def test_snapshot_v2_builds_strategy_ensemble_coverage_learning_and_causal_audit
     assert [(item.provider, item.row_count) for item in snapshot.dataset_coverage] == [("binance", 2)]
     assert snapshot.learning_runs[0].evaluated_candidates == snapshot.learning_runs[0].evaluation_budget == 2
     assert [trial.trial_id for trial in snapshot.learning_runs[0].trials] == ["trial-1", "trial-2"]
-    assert snapshot.learning_runs[0].best_rule.rule_id == "rule-2"
+    assert snapshot.learning_runs[0].best_rule == "volume_zscore[t-1] > 1"
+    assert snapshot.learning_runs[0].best_rule_detail.rule_id == "rule-2"
     assert snapshot.learning_runs[0].final_boundary == datetime(2026, 8, 23, tzinfo=UTC)
     assert [(item.audit_id, item.outer_block_consumed) for item in snapshot.causal_audits] == [("audit-1", True)]
 

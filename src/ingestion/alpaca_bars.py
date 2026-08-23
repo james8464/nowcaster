@@ -58,7 +58,7 @@ class AlpacaBarProvider:
 
     def fetch(self, request: BarRequest) -> Iterable[MarketBar]:
         feed = (request.feed or self.feed).strip().lower()
-        available_at = require_utc(self.clock())
+        retrieved_at = require_utc(self.clock())
         page_token: str | None = None
         seen_tokens: set[str] = set()
         bars: list[MarketBar] = []
@@ -98,7 +98,7 @@ class AlpacaBarProvider:
                 if open_timestamp < request.start or open_timestamp >= request.end:
                     continue
                 close_timestamp = open_timestamp + INTERVAL_DURATION[request.interval]
-                if close_timestamp > available_at:
+                if close_timestamp > retrieved_at:
                     continue
                 bars.append(
                     MarketBar(
@@ -108,7 +108,8 @@ class AlpacaBarProvider:
                         interval=request.interval,
                         open_timestamp=open_timestamp,
                         close_timestamp=close_timestamp,
-                        available_at=available_at,
+                        available_at=close_timestamp,
+                        retrieved_at=retrieved_at,
                         revision=1,
                         finalized=True,
                         open=float(raw["o"]),

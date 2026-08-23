@@ -679,9 +679,61 @@ def _dataset_coverage(database: Database) -> list[DatasetCoverageSnapshot]:
         order by provider, feed, symbol, interval, open_timestamp, available_at, revision
         """
     )
+    latest = frame.drop_duplicates(["provider", "feed", "symbol", "interval", "open_timestamp"], keep="last")
+    requests = database.frame(
+        """
+        select coverage_request_id, provider, feed, symbol, interval, requested_start,
+               requested_end, requested_at, status, dataset_hash, row_count, gaps
+        from dataset_coverage_requests
+        order by provider, feed, symbol, interval, requested_at desc, coverage_request_id desc
+        """
+    )
+    if not requests.empty:
+        requests = requests.drop_duplicates(["provider", "feed", "symbol", "interval"], keep="first")
+        snapshots: list[DatasetCoverageSnapshot] = []
+        for row in requests.itertuples(index=False):
+            requested_start = _python_datetime(row.requested_start)
+            requested_end = _python_datetime(row.requested_end)
+            if requested_start is None or requested_end is None:
+                continue
+            selected = latest.loc[
+                (latest["provider"] == row.provider)
+                & (latest["feed"] == row.feed)
+                & (latest["symbol"] == row.symbol)
+                & (latest["interval"] == row.interval)
+                & (pd.to_datetime(latest["open_timestamp"], utc=True) >= requested_start)
+                & (pd.to_datetime(latest["open_timestamp"], utc=True) < requested_end)
+            ].sort_values("open_timestamp", kind="stable")
+            coverage_start = _python_datetime(selected.iloc[0]["open_timestamp"]) if not selected.empty else None
+            coverage_end = _python_datetime(selected.iloc[-1]["close_timestamp"]) if not selected.empty else None
+            gaps = [
+                DatasetGapSnapshot(
+                    start=item["start"],
+                    end=item["end"],
+                    missing_bars=int(item["missing_bars"]),
+                )
+                for item in (row.gaps if isinstance(row.gaps, list) else [])[:100]
+                if isinstance(item, dict)
+            ]
+            snapshots.append(
+                DatasetCoverageSnapshot(
+                    dataset_hash=str(row.dataset_hash),
+                    provider=str(row.provider),
+                    feed=str(row.feed),
+                    symbol=str(row.symbol),
+                    interval=str(row.interval),
+                    requested_start=requested_start,
+                    requested_end=requested_end,
+                    coverage_start=coverage_start,
+                    coverage_end=coverage_end,
+                    row_count=int(row.row_count),
+                    gaps=gaps,
+                    complete=str(row.status) == "complete" and not gaps,
+                )
+            )
+        return snapshots[:200]
     if frame.empty:
         return []
-    latest = frame.drop_duplicates(["provider", "feed", "symbol", "interval", "open_timestamp"], keep="last")
     known_hashes = database.frame(
         "select distinct dataset_hash, symbol, interval from strategy_runs order by dataset_hash"
     )
@@ -820,7 +872,7 @@ def _learning_runs(database: Database, audits: list[CausalAuditSnapshot]) -> lis
                 item.rule_id,
             )
         )
-        best_rule = discovered[0] if discovered else None
+        best_rule_detail = discovered[0] if discovered else None
         evidence = (
             matching_rules.iloc[0]["evidence"]
             if not matching_rules.empty and isinstance(matching_rules.iloc[0]["evidence"], dict)
@@ -828,8 +880,12 @@ def _learning_runs(database: Database, audits: list[CausalAuditSnapshot]) -> lis
         )
         evaluated = len(trial_snapshots)
         budget = max(int(evidence.get("trial_count") or 0), evaluated)
-        final_boundary = _optional_utc(evidence.get("final_boundary"))
-        audit = audit_by_strategy.get(best_rule.strategy_id) if best_rule is not None else None
+        trial_evidence = trial_group.iloc[0]["candidate"] if not trial_group.empty else {}
+        trial_evidence = trial_evidence if isinstance(trial_evidence, dict) else {}
+        final_boundary = _optional_utc(evidence.get("final_boundary") or trial_evidence.get("sealed_final_start"))
+        if final_boundary is None:
+            raise ValueError("learning run is missing its sealed final boundary and must be regenerated")
+        audit = audit_by_strategy.get(best_rule_detail.strategy_id) if best_rule_detail is not None else None
         generation = 1
         if "-force-" in str(learning_run_id):
             try:
@@ -842,13 +898,14 @@ def _learning_runs(database: Database, audits: list[CausalAuditSnapshot]) -> lis
                 state="completed" if evaluated >= budget else "running",
                 evaluated_candidates=evaluated,
                 evaluation_budget=budget,
-                best_rule=best_rule,
+                best_rule=best_rule_detail.rule_text if best_rule_detail is not None else None,
+                best_rule_detail=best_rule_detail,
                 final_boundary=final_boundary,
                 generation=generation,
                 progress=float(evaluated / budget) if budget else 0.0,
                 trials=trial_snapshots,
                 discovered_rules=discovered,
-                promotion_state=best_rule.state if best_rule is not None else "no_candidate",
+                promotion_state=best_rule_detail.state if best_rule_detail is not None else "no_candidate",
                 causal_audit_id=audit.audit_id if audit is not None else None,
                 no_repaint_badge=audit.no_repaint_badge if audit is not None else "not_audited",
             )

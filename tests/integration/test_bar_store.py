@@ -78,6 +78,24 @@ def test_append_is_idempotent_and_as_of_selects_only_the_revision_available_then
     assert repository.database.scalar("SELECT count(*) FROM market_bars") == 2
 
 
+def test_adapter_refetch_revision_is_not_visible_before_its_retrieval(repository) -> None:
+    original = _bar(0, available_minute=5, close=100.5, payload_hash="a" * 64).model_copy(
+        update={"retrieved_at": datetime(2026, 8, 22, 10, 30, tzinfo=UTC)}
+    )
+    corrected = _bar(0, available_minute=5, close=100.75, payload_hash="b" * 64).model_copy(
+        update={"retrieved_at": datetime(2026, 8, 22, 10, 40, tzinfo=UTC)}
+    )
+
+    repository.append([original])
+    repository.append([corrected])
+
+    before_refetch = repository.bars_as_of(_query(), datetime(2026, 8, 22, 10, 35, tzinfo=UTC))
+    after_refetch = repository.bars_as_of(_query(), datetime(2026, 8, 22, 10, 45, tzinfo=UTC))
+
+    assert before_refetch[["revision", "close"]].to_dict("records") == [{"revision": 1, "close": 100.5}]
+    assert after_refetch[["revision", "close"]].to_dict("records") == [{"revision": 2, "close": 100.75}]
+
+
 def test_as_of_uses_source_availability_when_revisions_arrive_out_of_order(repository):
     original = _bar(0, available_minute=6, close=100.5, payload_hash="a" * 64)
     corrected = _bar(0, available_minute=8, close=100.75, payload_hash="b" * 64)

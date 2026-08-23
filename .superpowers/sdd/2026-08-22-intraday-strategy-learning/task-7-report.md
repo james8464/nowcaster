@@ -87,3 +87,43 @@ Task 7 is complete. The existing strategy and learning engines are exposed throu
 - No known Task 7 blockers or correctness concerns remain.
 - Live external Binance/Alpaca network calls were not exercised in the deterministic test suite; provider adapters are existing components and the new orchestration is covered through CSV and dependency-injected boundaries.
 - Swift consumption is intentionally deferred to Task 8; no Swift files were edited.
+
+## Independent-review fix round 1/5 addendum
+
+All seven Important findings against `69347c85c7c370f5e1fdfe0bb69d36677759ce68` are addressed.
+
+### Behavior and files
+
+- `src/ingestion/bars.py`, `src/ingestion/binance_bars.py`, `src/ingestion/alpaca_bars.py`, and `src/strategies/datasets.py` now distinguish per-bar causal source availability from retrieval time. Initial historical bars become visible at close; changed refetches remain invisible until their retrieval timestamp.
+- `src/strategies/pipeline.py` now derives one outer boundary from the raw finalized chronology, passes that exact boundary into learning and evaluation, and admits only observed adaptive trial evidence before it. Production learning evidence persists that boundary.
+- Plural, validated strategy selections run together through Task 5. Current weights, contributions, resolved-outcome provenance, and the current ensemble decision are persisted without using final-block outcomes as feedback. The scalar `StrategyScope(strategy_id=...)` form remains compatible.
+- `src/app_snapshot/models.py` and `src/app_snapshot/builder.py` now expose Task 8's wire shape: `bestRule` is a nullable string, structured rule evidence is separate, and `finalBoundary` is a required explicit UTC datetime. Real learning trials and discoveries durably carry the boundary.
+- Forced evaluations atomically reserve a monotonic generation, timestamp, and collision-safe ID for the full cache key. Concurrent fixed-clock forces append distinct run and weight records while preserving unrelated scopes.
+- Evaluation children and the running-to-evaluated transition commit in one transaction. A late child-write failure rolls back signals, executions, audits, weights, and the success transition; the reserved run is then marked failed without masking the original error, and a normal retry ignores that failed cache entry.
+- `src/database/schema.py` adds an append-only requested-coverage ledger. Partial responses, unavailable providers, and empty forced refreshes are persisted and block evaluation/learning. The CLI ends these paths with structured `error` JSON Lines and a nonzero exit. Snapshot coverage uses the source-backed request range/gaps, while successful evaluation still uses all contiguous compatible local history across completed requests.
+- `src/strategies/engine.py` and `src/strategies/ensemble.py` expose deterministic ensemble evidence rows so the pipeline can persist Task 5 output in the same atomic evaluation transaction.
+- Regression coverage was added in `tests/unit/test_bar_ingestion.py`, `tests/unit/test_app_snapshot.py`, `tests/integration/test_bar_store.py`, `tests/integration/test_app_snapshot_export.py`, and `tests/integration/test_strategy_cli.py`. No Swift files were changed.
+
+### RED/GREEN evidence
+
+- Initial independent-review RED: `pytest tests/unit/test_bar_ingestion.py tests/unit/test_app_snapshot.py tests/integration/test_strategy_cli.py -q` — **10 failed, 21 passed (31 collected)**.
+- Atomic-force hardening exposed two successive real races: the strategy CLI slice first ended **1 failed, 17 passed** on duplicate ensemble weight identity; the two-test concurrency/rollback slice then ended **1 failed, 1 passed** on shared audit insertion. After generation-scoped weights and atomic serialization, the slice passed **2 passed**.
+- Source-backed incomplete-coverage snapshot RED: **1 failed** because the builder reported stored-bar end rather than the persisted requested end; GREEN: **1 passed**.
+- All-local-history RED: **1 failed** because only the latest completed request's 40 bars were evaluated; GREEN: **1 passed** with all 80 contiguous local bars.
+- Final focused fix-round suite: `pytest tests/unit/test_bar_ingestion.py tests/unit/test_app_snapshot.py tests/integration/test_bar_store.py tests/integration/test_app_snapshot_export.py tests/integration/test_strategy_cli.py -q` — **44 passed in 82.12s**.
+- Full Python suite: `pytest -q` — **431 passed in 136.28s**.
+
+### Fix-round self-review
+
+- Live causality: adapter-shaped multi-bar history produces one unique decision per finalized bar, while corrected payloads preserve retrieval-time revision visibility.
+- Boundary and leakage: raw chronology selects the boundary before indicator warmup/dropna; learning and evaluation persist the same identity; Task 5 feedback rows are restricted to outcomes available strictly before the sealed block.
+- Ensemble context: plural inputs are enum/registry validated, homogeneous evaluation context remains enforced by Task 5, and persisted contribution/current-decision provenance is deterministic.
+- Force/concurrency: the exact cache key includes dataset hash, strategy ID/version, symbol, interval, and mode; reservations include ordered generation/timestamp; execution IDs include the full natural context; unrelated sentinels remain unchanged.
+- Atomicity: no successful cache entry is visible before child evidence commits, failed runs are not reusable, and failure-recording errors are attached as notes rather than replacing the originating exception.
+- Availability: the latest requested range must be complete, the union of contiguous local compatible history must also be complete, and an empty forced refresh cannot reuse stale success.
+- Snapshot contract: production learning snapshots decode with string `bestRule`, separate detail, and required UTC `finalBoundary`; coverage is bounded, deterministic, and request-backed.
+
+### Remaining concerns
+
+- No live external Binance or Alpaca network request was made in tests; their exact wire payloads were exercised through deterministic adapter-shaped mocked responses.
+- Database concurrency tests use independent worker threads and real DuckDB transactions in one process, matching the native-app execution model. Cross-process DuckDB writers remain subject to DuckDB's own single-writer deployment constraints.

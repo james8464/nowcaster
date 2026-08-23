@@ -249,8 +249,7 @@ def _evaluation_context(evaluations: Sequence[StrategyEvaluation]) -> _EnsembleC
     if len({evaluation.strategy_id for evaluation in evaluations}) != len(evaluations):
         raise ValueError("strategy evaluations must have unique identifiers")
     contexts = {
-        (evaluation.dataset_hash, evaluation.symbol, evaluation.interval, evaluation.mode)
-        for evaluation in evaluations
+        (evaluation.dataset_hash, evaluation.symbol, evaluation.interval, evaluation.mode) for evaluation in evaluations
     }
     if len(contexts) != 1:
         raise ValueError("strategy evaluations must use one homogeneous evaluation context")
@@ -690,8 +689,7 @@ def _project_caps(
     for strategy_id, family in families.items():
         by_family.setdefault(family, []).append(strategy_id)
     family_targets = {
-        family.value: sum(desired[strategy_id] for strategy_id in members)
-        for family, members in by_family.items()
+        family.value: sum(desired[strategy_id] for strategy_id in members) for family, members in by_family.items()
     }
     family_capacities = {
         family.value: min(config.maximum_family_weight, len(members) * config.maximum_strategy_weight)
@@ -817,8 +815,8 @@ def _derive_offline_weights(
             evaluation = ordered[index]
             evidence_share = scored[index][0] / score_total
             desired[evaluation.strategy_id] = (
-                (1 - config.equal_weight_shrinkage) * evidence_share + config.equal_weight_shrinkage * prior
-            )
+                1 - config.equal_weight_shrinkage
+            ) * evidence_share + config.equal_weight_shrinkage * prior
         projected = _project_caps(
             desired,
             {ordered[index].strategy_id: ordered[index].family for index in eligible},
@@ -958,10 +956,9 @@ def _validated_weight_cohort(
     if snapshot["schema_version"] != 2 or hashes[0] != canonical_hash(snapshot):
         raise ValueError("evidence weight cohort hash is invalid")
     config_payload = _config_payload(config)
-    if (
-        snapshot["ensemble_config_hash"] != canonical_hash(snapshot["ensemble_config"])
-        or canonical_hash(snapshot["ensemble_config"]) != canonical_hash(config_payload)
-    ):
+    if snapshot["ensemble_config_hash"] != canonical_hash(snapshot["ensemble_config"]) or canonical_hash(
+        snapshot["ensemble_config"]
+    ) != canonical_hash(config_payload):
         raise ValueError("evidence weight cohort ensemble configuration is invalid")
     initial_current = tuple(snapshot["current_weights"])
     if snapshot["current_weights_hash"] != canonical_hash(initial_current):
@@ -1128,9 +1125,7 @@ def _fixed_share_update(
     cohort = _validated_weight_cohort(ordered_weights, config=config)
     weight_by_strategy = {weight.strategy_id: weight for weight in ordered_weights}
     for weight in ordered_weights:
-        if as_of < weight.effective_at or (
-            weight.outcomes_through is not None and as_of < weight.outcomes_through
-        ):
+        if as_of < weight.effective_at or (weight.outcomes_through is not None and as_of < weight.outcomes_through):
             raise ValueError("as_of cannot precede an evidence weight snapshot or outcome watermark")
         if weight.outcomes_through is not None and weight.outcomes_through > weight.effective_at:
             raise ValueError("an outcome watermark cannot follow its effective weight timestamp")
@@ -1141,8 +1136,7 @@ def _fixed_share_update(
     config_hash = canonical_hash(config_payload)
     cohort_hash = canonical_hash(cohort)
     expected_base_rows = tuple(
-        {"strategy_id": member["strategy_id"], "weight": member["base_weight"]}
-        for member in cohort["members"]
+        {"strategy_id": member["strategy_id"], "weight": member["base_weight"]} for member in cohort["members"]
     )
     stored_states = [_deep_thaw(weight.provenance.get("online_state", {})) for weight in ordered_weights]
     if len({canonical_hash(state) for state in stored_states}) != 1:
@@ -1166,10 +1160,7 @@ def _fixed_share_update(
         }
         if not isinstance(stored_state, dict) or set(stored_state) != state_fields:
             raise ValueError("persisted online state schema is invalid")
-        if (
-            canonical_hash(stored_state["config"]) != config_hash
-            or stored_state["config_hash"] != config_hash
-        ):
+        if canonical_hash(stored_state["config"]) != config_hash or stored_state["config_hash"] != config_hash:
             raise ValueError("online feedback configuration cannot change during replay")
         if stored_state["cohort_hash"] != cohort_hash:
             raise ValueError("persisted online state does not match the weight cohort")
@@ -1214,11 +1205,7 @@ def _fixed_share_update(
         weight.strategy_id: (weight.prior_weight / prior_total if prior_total > 0 else weight.weight)
         for weight in ordered_weights
     }
-    families = {
-        weight.strategy_id: weight.family
-        for weight in ordered_weights
-        if base_weights[weight.strategy_id] > 0
-    }
+    families = {weight.strategy_id: weight.family for weight in ordered_weights if base_weights[weight.strategy_id] > 0}
     replayed, replayed_through, replayed_rates, replayed_gap = _replay_outcome_history(
         base_weights=base_weights,
         prior_weights=prior,
@@ -1263,9 +1250,7 @@ def _fixed_share_update(
     outcomes = resolved_outcomes.copy()
     if outcomes[list(required)].isna().any().any():
         raise ValueError("resolved outcomes must be complete and finite")
-    outcomes["decision_timestamp"] = _strict_utc_outcome_column(
-        outcomes["decision_timestamp"], "decision_timestamp"
-    )
+    outcomes["decision_timestamp"] = _strict_utc_outcome_column(outcomes["decision_timestamp"], "decision_timestamp")
     outcomes["outcome_available_at"] = _strict_utc_outcome_column(
         outcomes["outcome_available_at"], "outcome_available_at"
     )
@@ -1319,8 +1304,7 @@ def _fixed_share_update(
             raise ValueError(f"resolved outcome context does not match evidence weight for {weight.strategy_id}")
 
     outcomes = outcomes.loc[
-        outcomes["strategy_id"].isin(weight_by_strategy)
-        & (outcomes["outcome_available_at"] <= pd.Timestamp(as_of))
+        outcomes["strategy_id"].isin(weight_by_strategy) & (outcomes["outcome_available_at"] <= pd.Timestamp(as_of))
     ].sort_values(["outcome_available_at", "decision_timestamp", "strategy_id"], kind="stable")
     if outcomes.empty:
         return ordered_weights
@@ -1467,9 +1451,7 @@ def _validate_current_weights_for_decision(
     if evaluation_identity != weight_identity:
         raise ValueError("evaluation and weight strategy identity must match exactly")
     for weight in weights:
-        if weight.effective_at > as_of or (
-            weight.outcomes_through is not None and weight.outcomes_through > as_of
-        ):
+        if weight.effective_at > as_of or (weight.outcomes_through is not None and weight.outcomes_through > as_of):
             raise ValueError("evidence weight chronology cannot follow the requested as_of")
         if weight.outcomes_through is not None and weight.outcomes_through > weight.effective_at:
             raise ValueError("an outcome watermark cannot follow its effective weight timestamp")
@@ -1487,9 +1469,7 @@ def _validate_current_weights_for_decision(
         config=config,
         validation_config=validation_config,
     )
-    if weight_context.mode is StrategyMode.FROZEN and any(
-        "online_state" in weight.provenance for weight in weights
-    ):
+    if weight_context.mode is StrategyMode.FROZEN and any("online_state" in weight.provenance for weight in weights):
         raise ValueError("frozen evidence weights cannot carry persisted online state")
     if weights[0].mode is not StrategyMode.FROZEN:
         _fixed_share_update(weights, pd.DataFrame(), as_of=as_of, config=config)
@@ -1620,8 +1600,7 @@ def combine_current_signals(
     direction = 1 if vote > 0 else -1 if vote < 0 else 0
     probability = (
         sum(
-            weight.weight
-            * (evaluation.current_probability if direction >= 0 else 1 - evaluation.current_probability)
+            weight.weight * (evaluation.current_probability if direction >= 0 else 1 - evaluation.current_probability)
             for evaluation, weight, _ in active
         )
         / active_mass
@@ -1634,8 +1613,7 @@ def combine_current_signals(
     )
     gross_edge = direction * signed_edge / active_mass if direction and active_mass else 0.0
     estimated_cost = (
-        sum(weight.weight * max(float(evaluation.expected_cost), 0.0) for evaluation, weight, _ in active)
-        / active_mass
+        sum(weight.weight * max(float(evaluation.expected_cost), 0.0) for evaluation, weight, _ in active) / active_mass
         if active_mass
         else 0.0
     )
@@ -1705,11 +1683,34 @@ def combine_current_signals(
     )
 
 
-def persist_evidence_weights(database: Database, weights: Sequence[EvidenceWeight]) -> int:
+def evidence_weight_rows(
+    weights: Sequence[EvidenceWeight],
+    decision: EnsembleDecision | None = None,
+) -> tuple[dict[str, Any], ...]:
     rows: list[dict[str, Any]] = []
+    contribution_by_strategy = (
+        {item.strategy_id: item for item in decision.contributions} if decision is not None else {}
+    )
     for weight in weights:
         provenance = _deep_thaw(weight.provenance)
         provenance["outcomes_through"] = weight.outcomes_through.isoformat() if weight.outcomes_through else None
+        if decision is not None:
+            contribution = contribution_by_strategy.get(weight.strategy_id)
+            provenance["contribution"] = contribution.contribution if contribution is not None else 0.0
+            provenance["current_decision"] = {
+                "decision_hash": decision.decision_hash,
+                "as_of": decision.as_of.isoformat(),
+                "data_through": decision.data_through.isoformat() if decision.data_through else None,
+                "signal": decision.signal,
+                "status": decision.status,
+                "reasons": list(decision.reasons),
+                "probability": decision.probability,
+                "vote_margin": decision.vote_margin,
+                "expected_net_edge": decision.expected_net_edge,
+                "estimated_cost": decision.estimated_cost,
+                "uncertainty_buffer": decision.uncertainty_buffer,
+                "breadth": decision.breadth,
+            }
         natural = {
             "dataset_hash": weight.dataset_hash,
             "strategy_id": weight.strategy_id,
@@ -1732,7 +1733,15 @@ def persist_evidence_weights(database: Database, weights: Sequence[EvidenceWeigh
                 "created_at": weight.effective_at,
             }
         )
-    return database.upsert("ensemble_weights", rows)
+    return tuple(rows)
+
+
+def persist_evidence_weights(
+    database: Database,
+    weights: Sequence[EvidenceWeight],
+    decision: EnsembleDecision | None = None,
+) -> int:
+    return database.upsert("ensemble_weights", evidence_weight_rows(weights, decision))
 
 
 __all__ = [
@@ -1744,6 +1753,7 @@ __all__ = [
     "canonical_decision_hash",
     "combine_current_signals",
     "compute_evidence_weights",
+    "evidence_weight_rows",
     "fixed_share_update",
     "persist_evidence_weights",
 ]

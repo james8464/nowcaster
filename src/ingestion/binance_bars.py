@@ -49,7 +49,7 @@ class BinanceBarProvider:
         end_ms = int(request.end.timestamp() * 1_000)
         interval = INTERVAL_DURATION[request.interval]
         interval_ms = int(interval.total_seconds() * 1_000)
-        available_at = require_utc(self.clock())
+        retrieved_at = require_utc(self.clock())
         bars: list[MarketBar] = []
 
         while cursor_ms < end_ms:
@@ -83,7 +83,7 @@ class BinanceBarProvider:
                     continue
                 open_timestamp = datetime.fromtimestamp(open_ms / 1_000, UTC)
                 close_timestamp = datetime.fromtimestamp((int(raw[6]) + 1) / 1_000, UTC)
-                if close_timestamp > available_at:
+                if close_timestamp > retrieved_at:
                     continue
                 bars.append(
                     MarketBar(
@@ -93,7 +93,8 @@ class BinanceBarProvider:
                         interval=request.interval,
                         open_timestamp=open_timestamp,
                         close_timestamp=close_timestamp,
-                        available_at=available_at,
+                        available_at=close_timestamp,
+                        retrieved_at=retrieved_at,
                         revision=1,
                         finalized=True,
                         open=float(raw[1]),

@@ -47,7 +47,7 @@ def test_binance_normalizes_utc_rejects_open_bar_and_hashes_complete_payload():
     assert bar.symbol == "BTCUSDT"
     assert bar.open_timestamp == datetime(2026, 8, 22, 10, 0, tzinfo=UTC)
     assert bar.close_timestamp == datetime(2026, 8, 22, 10, 5, tzinfo=UTC)
-    assert bar.available_at == datetime(2026, 8, 22, 10, 7, tzinfo=UTC)
+    assert bar.available_at == datetime(2026, 8, 22, 10, 5, tzinfo=UTC)
     assert bar.trade_count == 321
     assert bar.payload_hash == "5ecaf0e14ec23613558771976a2b3832bb3b16cd7afb7ed807334f27ec0371ec"
 
@@ -112,6 +112,7 @@ def test_alpaca_preserves_feed_pages_exclusive_end_and_deduplicates_page_boundar
 
     assert tokens == [None, "page-2"]
     assert [bar.open_timestamp.minute for bar in bars] == [0, 5, 10]
+    assert [bar.available_at.minute for bar in bars] == [5, 10, 15]
     assert {bar.feed for bar in bars} == {"iex"}
     assert bars[0].payload_hash == "de38fb0c9934106f57db3dca6ceb9a1ebe622a857e2e3df13658a6b075ee7d9f"
 

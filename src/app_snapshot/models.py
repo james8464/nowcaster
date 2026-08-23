@@ -260,8 +260,9 @@ class LearningRunSnapshot(SnapshotModel):
     state: str
     evaluated_candidates: int = Field(ge=0)
     evaluation_budget: int = Field(gt=0)
-    best_rule: DiscoveredRuleSnapshot | None = None
-    final_boundary: datetime | None = None
+    best_rule: str | None = None
+    best_rule_detail: DiscoveredRuleSnapshot | None = None
+    final_boundary: datetime
     generation: int = Field(default=1, ge=1)
     progress: float = Field(default=0.0, ge=0, le=1)
     trials: list[LearningTrialSnapshot] = Field(default_factory=list)

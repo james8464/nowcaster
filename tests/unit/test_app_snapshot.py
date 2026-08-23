@@ -123,3 +123,43 @@ def test_atomic_writer_replaces_a_complete_valid_document(tmp_path):
     assert AppSnapshot.model_validate_json(text).schema_version == 2
     assert text.count("\n") == 1
     assert not list(path.parent.glob("*.tmp"))
+
+
+def test_learning_run_wire_contract_uses_string_summary_and_required_utc_boundary() -> None:
+    learning_run_model = _snapshot_model("LearningRunSnapshot")
+    discovered_rule_model = _snapshot_model("DiscoveredRuleSnapshot")
+    detail = discovered_rule_model(
+        rule_id="rule-1",
+        strategy_id="learned-rsi",
+        version="1.0.0",
+        state="shadow",
+        rule_text="rsi[t-1] > 50",
+        fitness=0.25,
+        complexity=3,
+        discovered_at=datetime(2026, 8, 22, 11, tzinfo=UTC),
+    )
+
+    decoded = learning_run_model.model_validate(
+        {
+            "learning_run_id": "learn-1",
+            "state": "completed",
+            "evaluated_candidates": 1,
+            "evaluation_budget": 1,
+            "best_rule": "rsi[t-1] > 50",
+            "best_rule_detail": detail.model_dump(),
+            "final_boundary": "2026-08-23T00:00:00Z",
+        }
+    )
+
+    assert decoded.best_rule == "rsi[t-1] > 50"
+    assert decoded.best_rule_detail.rule_id == "rule-1"
+    with pytest.raises(ValidationError, match="final_boundary"):
+        learning_run_model.model_validate(
+            {
+                "learning_run_id": "learn-without-boundary",
+                "state": "completed",
+                "evaluated_candidates": 0,
+                "evaluation_budget": 1,
+                "best_rule": None,
+            }
+        )

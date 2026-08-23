@@ -108,6 +108,7 @@ class MarketBar(BaseModel):
     open_timestamp: datetime
     close_timestamp: datetime
     available_at: datetime
+    retrieved_at: datetime | None = None
     revision: int = Field(default=1, ge=1)
     finalized: bool = True
     open: float
@@ -135,10 +136,10 @@ class MarketBar(BaseModel):
             raise ValueError("symbol must not be empty")
         return value
 
-    @field_validator("open_timestamp", "close_timestamp", "available_at")
+    @field_validator("open_timestamp", "close_timestamp", "available_at", "retrieved_at")
     @classmethod
-    def utc_timestamps(cls, value: datetime) -> datetime:
-        return require_utc(value)
+    def utc_timestamps(cls, value: datetime | None) -> datetime | None:
+        return require_utc(value) if value is not None else None
 
     @model_validator(mode="after")
     def valid_bar(self) -> MarketBar:
@@ -146,6 +147,8 @@ class MarketBar(BaseModel):
             raise ValueError("bar close timestamp must follow open timestamp")
         if self.finalized and self.available_at < self.close_timestamp:
             raise ValueError("a finalized bar cannot be available before its close timestamp")
+        if self.retrieved_at is not None and self.retrieved_at < self.available_at:
+            raise ValueError("bar retrieval cannot precede source availability")
         if self.high < max(self.open, self.close) or self.low > min(self.open, self.close) or self.high < self.low:
             raise ValueError("bar OHLC values are inconsistent")
         return self

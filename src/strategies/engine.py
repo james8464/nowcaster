@@ -49,15 +49,16 @@ def generate_current_decision(
             validation_config=validation_config,
             config=config,
         )
-    if database is not None:
-        persist_evidence_weights(database, weights)
-    return combine_current_signals(
+    decision = combine_current_signals(
         evaluations,
         weights,
         as_of=as_of,
         config=config,
         validation_config=validation_config,
     )
+    if database is not None:
+        persist_evidence_weights(database, decision.weights, decision)
+    return decision
 
 
 def decision_to_signal_frame(

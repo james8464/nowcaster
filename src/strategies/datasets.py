@@ -84,7 +84,12 @@ class BarRepository:
                 continue
             max_revision = max((revision for revision, _ in versions), default=0)
             revision = bar.revision if bar.revision > max_revision else max_revision + 1
-            persisted = bar.model_copy(update={"revision": revision})
+            available_at = (
+                max(bar.available_at, bar.retrieved_at)
+                if versions and bar.retrieved_at is not None
+                else bar.available_at
+            )
+            persisted = bar.model_copy(update={"revision": revision, "available_at": available_at})
             rows.append(self._row(persisted))
             versions.append((revision, persisted.payload_hash))
         return self.database.insert("market_bars", rows)
