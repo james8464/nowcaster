@@ -1487,6 +1487,10 @@ def _validate_current_weights_for_decision(
         config=config,
         validation_config=validation_config,
     )
+    if weight_context.mode is StrategyMode.FROZEN and any(
+        "online_state" in weight.provenance for weight in weights
+    ):
+        raise ValueError("frozen evidence weights cannot carry persisted online state")
     if weights[0].mode is not StrategyMode.FROZEN:
         _fixed_share_update(weights, pd.DataFrame(), as_of=as_of, config=config)
     return evaluation_context

@@ -371,7 +371,7 @@ def _forge_offline_weight_state(
 
 def _replace_online_state(
     weights: tuple,
-    state: dict[str, object],
+    state: object,
 ) -> tuple:
     changed = []
     for weight in weights:
@@ -380,6 +380,62 @@ def _replace_online_state(
         provenance["online_state"] = state
         changed.append(replace(weight, provenance=provenance))
     return tuple(changed)
+
+
+def _with_future_online_history(
+    weights: tuple[EvidenceWeight, ...],
+    *,
+    as_of: datetime,
+) -> tuple[EvidenceWeight, ...]:
+    cohort = _thaw(weights[0].provenance["weight_cohort_snapshot"])
+    assert isinstance(cohort, dict)
+    members = tuple(cohort["members"])
+    identity = {
+        "strategy_id": weights[0].strategy_id,
+        "dataset_hash": weights[0].dataset_hash,
+        "strategy_version": weights[0].strategy_version,
+        "symbol": weights[0].symbol,
+        "interval": weights[0].interval.value,
+        "mode": weights[0].mode.value,
+        "decision_timestamp": as_of.isoformat(),
+        "outcome_available_at": (as_of + timedelta(hours=1)).isoformat(),
+    }
+    record = {
+        "outcome_id": canonical_hash(identity),
+        **identity,
+        "signal": 1,
+        "realized_return": 0.25,
+        "cost": 0.0,
+    }
+    history = (record,)
+    current_rows = tuple(
+        {
+            "strategy_id": weight.strategy_id,
+            "weight": weight.weight,
+            "effective_at": weight.effective_at.isoformat(),
+            "outcomes_through": None,
+        }
+        for weight in weights
+    )
+    config_payload = cohort["ensemble_config"]
+    state = {
+        "config": config_payload,
+        "config_hash": canonical_hash(config_payload),
+        "cohort_hash": weights[0].provenance["weight_cohort_hash"],
+        "base_weights": tuple(
+            {"strategy_id": member["strategy_id"], "weight": member["base_weight"]} for member in members
+        ),
+        "processed_outcome_ids": (record["outcome_id"],),
+        "processed_outcomes": history,
+        "processed_outcomes_hash": canonical_hash(history),
+        "adaptive_learning_rates": (),
+        "cumulative_mixability_gap": 0.0,
+        "current_weights": current_rows,
+        "current_weights_hash": canonical_hash(current_rows),
+    }
+    state["state_hash"] = canonical_hash(state)
+    assert state["state_hash"] == canonical_hash({key: value for key, value in state.items() if key != "state_hash"})
+    return _replace_online_state(weights, state)
 
 
 def _feedback_fixture() -> tuple[tuple[StrategyEvaluation, ...], EnsembleConfig, tuple, pd.DataFrame]:
@@ -1476,6 +1532,69 @@ def test_current_decision_rejects_future_frozen_weight_snapshot_before_mode_bran
 
     with pytest.raises(ValueError, match="as_of|future|chronology"):
         combine_current_signals(evaluations, weights, as_of=AS_OF, config=config)
+
+
+def test_current_decision_rejects_frozen_future_online_history_before_mode_branch() -> None:
+    paper_evaluations = (
+        _evaluation("alpha", StrategyFamily.TREND),
+        _evaluation("beta", StrategyFamily.MEAN_REVERSION),
+        _evaluation("gamma", StrategyFamily.SESSION),
+    )
+    frozen_evaluations = tuple(
+        _with_mode(evaluation, StrategyMode.FROZEN) for evaluation in paper_evaluations
+    )
+    config = EnsembleConfig(maximum_strategy_weight=0.8, maximum_family_weight=0.8)
+    paper = _with_future_online_history(
+        compute_evidence_weights(paper_evaluations, as_of=AS_OF, config=config),
+        as_of=AS_OF,
+    )
+    frozen = _with_future_online_history(
+        compute_evidence_weights(frozen_evaluations, as_of=AS_OF, config=config),
+        as_of=AS_OF,
+    )
+
+    assert all(weight.effective_at <= AS_OF and weight.outcomes_through is None for weight in frozen)
+    with pytest.raises(ValueError, match="persisted outcome chronology"):
+        combine_current_signals(paper_evaluations, paper, as_of=AS_OF, config=config)
+    with pytest.raises(ValueError, match="frozen.*online state"):
+        combine_current_signals(frozen_evaluations, frozen, as_of=AS_OF, config=config)
+
+
+@pytest.mark.parametrize("online_state", [None, {}])
+def test_current_decision_rejects_any_present_online_state_on_frozen_weights(online_state: object) -> None:
+    evaluations = tuple(
+        _with_mode(evaluation, StrategyMode.FROZEN)
+        for evaluation in (
+            _evaluation("alpha", StrategyFamily.TREND),
+            _evaluation("beta", StrategyFamily.MEAN_REVERSION),
+            _evaluation("gamma", StrategyFamily.SESSION),
+        )
+    )
+    config = EnsembleConfig(maximum_strategy_weight=0.8, maximum_family_weight=0.8)
+    weights = compute_evidence_weights(evaluations, as_of=AS_OF, config=config)
+    with_state = _replace_online_state(weights, online_state)
+
+    with pytest.raises(ValueError, match="frozen.*online state"):
+        combine_current_signals(evaluations, with_state, as_of=AS_OF, config=config)
+
+
+def test_current_decision_accepts_frozen_weights_without_online_state() -> None:
+    evaluations = tuple(
+        _with_mode(evaluation, StrategyMode.FROZEN)
+        for evaluation in (
+            _evaluation("alpha", StrategyFamily.TREND),
+            _evaluation("beta", StrategyFamily.MEAN_REVERSION),
+            _evaluation("gamma", StrategyFamily.SESSION),
+        )
+    )
+    config = EnsembleConfig(maximum_strategy_weight=0.8, maximum_family_weight=0.8)
+    weights = compute_evidence_weights(evaluations, as_of=AS_OF, config=config)
+
+    decision = combine_current_signals(evaluations, weights, as_of=AS_OF, config=config)
+
+    assert decision.mode is StrategyMode.FROZEN
+    assert decision.signal == 1
+    assert all("online_state" not in weight.provenance for weight in weights)
 
 
 def test_actionable_positive_weight_component_requires_decision_and_data_timestamps() -> None:
