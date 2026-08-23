@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -10,7 +11,13 @@ from src.app_snapshot.models import AppSnapshot
 def write_snapshot_atomic(snapshot: AppSnapshot, path: Path) -> Path:
     path = path.resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = snapshot.model_dump_json(indent=2)
+    payload = json.dumps(
+        snapshot.model_dump(mode="json"),
+        allow_nan=False,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
     temporary_path: Path | None = None
     try:
         with NamedTemporaryFile(

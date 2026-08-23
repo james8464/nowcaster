@@ -11,8 +11,15 @@ from src.app_snapshot.models import (
     AppSnapshot,
     BacktestPoint,
     BacktestSnapshot,
+    CausalAuditSnapshot,
+    DatasetCoverageSnapshot,
+    DatasetGapSnapshot,
+    DiscoveredRuleSnapshot,
     EarningsSnapshot,
+    EnsembleComponentSnapshot,
     InstrumentSnapshot,
+    LearningRunSnapshot,
+    LearningTrialSnapshot,
     ModelDiagnosticSnapshot,
     OverviewSnapshot,
     PipelineRunSnapshot,
@@ -21,10 +28,13 @@ from src.app_snapshot.models import (
     ResearchSignalSnapshot,
     SensitivitySnapshot,
     SnapshotMetadata,
+    StrategySnapshot,
 )
 from src.config.settings import Settings
 from src.database.engine import Database
+from src.ingestion.bars import INTERVAL_DURATION
 from src.reporting.summary import research_statistics
+from src.strategies.types import BarInterval, canonical_hash
 from src.utils.provenance import git_commit
 
 
@@ -58,6 +68,11 @@ def _metadata(database: Database, settings: Settings) -> SnapshotMetadata:
         if data_mode == "demo_real_snapshot"
         else "Live configured providers; inspect source freshness and coverage before use"
     )
+    providers = database.frame("select distinct provider, feed from market_bars order by provider, feed")
+    if not providers.empty:
+        data_mode = "strategy_provider_data"
+        identities = ", ".join(f"{row.provider}/{row.feed}" for row in providers.itertuples(index=False))
+        source_posture = f"Source-backed strategy bars: {identities}"
     return SnapshotMetadata(
         generated_at=datetime.now(UTC),
         git_commit=git_commit(settings.project_root),
@@ -293,29 +308,29 @@ def _model_diagnostics(database: Database) -> list[ModelDiagnosticSnapshot]:
 
 def _backtests(database: Database, statistics: dict[str, int | float | None]) -> list[BacktestSnapshot]:
     observations = int(statistics["backtest_observations"] or 0)
-    if observations == 0:
-        return []
-    snapshots = [
-        BacktestSnapshot(
-            backtest_id="equity_event_variant_demo_v1",
-            asset_class="equity",
-            strategy_name="Earnings expectation-variant event study",
-            readiness="research_only",
-            verdict="Exploratory evidence only",
-            sample_size=observations,
-            development_metrics={"top_bottom_spread_0_3": _finite(statistics["event_spread"])},
-            assumptions=[
-                "SEC filing dates proxy for exact earnings timestamps",
-                "Seasonal expectation proxy is not Wall Street consensus",
-                "Daily adjusted closes and market adjustment are used",
-            ],
-            warnings=[
-                "Small three-company universe",
-                "Repeated model signals reduce the effective event sample",
-                "Borrow, capacity, taxes, and intraday execution are not fully modelled",
-            ],
+    snapshots: list[BacktestSnapshot] = []
+    if observations:
+        snapshots.append(
+            BacktestSnapshot(
+                backtest_id="equity_event_variant_demo_v1",
+                asset_class="equity",
+                strategy_name="Earnings expectation-variant event study",
+                readiness="research_only",
+                verdict="Exploratory evidence only",
+                sample_size=observations,
+                development_metrics={"top_bottom_spread_0_3": _finite(statistics["event_spread"])},
+                assumptions=[
+                    "SEC filing dates proxy for exact earnings timestamps",
+                    "Seasonal expectation proxy is not Wall Street consensus",
+                    "Daily adjusted closes and market adjustment are used",
+                ],
+                warnings=[
+                    "Small three-company universe",
+                    "Repeated model signals reduce the effective event sample",
+                    "Borrow, capacity, taxes, and intraday execution are not fully modelled",
+                ],
+            )
         )
-    ]
     runs = database.frame(
         """
         select backtest_run_id, asset_class, strategy_name, readiness,
@@ -473,12 +488,381 @@ def _pipeline_runs(database: Database) -> list[PipelineRunSnapshot]:
     return rows
 
 
+def _finite_metrics(value: Any) -> dict[str, float | None]:
+    if not isinstance(value, dict):
+        return {}
+    return {str(key): _finite(item) for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))}
+
+
+def _causal_audits(database: Database) -> list[CausalAuditSnapshot]:
+    frame = database.frame(
+        """
+        select audit_id, dataset_hash, strategy_id, strategy_version, symbol,
+               interval, mode, audited_at, passed, details
+        from causal_audits order by audited_at desc, audit_id limit 500
+        """
+    )
+    return [
+        CausalAuditSnapshot(
+            audit_id=str(row.audit_id),
+            dataset_hash=str(row.dataset_hash),
+            strategy_id=str(row.strategy_id),
+            version=str(row.strategy_version),
+            symbol=str(row.symbol),
+            interval=str(row.interval),
+            mode=str(row.mode),
+            audited_at=_python_datetime(row.audited_at) or datetime.now(UTC),
+            passed=bool(row.passed),
+            outer_block_consumed=bool(
+                (row.details if isinstance(row.details, dict) else {}).get("outer_block_consumed", False)
+            ),
+            details=row.details if isinstance(row.details, dict) else {},
+            no_repaint_badge="passed" if bool(row.passed) else "failed",
+        )
+        for row in frame.itertuples(index=False)
+    ]
+
+
+def _strategies(database: Database, audits: list[CausalAuditSnapshot]) -> list[StrategySnapshot]:
+    frame = database.frame(
+        """
+        select strategy_run_id, dataset_hash, strategy_id, strategy_version, family,
+               symbol, interval, mode, run_timestamp, parameters, status, metrics, ended_at
+        from strategy_runs order by strategy_id, strategy_version, symbol, interval, mode, run_timestamp
+        """
+    )
+    if frame.empty:
+        return []
+    for row in frame.itertuples(index=False):
+        metrics = row.metrics if isinstance(row.metrics, dict) else {}
+        if str(row.mode) == "frozen" and "online_state" in metrics:
+            raise ValueError("legacy FROZEN snapshot contains online_state and must be regenerated")
+    key_columns = ["dataset_hash", "strategy_id", "strategy_version", "symbol", "interval", "mode"]
+    frame["run_timestamp"] = pd.to_datetime(frame["run_timestamp"], utc=True)
+    generations = frame.groupby(key_columns, dropna=False).size().to_dict()
+    latest = frame.sort_values([*key_columns, "run_timestamp"], kind="stable").drop_duplicates(key_columns, keep="last")
+    weights = database.frame(
+        """
+        select dataset_hash, strategy_id, strategy_version, symbol, interval, mode,
+               effective_at, weight
+        from ensemble_weights
+        order by dataset_hash, strategy_id, strategy_version, symbol, interval, mode, effective_at
+        """
+    )
+    weight_lookup: dict[tuple[str, ...], float] = {}
+    for row in weights.itertuples(index=False):
+        key = tuple(str(getattr(row, column)) for column in key_columns)
+        weight_lookup[key] = float(row.weight)
+    audit_lookup: dict[tuple[str, ...], CausalAuditSnapshot] = {}
+    for audit in reversed(audits):
+        key = (
+            audit.dataset_hash,
+            audit.strategy_id,
+            audit.version,
+            audit.symbol,
+            audit.interval,
+            audit.mode,
+        )
+        audit_lookup[key] = audit
+
+    snapshots: list[StrategySnapshot] = []
+    for row in latest.itertuples(index=False):
+        key = tuple(str(getattr(row, column)) for column in key_columns)
+        metrics = row.metrics if isinstance(row.metrics, dict) else {}
+        promotion = metrics.get("promotion") if isinstance(metrics.get("promotion"), dict) else {}
+        audit = audit_lookup.get(key)
+        raw_warnings = metrics.get("warnings") if isinstance(metrics.get("warnings"), list) else []
+        reasons = promotion.get("reasons") if isinstance(promotion.get("reasons"), list) else []
+        warnings = list(
+            dict.fromkeys(
+                [
+                    *(str(item) for item in raw_warnings),
+                    *(str(item) for item in reasons),
+                    "Historical evidence is not live proof",
+                    "Research/paper-trading aid: abstain when uncertainty is material",
+                ]
+            )
+        )
+        causal_passed = audit.passed if audit is not None else metrics.get("causal_audit_passed")
+        snapshots.append(
+            StrategySnapshot(
+                strategy_id=str(row.strategy_id),
+                version=str(row.strategy_version),
+                family=str(row.family),
+                symbol=str(row.symbol),
+                interval=str(row.interval),
+                state=str(metrics.get("state") or row.mode or row.status),
+                weight=weight_lookup.get(key, 0.0),
+                development_metrics=_finite_metrics(metrics.get("development_metrics")),
+                final_test_metrics=_finite_metrics(metrics.get("final_test_metrics")),
+                warnings=warnings,
+                generation=int(generations[key]),
+                progress=1.0 if row.ended_at is not None else 0.5,
+                complexity=len(row.parameters) if isinstance(row.parameters, dict) else None,
+                promotion_state=(
+                    "promoted" if promotion.get("promoted") is True else "rejected" if promotion else str(row.status)
+                ),
+                causal_audit_passed=bool(causal_passed) if isinstance(causal_passed, bool) else None,
+                no_repaint_badge=(
+                    "passed" if causal_passed is True else "failed" if causal_passed is False else "not_audited"
+                ),
+                latest_run_at=_python_datetime(row.run_timestamp),
+            )
+        )
+    return sorted(
+        snapshots,
+        key=lambda item: (item.strategy_id, item.version, item.symbol, item.interval, item.state),
+    )
+
+
+def _ensemble_components(database: Database) -> list[EnsembleComponentSnapshot]:
+    frame = database.frame(
+        """
+        select dataset_hash, strategy_id, strategy_version, family, symbol, interval,
+               mode, effective_at, weight, evidence
+        from ensemble_weights
+        order by strategy_id, strategy_version, symbol, interval, mode, effective_at
+        limit 1000
+        """
+    )
+    if frame.empty:
+        return []
+    key_columns = ["dataset_hash", "strategy_id", "strategy_version", "symbol", "interval", "mode"]
+    frame["effective_at"] = pd.to_datetime(frame["effective_at"], utc=True)
+    latest = frame.drop_duplicates(key_columns, keep="last")
+    rows: list[EnsembleComponentSnapshot] = []
+    for row in latest.itertuples(index=False):
+        evidence = row.evidence if isinstance(row.evidence, dict) else {}
+        rows.append(
+            EnsembleComponentSnapshot(
+                strategy_id=str(row.strategy_id),
+                version=str(row.strategy_version),
+                family=str(row.family),
+                symbol=str(row.symbol),
+                interval=str(row.interval),
+                mode=str(row.mode),
+                effective_at=_python_datetime(row.effective_at) or datetime.now(UTC),
+                weight=float(row.weight),
+                contribution=_finite(evidence.get("contribution")),
+                evidence=evidence,
+            )
+        )
+    return sorted(rows, key=lambda item: (item.strategy_id, item.version, item.symbol, item.interval, item.mode))
+
+
+def _coverage_gaps(frame: pd.DataFrame, interval: BarInterval) -> list[DatasetGapSnapshot]:
+    duration = INTERVAL_DURATION[interval]
+    opens = sorted(pd.to_datetime(frame["open_timestamp"], utc=True).drop_duplicates())
+    gaps: list[DatasetGapSnapshot] = []
+    for previous, current in zip(opens, opens[1:], strict=False):
+        difference = current.to_pydatetime() - previous.to_pydatetime()
+        missing = max(int(difference / duration) - 1, 0)
+        if missing:
+            gaps.append(
+                DatasetGapSnapshot(
+                    start=previous.to_pydatetime() + duration,
+                    end=current.to_pydatetime(),
+                    missing_bars=missing,
+                )
+            )
+        if len(gaps) == 100:
+            break
+    return gaps
+
+
+def _dataset_coverage(database: Database) -> list[DatasetCoverageSnapshot]:
+    frame = database.frame(
+        """
+        select provider, feed, symbol, interval, open_timestamp, close_timestamp,
+               available_at, revision, payload_hash
+        from market_bars where finalized = true
+        order by provider, feed, symbol, interval, open_timestamp, available_at, revision
+        """
+    )
+    if frame.empty:
+        return []
+    latest = frame.drop_duplicates(["provider", "feed", "symbol", "interval", "open_timestamp"], keep="last")
+    known_hashes = database.frame(
+        "select distinct dataset_hash, symbol, interval from strategy_runs order by dataset_hash"
+    )
+    snapshots: list[DatasetCoverageSnapshot] = []
+    for key, group in latest.groupby(["provider", "feed", "symbol", "interval"], sort=True):
+        provider, feed, symbol, raw_interval = (str(value) for value in key)
+        interval = BarInterval(raw_interval)
+        ordered = group.sort_values("open_timestamp", kind="stable").reset_index(drop=True)
+        requested_start = _python_datetime(ordered.iloc[0]["open_timestamp"])
+        requested_end = _python_datetime(ordered.iloc[-1]["close_timestamp"])
+        if requested_start is None or requested_end is None:
+            continue
+        matches = known_hashes.loc[
+            (known_hashes["symbol"] == symbol) & (known_hashes["interval"] == raw_interval), "dataset_hash"
+        ].tolist()
+        dataset_hash = (
+            str(matches[0])
+            if len(matches) == 1
+            else canonical_hash(
+                {
+                    "provider": provider,
+                    "feed": feed,
+                    "symbol": symbol,
+                    "interval": raw_interval,
+                    "payload_hashes": [str(value) for value in ordered["payload_hash"]],
+                }
+            )
+        )
+        gaps = _coverage_gaps(ordered, interval)
+        snapshots.append(
+            DatasetCoverageSnapshot(
+                dataset_hash=dataset_hash,
+                provider=provider,
+                feed=feed,
+                symbol=symbol,
+                interval=raw_interval,
+                requested_start=requested_start,
+                requested_end=requested_end,
+                coverage_start=requested_start,
+                coverage_end=requested_end,
+                row_count=len(ordered),
+                gaps=gaps,
+                complete=not gaps,
+            )
+        )
+        if len(snapshots) == 200:
+            break
+    return snapshots
+
+
+def _rule_complexity(value: Any) -> int:
+    if isinstance(value, dict):
+        children = value.get("children")
+        return 1 + sum(_rule_complexity(child) for child in children) if isinstance(children, list) else 1
+    return 0
+
+
+def _optional_utc(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    try:
+        return _python_datetime(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _learning_runs(database: Database, audits: list[CausalAuditSnapshot]) -> list[LearningRunSnapshot]:
+    trials_frame = database.frame(
+        """
+        select trial_id, learning_run_id, candidate_hash, evaluated_at, candidate,
+               fitness, status, error_summary
+        from learning_trials order by learning_run_id, evaluated_at, trial_id limit 1000
+        """
+    )
+    if trials_frame.empty:
+        return []
+    rules_frame = database.frame(
+        """
+        select rule_id, learning_run_id, rule_hash, rule_version, discovered_at,
+               state, rule, evidence
+        from discovered_rules order by learning_run_id, discovered_at, rule_id limit 500
+        """
+    )
+    audit_by_strategy = {audit.strategy_id: audit for audit in reversed(audits)}
+    runs: list[LearningRunSnapshot] = []
+    for learning_run_id, trial_group in trials_frame.groupby("learning_run_id", sort=True):
+        ordered_trials: list[tuple[int, LearningTrialSnapshot]] = []
+        for row in trial_group.itertuples(index=False):
+            payload = row.candidate if isinstance(row.candidate, dict) else {}
+            rule = payload.get("rule") if isinstance(payload.get("rule"), dict) else {}
+            ordinal = int(payload.get("ordinal", len(ordered_trials)))
+            ordered_trials.append(
+                (
+                    ordinal,
+                    LearningTrialSnapshot(
+                        trial_id=str(row.trial_id),
+                        candidate_hash=str(row.candidate_hash),
+                        status=str(row.status),
+                        fitness=_finite(row.fitness),
+                        evaluated_at=_python_datetime(row.evaluated_at) or datetime.now(UTC),
+                        rule_text=str(payload.get("rule_text") or "rule unavailable"),
+                        complexity=_rule_complexity(rule),
+                        error_summary=str(row.error_summary) if row.error_summary else None,
+                    ),
+                )
+            )
+        trial_snapshots = [item for _, item in sorted(ordered_trials, key=lambda pair: (pair[0], pair[1].trial_id))][
+            -200:
+        ]
+        discovered: list[DiscoveredRuleSnapshot] = []
+        matching_rules = rules_frame.loc[rules_frame["learning_run_id"] == learning_run_id]
+        for row in matching_rules.itertuples(index=False):
+            rule = row.rule if isinstance(row.rule, dict) else {}
+            evidence = row.evidence if isinstance(row.evidence, dict) else {}
+            strategy_id = str(rule.get("strategy_id") or f"learned-{str(row.rule_hash)[:16]}")
+            audit = audit_by_strategy.get(strategy_id)
+            discovered.append(
+                DiscoveredRuleSnapshot(
+                    rule_id=str(row.rule_id),
+                    strategy_id=strategy_id,
+                    version=str(row.rule_version),
+                    state=str(row.state),
+                    rule_text=str(rule.get("plain_language") or "rule unavailable"),
+                    fitness=_finite(evidence.get("fitness")),
+                    complexity=_rule_complexity(rule.get("canonical")),
+                    discovered_at=_python_datetime(row.discovered_at) or datetime.now(UTC),
+                    evidence_through=_optional_utc(evidence.get("development_evidence_through")),
+                    promotion_state=str(row.state),
+                    causal_audit_id=audit.audit_id if audit is not None else None,
+                    no_repaint_badge=audit.no_repaint_badge if audit is not None else "not_audited",
+                )
+            )
+        discovered.sort(
+            key=lambda item: (
+                -float(item.fitness if item.fitness is not None else -math.inf),
+                item.rule_id,
+            )
+        )
+        best_rule = discovered[0] if discovered else None
+        evidence = (
+            matching_rules.iloc[0]["evidence"]
+            if not matching_rules.empty and isinstance(matching_rules.iloc[0]["evidence"], dict)
+            else {}
+        )
+        evaluated = len(trial_snapshots)
+        budget = max(int(evidence.get("trial_count") or 0), evaluated)
+        final_boundary = _optional_utc(evidence.get("final_boundary"))
+        audit = audit_by_strategy.get(best_rule.strategy_id) if best_rule is not None else None
+        generation = 1
+        if "-force-" in str(learning_run_id):
+            try:
+                generation = int(str(learning_run_id).rsplit("-force-", 1)[1]) + 1
+            except ValueError:
+                generation = 1
+        runs.append(
+            LearningRunSnapshot(
+                learning_run_id=str(learning_run_id),
+                state="completed" if evaluated >= budget else "running",
+                evaluated_candidates=evaluated,
+                evaluation_budget=budget,
+                best_rule=best_rule,
+                final_boundary=final_boundary,
+                generation=generation,
+                progress=float(evaluated / budget) if budget else 0.0,
+                trials=trial_snapshots,
+                discovered_rules=discovered,
+                promotion_state=best_rule.state if best_rule is not None else "no_candidate",
+                causal_audit_id=audit.audit_id if audit is not None else None,
+                no_repaint_badge=audit.no_repaint_badge if audit is not None else "not_audited",
+            )
+        )
+    return runs
+
+
 def build_app_snapshot(database: Database, settings: Settings) -> AppSnapshot:
     statistics = research_statistics(database)
     instruments = _instruments(database)
     earnings = _earnings(database)
     signals = _signals(database)
     quality_issues = _quality_issues(database)
+    causal_audits = _causal_audits(database)
     overview = OverviewSnapshot(
         company_count=int(statistics["companies"] or 0),
         instrument_count=len(instruments),
@@ -502,4 +886,9 @@ def build_app_snapshot(database: Database, settings: Settings) -> AppSnapshot:
         backtests=_backtests(database, statistics),
         quality_issues=quality_issues,
         pipeline_runs=_pipeline_runs(database),
+        strategies=_strategies(database, causal_audits),
+        ensemble_components=_ensemble_components(database),
+        dataset_coverage=_dataset_coverage(database),
+        learning_runs=_learning_runs(database, causal_audits),
+        causal_audits=causal_audits,
     )

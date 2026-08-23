@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated
 
@@ -11,9 +12,23 @@ from src.config.settings import Settings
 from src.database.engine import Database
 from src.demo import DEMO_STAGES, demo_pipeline, live_pipeline, run_demo
 from src.reporting.research_report import generate_research_report
+from src.strategies.pipeline import (
+    BarProviderName,
+    EvaluationOptions,
+    ExportOptions,
+    IngestOptions,
+    LearningOptions,
+    PipelineEvent,
+    StageOutcome,
+    StrategyScope,
+    create_strategy_pipeline,
+)
+from src.strategies.types import BarInterval, StrategyMode
 from src.utils.logging import configure_logging
 
 app = typer.Typer(help="Alternative-data earnings nowcasting research pipeline.", no_args_is_help=True)
+strategy_app = typer.Typer(help="Run scoped intraday strategy research stages.", no_args_is_help=True)
+app.add_typer(strategy_app, name="strategy")
 DEFAULT_PROJECT_ROOT = Path.cwd()
 
 
@@ -58,10 +73,13 @@ def _run_stages(project_root: Path, database_url: str | None, mode: str, stages:
 def demo(
     project_root: Annotated[Path, typer.Option(exists=True, file_okay=False)] = DEFAULT_PROJECT_ROOT,
     database_url: Annotated[str | None, typer.Option()] = None,
+    mode: Annotated[str, typer.Option(help="Native-app compatibility mode; must remain demo.")] = "demo",
     force: Annotated[bool, typer.Option(help="Re-run completed stages.")] = False,
 ) -> None:
     """Build the complete keyless demo from bundled real public snapshots."""
-    settings = _load_settings(project_root, database_url, "demo")
+    if mode != "demo":
+        raise typer.BadParameter("The keyless demo command supports only --mode demo")
+    settings = _load_settings(project_root, database_url, mode)
     summary = run_demo(settings, force=force)
     if summary.failed:
         typer.echo(summary.concise_message, err=True)
@@ -172,8 +190,158 @@ def export_app_snapshot(
     destination = output or settings.project_root / "data" / "app" / "nowcaster-snapshot.json"
     if not destination.is_absolute():
         destination = settings.project_root / destination
-    path = write_snapshot_atomic(build_app_snapshot(database, settings), destination)
-    typer.echo(json.dumps({"event": "snapshot_exported", "path": str(path), "schema_version": 1}))
+    snapshot = build_app_snapshot(database, settings)
+    path = write_snapshot_atomic(snapshot, destination)
+    schema_version = snapshot.schema_version
+    typer.echo(json.dumps({"event": "snapshot_exported", "path": str(path), "schema_version": schema_version}))
+
+
+def _strategy_scope(
+    strategy_id: str,
+    provider: str,
+    feed: str,
+    symbol: str,
+    interval: str,
+    mode: str,
+) -> StrategyScope:
+    return StrategyScope(
+        strategy_id=strategy_id,
+        provider=provider,
+        feed=feed,
+        symbol=symbol,
+        interval=interval,
+        mode=mode,
+    )
+
+
+def _strategy_pipeline(
+    project_root: Path,
+    database_url: str | None,
+    csv_path: Path | None,
+):
+    settings = _load_settings(project_root, database_url, "demo")
+    database = Database.from_url(settings.database_url)
+    return create_strategy_pipeline(settings, database, csv_path=csv_path)
+
+
+def _emit_strategy_event(event: PipelineEvent) -> None:
+    typer.echo(event.json_line())
+
+
+def _run_strategy_stage(stage: str, operation: Callable[[Callable[[PipelineEvent], None]], StageOutcome]) -> None:
+    _emit_strategy_event(PipelineEvent(event="started", stage=stage, progress=0, message=f"{stage} started"))
+    try:
+        outcome = operation(_emit_strategy_event)
+    except Exception as error:
+        _emit_strategy_event(
+            PipelineEvent(event="error", stage=stage, progress=1, message=f"{type(error).__name__}: {error}")
+        )
+        raise typer.Exit(code=1) from error
+    _emit_strategy_event(PipelineEvent(event="complete", stage=stage, progress=1, message=outcome.message))
+
+
+@strategy_app.command("ingest")
+def strategy_ingest(
+    project_root: Annotated[Path, typer.Option(exists=True, file_okay=False)] = DEFAULT_PROJECT_ROOT,
+    database_url: Annotated[str | None, typer.Option()] = None,
+    strategy_id: Annotated[str, typer.Option()] = "",
+    provider: Annotated[str, typer.Option()] = BarProviderName.BINANCE.value,
+    feed: Annotated[str, typer.Option()] = "spot",
+    symbol: Annotated[str, typer.Option()] = "BTCUSDT",
+    interval: Annotated[str, typer.Option()] = BarInterval.FIVE_MINUTES.value,
+    mode: Annotated[str, typer.Option()] = StrategyMode.PAPER.value,
+    start: Annotated[str, typer.Option()] = "2026-01-01T00:00:00Z",
+    end: Annotated[str, typer.Option()] = "2026-01-02T00:00:00Z",
+    csv_path: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
+    force: Annotated[bool, typer.Option(help="Refresh only this exact scoped range.")] = False,
+) -> None:
+    """Append finalized bar revisions for missing scoped coverage."""
+
+    def execute(emit: Callable[[PipelineEvent], None]) -> StageOutcome:
+        pipeline = _strategy_pipeline(project_root, database_url, csv_path)
+        options = IngestOptions(
+            scope=_strategy_scope(strategy_id, provider, feed, symbol, interval, mode),
+            start=start,
+            end=end,
+            force=force,
+        )
+        return pipeline.ingest(options, emit)
+
+    _run_strategy_stage("ingest", execute)
+
+
+@strategy_app.command("evaluate")
+def strategy_evaluate(
+    project_root: Annotated[Path, typer.Option(exists=True, file_okay=False)] = DEFAULT_PROJECT_ROOT,
+    database_url: Annotated[str | None, typer.Option()] = None,
+    strategy_id: Annotated[str, typer.Option()] = "",
+    provider: Annotated[str, typer.Option()] = BarProviderName.BINANCE.value,
+    feed: Annotated[str, typer.Option()] = "spot",
+    symbol: Annotated[str, typer.Option()] = "BTCUSDT",
+    interval: Annotated[str, typer.Option()] = BarInterval.FIVE_MINUTES.value,
+    mode: Annotated[str, typer.Option()] = StrategyMode.PAPER.value,
+    csv_path: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
+    force: Annotated[bool, typer.Option(help="Recompute only the selected immutable cache key.")] = False,
+) -> None:
+    """Evaluate all compatible local history with sealed causal evidence."""
+
+    def execute(emit: Callable[[PipelineEvent], None]) -> StageOutcome:
+        pipeline = _strategy_pipeline(project_root, database_url, csv_path)
+        options = EvaluationOptions(
+            scope=_strategy_scope(strategy_id, provider, feed, symbol, interval, mode),
+            force=force,
+        )
+        return pipeline.evaluate(options, emit)
+
+    _run_strategy_stage("evaluate", execute)
+
+
+@strategy_app.command("learn")
+def strategy_learn(
+    project_root: Annotated[Path, typer.Option(exists=True, file_okay=False)] = DEFAULT_PROJECT_ROOT,
+    database_url: Annotated[str | None, typer.Option()] = None,
+    strategy_id: Annotated[str, typer.Option()] = "",
+    provider: Annotated[str, typer.Option()] = BarProviderName.BINANCE.value,
+    feed: Annotated[str, typer.Option()] = "spot",
+    symbol: Annotated[str, typer.Option()] = "BTCUSDT",
+    interval: Annotated[str, typer.Option()] = BarInterval.FIVE_MINUTES.value,
+    mode: Annotated[str, typer.Option()] = StrategyMode.WALK_FORWARD_LEARNING.value,
+    csv_path: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
+    evaluation_budget: Annotated[int, typer.Option()] = 20,
+    seed: Annotated[int, typer.Option()] = 42,
+    force: Annotated[bool, typer.Option(help="Append a new run for only the selected learning key.")] = False,
+) -> None:
+    """Run bounded interpretable rule discovery inside the development boundary."""
+
+    def execute(emit: Callable[[PipelineEvent], None]) -> StageOutcome:
+        pipeline = _strategy_pipeline(project_root, database_url, csv_path)
+        options = LearningOptions(
+            scope=_strategy_scope(strategy_id, provider, feed, symbol, interval, mode),
+            evaluation_budget=evaluation_budget,
+            seed=seed,
+            force=force,
+        )
+        return pipeline.learn(options, emit)
+
+    _run_strategy_stage("learn", execute)
+
+
+@strategy_app.command("export")
+def strategy_export(
+    project_root: Annotated[Path, typer.Option(exists=True, file_okay=False)] = DEFAULT_PROJECT_ROOT,
+    database_url: Annotated[str | None, typer.Option()] = None,
+    output: Annotated[Path | None, typer.Option(dir_okay=False)] = None,
+    report_output: Annotated[Path | None, typer.Option(dir_okay=False)] = None,
+) -> None:
+    """Export the native snapshot and a bounded aggregate strategy report."""
+    snapshot_path = output or project_root / "data" / "app" / "nowcaster-snapshot.json"
+    report_path = report_output or project_root / "reports" / "latest_strategy_report.md"
+
+    def execute(emit: Callable[[PipelineEvent], None]) -> StageOutcome:
+        pipeline = _strategy_pipeline(project_root, database_url, None)
+        return pipeline.export(ExportOptions(snapshot_path=snapshot_path, report_path=report_path), emit)
+
+    _run_strategy_stage("export", execute)
 
 
 @app.command("run-all")
