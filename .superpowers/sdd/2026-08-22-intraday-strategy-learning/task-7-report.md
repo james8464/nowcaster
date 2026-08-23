@@ -352,3 +352,31 @@ All three final findings against `33aaa0f540acdff51387ba9c83279906e701db21` are 
 - The same-instrument lock is process-local, matching the native app's threaded DuckDB deployment. Cross-process writers would require database snapshot isolation or a durable source-generation compare-and-set.
 - Learning intentionally holds the instrument lock for the bounded search so its current persistence API stays generation-atomic; a future longer-running/distributed learner should separate compute from one transactional compare-and-set commit.
 - Source churn is retried three times and then reported unavailable. No credentialed live Binance or Alpaca request was made in this deterministic hardening cycle.
+
+## Validation-only malformed-data micro-fix round 8 addendum
+
+Both snapshot validation findings against `4f7c7efccb64da32f1fe94cc15b3a7ea0fb78def` are addressed without changing pipeline, CLI, database, or Swift behavior.
+
+### Behavior and files
+
+- `src/app_snapshot/builder.py` now validates every raw aggregate gap entry through the strict `DatasetGapSnapshot` DTO before projecting the bounded first 100 gaps. A non-dict entry, missing/extra field, invalid UTC timestamp, or invalid positive count rejects the entire manifest. `complete` derives from the fully validated raw ledger, so output truncation cannot turn omitted evidence into completeness.
+- When ensemble evidence contains a `coverage_manifest` key whose value is not a dictionary, the builder replaces it with the constant-size `unavailable`/`malformed_coverage_manifest` summary. Absent keys retain legacy behavior; malformed lists/scalars and their contents are never exported.
+- `tests/integration/test_app_snapshot_export.py` changes the aggregate corruption fixture to a string entry inside the raw gap ledger and adds a real snapshot regression with a 10,000-item list-valued ensemble manifest, asserting the raw marker is absent and encoded evidence remains bounded.
+
+### RED/GREEN evidence
+
+- Focused RED: **2 failed in 2.27s**. The string gap was filtered into `gaps=[]`/`complete=true`, and the 10,000-item non-dict ensemble manifest was retained verbatim.
+- Focused GREEN: **2 passed in 2.19s**.
+- Complete snapshot integration file: **10 passed in 65.45s**.
+- Complete Python suite: `.venv/bin/pytest -q` — **461 passed in 162.03s**.
+- Changed-file Ruff check/format, targeted `compileall`, and `git diff --check` — **passed**.
+
+### Micro-fix self-review
+
+- Full-ledger validation precedes representational truncation, and Pydantic's forbidden-extra policy checks the raw gap schema rather than reconstructing only recognized fields.
+- A present malformed ensemble manifest follows a distinct branch from an absent legacy manifest. Its replacement contains only two fixed strings, so neither input cardinality nor licensed/raw marker values affect output size.
+- The changes are confined to the snapshot builder, two regression scenarios, and this report. No ingestion/evaluation semantics, cache identities, raw data, Swift source, or progress ledger were changed.
+
+### Remaining concerns
+
+- Valid aggregate gap ledgers are scanned in full to authenticate completeness even though only 100 entries are exported. This is intentional fail-closed behavior; the immutable pipeline normally emits compact zero-gap complete manifests.

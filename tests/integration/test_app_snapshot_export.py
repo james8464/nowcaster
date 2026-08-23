@@ -425,7 +425,7 @@ def test_snapshot_does_not_fallback_when_terminal_aggregate_coverage_is_stale(tm
                         "coverage_start": "2026-08-21T13:30:00Z",
                         "coverage_end": "2026-08-21T20:00:00Z",
                         "row_count": 78,
-                        "gaps": "malformed",
+                        "gaps": ["malformed"],
                         "calendar_id": "XNYS",
                         "calendar_version": "offline-rules-2026.3",
                     }
@@ -540,6 +540,47 @@ def test_snapshot_uses_one_bounded_coverage_projection_and_summarizes_ensemble_c
     assert ensemble_manifest["contributing_request_count"] == 205
     assert len(ensemble_manifest["contributing_requests_hash"]) == 64
     assert len(json.dumps(ensemble_manifest, sort_keys=True)) < 2_000
+
+
+def test_snapshot_replaces_malformed_ensemble_coverage_manifest_with_bounded_summary(tmp_path) -> None:
+    settings, database = _empty_snapshot_database(tmp_path)
+    created_at = datetime(2026, 8, 23, 12, tzinfo=UTC)
+    database.insert(
+        "ensemble_weights",
+        [
+            {
+                "weight_id": "malformed-ensemble-weight",
+                "strategy_run_id": "malformed-ensemble-run",
+                "dataset_hash": "d" * 64,
+                "strategy_id": "rsi_reversal",
+                "strategy_version": "1",
+                "family": "mean_reversion",
+                "symbol": "BTCUSDT",
+                "interval": "5m",
+                "mode": "paper",
+                "effective_at": created_at,
+                "weight": 0.5,
+                "evidence": {
+                    "contribution": 0.0,
+                    "coverage_manifest": ["licensed-raw-entry"] * 10_000,
+                },
+                "source": "evidence_ensemble",
+                "source_version": "1",
+                "created_at": created_at,
+            }
+        ],
+    )
+
+    snapshot = build_app_snapshot(database, settings)
+    evidence = snapshot.ensemble_components[0].evidence
+
+    assert evidence["coverage_manifest"] == {
+        "reason": "malformed_coverage_manifest",
+        "status": "unavailable",
+    }
+    encoded = json.dumps(evidence, sort_keys=True)
+    assert "licensed-raw-entry" not in encoded
+    assert len(encoded) < 500
 
 
 def test_snapshot_rejects_legacy_frozen_online_state(tmp_path) -> None:

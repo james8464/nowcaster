@@ -742,15 +742,13 @@ def _coverage_snapshot_projection(
         return None
     raw_gaps = evidence["gaps"]
     try:
-        gaps = [
-            DatasetGapSnapshot(
-                start=item["start"],
-                end=item["end"],
-                missing_bars=int(item["missing_bars"]),
-            )
-            for item in raw_gaps[:100]
-            if isinstance(item, dict)
-        ]
+        gaps: list[DatasetGapSnapshot] = []
+        for item in raw_gaps:
+            if not isinstance(item, dict):
+                return None
+            gap = DatasetGapSnapshot.model_validate(item)
+            if len(gaps) < 100:
+                gaps.append(gap)
         return DatasetCoverageSnapshot(
             dataset_hash=expected_dataset_hash,
             provider=provider,
@@ -763,7 +761,7 @@ def _coverage_snapshot_projection(
             coverage_end=_optional_utc(evidence.get("coverage_end")),
             row_count=max(int(evidence.get("row_count", 0)), 0),
             gaps=gaps,
-            complete=not gaps,
+            complete=not raw_gaps,
             calendar_id=calendar.calendar_id,
             calendar_version=calendar.version,
         )
@@ -773,8 +771,14 @@ def _coverage_snapshot_projection(
 
 def _bounded_ensemble_evidence(evidence: dict[str, Any], dataset_hash: str) -> dict[str, Any]:
     result = dict(evidence)
-    raw_manifest = result.get("coverage_manifest")
+    if "coverage_manifest" not in result:
+        return result
+    raw_manifest = result["coverage_manifest"]
     if not isinstance(raw_manifest, dict):
+        result["coverage_manifest"] = {
+            "reason": "malformed_coverage_manifest",
+            "status": "unavailable",
+        }
         return result
     contributors = raw_manifest.get("contributing_requests")
     contributor_rows = contributors if isinstance(contributors, list) else []
