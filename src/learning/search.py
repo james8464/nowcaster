@@ -12,7 +12,9 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 
-from src.backtest.portfolio import maximum_drawdown
+from src.backtest.execution import ExecutionAssumptions
+from src.backtest.intraday import RiskLimits, run_intraday_backtest
+from src.backtest.metrics import calculate_backtest_metrics
 from src.database.engine import Database
 from src.learning.grammar import RuleNode, semantic_dedupe
 from src.strategies.types import BarInterval, StrategyMode, canonical_hash
@@ -120,13 +122,15 @@ class LearningExperiment:
     thresholds: tuple[float, ...]
     evaluator: Evaluator | None = None
     evaluator_version: str = "1"
+    evaluator_cost_contract: str = "net-cost-aware-fold-metrics-v1"
     penalties: FitnessPenalties = field(default_factory=FitnessPenalties)
     seed_rules: tuple[RuleNode, ...] = ()
     max_depth: int = 4
     max_nodes: int = 15
     maximum_lag: int = 2
-    periods_per_year: int = 252
-    transaction_cost_bps: float = 1.0
+    execution_assumptions: ExecutionAssumptions = field(default_factory=ExecutionAssumptions)
+    risk_limits: RiskLimits = field(default_factory=RiskLimits)
+    execution_model_version: str = "task4-intraday-directional-v1"
     return_column: str = "forward_return"
     timestamp_column: str = "decision_timestamp"
     availability_column: str = "available_at"
@@ -149,9 +153,11 @@ class LearningExperiment:
         if self.evaluation_budget <= 0:
             raise ValueError("evaluation budget must be positive")
         evaluator_version = self.evaluator_version.strip()
-        if not evaluator_version:
-            raise ValueError("evaluator_version must not be empty")
+        evaluator_cost_contract = self.evaluator_cost_contract.strip()
+        if not evaluator_version or not evaluator_cost_contract:
+            raise ValueError("evaluator version and cost contract must not be empty")
         object.__setattr__(self, "evaluator_version", evaluator_version)
+        object.__setattr__(self, "evaluator_cost_contract", evaluator_cost_contract)
         if not self.inner_folds:
             raise ValueError("learning requires chronological inner folds")
         names = tuple(sorted({name.strip() for name in self.indicators if name.strip()}))
@@ -162,8 +168,16 @@ class LearningExperiment:
         object.__setattr__(self, "thresholds", thresholds)
         if self.max_depth < 3 or self.max_nodes < 3 or self.maximum_lag < 1:
             raise ValueError("grammar bounds cannot exclude one lagged comparison")
-        if self.periods_per_year <= 0 or self.transaction_cost_bps < 0:
-            raise ValueError("evaluation periods and transaction costs are invalid")
+        if not isinstance(self.execution_assumptions, ExecutionAssumptions):
+            raise ValueError("execution_assumptions must use Task 4's typed contract")
+        if not isinstance(self.risk_limits, RiskLimits):
+            raise ValueError("risk_limits must use Task 4's typed contract")
+        if self.execution_assumptions.session_close is not None:
+            raise ValueError("learning does not accept an unauthenticated execution callback")
+        execution_model_version = self.execution_model_version.strip()
+        if not execution_model_version:
+            raise ValueError("execution_model_version must not be empty")
+        object.__setattr__(self, "execution_model_version", execution_model_version)
         if not self.seed_rules:
             object.__setattr__(
                 self,
@@ -178,6 +192,14 @@ class LearningExperiment:
             )
         if any(not isinstance(rule, RuleNode) for rule in self.seed_rules):
             raise ValueError("seed rules must be typed RuleNode instances")
+        ordered_seed_rules = tuple(
+            sorted(self.seed_rules, key=lambda rule: (rule.semantic_hash, rule.render()))
+        )
+        object.__setattr__(
+            self,
+            "seed_rules",
+            semantic_dedupe(ordered_seed_rules),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -247,25 +269,55 @@ def _development_frame(experiment: LearningExperiment, bars: pd.DataFrame) -> pd
     ]
     if forbidden:
         raise ValueError(f"sealed or final evidence is forbidden during search: {sorted(forbidden)}")
-    required = {
+    generic_columns = (
         experiment.timestamp_column,
         experiment.availability_column,
         experiment.outcome_availability_column,
         "finalized",
         *experiment.indicators,
-    }
+    )
+    required = set(generic_columns)
+    execution_columns: tuple[str, ...] = ()
     if experiment.evaluator is None:
-        required.add(experiment.return_column)
+        execution_columns = (
+            "symbol",
+            "open_timestamp",
+            "close_timestamp",
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+        )
+        required.update(execution_columns)
     missing = required - set(bars.columns)
     if missing:
         raise ValueError(f"development evidence is missing columns: {sorted(missing)}")
-    frame = bars.copy()
+    allowed_order = (*generic_columns, *execution_columns)
+    if experiment.return_column in bars:
+        allowed_order = (*allowed_order, experiment.return_column)
+    selected = tuple(dict.fromkeys(allowed_order))
+    frame = bars.loc[:, list(selected)].copy()
     for column in (
         experiment.timestamp_column,
         experiment.availability_column,
         experiment.outcome_availability_column,
     ):
         frame[column] = _utc_column(frame, column)
+    if experiment.evaluator is None:
+        frame["open_timestamp"] = _utc_column(frame, "open_timestamp")
+        frame["close_timestamp"] = _utc_column(frame, "close_timestamp")
+        if not frame["symbol"].astype(str).str.upper().eq(experiment.symbol).all():
+            raise ValueError("development execution bars must match the experiment symbol")
+        execution_numeric = ("open", "high", "low", "close", "volume")
+        for column in execution_numeric:
+            frame[column] = pd.to_numeric(frame[column], errors="coerce")
+        if frame[list(execution_numeric)].isna().any().any() or not np.isfinite(
+            frame[list(execution_numeric)].to_numpy(dtype=float)
+        ).all():
+            raise ValueError("development execution prices and volume must be finite numbers")
+        if (frame["close_timestamp"] <= frame["open_timestamp"]).any() or (frame["volume"] < 0).any():
+            raise ValueError("development execution bar chronology or volume is malformed")
     if not frame["finalized"].map(lambda value: value is True or value == 1).all():
         raise ValueError("learning requires finalized development bars")
     if (frame[experiment.timestamp_column] >= experiment.sealed_final_start).any():
@@ -276,8 +328,8 @@ def _development_frame(experiment: LearningExperiment, bars: pd.DataFrame) -> pd
         raise ValueError("each finalized learner input must be available by its decision time")
     if (frame[experiment.outcome_availability_column] > experiment.as_of).any():
         raise ValueError("development outcomes are not available as-of the learning experiment")
-    if (frame[experiment.outcome_availability_column] < frame[experiment.timestamp_column]).any():
-        raise ValueError("development outcomes cannot be available before their decisions")
+    if (frame[experiment.outcome_availability_column] <= frame[experiment.timestamp_column]).any():
+        raise ValueError("development outcomes must be available strictly after their decisions")
     frame = frame.sort_values(experiment.timestamp_column, kind="stable").reset_index(drop=True)
     if frame[experiment.timestamp_column].duplicated().any():
         raise ValueError("development decision timestamps must be unique")
@@ -289,7 +341,29 @@ def _development_frame(experiment: LearningExperiment, bars: pd.DataFrame) -> pd
     return frame
 
 
-def _candidate_rules(experiment: LearningExperiment) -> tuple[RuleNode, ...]:
+def _validate_rule_domain(experiment: LearningExperiment, rule: RuleNode) -> None:
+    rule.validate_bounds(max_depth=experiment.max_depth, max_nodes=experiment.max_nodes)
+    for node in (rule, *tuple(_descendants(rule))):
+        if node.operator.value == "indicator":
+            if node.name not in experiment.indicators:
+                raise ValueError(f"indicator '{node.name}' is not a declared indicator")
+            if node.lag < 1 or node.lag > experiment.maximum_lag:
+                raise ValueError(
+                    f"indicator lag {node.lag} is outside maximum lag {experiment.maximum_lag}"
+                )
+            if node.parameters:
+                raise ValueError("indicator parameters are outside the declared bounded domain")
+        elif node.operator.value == "number" and node.value not in experiment.thresholds:
+            raise ValueError(f"numeric threshold {node.value} is outside the declared threshold grid")
+
+
+def _descendants(rule: RuleNode):
+    for child in rule.children:
+        yield child
+        yield from _descendants(child)
+
+
+def _atomic_rules(experiment: LearningExperiment) -> tuple[RuleNode, ...]:
     atoms = [
         RuleNode.compare(operator, RuleNode.indicator(name, lag=lag), RuleNode.number(threshold))
         for operator in ("gt", "lt")
@@ -304,16 +378,67 @@ def _candidate_rules(experiment: LearningExperiment) -> tuple[RuleNode, ...]:
         for right in experiment.indicators
         if left < right
     )
-    ordered_atoms = sorted(semantic_dedupe(tuple(atoms)), key=lambda node: node.semantic_hash)
-    structures = [
-        constructor(left, right)
-        for constructor in (RuleNode.all_of, RuleNode.any_of)
-        for position, left in enumerate(ordered_atoms[:12])
-        for right in ordered_atoms[position + 1 : 12]
-    ]
-    generated = list(semantic_dedupe(tuple(ordered_atoms + structures)))
+    return tuple(sorted(semantic_dedupe(tuple(atoms)), key=lambda node: node.semantic_hash))
+
+
+def _candidate_rules(experiment: LearningExperiment) -> tuple[RuleNode, ...]:
+    generated = list(_atomic_rules(experiment))
     random.Random(experiment.seed).shuffle(generated)
     return semantic_dedupe(tuple(experiment.seed_rules) + tuple(generated))
+
+
+def _next_rule(experiment: LearningExperiment, trials: Sequence[LearningTrial]) -> RuleNode | None:
+    initial = _candidate_rules(experiment)
+    ordinal = len(trials)
+    warmup = min(4, len(initial))
+    if ordinal < warmup:
+        return initial[ordinal]
+
+    seen = {trial.candidate.candidate_hash for trial in trials}
+    ranked = sorted(
+        (trial for trial in trials if trial.status == "succeeded" and trial.fitness is not None),
+        key=lambda trial: (-float(trial.fitness), trial.candidate.candidate_hash),
+    )
+    variants: list[RuleNode] = []
+    atoms = _atomic_rules(experiment)
+    for parent_trial in ranked[:4]:
+        parent = parent_trial.candidate.rule
+        mates = [atom for atom in atoms if atom.semantic_hash != parent.semantic_hash]
+        random.Random(
+            int(
+                canonical_hash(
+                    {
+                        "seed": experiment.seed,
+                        "ordinal": ordinal,
+                        "parent": parent.semantic_hash,
+                    }
+                )[:16],
+                16,
+            )
+        ).shuffle(mates)
+        for mate in mates:
+            variants.extend((RuleNode.all_of(parent, mate), RuleNode.any_of(parent, mate)))
+        # Atomic alternatives are the bounded parameter/operator/lag mutations.
+        variants.extend(mates)
+    for position, left in enumerate(ranked[:4]):
+        for right in ranked[position + 1 : 4]:
+            variants.extend(
+                (
+                    RuleNode.all_of(left.candidate.rule, right.candidate.rule),
+                    RuleNode.any_of(left.candidate.rule, right.candidate.rule),
+                )
+            )
+    variants.extend(initial[warmup:])
+    for rule in semantic_dedupe(tuple(variants)):
+        candidate_hash = RuleCandidate.from_rule(experiment, rule).candidate_hash
+        if candidate_hash in seen:
+            continue
+        try:
+            _validate_rule_domain(experiment, rule)
+        except ValueError:
+            continue
+        return rule
+    return None
 
 
 def _validated_fold(
@@ -344,39 +469,156 @@ def _default_evaluator(
     candidate: RuleCandidate,
     train: pd.DataFrame,
     validation: pd.DataFrame,
+    execution_frame: pd.DataFrame,
 ) -> FoldMetrics:
-    combined = pd.concat([train, validation], ignore_index=True).sort_values(
+    causal_warmup = train.sort_values(experiment.timestamp_column, kind="stable").tail(
+        experiment.maximum_lag + 1
+    )
+    combined = pd.concat([causal_warmup, validation], ignore_index=True).sort_values(
         experiment.timestamp_column, kind="stable"
     )
-    active = candidate.rule.evaluate(combined).astype(float)
+    active = candidate.rule.evaluate(combined).astype(bool)
     validation_mask = combined[experiment.timestamp_column].isin(validation[experiment.timestamp_column])
-    positions = active.loc[validation_mask]
-    gross_returns = pd.to_numeric(combined.loc[validation_mask, experiment.return_column], errors="coerce")
-    if gross_returns.isna().any() or not np.isfinite(gross_returns).all():
-        raise ValueError("development forward returns must be finite")
-    turnover = positions.diff().abs().fillna(positions.abs())
-    net_returns = positions.to_numpy() * gross_returns.to_numpy() - turnover.to_numpy() * (
-        experiment.transaction_cost_bps / 10_000
+    decisions = combined.loc[validation_mask, [experiment.timestamp_column]].copy()
+    decisions["strategy_id"] = candidate.strategy_id
+    decisions["symbol"] = experiment.symbol
+    decisions["decision_timestamp"] = decisions.pop(experiment.timestamp_column)
+    decisions["data_through"] = decisions["decision_timestamp"]
+    # A Boolean rule is a transparent directional classifier: true is long, false is short.
+    decisions["signal"] = np.where(active.loc[validation_mask], 1, -1)
+    decisions["strength"] = 1.0
+    last_decision = pd.Timestamp(validation[experiment.timestamp_column].max())
+    eligible_at = last_decision + experiment.execution_assumptions.latency
+    future_execution = execution_frame.loc[
+        (execution_frame["open_timestamp"] >= eligible_at)
+        & (execution_frame["close_timestamp"] > last_decision)
+    ].sort_values("open_timestamp", kind="stable")
+    execution_end = (
+        pd.Timestamp(future_execution.iloc[0]["close_timestamp"])
+        if not future_execution.empty
+        else pd.Timestamp(combined["close_timestamp"].max())
     )
-    net = pd.Series(net_returns, dtype=float)
-    volatility = float(net.std(ddof=1))
-    sharpe = (
-        float(net.mean() / volatility * math.sqrt(experiment.periods_per_year))
-        if volatility > 0 and math.isfinite(volatility)
-        else 0.0
+    execution_start = pd.Timestamp(causal_warmup["open_timestamp"].min())
+    execution_mask = (
+        (execution_frame["open_timestamp"] >= execution_start)
+        & (execution_frame["close_timestamp"] <= execution_end)
     )
+    execution_bars = execution_frame.loc[
+        execution_mask,
+        [
+            "symbol",
+            "open_timestamp",
+            "close_timestamp",
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "finalized",
+        ],
+    ].copy()
+    result = run_intraday_backtest(
+        execution_bars,
+        decisions,
+        experiment.execution_assumptions,
+        experiment.risk_limits,
+        strategy_id=candidate.strategy_id,
+        symbol=experiment.symbol,
+    )
+    validation_start = pd.Timestamp(validation[experiment.timestamp_column].min())
+    validation_curve = result.equity_curve.loc[
+        (pd.to_datetime(result.equity_curve["timestamp"], utc=True) > validation_start)
+        & (pd.to_datetime(result.equity_curve["timestamp"], utc=True) <= execution_end)
+    ].copy()
+    validation_metrics = calculate_backtest_metrics(
+        validation_curve,
+        result.trade_ledger,
+        periods_per_year=experiment.risk_limits.periods_per_year,
+    )
+    sharpe = float(validation_metrics.sharpe)
+    drawdown = float(validation_metrics.maximum_drawdown)
+    turnover = float(validation_metrics.turnover)
     return FoldMetrics(
-        net_sharpe=sharpe,
-        maximum_drawdown=float(maximum_drawdown(net)),
-        turnover=float(turnover.sum()),
+        net_sharpe=sharpe if math.isfinite(sharpe) else 0.0,
+        maximum_drawdown=drawdown if math.isfinite(drawdown) else 0.0,
+        turnover=turnover if math.isfinite(turnover) else 0.0,
     )
 
 
-def _trial_payload(experiment: LearningExperiment, trial: LearningTrial) -> dict[str, object]:
+def _execution_contract(experiment: LearningExperiment) -> dict[str, object]:
+    execution = experiment.execution_assumptions
+    costs = execution.costs
+    risk = experiment.risk_limits
     return {
-        "schema_version": 1,
+        "model_version": experiment.execution_model_version,
+        "execution": {
+            "costs": {
+                "maker_fee_bps": costs.maker_fee_bps,
+                "taker_fee_bps": costs.taker_fee_bps,
+                "commission_per_unit": costs.commission_per_unit,
+                "half_spread_bps": costs.half_spread_bps,
+                "slippage_bps": costs.slippage_bps,
+                "funding_bps_per_period": costs.funding_bps_per_period,
+                "borrow_bps_per_period": costs.borrow_bps_per_period,
+            },
+            "latency_seconds": execution.latency.total_seconds(),
+            "tick_size": execution.tick_size,
+            "lot_size": execution.lot_size,
+            "participation_rate": execution.participation_rate,
+            "short_borrow_available": execution.short_borrow_available,
+            "flatten_at_session_end": execution.flatten_at_session_end,
+        },
+        "risk": {
+            "initial_cash": risk.initial_cash,
+            "maximum_gross_exposure": risk.maximum_gross_exposure,
+            "maximum_net_exposure": risk.maximum_net_exposure,
+            "maximum_asset_exposure": risk.maximum_asset_exposure,
+            "maximum_strategy_exposure": risk.maximum_strategy_exposure,
+            "target_volatility": risk.target_volatility,
+            "volatility_lookback": risk.volatility_lookback,
+            "minimum_volatility_observations": risk.minimum_volatility_observations,
+            "periods_per_year": risk.periods_per_year,
+        },
+    }
+
+
+_TRIAL_SOURCE = "interpretable_learning"
+_TRIAL_SOURCE_VERSION = "2"
+
+
+def _timestamp_text(value: object) -> str:
+    timestamp = pd.Timestamp(value)
+    if pd.isna(timestamp) or timestamp.tzinfo is None:
+        raise ValueError("persisted trial timestamps must be explicit UTC")
+    return timestamp.tz_convert("UTC").isoformat()
+
+
+def _development_digest(frame: pd.DataFrame) -> str:
+    return canonical_hash(
+        {
+            "columns": tuple(str(column) for column in frame.columns),
+            "dtypes": tuple(str(dtype) for dtype in frame.dtypes),
+            "rows": frame.to_json(
+                orient="split",
+                date_format="iso",
+                date_unit="ns",
+                double_precision=15,
+            ),
+        }
+    )
+
+
+def _trial_payload(
+    experiment: LearningExperiment,
+    trial: LearningTrial,
+    development_digest: str,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "schema_version": 2,
         "experiment_hash": _experiment_hash(experiment),
+        "development_evidence_digest": development_digest,
         "ordinal": trial.ordinal,
+        "trial_id": trial.trial_id,
         "candidate_hash": trial.candidate.candidate_hash,
         "strategy_id": trial.candidate.strategy_id,
         "version": trial.candidate.version,
@@ -391,7 +633,22 @@ def _trial_payload(experiment: LearningExperiment, trial: LearningTrial) -> dict
             }
             for metrics in trial.fold_metrics
         ],
+        "fold_count": len(trial.fold_metrics),
+        "fitness": trial.fitness,
+        "status": trial.status,
+        "error_summary": trial.error_summary,
+        "evaluated_at": _timestamp_text(trial.evaluated_at),
+        "learning_run_id": experiment.learning_run_id,
+        "dataset_hash": experiment.dataset_hash,
+        "symbol": experiment.symbol,
+        "interval": experiment.interval.value,
+        "mode": StrategyMode.WALK_FORWARD_LEARNING.value,
+        "source": _TRIAL_SOURCE,
+        "source_version": _TRIAL_SOURCE_VERSION,
+        "created_at": _timestamp_text(trial.evaluated_at),
     }
+    payload["receipt_hash"] = canonical_hash(payload)
+    return payload
 
 
 def _experiment_hash(experiment: LearningExperiment) -> str:
@@ -426,8 +683,7 @@ def _experiment_hash(experiment: LearningExperiment) -> str:
                 "max_depth": experiment.max_depth,
                 "max_nodes": experiment.max_nodes,
                 "maximum_lag": experiment.maximum_lag,
-                "periods_per_year": experiment.periods_per_year,
-                "transaction_cost_bps": experiment.transaction_cost_bps,
+                "execution_contract": _execution_contract(experiment),
                 "return_column": experiment.return_column,
                 "timestamp_column": experiment.timestamp_column,
                 "availability_column": experiment.availability_column,
@@ -440,12 +696,17 @@ def _experiment_hash(experiment: LearningExperiment) -> str:
                 },
                 "evaluator": evaluator_identity,
                 "evaluator_version": experiment.evaluator_version,
+                "evaluator_cost_contract": experiment.evaluator_cost_contract,
             },
         }
     )
 
 
-def _persist_trial(experiment: LearningExperiment, trial: LearningTrial) -> None:
+def _persist_trial(
+    experiment: LearningExperiment,
+    trial: LearningTrial,
+    development_digest: str,
+) -> None:
     if experiment.database is None:
         return
     experiment.database.insert(
@@ -460,12 +721,12 @@ def _persist_trial(experiment: LearningExperiment, trial: LearningTrial) -> None
                 "interval": experiment.interval.value,
                 "mode": StrategyMode.WALK_FORWARD_LEARNING.value,
                 "evaluated_at": trial.evaluated_at,
-                "candidate": _trial_payload(experiment, trial),
+                "candidate": _trial_payload(experiment, trial, development_digest),
                 "fitness": trial.fitness,
                 "status": trial.status,
                 "error_summary": trial.error_summary,
-                "source": "interpretable_learning",
-                "source_version": "1",
+                "source": _TRIAL_SOURCE,
+                "source_version": _TRIAL_SOURCE_VERSION,
                 "created_at": trial.evaluated_at,
             }
         ],
@@ -479,35 +740,94 @@ def _json_payload(value: object) -> dict[str, object]:
     return parsed
 
 
-def _resume_trials(experiment: LearningExperiment, rules: tuple[RuleNode, ...]) -> list[LearningTrial]:
+def _row_optional_text(value: object) -> str | None:
+    return None if pd.isna(value) else str(value)
+
+
+def _resume_trials(experiment: LearningExperiment, development_digest: str) -> list[LearningTrial]:
     if experiment.database is None:
         return []
     persisted = experiment.database.frame(
-        "select * from learning_trials where learning_run_id = :run_id order by evaluated_at, trial_id",
+        "select * from learning_trials where learning_run_id = :run_id",
         {"run_id": experiment.learning_run_id},
     )
     if persisted.empty:
         return []
-    expected_context = {
-        "dataset_hash": experiment.dataset_hash,
-        "symbol": experiment.symbol,
-        "interval": experiment.interval.value,
-        "mode": StrategyMode.WALK_FORWARD_LEARNING.value,
-    }
-    trials: list[LearningTrial] = []
+    rows: list[tuple[int, dict[str, object], dict[str, object]]] = []
     for row in persisted.to_dict(orient="records"):
-        if any(str(row[name]) != value for name, value in expected_context.items()):
-            raise ValueError("persisted learning ledger context conflicts with the experiment")
         payload = _json_payload(row["candidate"])
-        if payload.get("schema_version") != 1:
-            raise ValueError("persisted candidate payload version is unsupported")
+        receipt = payload.pop("receipt_hash", None)
+        if payload.get("schema_version") != 2 or receipt != canonical_hash(payload):
+            raise ValueError("persisted trial immutable receipt is malformed")
         if payload.get("experiment_hash") != _experiment_hash(experiment):
             raise ValueError("persisted trial does not authenticate the complete search contract")
+        if payload.get("development_evidence_digest") != development_digest:
+            raise ValueError("persisted trial receipt does not authenticate current development evidence")
         ordinal = payload.get("ordinal")
-        if isinstance(ordinal, bool) or not isinstance(ordinal, int) or not 0 <= ordinal < experiment.evaluation_budget:
+        if isinstance(ordinal, bool) or not isinstance(ordinal, int):
             raise ValueError("persisted learning trial ordinal is malformed")
-        candidate = RuleCandidate.from_rule(experiment, rules[min(ordinal, len(rules) - 1)])
-        if payload.get("candidate_hash") != candidate.candidate_hash or payload.get("version") != candidate.version:
+        row_fitness = None if pd.isna(row["fitness"]) else float(row["fitness"])
+        payload_fitness = payload.get("fitness")
+        fitness_matches = (
+            row_fitness is None and payload_fitness is None
+        ) or (
+            row_fitness is not None
+            and isinstance(payload_fitness, (float, int))
+            and not isinstance(payload_fitness, bool)
+            and math.isclose(row_fitness, float(payload_fitness), rel_tol=1e-6, abs_tol=1e-7)
+        )
+        mirrors = {
+            "trial_id": str(row["trial_id"]),
+            "learning_run_id": str(row["learning_run_id"]),
+            "candidate_hash": str(row["candidate_hash"]),
+            "dataset_hash": str(row["dataset_hash"]),
+            "symbol": str(row["symbol"]),
+            "interval": str(row["interval"]),
+            "mode": str(row["mode"]),
+            "evaluated_at": _timestamp_text(row["evaluated_at"]),
+            "status": str(row["status"]),
+            "error_summary": _row_optional_text(row["error_summary"]),
+            "source": str(row["source"]),
+            "source_version": str(row["source_version"]),
+            "created_at": _timestamp_text(row["created_at"]),
+        }
+        if not fitness_matches or any(payload.get(name) != value for name, value in mirrors.items()):
+            raise ValueError("persisted trial row conflicts with its immutable receipt")
+        expected_context = {
+            "learning_run_id": experiment.learning_run_id,
+            "dataset_hash": experiment.dataset_hash,
+            "symbol": experiment.symbol,
+            "interval": experiment.interval.value,
+            "mode": StrategyMode.WALK_FORWARD_LEARNING.value,
+            "source": _TRIAL_SOURCE,
+            "source_version": _TRIAL_SOURCE_VERSION,
+        }
+        if any(payload.get(name) != value for name, value in expected_context.items()):
+            raise ValueError("persisted trial receipt context conflicts with the experiment")
+        payload["receipt_hash"] = receipt
+        rows.append((ordinal, payload, row))
+
+    rows.sort(key=lambda item: item[0])
+    if [ordinal for ordinal, _, _ in rows] != list(range(len(rows))):
+        raise ValueError("persisted trial ledger must be a contiguous append-only prefix")
+    if len(rows) > experiment.evaluation_budget:
+        raise ValueError("persisted trial count exceeds the current evaluation budget")
+
+    trials: list[LearningTrial] = []
+    initial = _candidate_rules(experiment)
+    for ordinal, payload, _row in rows:
+        if not 0 <= ordinal < experiment.evaluation_budget:
+            raise ValueError("persisted learning trial ordinal is malformed")
+        expected_rule = _next_rule(experiment, trials)
+        candidate = RuleCandidate.from_rule(experiment, expected_rule or initial[-1])
+        if (
+            payload.get("candidate_hash") != candidate.candidate_hash
+            or payload.get("strategy_id") != candidate.strategy_id
+            or payload.get("version") != candidate.version
+            or payload.get("state") != candidate.state
+            or payload.get("rule") != json.loads(candidate.rule.canonical)
+            or payload.get("rule_text") != candidate.rule.render()
+        ):
             raise ValueError("persisted trial does not match deterministic candidate generation")
         expected_trial_id = canonical_hash(
             {
@@ -516,9 +836,9 @@ def _resume_trials(experiment: LearningExperiment, rules: tuple[RuleNode, ...]) 
                 "ordinal": ordinal,
             }
         )
-        if row["trial_id"] != expected_trial_id or row["candidate_hash"] != candidate.candidate_hash:
+        if payload.get("trial_id") != expected_trial_id:
             raise ValueError("persisted trial identity is malformed")
-        status = str(row["status"])
+        status = str(payload["status"])
         if status not in {"succeeded", "failed", "invalid", "budget_stop"}:
             raise ValueError("persisted trial status is malformed")
         metrics_payload = payload.get("fold_metrics", [])
@@ -527,35 +847,47 @@ def _resume_trials(experiment: LearningExperiment, rules: tuple[RuleNode, ...]) 
         metrics = tuple(FoldMetrics(**item) for item in metrics_payload if isinstance(item, dict))
         if len(metrics) != len(metrics_payload):
             raise ValueError("persisted fold metrics are malformed")
-        raw_fitness = row["fitness"]
-        stored_fitness = None if pd.isna(raw_fitness) else float(raw_fitness)
+        if payload.get("fold_count") != len(metrics):
+            raise ValueError("persisted fold count is malformed")
+        raw_fitness = payload.get("fitness")
+        stored_fitness = None if raw_fitness is None else float(raw_fitness)
+        error_summary = payload.get("error_summary")
         if status == "succeeded":
+            if len(metrics) != len(experiment.inner_folds) or error_summary is not None:
+                raise ValueError("successful persisted trial result semantics are malformed")
             fitness = calculate_fitness(candidate, metrics, experiment.penalties)
             if stored_fitness is None or not math.isclose(stored_fitness, fitness, rel_tol=1e-6, abs_tol=1e-7):
                 raise ValueError("persisted trial fitness does not match its fold evidence")
         else:
-            if stored_fitness is not None:
-                raise ValueError("failed or invalid persisted trials cannot contain fitness")
+            if metrics or stored_fitness is not None or not isinstance(error_summary, str) or not error_summary:
+                raise ValueError("non-success persisted trial result semantics are malformed")
             fitness = None
-        raw_error = row["error_summary"]
-        error_summary = None if pd.isna(raw_error) else str(raw_error)
+        try:
+            _validate_rule_domain(experiment, candidate.rule)
+            expected_invalid = False
+        except ValueError:
+            expected_invalid = True
+        if (status == "invalid") != expected_invalid:
+            raise ValueError("persisted invalid status conflicts with deterministic domain validation")
+        if (expected_rule is None) != (status == "budget_stop"):
+            raise ValueError("persisted budget-stop status conflicts with deterministic generation")
+        expected_evaluated_at = experiment.started_at + timedelta(microseconds=ordinal)
+        if payload.get("evaluated_at") != _timestamp_text(expected_evaluated_at) or payload.get(
+            "created_at"
+        ) != _timestamp_text(expected_evaluated_at):
+            raise ValueError("persisted trial evaluated_at is not deterministic")
         trials.append(
             LearningTrial(
                 ordinal=ordinal,
                 trial_id=expected_trial_id,
                 candidate=candidate,
-                evaluated_at=experiment.started_at + timedelta(microseconds=ordinal),
+                evaluated_at=expected_evaluated_at,
                 status=status,  # type: ignore[arg-type]
                 fold_metrics=metrics,
                 fitness=fitness,
-                error_summary=error_summary,
+                error_summary=error_summary if isinstance(error_summary, str) else None,
             )
         )
-    trials.sort(key=lambda trial: trial.ordinal)
-    if [trial.ordinal for trial in trials] != list(range(len(trials))):
-        raise ValueError("persisted trial ledger must be a contiguous append-only prefix")
-    if len(trials) > experiment.evaluation_budget:
-        raise ValueError("persisted trial count exceeds the current evaluation budget")
     return trials
 
 
@@ -563,6 +895,7 @@ def _persist_discovery(
     experiment: LearningExperiment,
     candidate: RuleCandidate,
     trials: Sequence[LearningTrial],
+    development_digest: str,
 ) -> None:
     if experiment.database is None:
         return
@@ -599,13 +932,14 @@ def _persist_discovery(
                 },
                 "evidence": {
                     "development_evidence_through": experiment.as_of.isoformat(),
+                    "development_evidence_digest": development_digest,
                     "experiment_hash": _experiment_hash(experiment),
                     "fitness": best.fitness,
                     "trial_count": len(trials),
                     "trial_ids": [trial.trial_id for trial in trials],
                 },
-                "source": "interpretable_learning",
-                "source_version": "1",
+                "source": _TRIAL_SOURCE,
+                "source_version": _TRIAL_SOURCE_VERSION,
                 "created_at": experiment.as_of,
             }
         ],
@@ -616,14 +950,15 @@ def discover_rules(experiment: LearningExperiment, development_bars: pd.DataFram
     """Run deterministic bounded search without touching the sealed final block."""
 
     frame = _development_frame(experiment, development_bars)
+    development_digest = _development_digest(frame)
     fold_frames = tuple(_validated_fold(experiment, frame, fold) for fold in experiment.inner_folds)
     rules = _candidate_rules(experiment)
-    trials = _resume_trials(experiment, rules)
+    trials = _resume_trials(experiment, development_digest)
     successful = [trial.candidate for trial in trials if trial.status == "succeeded"]
     for ordinal in range(len(trials), experiment.evaluation_budget):
-        rule = rules[min(ordinal, len(rules) - 1)]
+        rule = _next_rule(experiment, trials)
         evaluated_at = experiment.started_at + timedelta(microseconds=ordinal)
-        candidate = RuleCandidate.from_rule(experiment, rule)
+        candidate = RuleCandidate.from_rule(experiment, rule or rules[-1])
         trial_id = canonical_hash(
             {
                 "candidate_hash": candidate.candidate_hash,
@@ -631,7 +966,7 @@ def discover_rules(experiment: LearningExperiment, development_bars: pd.DataFram
                 "ordinal": ordinal,
             }
         )
-        if ordinal >= len(rules):
+        if rule is None:
             trial = LearningTrial(
                 ordinal,
                 trial_id,
@@ -641,10 +976,10 @@ def discover_rules(experiment: LearningExperiment, development_bars: pd.DataFram
                 error_summary="bounded semantic candidate space exhausted",
             )
             trials.append(trial)
-            _persist_trial(experiment, trial)
+            _persist_trial(experiment, trial, development_digest)
             continue
         try:
-            candidate.rule.validate_bounds(max_depth=experiment.max_depth, max_nodes=experiment.max_nodes)
+            _validate_rule_domain(experiment, candidate.rule)
         except ValueError as error:
             trial = LearningTrial(
                 ordinal,
@@ -655,7 +990,7 @@ def discover_rules(experiment: LearningExperiment, development_bars: pd.DataFram
                 error_summary=f"{type(error).__name__}: {error}",
             )
             trials.append(trial)
-            _persist_trial(experiment, trial)
+            _persist_trial(experiment, trial, development_digest)
             continue
         try:
             fold_metrics: list[FoldMetrics] = []
@@ -665,7 +1000,7 @@ def discover_rules(experiment: LearningExperiment, development_bars: pd.DataFram
                 metrics = (
                     experiment.evaluator(candidate, train, validation)
                     if experiment.evaluator is not None
-                    else _default_evaluator(experiment, candidate, train, validation)
+                    else _default_evaluator(experiment, candidate, train, validation, frame)
                 )
                 if not isinstance(metrics, FoldMetrics):
                     raise TypeError("candidate evaluator must return FoldMetrics")
@@ -673,27 +1008,27 @@ def discover_rules(experiment: LearningExperiment, development_bars: pd.DataFram
             fitness = calculate_fitness(candidate, fold_metrics, experiment.penalties)
         except Exception as error:  # each deterministic query must survive into the append-only ledger
             trial = LearningTrial(
-                    ordinal,
-                    trial_id,
-                    candidate,
-                    evaluated_at,
-                    "failed",
-                    error_summary=f"{type(error).__name__}: {error}",
-                )
-            trials.append(trial)
-            _persist_trial(experiment, trial)
-            continue
-        trial = LearningTrial(
                 ordinal,
                 trial_id,
                 candidate,
                 evaluated_at,
-                "succeeded",
-                tuple(fold_metrics),
-                fitness,
+                "failed",
+                error_summary=f"{type(error).__name__}: {error}",
             )
+            trials.append(trial)
+            _persist_trial(experiment, trial, development_digest)
+            continue
+        trial = LearningTrial(
+            ordinal,
+            trial_id,
+            candidate,
+            evaluated_at,
+            "succeeded",
+            tuple(fold_metrics),
+            fitness,
+        )
         trials.append(trial)
-        _persist_trial(experiment, trial)
+        _persist_trial(experiment, trial, development_digest)
         successful.append(candidate)
     ranked = sorted(
         (trial for trial in trials if trial.fitness is not None),
@@ -707,7 +1042,7 @@ def discover_rules(experiment: LearningExperiment, development_bars: pd.DataFram
         stopped_reason="evaluation_budget_exhausted",
     )
     if result.best_candidate is not None:
-        _persist_discovery(experiment, result.best_candidate, result.trials)
+        _persist_discovery(experiment, result.best_candidate, result.trials, development_digest)
     return result
 
 

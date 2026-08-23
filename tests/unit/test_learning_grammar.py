@@ -50,6 +50,18 @@ def test_semantic_dedupe_normalizes_inverse_crossovers_and_idempotent_boolean_no
     assert semantic_dedupe((above, same_cross, repeated)) == (above,)
 
 
+@pytest.mark.parametrize("combine", [RuleNode.all_of, RuleNode.any_of])
+def test_nested_boolean_canonicalization_is_associative_and_idempotent(combine) -> None:
+    a = RuleNode.compare("gt", RuleNode.indicator("rsi", lag=1), RuleNode.number(50))
+    b = RuleNode.compare("gt", RuleNode.indicator("volume", lag=1), RuleNode.number(100))
+
+    nested = combine(combine(a, a), b)
+    simple = combine(a, b)
+
+    assert nested.canonical == simple.canonical
+    assert nested.semantic_hash == simple.semantic_hash
+
+
 def test_maximum_depth_and_node_count_are_enforced() -> None:
     leaf = RuleNode.compare("gt", RuleNode.indicator("close", lag=1), RuleNode.number(0))
     deep = RuleNode.negate(RuleNode.negate(leaf))

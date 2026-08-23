@@ -169,10 +169,12 @@ class RuleNode:
             children.reverse()
         if operator in {RuleOperator.AND, RuleOperator.OR}:
             flattened: list[dict[str, object]] = []
-            for child in self.children:
-                child_value = child._canonical_value()
-                if child.operator is operator:
-                    flattened.extend(child_value["children"])  # type: ignore[arg-type]
+            for child_value in children:
+                if child_value.get("operator") == operator.value:
+                    nested = child_value.get("children")
+                    if not isinstance(nested, list):
+                        raise AssertionError("canonical Boolean children must be a list")
+                    flattened.extend(nested)
                 else:
                     flattened.append(child_value)
             unique = {canonical_json(child): child for child in flattened}

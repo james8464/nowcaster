@@ -33,28 +33,32 @@ No shared Task 1-5 production interface or schema file was changed. Task 1's exi
 
 ### Search and fitness
 
-- `LearningExperiment` binds identifiers, UTC chronology, sealed boundary, seed, fixed budget, inner folds, indicator/parameter grid, grammar caps, cost assumptions, fitness penalties, evaluator identity, and explicit evaluator version.
-- A canonical full search-contract hash is stored in every trial payload and verified on resume.
-- Candidate ordering is deterministic across process input/configuration order for a fixed seed.
+- `LearningExperiment` binds identifiers, UTC chronology, sealed boundary, seed, fixed budget, inner folds, indicator/parameter grid, grammar caps, every typed Task 4 execution/risk assumption, fitness penalties, evaluator identity/version, and an explicit net-cost-aware evaluator contract.
+- A canonical full search-contract hash and validated-development-frame digest are stored in every authenticated trial receipt and verified on resume.
+- Seed rules are canonically deduplicated/sorted. Candidate ordering is deterministic across row/configuration order and fresh processes for a fixed seed.
+- Search starts with a bounded seeded population, then uses validation fitness to rank parents and deterministically generate bounded parameter/operator/lag mutations and Boolean crossovers. Later candidates change when early parent fitness changes.
 - Search evaluates exactly the fixed ledger budget. Candidate-space exhaustion produces deterministic `budget_stop` rows rather than silent early stopping.
 - Invalid cap-breaking candidates, evaluator failures, successful candidates, and budget stops all become append-only ledger rows. `LearningResult.trial_count` is exactly `len(trials)` and matches durable ledger count.
 - Fitness is median inner-fold validation net Sharpe less median absolute drawdown, median turnover, fold Sharpe population instability, and node-count MDL/complexity penalties.
-- The default evaluator applies explicit transaction costs to validation returns; injected evaluators must return typed net/cost-aware `FoldMetrics` and are version-bound for resume.
+- The default evaluator converts Boolean rules to a versioned long/short signal contract and routes them through Task 4's event-driven intraday backtest, preserving next-actionable-bar, latency, collision, spread/slippage/fees, funding/borrow, and risk behavior. Fold metrics are computed only over the validation execution horizon; prepended causal warmup rows do not dilute them.
+- Injected evaluators receive only deterministic allowlisted finalized timestamps, declared indicators, and an explicitly declared return column when present. They cannot observe undeclared labels or execution columns and must return typed net/cost-aware `FoldMetrics` under a versioned cost contract.
 
 ### Leakage and chronology boundaries
 
 - Every timestamp supplied to learning or promotion must be explicit UTC.
 - Every learner input row must be finalized and available by its decision time and by experiment `as_of`.
-- Development outcomes must become available after their decision and by experiment `as_of`.
+- Development outcomes must become available strictly after their decision and by experiment `as_of`; equality fails closed.
 - Any row at or beyond `sealed_final_start`, or any column named as sealed/final evidence, fails closed.
 - Inner folds are non-empty, in range, unique, strictly chronological, and require training outcomes to be available by validation start.
 - Fold validation occurs before the first candidate query, so malformed evidence is not misclassified as a failed trial.
-- Evaluators receive deep copies of training and validation slices only.
+- Every seed/generated terminal is recursively checked against the declared indicator, lag, parameter, threshold, depth, and node domains before evaluator invocation. Invalid selected queries are ledgered and never reach the evaluator.
+- Evaluators receive deep copies of strict typed allowlisted training and validation slices only. The Task 4 engine receives only execution-bar columns and never undeclared labels/indicators.
 
 ### Persistence, versioning, and promotion
 
 - Trials use deterministic IDs and evaluation timestamps and are inserted, never upserted or updated.
-- Resume accepts only a contiguous deterministic ledger prefix with matching context, full search-contract hash, candidate generation, version, identity, status, fold metrics, and recomputed fitness.
+- Every ledger payload contains an immutable canonical receipt over the complete row/result contract, deterministic timestamps/source/version, candidate payload, fold count/metrics/fitness/status/error semantics, experiment hash, and validated-frame digest.
+- Resume accepts only a contiguous deterministic ledger prefix, regenerates each evolutionary candidate from authenticated preceding fitness, recomputes fitness, and rejects any changed row, payload, source/version, timestamp, status/error, claimed dataset/frame, or candidate identity.
 - Failed, invalid, and budget-stop rows survive resume and count toward the budget.
 - The best successful rule is persisted idempotently as a new immutable `shadow` candidate.
 - Candidate versions include the immutable rule definition and learning-run identity, so later discovery runs cannot mutate or collide with an active version.
@@ -101,26 +105,45 @@ All commands below were run after activating the repository `.venv` so the comma
 - Evaluator-version RED failed because no explicit version token existed. GREEN binds it into the authenticated resume contract.
 - The final integration file contains **9 tests**.
 
+### Review fix round 1/5 RED/GREEN
+
+- Nested Boolean RED: `.venv/bin/pytest tests/unit/test_learning_grammar.py -v` -> **2 failed, 8 passed** (`AND` and `OR` nested associativity/idempotence). GREEN -> **10 passed**.
+- Domain/evidence/order/time RED: `.venv/bin/pytest tests/unit/test_learning_search.py -v` -> **7 failed, 9 passed** (four escaped seed-domain cases, evaluator allowlist, seed order, equal outcome time). GREEN -> **16 passed**.
+- Evolution RED: `.venv/bin/pytest tests/unit/test_learning_search.py::test_inner_fitness_selects_parents_and_changes_later_candidates -v` -> **1 failed** because the fixed shuffled pool ignored fitness. GREEN -> **1 passed**; the full search unit file then passed **17 tests**.
+- Task 4 RED: `.venv/bin/pytest tests/unit/test_learning_search.py::test_default_fitness_uses_versioned_task4_execution_and_cost_assumptions -v` -> **1 failed** because `LearningExperiment` had no typed execution contract and used flat forward-return arithmetic. GREEN -> **1 passed**, covering spread, latency, funding, short borrow, and doubled costs.
+- Validation-horizon RED: `.venv/bin/pytest tests/unit/test_learning_search.py::test_default_fold_metrics_exclude_prepended_training_only_returns -v` -> **1 failed** with different Sharpes (`-5.612486...` versus `-6.480740...`). GREEN -> **1 passed** after limiting causal warmup and recomputing Task 4 metrics strictly on the validation execution horizon.
+- Receipt/evolutionary-resume RED: `.venv/bin/pytest tests/integration/test_learning_mode.py -v` -> **7 failed, 8 passed**: evolutionary ordinal 4 could not resume; status/error/timestamp/source/source-version corruption was accepted; the changed-frame test initially exposed a pandas fixture dtype issue, then correctly failed because the same claimed dataset hash accepted different evidence. GREEN -> **15 passed**, later expanded with candidate-payload corruption and evaluator cost-contract coverage.
+
+### Review findings addressed
+
+1. Critical domain/evidence bypass: recursive terminal validation plus strict evaluator allowlist; unknown/future indicators, lag 99, arbitrary indicator parameters, off-grid thresholds, and undeclared future labels are covered.
+2. Deterministic evolution: fitness-ranked seeded parents now drive bounded mutation/crossover; fresh-process/order determinism, changed-parent fitness, fixed budgets, semantic dedupe, and resume are covered.
+3. Task 4 fitness: default evaluation uses the event-driven backtest; the full execution/risk and directional-signal contract is hashed; validation-only metrics and individual cost/latency/carry sensitivities are covered.
+4. Nested canonicalization: normalized child operators drive safe `AND`/`OR` flattening, preserving associativity and idempotence.
+5. Resume receipt: schema-v2 receipts authenticate the complete row/result and actual validated frame, including deterministic generation and result semantics.
+6. Seed normalization: semantic duplicates are deterministically represented, deduplicated, and sorted before hashing/generation.
+7. Outcome availability: `outcome_available_at <= decision_timestamp` is rejected.
+
 ## Verification
 
-- Task 6 focused: `pytest tests/unit/test_learning_grammar.py tests/unit/test_learning_search.py tests/integration/test_learning_mode.py -q` -> **26 passed in 1.22s**.
-- Relevant Task 3-5 compatibility: indicators, strategy library, no-repaint, execution engine, intraday backtest, strategy validation, ensemble, strategy engine integration, and schema integration -> **196 passed in 14.39s**.
-- Fresh full Python suite after final executable change: `pytest` -> **381 passed in 83.82s**.
-- Changed-file Ruff: `ruff check ...` -> **All checks passed**.
-- Final staged diff check: `git diff --cached --check` -> **passed with no output**.
+- Task 6 focused: `.venv/bin/pytest tests/unit/test_learning_grammar.py tests/unit/test_learning_search.py tests/integration/test_learning_mode.py -q` -> **46 passed in 3.55s**.
+- Relevant Task 3-5 compatibility: indicators, strategy library, no-repaint, execution engine, intraday backtest, strategy validation, ensemble, strategy engine integration, and schema integration -> **196 passed in 14.87s**.
+- Fresh full Python suite after final executable change: `.venv/bin/pytest -q` -> **401 passed in 81.69s**.
+- Changed-file Ruff: `.venv/bin/ruff check src/learning/grammar.py src/learning/search.py tests/unit/test_learning_grammar.py tests/unit/test_learning_search.py tests/integration/test_learning_mode.py` -> **All checks passed**.
+- Working-tree and staged diff checks: `git diff --check` and `git diff --cached --check` -> **passed with no output**.
 
 ## Final self-review
 
-- **Final leakage:** sealed/final columns and boundary rows reject before candidate generation; evaluator slices contain inner development folds only; promotion accepts new forward evidence, never the sealed search block.
-- **Determinism across process/order:** indicator and threshold inputs are normalized, semantic candidates are canonicalized/deduped, seeded order is fixed, trial IDs/timestamps and candidate versions are content-derived, and ties break on full candidate hash.
-- **Resume idempotency:** persisted trials form a contiguous prefix and bind the full context/search/evaluator version; completed queries are not reevaluated; discovery insertion is deterministic and idempotent.
-- **Failed-trial persistence:** failures, invalid cap attempts, and budget stops insert immediately and remain part of the actual trial count on resume.
+- **Final leakage:** sealed/final columns and boundary rows reject before candidate generation; custom evaluators receive a strict allowlist; default execution receives only Task 4 bar fields; candidate features stop at each inner validation block; promotion accepts new forward evidence, never the sealed search block.
+- **Determinism across process/order:** indicator, threshold, and seed inputs are normalized; semantic candidates are canonicalized/deduped; seeded evolution is content-derived; fresh-process output is tested; ties break on the full candidate hash.
+- **Resume idempotency:** canonical receipts bind the actual validated frame, full experiment/evaluator/cost context, result semantics, and deterministic evolutionary history; completed queries are not reevaluated; discovery insertion is deterministic and idempotent.
+- **Failed-trial persistence:** failures, invalid domain/cap attempts, and budget stops insert immediately and remain part of the actual trial count on resume. Candidate-space enumeration is not counted as evaluation; every selected candidate/parameter query is one deterministic ledger row, including pre-evaluator invalid selections, evaluator failures, and exhaustion stops.
 - **Version collisions:** full candidate hashes identify semantics; run-derived immutable versions distinguish discovery runs; deterministic rule IDs distinguish persisted discoveries.
-- **Mutation/cap bypass:** all candidate rules are cap-checked before an evaluator call; invalid seeds are ledgered as invalid; no active candidate object is mutated; promotion rejects active/retired rules.
+- **Mutation/cap bypass:** every terminal is recursively domain-checked and every rule cap-checked before an evaluator call; invalid seeds are ledgered as invalid; generated mutations/crossovers are bounded and deduplicated; no active candidate object is mutated; promotion rejects active/retired rules.
 - **No repaint:** grammar operations use only current/past values and explicit lags; future-row append invariance is tested.
 
 ## Concerns
 
 - The machine-global Anaconda `pytest` launcher is not usable for this repository; the checked-in project workflow already uses `.venv`, which is green.
-- Callers supplying a custom evaluator must increment `evaluator_version` whenever behavior or external assumptions change. Resume fails closed when the explicit version changes.
+- Callers supplying a custom evaluator must maintain truthful `evaluator_version` and `evaluator_cost_contract` values whenever behavior or external assumptions change. Both and the typed Task 4 execution/risk assumptions are receipt-bound; Task 6 cannot independently prove the internals of trusted injected code.
 - Durable marking of an inspected outer block as consumed is a pipeline/persistence responsibility beyond this pure Task 6 promotion function; Task 6 rejects authenticated consumed evidence and never mutates evidence locally.

@@ -5,8 +5,12 @@ from datetime import UTC, datetime, timedelta
 
 import pandas as pd
 import pytest
+from sqlalchemy import text, update
 
+from src.backtest.costs import CostAssumptions
+from src.backtest.execution import ExecutionAssumptions
 from src.database.engine import Database
+from src.database.schema import learning_trials
 from src.learning.grammar import RuleNode
 from src.learning.promotion import ForwardEvidence, promote_candidate
 from src.learning.search import (
@@ -73,18 +77,18 @@ def test_experiment_resume_is_idempotent_and_uses_the_persisted_ledger(tmp_path)
         calls += 1
         return _good_metrics(*args)
 
-    experiment = _experiment(database, evaluator)
+    experiment = _experiment(database, evaluator, evaluation_budget=6)
     first = discover_rules(experiment, _bars())
     calls_after_first = calls
     second = discover_rules(experiment, _bars())
 
     assert first.trials == second.trials
-    assert calls_after_first == 8
+    assert calls_after_first == 12
     assert calls == calls_after_first
     assert database.scalar(
         "select count(*) from learning_trials where learning_run_id = :run_id",
         {"run_id": experiment.learning_run_id},
-    ) == first.trial_count == 4
+    ) == first.trial_count == 6
     assert database.scalar(
         "select count(*) from discovered_rules where learning_run_id = :run_id",
         {"run_id": experiment.learning_run_id},
@@ -157,6 +161,8 @@ def test_candidate_space_exhaustion_fills_fixed_budget_with_budget_stop_rows(tmp
             indicators=("rsi",),
             thresholds=(50.0,),
             maximum_lag=1,
+            max_depth=3,
+            max_nodes=3,
         ),
         _bars(),
     )
@@ -165,8 +171,8 @@ def test_candidate_space_exhaustion_fills_fixed_budget_with_budget_stop_rows(tmp
     assert [trial.status for trial in result.trials] == [
         "succeeded",
         "succeeded",
-        "succeeded",
-        "succeeded",
+        "budget_stop",
+        "budget_stop",
         "budget_stop",
     ]
     assert database.scalar(
@@ -190,6 +196,67 @@ def test_resume_authenticates_the_complete_search_contract(tmp_path) -> None:
     with pytest.raises(ValueError, match="search contract"):
         discover_rules(changed_evaluator, _bars())
 
+    changed_cost_contract = replace(experiment, evaluator_cost_contract="alternate-cost-engine-v2")
+    with pytest.raises(ValueError, match="search contract"):
+        discover_rules(changed_cost_contract, _bars())
+
+    changed_costs = replace(
+        experiment,
+        execution_assumptions=ExecutionAssumptions(
+            costs=CostAssumptions(half_spread_bps=5)
+        ),
+    )
+    with pytest.raises(ValueError, match="search contract"):
+        discover_rules(changed_costs, _bars())
+
+
+@pytest.mark.parametrize(
+    "assignment",
+    [
+        "status = 'failed', fitness = NULL, error_summary = NULL",
+        "error_summary = 'forged error'",
+        "evaluated_at = TIMESTAMP '2026-08-20 19:00:01'",
+        "source = 'forged-source'",
+        "source_version = '999'",
+    ],
+)
+def test_resume_rejects_any_mutated_immutable_trial_result(tmp_path, assignment: str) -> None:
+    database = Database.from_url(f"duckdb:///{tmp_path / 'receipt.duckdb'}")
+    database.initialize()
+    experiment = _experiment(database, _good_metrics, evaluation_budget=1)
+    discover_rules(experiment, _bars())
+    with database.engine.begin() as connection:
+        connection.execute(text(f"update learning_trials set {assignment}"))
+
+    with pytest.raises(ValueError, match="receipt|immutable"):
+        discover_rules(experiment, _bars())
+
+
+def test_resume_authenticates_the_validated_development_frame_not_claimed_hash(tmp_path) -> None:
+    database = Database.from_url(f"duckdb:///{tmp_path / 'frame-receipt.duckdb'}")
+    database.initialize()
+    experiment = _experiment(database, _good_metrics, evaluation_budget=1)
+    discover_rules(experiment, _bars())
+    changed_frame = _bars()
+    changed_frame.loc[3, "rsi"] += 1
+
+    with pytest.raises(ValueError, match="evidence|receipt"):
+        discover_rules(experiment, changed_frame)
+
+
+def test_resume_rejects_mutated_candidate_payload(tmp_path) -> None:
+    database = Database.from_url(f"duckdb:///{tmp_path / 'candidate-receipt.duckdb'}")
+    database.initialize()
+    experiment = _experiment(database, _good_metrics, evaluation_budget=1)
+    discover_rules(experiment, _bars())
+    payload = database.frame("select candidate from learning_trials").loc[0, "candidate"]
+    payload["rule_text"] = "forged rule"
+    with database.engine.begin() as connection:
+        connection.execute(update(learning_trials).values(candidate=payload))
+
+    with pytest.raises(ValueError, match="receipt"):
+        discover_rules(experiment, _bars())
+
 
 def test_discovered_rules_are_immutable_run_versioned_shadow_candidates(tmp_path) -> None:
     database = Database.from_url(f"duckdb:///{tmp_path / 'versions.duckdb'}")
@@ -202,6 +269,7 @@ def test_discovered_rules_are_immutable_run_versioned_shadow_candidates(tmp_path
             _good_metrics,
             learning_run_id="durable-learning-2",
             started_at=datetime(2026, 8, 20, 19, 0, 1, tzinfo=UTC),
+            evaluation_budget=1,
         ),
         _bars(),
     )
