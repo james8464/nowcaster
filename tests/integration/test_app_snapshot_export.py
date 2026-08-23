@@ -319,6 +319,79 @@ def test_snapshot_rejects_legacy_frozen_online_state(tmp_path) -> None:
         build_app_snapshot(database, settings)
 
 
+def test_snapshot_searches_past_more_than_one_thousand_incomplete_cohorts(tmp_path) -> None:
+    settings, database = _empty_snapshot_database(tmp_path)
+    created_at = datetime(2026, 8, 22, 12, tzinfo=UTC)
+    members = [
+        {"strategy_id": "older-a", "strategy_version": "1", "family": "mean_reversion"},
+        {"strategy_id": "older-b", "strategy_version": "1", "family": "mean_reversion"},
+    ]
+    complete_evidence = {
+        "cohort_id": "complete-older",
+        "cohort_members": members,
+        "cohort_decision_hash": "complete-decision",
+        "cohort_generation": 1,
+    }
+    rows = [
+        {
+            "weight_id": f"complete-{strategy_id}",
+            "strategy_run_id": f"run-{strategy_id}",
+            "dataset_hash": "d" * 64,
+            "strategy_id": strategy_id,
+            "strategy_version": "1",
+            "family": "mean_reversion",
+            "symbol": "BTCUSDT",
+            "interval": "5m",
+            "mode": "paper",
+            "effective_at": created_at,
+            "weight": 0.5,
+            "evidence": complete_evidence,
+            "source": "test",
+            "source_version": "1",
+            "created_at": created_at,
+        }
+        for strategy_id in ("older-a", "older-b")
+    ]
+    for index in range(1_001):
+        effective_at = created_at + timedelta(microseconds=index + 1)
+        rows.append(
+            {
+                "weight_id": f"incomplete-{index}",
+                "strategy_run_id": f"incomplete-run-{index}",
+                "dataset_hash": "d" * 64,
+                "strategy_id": "aaa-incomplete",
+                "strategy_version": "1",
+                "family": "mean_reversion",
+                "symbol": "BTCUSDT",
+                "interval": "5m",
+                "mode": "paper",
+                "effective_at": effective_at,
+                "weight": 0.5,
+                "evidence": {
+                    "cohort_id": f"incomplete-{index}",
+                    "cohort_members": members,
+                    "cohort_decision_hash": f"incomplete-decision-{index}",
+                    "cohort_generation": index + 2,
+                },
+                "source": "test",
+                "source_version": "1",
+                "created_at": effective_at,
+            }
+        )
+    database.insert("ensemble_weights", rows)
+
+    snapshot = build_app_snapshot(database, settings)
+
+    assert [(item.strategy_id, item.weight) for item in snapshot.ensemble_components] == [
+        ("older-a", 0.5),
+        ("older-b", 0.5),
+    ]
+    assert {item.evidence["cohort_id"] for item in snapshot.ensemble_components} == {"complete-older"}
+    assert {item.evidence["cohort_decision_hash"] for item in snapshot.ensemble_components} == {
+        "complete-decision"
+    }
+
+
 def test_crypto_backtest_exports_when_equity_event_observations_are_zero(tmp_path) -> None:
     settings, database = _empty_snapshot_database(tmp_path)
     created_at = datetime(2026, 8, 22, 12, tzinfo=UTC)

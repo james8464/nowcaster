@@ -621,8 +621,7 @@ def _ensemble_components(database: Database) -> list[EnsembleComponentSnapshot]:
         select dataset_hash, strategy_id, strategy_version, family, symbol, interval,
                mode, effective_at, weight, evidence
         from ensemble_weights
-        order by strategy_id, strategy_version, symbol, interval, mode, effective_at
-        limit 1000
+        order by effective_at desc, strategy_id, strategy_version, symbol, interval, mode
         """
     )
     if frame.empty:
@@ -630,29 +629,40 @@ def _ensemble_components(database: Database) -> list[EnsembleComponentSnapshot]:
     key_columns = ["dataset_hash", "strategy_id", "strategy_version", "symbol", "interval", "mode"]
     frame["effective_at"] = pd.to_datetime(frame["effective_at"], utc=True)
     cohort_rows = frame[frame["evidence"].map(lambda value: isinstance(value, dict) and bool(value.get("cohort_id")))]
-    latest = frame.drop_duplicates(key_columns, keep="last")
+    latest = frame.drop_duplicates(key_columns, keep="first").head(1000)
     if not cohort_rows.empty:
-        latest_row = cohort_rows.sort_values("effective_at", kind="stable").iloc[-1]
-        latest_evidence = latest_row["evidence"]
-        cohort_id = latest_evidence["cohort_id"]
-        selected = cohort_rows[
-            cohort_rows["evidence"].map(lambda value: isinstance(value, dict) and value.get("cohort_id") == cohort_id)
-            & (cohort_rows["effective_at"] == latest_row["effective_at"])
-        ]
-        members = latest_evidence.get("cohort_members", [])
-        expected = {
-            (str(item.get("strategy_id")), str(item.get("strategy_version")))
-            for item in members
-            if isinstance(item, dict)
-        }
-        observed = {(str(row.strategy_id), str(row.strategy_version)) for row in selected.itertuples(index=False)}
-        hashes = {
-            row.evidence.get("cohort_decision_hash")
-            for row in selected.itertuples(index=False)
-            if isinstance(row.evidence, dict)
-        }
-        if expected and observed == expected and len(selected) == len(expected) and len(hashes) == 1:
-            latest = selected
+        latest = cohort_rows.iloc[0:0]
+        inspected: set[tuple[str, pd.Timestamp]] = set()
+        for candidate in cohort_rows.itertuples(index=False):
+            evidence = candidate.evidence
+            cohort_id = str(evidence["cohort_id"])
+            effective_at = pd.Timestamp(candidate.effective_at)
+            identity = (cohort_id, effective_at)
+            if identity in inspected:
+                continue
+            inspected.add(identity)
+            selected = cohort_rows[
+                cohort_rows["evidence"].map(
+                    lambda value, selected_cohort=cohort_id: isinstance(value, dict)
+                    and str(value.get("cohort_id")) == selected_cohort
+                )
+                & (cohort_rows["effective_at"] == effective_at)
+            ]
+            members = evidence.get("cohort_members", [])
+            expected = {
+                (str(item.get("strategy_id")), str(item.get("strategy_version")))
+                for item in members
+                if isinstance(item, dict)
+            }
+            observed = {(str(row.strategy_id), str(row.strategy_version)) for row in selected.itertuples(index=False)}
+            hashes = {
+                row.evidence.get("cohort_decision_hash")
+                for row in selected.itertuples(index=False)
+                if isinstance(row.evidence, dict)
+            }
+            if expected and observed == expected and len(selected) == len(expected) and len(hashes) == 1:
+                latest = selected.head(1000)
+                break
     rows: list[EnsembleComponentSnapshot] = []
     for row in latest.itertuples(index=False):
         evidence = row.evidence if isinstance(row.evidence, dict) else {}

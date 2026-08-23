@@ -167,3 +167,41 @@ All seven Important findings against `db73982cf6e4303b7afa19c5769395ccf2277bb0` 
 
 - The offline XNYS schedule models regular sessions and full-day US exchange holidays but not exceptional one-off closures or early-close session shortening. Its version is persisted so a future audited calendar upgrade invalidates cache identity deterministically.
 - Live network latency was simulated with ordered response/clock hooks; no external Binance or Alpaca request was made.
+
+## Independent-review fix round 3/5 addendum
+
+All five Important findings against `5bc6224417a7af95a6f21e90073d40b5082746d8` are addressed.
+
+### Behavior and files
+
+- `src/strategies/pipeline.py` no longer aligns revision-aware signal rows to causal bars by ordinal position. It assigns every decision a deterministic source hash, maps it to the actual next executable bar under Task 4's timing rule, collapses all states effective for that bar to the final state, and derives return/cost from that execution bar. Feedback passed to Task 5 now includes execution timestamp plus source-decision and source-execution hashes. The exact compact hash ledger is persisted with each cohort's weight evidence.
+- Evaluation cache-check and reservation are one sorted-cohort critical section. Every forced cohort receives one monotonic cohort generation and one effective timestamp before all component `strategy_runs` are inserted in a single transaction. Concurrent plural evaluations therefore cannot cross-pair component generations; later non-force evaluation reuses the newest complete evaluated cohort.
+- Coverage reservation is serialized on provider/feed/symbol/interval/requested-range identity, retries generation/timestamp/ID conflicts, and releases the reservation lock before provider I/O. Concurrent immutable-bar append is separately serialized by instrument/feed identity. Two fixed-clock forced ingests now retain independent pre-I/O request rows and independent terminal states.
+- `src/strategies/calendars.py` now implements Alpaca-compatible aggregation labels: minute buckets use UTC-aligned interval starts, hourly/multi-hour labels follow clock-hour aggregation even when the first/last regular-session bucket is partial, and `1Day` has one New York-local midnight label per session. Session-aware closes cap partial bars, daily bars become finalized at the exchange close, and the version is `offline-rules-2026.2`.
+- The deterministic XNYS rules include the 2026 full-day holidays and repeatable early closes after Thanksgiving, on eligible July 3 sessions, and on eligible December 24 sessions. Black Friday 2026 ends at 13:00 ET. The implementation is based on Alpaca's Market Data FAQ (`https://docs.alpaca.markets/us/docs/market-data-faq`) and NYSE's published hours/calendar (`https://www.nyse.com/trade/hours-calendars`).
+- `src/ingestion/alpaca_bars.py` uses the source calendar to determine finalized close/availability, so daily and partially aggregated historical bars are no longer dropped by a fixed-duration close that extends beyond retrieval time.
+- `src/app_snapshot/builder.py` queries ensemble rows newest-first without applying an input cutoff, scans backward for the newest complete cohort with exact membership and one decision hash, never substitutes independently latest rows when cohort evidence exists, and applies the 1,000-component output bound only after cohort selection.
+- New regressions live in `tests/integration/test_strategy_cli.py`, `tests/unit/test_bar_ingestion.py`, and `tests/integration/test_app_snapshot_export.py`. No Swift files were edited.
+
+### RED/GREEN evidence
+
+- Initial focused RED: six tests covering the five findings — **6 failed in 17.38s**. The failures were missing execution provenance/positional outcomes, absent atomic cohort generation, a duplicate fixed-clock coverage key, incorrect 09:30-anchored hourly labels, a discarded daily bar, and incomplete snapshot-cohort fallback.
+- The coverage concurrency test was tightened to capture both worker exceptions as behavior; it failed with a duplicate-key `OperationalError` plus the blocked peer, proving the request reservation race before provider I/O.
+- Focused GREEN: the same six regressions — **6 passed in 7.24s**.
+- High-risk provider/Task 4/pipeline/bar-store/snapshot slice — **73 passed in 141.51s**.
+- Complete Python suite: `pytest -q` — **446 passed in 172.14s** on the final verification run.
+- Changed-file Ruff check, `python -m compileall -q src`, and `git diff --check` — **passed**.
+
+### Fix-round self-review
+
+- Outcome causality: post-correction ordinary decisions retain their literal next-bar outcome; multiple decisions eligible for one execution bar yield exactly one final state; corrections never shift later feedback by row position. Feedback ends before the sealed final boundary and contains no final-result learner input.
+- Provenance: decision hashes seal dataset, strategy/version, symbol, interval, mode, timestamps, signal, and strength. Execution hashes seal the exact causal bar identity, timestamps, and payload hash. Persisted cohort evidence seals the ordered provenance records with a canonical aggregate hash.
+- Cohort atomicity: membership remains sorted in the cohort identity; cache lookup and allocation share one lock; component reservations share generation and timestamp; all reservation rows commit together. Failure metrics preserve the cohort generation so retry allocation cannot reuse it.
+- Coverage atomicity: reservation remains before network I/O, provider work is not performed while holding the identity lock, fixed clocks monotonically advance persisted request timestamps, and immutable bar deduplication is serialized independently from coverage lifecycle state.
+- Calendar/provider alignment: regular-session gaps skip overnight/weekend/holiday intervals, still flag a missing in-session bucket, and handle EST/EDT label changes. Early closes and calendar version participate in dataset hashes and exported coverage evidence.
+- Snapshot coherence: input history is not truncated before validation; incomplete newest cohorts are skipped; no per-component fallback occurs when cohort metadata exists; only one decision hash/effective cohort is exported.
+
+### Remaining concerns
+
+- The offline calendar intentionally covers repeatable NYSE holiday/early-close rules, not emergency or one-off closures. A future authoritative calendar update must bump the persisted version, which deterministically invalidates affected dataset/cohort identities.
+- Alpaca and NYSE behavior was verified against their official documentation with deterministic fixtures; no credentialed live request was made.

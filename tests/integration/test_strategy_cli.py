@@ -452,6 +452,151 @@ def test_corrected_refetch_preserves_signal_prefix_and_adds_receipt_decision(pro
     assert revised_signals["decision_timestamp"].is_unique
 
 
+def test_mid_history_correction_feedback_uses_final_state_for_the_actual_execution_bar(project_root, tmp_path) -> None:
+    _configure_strategy(project_root)
+    bars_path = tmp_path / "outcome-revision-bars.csv"
+    _write_bars(bars_path, 80)
+    database_url = f"duckdb:///{tmp_path / 'outcome-revision.duckdb'}"
+    pipeline, database = _csv_pipeline(project_root, database_url, bars_path)
+    scope = _scope("rsi_reversal")
+    assert pipeline.ingest(_ingest_options(scope)).status == "completed"
+    correction_receipt = datetime(2026, 8, 20, 2, 36, tzinfo=UTC)
+    assert pipeline.bars.append(
+        [
+            _market_bar(
+                datetime(2026, 8, 20, 1, 40, tzinfo=UTC),
+                provider="csv",
+                feed="local",
+                symbol="BTCUSDT",
+                close=1_000,
+                retrieved_at=correction_receipt,
+                payload_suffix="mid-history-correction",
+            )
+        ]
+    ) == 1
+
+    captured: list[pd.DataFrame] = []
+    original = pipeline._resolved_outcomes
+
+    def capture(*args, **kwargs):
+        resolved = original(*args, **kwargs)
+        captured.append(resolved.copy())
+        return resolved
+
+    pipeline._resolved_outcomes = capture  # type: ignore[method-assign]
+    outcome = pipeline.evaluate(EvaluationOptions(scope=scope, force=True))
+    resolved = captured[-1]
+    ordinary = resolved.loc[resolved["decision_timestamp"] == pd.Timestamp("2026-08-20T03:25:00Z")].iloc[0]
+    shared_execution = resolved.loc[resolved["execution_timestamp"] == pd.Timestamp("2026-08-20T02:40:00Z")]
+    evidence = database.frame("select evidence from ensemble_weights order by effective_at desc limit 1").iloc[0][
+        "evidence"
+    ]
+    provenance = evidence["resolved_outcome_provenance"]
+
+    assert outcome.status == "completed"
+    assert ordinary["outcome_available_at"] == pd.Timestamp("2026-08-20T03:30:00Z")
+    assert ordinary["realized_return"] == pytest.approx(121.0 / 120.0 - 1)
+    assert shared_execution["decision_timestamp"].tolist() == [pd.Timestamp("2026-08-20T02:40:00Z")]
+    assert resolved["source_decision_hash"].str.len().eq(64).all()
+    assert resolved["source_execution_hash"].str.len().eq(64).all()
+    assert resolved["source_execution_hash"].is_unique
+    assert provenance["record_count"] == len(resolved)
+    assert provenance["records_hash"] == canonical_hash(provenance["records"])
+    assert {row["source_decision_hash"] for row in provenance["records"]} == set(resolved["source_decision_hash"])
+
+
+def test_concurrent_forced_plural_evaluations_allocate_complete_atomic_cohorts(project_root, tmp_path) -> None:
+    _configure_plural_strategies(project_root)
+    bars = tmp_path / "concurrent-plural-bars.csv"
+    _write_bars(bars, 80)
+    database_url = f"duckdb:///{tmp_path / 'concurrent-plural.duckdb'}"
+    pipeline, database = _csv_pipeline(project_root, database_url, bars)
+    pipeline.clock = lambda: datetime(2026, 8, 23, 12, tzinfo=UTC)
+    scope = _scope("rsi_reversal", "extreme_return_reversal")
+    assert pipeline.ingest(_ingest_options(scope)).status == "completed"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = list(
+            executor.map(
+                lambda _: pipeline.evaluate(EvaluationOptions(scope=scope, force=True)),
+                range(2),
+            )
+        )
+    reused = pipeline.evaluate(EvaluationOptions(scope=scope))
+    runs = database.frame(
+        "select strategy_run_id, strategy_id, run_timestamp, metrics from strategy_runs "
+        "where status = 'evaluated' order by run_timestamp, strategy_id"
+    )
+    weights = database.frame(
+        "select strategy_run_id, strategy_id, effective_at, evidence from ensemble_weights "
+        "order by effective_at, strategy_id"
+    )
+
+    assert [item.status for item in outcomes] == ["completed", "completed"]
+    assert len(runs) == len(weights) == 4
+    generations = {int(row["cohort_generation"]) for row in runs["metrics"]}
+    assert generations == {1, 2}
+    for generation in generations:
+        selected = runs.loc[
+            runs["metrics"].map(
+                lambda value, selected_generation=generation: value["cohort_generation"] == selected_generation
+            )
+        ]
+        selected_weights = weights.loc[
+            weights["evidence"].map(
+                lambda value, selected_generation=generation: value["cohort_generation"] == selected_generation
+            )
+        ]
+        assert selected["strategy_id"].nunique() == len(selected) == 2
+        assert selected["run_timestamp"].nunique() == 1
+        assert selected_weights["effective_at"].nunique() == 1
+        assert selected_weights["strategy_id"].nunique() == len(selected_weights) == 2
+        assert len({row["cohort_decision_hash"] for row in selected_weights["evidence"]}) == 1
+    newest_generation = max(generations)
+    newest_run_ids = set(
+        runs.loc[runs["metrics"].map(lambda value: value["cohort_generation"] == newest_generation), "strategy_run_id"]
+    )
+    assert reused.status == "reused"
+    assert set(reused.strategy_run_ids) == newest_run_ids
+
+
+def test_concurrent_fixed_clock_forced_ingests_reserve_independent_terminal_requests(project_root, tmp_path) -> None:
+    _configure_strategy(project_root)
+    bars_path = tmp_path / "concurrent-ingest-bars.csv"
+    _write_bars(bars_path, 80)
+    database_url = f"duckdb:///{tmp_path / 'concurrent-ingest.duckdb'}"
+    pipeline, database = _csv_pipeline(project_root, database_url, bars_path)
+    pipeline.clock = lambda: datetime(2026, 8, 23, 12, tzinfo=UTC)
+    scope = _scope("rsi_reversal")
+    source = pipeline.providers[BarProviderName.CSV]
+    barrier = __import__("threading").Barrier(2)
+
+    class SynchronizedProvider:
+        def fetch(self, request: BarRequest):
+            barrier.wait(timeout=10)
+            return source.fetch(request)
+
+    pipeline.providers[BarProviderName.CSV] = SynchronizedProvider()
+    outcomes: list[StageOutcome] = []
+    errors: list[Exception] = []
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(pipeline.ingest, _ingest_options(scope, force=True)) for _ in range(2)]
+        for future in futures:
+            try:
+                outcomes.append(future.result())
+            except Exception as error:
+                errors.append(error)
+    requests = database.frame(
+        "select coverage_request_id, requested_at, status from dataset_coverage_requests order by requested_at"
+    )
+
+    assert errors == []
+    assert [item.status for item in outcomes] == ["completed", "completed"]
+    assert len(requests) == 2
+    assert requests["coverage_request_id"].nunique() == requests["requested_at"].nunique() == 2
+    assert requests["status"].tolist() == ["complete", "complete"]
+
+
 def test_partial_requested_coverage_is_persisted_and_blocks_cli_evaluation(project_root, tmp_path) -> None:
     _configure_strategy(project_root)
     bars = tmp_path / "partial-bars.csv"

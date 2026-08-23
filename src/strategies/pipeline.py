@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import insert, select, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 from src.app_snapshot.builder import build_app_snapshot
 from src.app_snapshot.writer import write_snapshot_atomic
@@ -197,6 +197,7 @@ class ComponentEvaluation:
 class EvaluationBatch:
     components: tuple[ComponentEvaluation, ...]
     ensemble_decision: EnsembleDecision
+    resolved_outcomes: pd.DataFrame
 
 
 _CONSUMPTION_LOCKS: dict[str, threading.Lock] = {}
@@ -344,7 +345,11 @@ class StrategyPipeline:
                     )
                 )
                 fetched_count += len(fetched)
-                inserted += self.bars.append(fetched)
+                append_identity = canonical_hash(
+                    ["market_bar_append", query.provider, query.feed, query.symbol, query.interval.value]
+                )
+                with _lock_for(append_identity):
+                    inserted += self.bars.append(fetched)
                 self._emit(
                     emit,
                     "progress",
@@ -385,8 +390,15 @@ class StrategyPipeline:
         as_of = self._query_as_of(query)
         cohort = self._cohort_payload(options.scope, registered, manifest.dataset_hash, as_of)
         cohort_id = canonical_hash(cohort)
-        cached = self._cached_cohort(options.scope, registered, manifest.dataset_hash, cohort_id)
-        if cached and not options.force:
+        cached, run_contexts, cohort_generation = self._claim_evaluation_cohort(
+            options.scope,
+            registered,
+            manifest.dataset_hash,
+            cohort,
+            cohort_id,
+            force=options.force,
+        )
+        if cached:
             self._emit(emit, "progress", "evaluate", 1.0, "reused cached evaluation")
             return StageOutcome(
                 "reused",
@@ -396,18 +408,7 @@ class StrategyPipeline:
                 strategy_run_ids=cached,
             )
         self._emit(emit, "progress", "evaluate", 0.1, "loaded all locally available compatible history")
-        run_contexts: list[tuple[RegisteredStrategy, str, datetime]] = []
         try:
-            cohort_timestamp = self._cohort_run_timestamp(options.scope, registered, manifest.dataset_hash)
-            for item in registered:
-                run_id, run_timestamp = self._reserve_run(
-                    options.scope,
-                    item,
-                    manifest.dataset_hash,
-                    preferred_timestamp=cohort_timestamp,
-                    reservation_metrics={"cohort_id": cohort_id, "cohort_members": cohort["members"]},
-                )
-                run_contexts.append((item, run_id, run_timestamp))
             batch = self._evaluate_engines(options.scope, registered, query, manifest, as_of)
             self._persist_evaluation_batch(
                 options.scope,
@@ -416,6 +417,7 @@ class StrategyPipeline:
                 batch,
                 cohort,
                 cohort_id,
+                cohort_generation,
             )
         except Exception as error:
             for item, run_id, run_timestamp in run_contexts:
@@ -442,6 +444,78 @@ class StrategyPipeline:
             strategy_run_id=run_ids[0],
             strategy_run_ids=run_ids,
         )
+
+    def _claim_evaluation_cohort(
+        self,
+        scope: StrategyScope,
+        registered: Sequence[RegisteredStrategy],
+        dataset_hash: str,
+        cohort: Mapping[str, Any],
+        cohort_id: str,
+        *,
+        force: bool,
+    ) -> tuple[tuple[str, ...], list[tuple[RegisteredStrategy, str, datetime]], int]:
+        lock_identity = canonical_hash(["strategy_evaluation_cohort_reservation", cohort_id])
+        with _lock_for(lock_identity):
+            cached = self._cached_cohort(scope, registered, dataset_hash, cohort_id)
+            if cached and not force:
+                return cached, [], 0
+            prior = self.database.frame(
+                "select metrics from strategy_runs where dataset_hash = :dataset_hash "
+                "and symbol = :symbol and interval = :interval and mode = :mode",
+                {
+                    "dataset_hash": dataset_hash,
+                    "symbol": scope.symbol,
+                    "interval": scope.interval.value,
+                    "mode": scope.mode.value,
+                },
+            )
+            generations = [
+                int(metrics["cohort_generation"])
+                for metrics in prior.get("metrics", [])
+                if isinstance(metrics, dict)
+                and metrics.get("cohort_id") == cohort_id
+                and isinstance(metrics.get("cohort_generation"), int)
+            ]
+            cohort_generation = max(generations, default=0) + 1
+            run_timestamp = self._cohort_run_timestamp(scope, registered, dataset_hash)
+            contexts: list[tuple[RegisteredStrategy, str, datetime]] = []
+            rows: list[dict[str, Any]] = []
+            for item in registered:
+                component_generation = self._exact_run_count(scope, item, dataset_hash) + 1
+                run_id = canonical_hash(
+                    {
+                        "cache_key": self._cache_key(scope, item, dataset_hash),
+                        "cohort_id": cohort_id,
+                        "cohort_generation": cohort_generation,
+                        "run_timestamp": run_timestamp,
+                        "component_generation": component_generation,
+                    }
+                )
+                metrics = {
+                    "reservation_generation": component_generation,
+                    "cohort_generation": cohort_generation,
+                    "cohort_id": cohort_id,
+                    "cohort_members": cohort["members"],
+                    "cohort_effective_at": run_timestamp.isoformat(),
+                    "state": scope.mode.value,
+                }
+                rows.append(
+                    self._strategy_run_row(
+                        scope,
+                        item,
+                        dataset_hash,
+                        run_id,
+                        run_timestamp,
+                        status="running",
+                        metrics=metrics,
+                        ended_at=None,
+                    )
+                )
+                contexts.append((item, run_id, run_timestamp))
+            with self.database.engine.begin() as connection:
+                connection.execute(insert(strategy_runs), rows)
+            return (), contexts, cohort_generation
 
     def learn(self, options: LearningOptions, emit: EventSink | None = None) -> StageOutcome:
         registered = self._registered(options.scope)
@@ -611,54 +685,64 @@ class StrategyPipeline:
             "start": query.start,
             "end": query.end,
         }
-        prior = int(
-            self.database.scalar(
-                "select count(*) from dataset_coverage_requests where provider = :provider and feed = :feed "
-                "and symbol = :symbol and interval = :interval and requested_start = :start "
-                "and requested_end = :end",
-                parameters,
-            )
-            or 0
-        )
-        requested_at = self._run_timestamp()
-        if prior:
-            latest = self.database.scalar(
-                "select max(requested_at) from dataset_coverage_requests where provider = :provider "
-                "and feed = :feed and symbol = :symbol and interval = :interval "
-                "and requested_start = :start and requested_end = :end",
-                parameters,
-            )
-            latest_at = _utc_datetime(latest)
-            if requested_at <= latest_at:
-                requested_at = latest_at + timedelta(microseconds=1)
-        identity = {
-            "provider": query.provider,
-            "feed": query.feed,
-            "symbol": query.symbol,
-            "interval": query.interval.value,
-            "requested_start": query.start,
-            "requested_end": query.end,
-            "requested_at": requested_at,
-        }
-        coverage_request_id = canonical_hash({**identity, "generation": prior + 1})
-        self.database.insert(
-            "dataset_coverage_requests",
-            [
-                {
-                    "coverage_request_id": coverage_request_id,
-                    **identity,
-                    "force": force,
-                    "status": "running",
-                    "dataset_hash": manifest.dataset_hash,
-                    "row_count": manifest.row_count,
-                    "gaps": self._coverage_evidence(manifest),
-                    "source": "strategy_pipeline_coverage",
-                    "source_version": "2",
-                    "created_at": requested_at,
+        lock_identity = canonical_hash(["dataset_coverage_reservation", parameters])
+        with _lock_for(lock_identity):
+            for _attempt in range(5):
+                prior = int(
+                    self.database.scalar(
+                        "select count(*) from dataset_coverage_requests where provider = :provider and feed = :feed "
+                        "and symbol = :symbol and interval = :interval and requested_start = :start "
+                        "and requested_end = :end",
+                        parameters,
+                    )
+                    or 0
+                )
+                requested_at = self._run_timestamp()
+                if prior:
+                    latest = self.database.scalar(
+                        "select max(requested_at) from dataset_coverage_requests where provider = :provider "
+                        "and feed = :feed and symbol = :symbol and interval = :interval "
+                        "and requested_start = :start and requested_end = :end",
+                        parameters,
+                    )
+                    latest_at = _utc_datetime(latest)
+                    if requested_at <= latest_at:
+                        requested_at = latest_at + timedelta(microseconds=1)
+                identity = {
+                    "provider": query.provider,
+                    "feed": query.feed,
+                    "symbol": query.symbol,
+                    "interval": query.interval.value,
+                    "requested_start": query.start,
+                    "requested_end": query.end,
+                    "requested_at": requested_at,
                 }
-            ],
-        )
-        return coverage_request_id
+                coverage_request_id = canonical_hash({**identity, "generation": prior + 1})
+                try:
+                    self.database.insert(
+                        "dataset_coverage_requests",
+                        [
+                            {
+                                "coverage_request_id": coverage_request_id,
+                                **identity,
+                                "force": force,
+                                "status": "running",
+                                "dataset_hash": manifest.dataset_hash,
+                                "row_count": manifest.row_count,
+                                "gaps": self._coverage_evidence(manifest),
+                                "source": "strategy_pipeline_coverage",
+                                "source_version": "2",
+                                "created_at": requested_at,
+                            }
+                        ],
+                    )
+                except (IntegrityError, OperationalError) as error:
+                    message = str(error).lower()
+                    if "duplicate" not in message and "unique constraint" not in message:
+                        raise
+                    continue
+                return coverage_request_id
+        raise RuntimeError("could not reserve a unique dataset coverage request")
 
     def _finalize_coverage_request(
         self,
@@ -906,6 +990,7 @@ class StrategyPipeline:
         runs: dict[str, StrategyRunEvidence] = {}
         for item in registered:
             signals = item.generator(item.spec, signal_bars, StrategyContext())
+            signals = self._signal_decision_hashes(scope, manifest, item, signals)
             prefix_size = max(item.spec.warmup_bars, int(len(bars) * 0.8))
             prefix_size = min(prefix_size, len(bars) - 1)
             audit = audit_prefix_invariance(
@@ -950,9 +1035,10 @@ class StrategyPipeline:
                 config=self.validation_config,
             )
         )
+        resolved_outcomes = self._resolved_outcomes(bars, raw_components, evaluations, boundary)
         ensemble_decision = generate_current_decision(
             evaluations,
-            self._resolved_outcomes(bars, raw_components, evaluations, boundary),
+            resolved_outcomes,
             as_of,
             config=self.ensemble_config,
             validation_config=self.validation_config,
@@ -969,7 +1055,34 @@ class StrategyPipeline:
             )
             for item, signals, backtest, audit_details in raw_components
         )
-        return EvaluationBatch(components, ensemble_decision)
+        return EvaluationBatch(components, ensemble_decision, resolved_outcomes)
+
+    @staticmethod
+    def _signal_decision_hashes(
+        scope: StrategyScope,
+        manifest: DatasetManifest,
+        registered: RegisteredStrategy,
+        signals: pd.DataFrame,
+    ) -> pd.DataFrame:
+        result = signals.copy()
+        result["decision_hash"] = [
+            canonical_hash(
+                {
+                    "dataset_hash": manifest.dataset_hash,
+                    "strategy_id": registered.spec.strategy_id,
+                    "strategy_version": registered.spec.deterministic_version,
+                    "symbol": scope.symbol,
+                    "interval": scope.interval.value,
+                    "mode": scope.mode.value,
+                    "decision_timestamp": _utc_datetime(row.decision_timestamp),
+                    "data_through": _utc_datetime(row.data_through),
+                    "signal": int(row.signal),
+                    "strength": float(row.strength),
+                }
+            )
+            for row in result.itertuples(index=False)
+        ]
+        return result
 
     def _resolved_outcomes(
         self,
@@ -978,26 +1091,57 @@ class StrategyPipeline:
         evaluations: Sequence[StrategyEvaluation],
         boundary: FinalBoundary,
     ) -> pd.DataFrame:
-        ordered = bars.sort_values("open_timestamp", kind="stable").reset_index(drop=True)
-        closes = pd.to_numeric(ordered["close"], errors="coerce")
-        availability = pd.to_datetime(ordered["available_at"], utc=True)
+        ordered = bars.sort_values("open_timestamp", kind="stable").reset_index(drop=True).copy()
+        ordered["open_timestamp"] = pd.to_datetime(ordered["open_timestamp"], utc=True)
+        ordered["close_timestamp"] = pd.to_datetime(ordered["close_timestamp"], utc=True)
+        ordered["available_at"] = pd.to_datetime(ordered["available_at"], utc=True)
         by_strategy = {item.strategy_id: item for item in evaluations}
         rows: list[dict[str, Any]] = []
-        for registered, signals, _backtest, _audit in components:
+        for registered, signals, backtest, _audit in components:
             evaluation = by_strategy[registered.spec.strategy_id]
-            ordered_signals = signals.reset_index(drop=True)
-            for index in range(min(len(ordered_signals), len(ordered) - 1)):
-                outcome_available_at = availability.iloc[index + 1]
+            executable_states: dict[int, Any] = {}
+            for signal in signals.sort_values("decision_timestamp", kind="stable").itertuples(index=False):
+                decision = pd.Timestamp(signal.decision_timestamp)
+                eligible = ordered.index[
+                    (ordered["open_timestamp"] >= decision) & (ordered["close_timestamp"] > decision)
+                ]
+                if len(eligible):
+                    executable_states[int(eligible[0])] = signal
+            fills = backtest.trade_ledger.copy()
+            if not fills.empty:
+                fills["execution_timestamp"] = pd.to_datetime(fills["execution_timestamp"], utc=True)
+            for bar_index, signal in sorted(executable_states.items()):
+                bar = ordered.iloc[bar_index]
+                outcome_available_at = pd.Timestamp(bar["available_at"])
                 if outcome_available_at >= boundary.final_start:
                     continue
+                decision = pd.Timestamp(signal.decision_timestamp)
+                execution_timestamp = pd.Timestamp(bar["open_timestamp"])
+                matching_fills = fills.loc[fills["execution_timestamp"] == execution_timestamp]
+                gross_notional = float(pd.to_numeric(matching_fills.get("notional"), errors="coerce").abs().sum())
+                total_cost = float(pd.to_numeric(matching_fills.get("total_cost"), errors="coerce").sum())
+                cost = total_cost / gross_notional if gross_notional > 0 else 0.0
+                execution_identity = {
+                    "dataset_hash": evaluation.dataset_hash,
+                    "provider": str(bar["provider"]),
+                    "feed": str(bar["feed"]),
+                    "symbol": evaluation.symbol,
+                    "interval": evaluation.interval.value,
+                    "open_timestamp": _utc_datetime(bar["open_timestamp"]),
+                    "close_timestamp": _utc_datetime(bar["close_timestamp"]),
+                    "payload_hash": str(bar["payload_hash"]),
+                }
                 rows.append(
                     {
                         "strategy_id": registered.spec.strategy_id,
-                        "decision_timestamp": pd.Timestamp(ordered_signals.iloc[index]["decision_timestamp"]),
+                        "decision_timestamp": decision,
+                        "execution_timestamp": execution_timestamp,
                         "outcome_available_at": outcome_available_at,
-                        "signal": int(ordered_signals.iloc[index]["signal"]),
-                        "realized_return": float(closes.iloc[index + 1] / closes.iloc[index] - 1),
-                        "cost": 0.0,
+                        "signal": int(signal.signal),
+                        "realized_return": float(float(bar["close"]) / float(bar["open"]) - 1),
+                        "cost": cost,
+                        "source_decision_hash": str(signal.decision_hash),
+                        "source_execution_hash": canonical_hash(execution_identity),
                         "dataset_hash": evaluation.dataset_hash,
                         "strategy_version": evaluation.strategy_version,
                         "symbol": evaluation.symbol,
@@ -1080,6 +1224,7 @@ class StrategyPipeline:
         batch: EvaluationBatch,
         cohort: Mapping[str, Any],
         cohort_id: str,
+        cohort_generation: int,
     ) -> None:
         components = {item.registered.spec.strategy_id: item for item in batch.components}
         reservations = {
@@ -1088,11 +1233,30 @@ class StrategyPipeline:
         cohort_effective_at = max(run_timestamp for _, _, run_timestamp in run_contexts)
         cohort_metrics = {
             "cohort_id": cohort_id,
+            "cohort_generation": cohort_generation,
             "cohort_members": cohort["members"],
             "cohort_decision_hash": batch.ensemble_decision.decision_hash,
             "cohort_effective_at": cohort_effective_at.isoformat(),
             "ensemble_policy_hash": canonical_hash(cohort["ensemble_policy"]),
             "validation_policy_hash": cohort["validation_policy_hash"],
+        }
+        outcome_records = [
+            {
+                "strategy_id": str(row.strategy_id),
+                "decision_timestamp": pd.Timestamp(row.decision_timestamp).isoformat(),
+                "execution_timestamp": pd.Timestamp(row.execution_timestamp).isoformat(),
+                "outcome_available_at": pd.Timestamp(row.outcome_available_at).isoformat(),
+                "source_decision_hash": str(row.source_decision_hash),
+                "source_execution_hash": str(row.source_execution_hash),
+            }
+            for row in batch.resolved_outcomes.sort_values(
+                ["outcome_available_at", "execution_timestamp", "strategy_id"], kind="stable"
+            ).itertuples(index=False)
+        ]
+        outcome_provenance = {
+            "record_count": len(outcome_records),
+            "records": outcome_records,
+            "records_hash": canonical_hash(outcome_records),
         }
         with _lock_for("strategy_evaluation_persistence"), self.database.engine.begin() as connection:
             for registered, run_id, run_timestamp in run_contexts:
@@ -1133,6 +1297,7 @@ class StrategyPipeline:
                             **cohort_metrics,
                             "ensemble_config": cohort["ensemble_policy"],
                             "validation_policy": cohort["validation_policy"],
+                            "resolved_outcome_provenance": outcome_provenance,
                         },
                         "weight_id": canonical_hash(natural),
                         "strategy_run_id": run_id,
@@ -1361,8 +1526,10 @@ class StrategyPipeline:
         ended_at = max(self._run_timestamp(), run_timestamp)
         with self.database.engine.begin() as connection:
             existing = connection.execute(
-                select(strategy_runs.c.strategy_run_id).where(strategy_runs.c.strategy_run_id == run_id)
-            ).scalar_one_or_none()
+                select(strategy_runs.c.strategy_run_id, strategy_runs.c.metrics).where(
+                    strategy_runs.c.strategy_run_id == run_id
+                )
+            ).one_or_none()
             if existing is None:
                 connection.execute(
                     insert(strategy_runs).values(
@@ -1379,12 +1546,13 @@ class StrategyPipeline:
                     )
                 )
             else:
+                prior_metrics = existing.metrics if isinstance(existing.metrics, dict) else {}
                 connection.execute(
                     update(strategy_runs)
                     .where(strategy_runs.c.strategy_run_id == run_id)
                     .values(
                         status="failed",
-                        metrics={"error_summary": reason},
+                        metrics={**prior_metrics, "error_summary": reason},
                         ended_at=ended_at,
                     )
                 )

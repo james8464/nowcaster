@@ -9,7 +9,6 @@ from pathlib import Path
 import httpx
 
 from src.ingestion.bars import (
-    INTERVAL_DURATION,
     BarRequest,
     MarketBar,
     atomic_write_bytes,
@@ -17,6 +16,7 @@ from src.ingestion.bars import (
     request_with_retries,
     require_utc,
 )
+from src.strategies.calendars import XNYS_CALENDAR
 from src.strategies.types import BarInterval, canonical_hash
 
 ALPACA_TIMEFRAMES = {
@@ -97,7 +97,7 @@ class AlpacaBarProvider:
                 open_timestamp = datetime.fromisoformat(str(raw["t"]).replace("Z", "+00:00")).astimezone(UTC)
                 if open_timestamp < request.start or open_timestamp >= request.end:
                     continue
-                close_timestamp = open_timestamp + INTERVAL_DURATION[request.interval]
+                close_timestamp = XNYS_CALENDAR.close_for(open_timestamp, request.interval)
                 if close_timestamp > retrieved_at:
                     continue
                 bars.append(

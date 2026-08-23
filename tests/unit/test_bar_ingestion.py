@@ -12,6 +12,7 @@ from src.ingestion.alpaca_bars import AlpacaBarProvider
 from src.ingestion.bars import BarRequest, MarketBar
 from src.ingestion.binance_bars import BinanceBarProvider
 from src.ingestion.csv_bars import CSVBarProvider
+from src.strategies.calendars import XNYS_CALENDAR
 from src.strategies.types import BarInterval
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "bars"
@@ -128,6 +129,78 @@ def test_binance_receipt_timestamp_is_after_each_paginated_response() -> None:
 
     assert events == ["response", "clock", "response", "clock"]
     assert [bar.retrieved_at.minute for bar in bars if bar.retrieved_at is not None] == [20, 20, 25]
+
+
+def test_xnys_calendar_matches_alpaca_buckets_dst_early_close_and_daily_labels() -> None:
+    normal_dst = XNYS_CALENDAR.expected_opens(
+        datetime(2026, 3, 9, tzinfo=UTC),
+        datetime(2026, 3, 10, tzinfo=UTC),
+        BarInterval.ONE_HOUR,
+    )
+    normal_standard = XNYS_CALENDAR.expected_opens(
+        datetime(2026, 3, 6, tzinfo=UTC),
+        datetime(2026, 3, 7, tzinfo=UTC),
+        BarInterval.ONE_HOUR,
+    )
+    black_friday = XNYS_CALENDAR.expected_opens(
+        datetime(2026, 11, 27, tzinfo=UTC),
+        datetime(2026, 11, 28, tzinfo=UTC),
+        BarInterval.FIVE_MINUTES,
+    )
+    daily = XNYS_CALENDAR.expected_opens(
+        datetime(2026, 11, 27, tzinfo=UTC),
+        datetime(2026, 11, 28, tzinfo=UTC),
+        BarInterval.ONE_DAY,
+    )
+
+    assert normal_dst == tuple(datetime(2026, 3, 9, hour, tzinfo=UTC) for hour in range(13, 20))
+    assert normal_standard == tuple(datetime(2026, 3, 6, hour, tzinfo=UTC) for hour in range(14, 21))
+    assert len(black_friday) == 42
+    assert black_friday[0] == datetime(2026, 11, 27, 14, 30, tzinfo=UTC)
+    assert black_friday[-1] == datetime(2026, 11, 27, 17, 55, tzinfo=UTC)
+    assert daily == (datetime(2026, 11, 27, 5, tzinfo=UTC),)
+    assert XNYS_CALENDAR.close_for(daily[0], BarInterval.ONE_DAY) == datetime(2026, 11, 27, 18, tzinfo=UTC)
+    assert XNYS_CALENDAR.version == "offline-rules-2026.2"
+
+
+def test_alpaca_daily_bar_uses_session_close_instead_of_a_fixed_day(monkeypatch) -> None:
+    monkeypatch.setenv("APCA_API_KEY_ID", "test-key")
+    monkeypatch.setenv("APCA_API_SECRET_KEY", "test-secret")
+    payload = {
+        "bars": [
+            {
+                "t": "2026-11-27T05:00:00Z",
+                "o": 100,
+                "h": 102,
+                "l": 99,
+                "c": 101,
+                "v": 1000,
+                "vw": 100.5,
+                "n": 20,
+            }
+        ],
+        "next_page_token": None,
+    }
+    provider = AlpacaBarProvider(
+        httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json=payload))),
+        clock=lambda: datetime(2026, 11, 27, 18, 1, tzinfo=UTC),
+    )
+
+    bars = list(
+        provider.fetch(
+            BarRequest(
+                symbol="AAPL",
+                interval=BarInterval.ONE_DAY,
+                start=datetime(2026, 11, 27, tzinfo=UTC),
+                end=datetime(2026, 11, 28, tzinfo=UTC),
+                feed="iex",
+            )
+        )
+    )
+
+    assert len(bars) == 1
+    assert bars[0].open_timestamp == datetime(2026, 11, 27, 5, tzinfo=UTC)
+    assert bars[0].close_timestamp == bars[0].available_at == datetime(2026, 11, 27, 18, tzinfo=UTC)
 
 
 def test_alpaca_preserves_feed_pages_exclusive_end_and_deduplicates_page_boundary(monkeypatch):
