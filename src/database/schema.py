@@ -638,6 +638,34 @@ strategy_executions = Table(
     ),
 )
 
+strategy_run_signal_links = Table(
+    "strategy_run_signal_links",
+    metadata,
+    Column("run_signal_link_id", String, primary_key=True),
+    Column("strategy_run_id", String, nullable=False),
+    Column("strategy_signal_id", String, nullable=False),
+    *common_columns(),
+    UniqueConstraint(
+        "strategy_run_id",
+        "strategy_signal_id",
+        name="uq_strategy_run_signal_link",
+    ),
+)
+
+strategy_run_execution_links = Table(
+    "strategy_run_execution_links",
+    metadata,
+    Column("run_execution_link_id", String, primary_key=True),
+    Column("strategy_run_id", String, nullable=False),
+    Column("execution_id", String, nullable=False),
+    *common_columns(),
+    UniqueConstraint(
+        "strategy_run_id",
+        "execution_id",
+        name="uq_strategy_run_execution_link",
+    ),
+)
+
 learning_trials = Table(
     "learning_trials",
     metadata,
@@ -770,6 +798,8 @@ NATURAL_KEYS: dict[str, tuple[str, ...]] = {
         "decision_timestamp",
         "execution_timestamp",
     ),
+    "strategy_run_signal_links": ("strategy_run_id", "strategy_signal_id"),
+    "strategy_run_execution_links": ("strategy_run_id", "execution_id"),
     "learning_trials": ("learning_run_id", "candidate_hash", "evaluated_at"),
     "discovered_rules": ("rule_hash", "rule_version", "dataset_hash", "symbol", "interval", "discovered_at"),
     "causal_audits": (

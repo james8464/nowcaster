@@ -541,16 +541,15 @@ def _snapshot_as_of(ledger: pd.DataFrame, decision_timestamp: pd.Timestamp) -> p
 
 def _decision_events(ledger: pd.DataFrame) -> pd.DataFrame:
     return (
-        ledger.sort_values(["open_timestamp", "available_at", "revision"])
-        .drop_duplicates(_BAR_IDENTITY, keep="first")
-        .sort_values("open_timestamp")
+        ledger.sort_values(["available_at", "open_timestamp", "revision"], kind="stable")
+        .drop_duplicates("available_at", keep="last")
         .reset_index(drop=True)
     )
 
 
 def _is_monotonic_unique_snapshot(ledger: pd.DataFrame) -> bool:
-    events = _decision_events(ledger)
-    return len(events) == len(ledger) and events["available_at"].is_monotonic_increasing
+    ordered = ledger.sort_values("open_timestamp", kind="stable")
+    return not ordered.duplicated(_BAR_IDENTITY).any() and ordered["available_at"].is_monotonic_increasing
 
 
 def _membership_as_of(membership: pd.DataFrame | None, decision_timestamp: pd.Timestamp) -> pd.DataFrame | None:
@@ -668,6 +667,7 @@ def _generate_for_rule(
         snapshot = ledger.sort_values("open_timestamp").reset_index(drop=True)
         return _result_frame(spec, snapshot, _RULES[strategy_id](snapshot, spec.parameters, context))
     rows: list[pd.Series] = []
+    observed_identities: set[tuple[Any, ...]] = set()
     for event in _decision_events(ledger).itertuples(index=False):
         decision = pd.Timestamp(event.available_at)
         snapshot = _snapshot_as_of(ledger, decision)
@@ -677,12 +677,22 @@ def _generate_for_rule(
             snapshot,
             _RULES[strategy_id](snapshot, spec.parameters, point_in_time_context),
         )
-        target = result.index[snapshot["open_timestamp"] == pd.Timestamp(event.open_timestamp)]
-        if len(target) != 1:
-            raise ValueError("revision ledger could not resolve the decision bar in its point-in-time snapshot")
-        row = result.loc[target[0]].copy()
+        if snapshot.empty:
+            raise ValueError("revision ledger could not resolve a point-in-time decision snapshot")
+        identity = tuple(getattr(event, column) for column in _BAR_IDENTITY)
+        if identity in observed_identities:
+            target = snapshot["open_timestamp"].idxmax()
+        else:
+            matches = pd.Series(True, index=snapshot.index)
+            for column, value in zip(_BAR_IDENTITY, identity, strict=True):
+                matches &= snapshot[column] == value
+            if not matches.any():
+                raise ValueError("revision event could not resolve its point-in-time bar")
+            target = matches[matches].index[-1]
+            observed_identities.add(identity)
+        row = result.loc[target].copy()
         row["decision_timestamp"] = decision
-        row["data_through"] = pd.Timestamp(event.close_timestamp)
+        row["data_through"] = pd.Timestamp(snapshot.loc[target, "close_timestamp"])
         rows.append(row)
     return pd.DataFrame(rows, columns=["decision_timestamp", "data_through", "signal", "strength", "reason"])
 

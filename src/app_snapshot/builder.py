@@ -629,7 +629,30 @@ def _ensemble_components(database: Database) -> list[EnsembleComponentSnapshot]:
         return []
     key_columns = ["dataset_hash", "strategy_id", "strategy_version", "symbol", "interval", "mode"]
     frame["effective_at"] = pd.to_datetime(frame["effective_at"], utc=True)
+    cohort_rows = frame[frame["evidence"].map(lambda value: isinstance(value, dict) and bool(value.get("cohort_id")))]
     latest = frame.drop_duplicates(key_columns, keep="last")
+    if not cohort_rows.empty:
+        latest_row = cohort_rows.sort_values("effective_at", kind="stable").iloc[-1]
+        latest_evidence = latest_row["evidence"]
+        cohort_id = latest_evidence["cohort_id"]
+        selected = cohort_rows[
+            cohort_rows["evidence"].map(lambda value: isinstance(value, dict) and value.get("cohort_id") == cohort_id)
+            & (cohort_rows["effective_at"] == latest_row["effective_at"])
+        ]
+        members = latest_evidence.get("cohort_members", [])
+        expected = {
+            (str(item.get("strategy_id")), str(item.get("strategy_version")))
+            for item in members
+            if isinstance(item, dict)
+        }
+        observed = {(str(row.strategy_id), str(row.strategy_version)) for row in selected.itertuples(index=False)}
+        hashes = {
+            row.evidence.get("cohort_decision_hash")
+            for row in selected.itertuples(index=False)
+            if isinstance(row.evidence, dict)
+        }
+        if expected and observed == expected and len(selected) == len(expected) and len(hashes) == 1:
+            latest = selected
     rows: list[EnsembleComponentSnapshot] = []
     for row in latest.itertuples(index=False):
         evidence = row.evidence if isinstance(row.evidence, dict) else {}
@@ -706,13 +729,15 @@ def _dataset_coverage(database: Database) -> list[DatasetCoverageSnapshot]:
             ].sort_values("open_timestamp", kind="stable")
             coverage_start = _python_datetime(selected.iloc[0]["open_timestamp"]) if not selected.empty else None
             coverage_end = _python_datetime(selected.iloc[-1]["close_timestamp"]) if not selected.empty else None
+            gap_evidence = row.gaps if isinstance(row.gaps, dict) else {}
+            missing_gaps = gap_evidence.get("missing", row.gaps if isinstance(row.gaps, list) else [])
             gaps = [
                 DatasetGapSnapshot(
                     start=item["start"],
                     end=item["end"],
                     missing_bars=int(item["missing_bars"]),
                 )
-                for item in (row.gaps if isinstance(row.gaps, list) else [])[:100]
+                for item in missing_gaps[:100]
                 if isinstance(item, dict)
             ]
             snapshots.append(
@@ -729,6 +754,8 @@ def _dataset_coverage(database: Database) -> list[DatasetCoverageSnapshot]:
                     row_count=int(row.row_count),
                     gaps=gaps,
                     complete=str(row.status) == "complete" and not gaps,
+                    calendar_id=str(gap_evidence.get("calendar_id", "unknown")),
+                    calendar_version=str(gap_evidence.get("calendar_version", "unknown")),
                 )
             )
         return snapshots[:200]

@@ -127,3 +127,43 @@ All seven Important findings against `69347c85c7c370f5e1fdfe0bb69d36677759ce68` 
 
 - No live external Binance or Alpaca network request was made in tests; their exact wire payloads were exercised through deterministic adapter-shaped mocked responses.
 - Database concurrency tests use independent worker threads and real DuckDB transactions in one process, matching the native-app execution model. Cross-process DuckDB writers remain subject to DuckDB's own single-writer deployment constraints.
+
+## Independent-review fix round 2/5 addendum
+
+All seven Important findings against `db73982cf6e4303b7afa19c5769395ccf2277bb0` are addressed.
+
+### Behavior and files
+
+- `src/strategies/datasets.py` and `src/strategies/library.py` now expose an eligible revision ledger for point-in-time signal generation. First-observed causal prefixes remain immutable; a corrected revision becomes a new receipt-time decision without rewriting the earlier signal rows. Execution and sealed-boundary bars are separately resolved from the earliest observable revision of each logical bar.
+- `src/ingestion/binance_bars.py` and `src/ingestion/alpaca_bars.py` capture retrieval time only after each successful HTTP response. Every pagination page therefore has its own post-response receipt timestamp, while initial historical rows still use causal close availability and repository revisions remain retrieval-protected.
+- `src/strategies/pipeline.py` persists and reuses only a complete exact cohort: sorted strategy ID/version/family membership, dataset/context/mode/as-of, ensemble policy, configured caps, and validation policy are hashed together. Scalar component runs cannot satisfy a plural request; every member in a reusable cohort shares one effective time and decision hash.
+- `src/strategies/ensemble.py` supports immutable family-specific caps. `create_strategy_pipeline` translates `strategy_weight_cap` and `family_weight_caps` from validated settings into Task 5, and the full policy is stored in run and ensemble provenance. Infeasible cap combinations retain Task 5's explicit rejection behavior.
+- `src/database/schema.py` adds append-only signal/execution link tables. Each forced strategy-run generation links to its complete immutable child evidence set in the same transaction as the evaluated transition, without overwriting shared natural-key evidence.
+- Coverage is reserved as `running` before provider I/O and atomically finalized. Exceptions preserve the original failure while durably making the newest request unavailable, partial results remain incomplete, stale successful requests cannot be reused, and recovery creates a newer complete request.
+- `src/strategies/calendars.py` supplies deterministic offline `XNYS` and continuous schedules. Alpaca gaps exclude closures, weekends, and US exchange holidays while still detecting missing regular-session bars; calendar ID/version are included in manifest hashes, coverage evidence, and snapshot DTOs. Synthetic off-session fixtures retain local between-observation gap detection without treating real closures as missing.
+- `src/app_snapshot/builder.py` selects the newest complete ensemble cohort rather than mixing independently latest component rows, and exports coverage calendar provenance. `src/app_snapshot/models.py` strictly exposes the new calendar fields.
+- Regression tests were added to `tests/unit/test_bar_ingestion.py` and `tests/integration/test_strategy_cli.py`; existing bar-store and strategy-library tests were also rerun to guard compatibility. No Swift files were edited.
+
+### RED/GREEN evidence
+
+- Initial round-two RED: `pytest tests/unit/test_bar_ingestion.py tests/integration/test_strategy_cli.py -q` — **8 failed, 29 passed (37 collected) in 25.17s**. Failures covered both provider clocks, revision point-in-time decisions, failed-fetch state, exchange-calendar gaps, run-scoped links, scalar-to-plural cohort reuse, and cap-policy invalidation.
+- Focused round-two GREEN: the same command — **37 passed in 45.09s**.
+- The first complete-suite run exposed two legacy compatibility failures — **2 failed, 438 passed in 140.55s** — for synthetic Saturday Alpaca observations and an out-of-order initial bar. Both received regressions-preserving fixes; their combined strategy/bar/Task-7 slice then passed **81 passed in 46.70s**.
+- Final complete Python suite: `pytest -q` — **440 passed in 136.54s**.
+- Changed-file Ruff check — **passed**.
+- `python -m compileall -q src` and `git diff --check` — **passed**.
+
+### Fix-round self-review
+
+- Revision leakage/no-repaint: signal events are ordered by actual availability and have unique decision timestamps. A first-delivered old bar cannot retroactively trade a later bar; an actual revision is visible only at its receipt event. Execution/validation chronology never substitutes a late correction into its original historical point.
+- Cohort/cache identity: membership includes deterministic strategy versions and is sorted; dataset, symbol, interval, mode, as-of, validation policy, ensemble policy, and cap values all participate. Reuse requires the complete matching generation with one decision hash/effective time.
+- Cap feasibility: settings validation rejects a strategy cap above its configured family cap; Task 5 rejects total-capacity infeasibility instead of silently renormalizing beyond caps. Provenance records the exact accepted policy.
+- Run evidence: signal and execution IDs preserve their natural identities, while append-only run-link rows provide generation-specific auditability. The evaluated state, links, children, audit, and weights share one transaction.
+- Fetch lifecycle: a newest failed/partial request blocks evaluate/learn even if older coverage succeeded; a later complete request recovers normally. Provider exceptions are re-raised unchanged, with persistence failures attached only as notes.
+- Calendar evidence: Alpaca uses a source-specific XNYS ruleset with DST and deterministic holiday handling; continuous crypto coverage remains 24x7. Calendar identity/version is sealed into both dataset and exported coverage provenance.
+- Snapshot stability: only a complete newest cohort is exported, ordering remains deterministic, and calendar additions preserve strict DTO validation.
+
+### Remaining concerns
+
+- The offline XNYS schedule models regular sessions and full-day US exchange holidays but not exceptional one-off closures or early-close session shortening. Its version is persisted so a future audited calendar upgrade invalidates cache identity deterministically.
+- Live network latency was simulated with ordered response/clock hooks; no external Binance or Alpaca request was made.

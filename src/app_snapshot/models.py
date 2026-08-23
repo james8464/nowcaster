@@ -227,6 +227,8 @@ class DatasetCoverageSnapshot(SnapshotModel):
     row_count: int = Field(ge=0)
     gaps: list[DatasetGapSnapshot] = Field(default_factory=list)
     complete: bool = False
+    calendar_id: str = "unknown"
+    calendar_version: str = "unknown"
 
 
 class LearningTrialSnapshot(SnapshotModel):

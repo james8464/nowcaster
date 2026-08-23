@@ -49,7 +49,6 @@ class BinanceBarProvider:
         end_ms = int(request.end.timestamp() * 1_000)
         interval = INTERVAL_DURATION[request.interval]
         interval_ms = int(interval.total_seconds() * 1_000)
-        retrieved_at = require_utc(self.clock())
         bars: list[MarketBar] = []
 
         while cursor_ms < end_ms:
@@ -67,6 +66,7 @@ class BinanceBarProvider:
                 max_attempts=self.max_attempts,
                 sleep=self.sleep,
             )
+            retrieved_at = require_utc(self.clock())
             payload = response.json()
             if not isinstance(payload, list):
                 raise ValueError("Binance kline response must be a list")

@@ -58,7 +58,6 @@ class AlpacaBarProvider:
 
     def fetch(self, request: BarRequest) -> Iterable[MarketBar]:
         feed = (request.feed or self.feed).strip().lower()
-        retrieved_at = require_utc(self.clock())
         page_token: str | None = None
         seen_tokens: set[str] = set()
         bars: list[MarketBar] = []
@@ -87,6 +86,7 @@ class AlpacaBarProvider:
                 max_attempts=self.max_attempts,
                 sleep=self.sleep,
             )
+            retrieved_at = require_utc(self.clock())
             payload = response.json()
             if not isinstance(payload, dict) or not isinstance(payload.get("bars"), list):
                 raise ValueError("Alpaca bars response must contain a bars list")

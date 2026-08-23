@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
+import pandas as pd
 import pytest
 from sqlalchemy import event
 from typer.testing import CliRunner
@@ -24,11 +25,13 @@ from src.strategies import pipeline as strategy_pipeline
 from src.strategies.pipeline import (
     BarProviderName,
     EvaluationOptions,
+    ExportOptions,
     IngestOptions,
     StageOutcome,
     StrategyScope,
     create_strategy_pipeline,
 )
+from src.strategies.registry import StrategyRegistry
 from src.strategies.types import BarInterval, StrategyMode, canonical_hash
 from src.strategies.validation import PromotionDecision
 
@@ -54,26 +57,31 @@ strategies:
     )
 
 
-def _configure_plural_strategies(project_root: Path) -> None:
+def _configure_plural_strategies(
+    project_root: Path,
+    *,
+    strategy_weight_cap: float = 0.5,
+    family_weight_cap: float = 1.0,
+) -> None:
     (project_root / "config" / "strategies.yaml").write_text(
-        """
-strategy_weight_cap: 0.5
+        f"""
+strategy_weight_cap: {strategy_weight_cap}
 family_weight_caps:
-  mean_reversion: 1.0
+  mean_reversion: {family_weight_cap}
 strategies:
   - strategy_id: rsi_reversal
     family: mean_reversion
     version: 1.0.0
     intervals: [5m]
     warmup_bars: 3
-    parameters: {period: 2, oversold: 30, overbought: 70}
+    parameters: {{period: 2, oversold: 30, overbought: 70}}
     enabled: true
   - strategy_id: extreme_return_reversal
     family: mean_reversion
     version: 1.0.0
     intervals: [5m]
     warmup_bars: 3
-    parameters: {lookback: 2, entry_zscore: 0.5}
+    parameters: {{lookback: 2, entry_zscore: 0.5}}
     enabled: true
 """.lstrip(),
         encoding="utf-8",
@@ -95,6 +103,37 @@ def _write_bars(path: Path, count: int) -> None:
         )
         previous = close
     path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+
+def _market_bar(
+    opened_at: datetime,
+    *,
+    provider: str,
+    feed: str,
+    symbol: str,
+    close: float,
+    retrieved_at: datetime | None = None,
+    payload_suffix: str = "initial",
+) -> MarketBar:
+    closed_at = opened_at + timedelta(minutes=5)
+    return MarketBar(
+        provider=provider,
+        feed=feed,
+        symbol=symbol,
+        interval=BarInterval.FIVE_MINUTES,
+        open_timestamp=opened_at,
+        close_timestamp=closed_at,
+        available_at=closed_at,
+        retrieved_at=retrieved_at,
+        open=close - 0.25,
+        high=close + 0.5,
+        low=close - 0.5,
+        close=close,
+        volume=1_000,
+        vwap=close,
+        trade_count=10,
+        payload_hash=canonical_hash([provider, feed, symbol, opened_at, close, payload_suffix]),
+    )
 
 
 def _base_arguments(project_root: Path, database_url: str, bars: Path) -> list[str]:
@@ -357,6 +396,62 @@ def test_live_adapter_history_keeps_per_bar_causal_decisions_and_evaluates(proje
     assert database.scalar("select count(*) from strategy_runs where status = 'evaluated'") == 1
 
 
+def test_corrected_refetch_preserves_signal_prefix_and_adds_receipt_decision(project_root, tmp_path) -> None:
+    _configure_strategy(project_root)
+    bars_path = tmp_path / "revision-bars.csv"
+    _write_bars(bars_path, 80)
+    database_url = f"duckdb:///{tmp_path / 'revision-causality.duckdb'}"
+    pipeline, database = _csv_pipeline(project_root, database_url, bars_path)
+    scope = _scope("rsi_reversal")
+    options = _ingest_options(scope)
+    assert pipeline.ingest(options).status == "completed"
+    assert pipeline.evaluate(EvaluationOptions(scope=scope)).status == "completed"
+
+    registered = pipeline.registry.resolve("rsi_reversal")
+    query, _manifest, unavailable = pipeline._requested_coverage(scope)
+    assert query is not None and unavailable is None
+    original_ledger = pipeline.bars._matching_frame(query)
+    original_signals = registered.generator(registered.spec, original_ledger, strategy_pipeline.StrategyContext())
+    corrected_open = datetime(2026, 8, 20, 1, 40, tzinfo=UTC)
+    receipt = datetime(2026, 8, 20, 6, 45, tzinfo=UTC)
+    correction = _market_bar(
+        corrected_open,
+        provider="csv",
+        feed="local",
+        symbol="BTCUSDT",
+        close=1_000,
+        retrieved_at=receipt,
+        payload_suffix="correction",
+    )
+    assert pipeline.bars.append([correction]) == 1
+
+    seen_ledgers: list[pd.DataFrame] = []
+
+    def capture_generator(spec, bars, context):
+        seen_ledgers.append(bars.copy())
+        return registered.generator(spec, bars, context)
+
+    capturing_registry = StrategyRegistry()
+    capturing_registry.register(registered.spec, capture_generator, registered.metadata)
+    pipeline.registry = capturing_registry
+    recomputed = pipeline.evaluate(EvaluationOptions(scope=scope, force=True))
+    revised_ledger = pipeline.bars._matching_frame(query)
+    revised_signals = registered.generator(registered.spec, revised_ledger, strategy_pipeline.StrategyContext())
+
+    assert recomputed.status == "completed"
+    assert len(seen_ledgers[-1]) == 81
+    assert len(revised_signals) == 81
+    pd.testing.assert_frame_equal(
+        revised_signals.iloc[:80].reset_index(drop=True),
+        original_signals.reset_index(drop=True),
+        check_dtype=False,
+    )
+    assert revised_signals.iloc[-1]["decision_timestamp"] == pd.Timestamp(receipt)
+    assert revised_signals.iloc[-1]["data_through"] == pd.Timestamp("2026-08-20T06:40:00Z")
+    assert revised_signals["decision_timestamp"].is_monotonic_increasing
+    assert revised_signals["decision_timestamp"].is_unique
+
+
 def test_partial_requested_coverage_is_persisted_and_blocks_cli_evaluation(project_root, tmp_path) -> None:
     _configure_strategy(project_root)
     bars = tmp_path / "partial-bars.csv"
@@ -435,6 +530,121 @@ def test_empty_forced_refresh_is_unavailable_even_when_prior_coverage_exists(pro
     assert refreshed.status == "unavailable"
     assert "empty" in refreshed.message
     assert persisted["status"].tolist() == ["complete", "unavailable"]
+
+
+def test_failed_forced_fetch_invalidates_stale_coverage_and_successful_retry_recovers(project_root, tmp_path) -> None:
+    class FailingProvider:
+        def __init__(self, error: RuntimeError):
+            self.error = error
+
+        def fetch(self, request: BarRequest) -> list[MarketBar]:
+            raise self.error
+
+    _configure_strategy(project_root)
+    bars = tmp_path / "fetch-recovery.csv"
+    _write_bars(bars, 80)
+    database_url = f"duckdb:///{tmp_path / 'fetch-recovery.duckdb'}"
+    pipeline, database = _csv_pipeline(project_root, database_url, bars)
+    scope = _scope("rsi_reversal")
+    options = _ingest_options(scope)
+    assert pipeline.ingest(options).status == "completed"
+    assert pipeline.evaluate(EvaluationOptions(scope=scope)).status == "completed"
+    working_provider = pipeline.providers[BarProviderName.CSV]
+    original_error = RuntimeError("provider connection failed after request")
+    pipeline.providers[BarProviderName.CSV] = FailingProvider(original_error)
+
+    with pytest.raises(RuntimeError) as captured:
+        pipeline.ingest(options.model_copy(update={"force": True}))
+
+    failed_statuses = database.frame(
+        "select status from dataset_coverage_requests order by requested_at, coverage_request_id"
+    )["status"].tolist()
+    blocked = pipeline.evaluate(EvaluationOptions(scope=scope))
+    pipeline.providers[BarProviderName.CSV] = working_provider
+    recovered = pipeline.ingest(options.model_copy(update={"force": True}))
+    available_again = pipeline.evaluate(EvaluationOptions(scope=scope))
+
+    assert captured.value is original_error
+    assert failed_statuses[0] == "complete" and failed_statuses[-1] in {"incomplete", "unavailable"}
+    assert blocked.status == "unavailable"
+    assert recovered.status == "completed"
+    assert available_again.status in {"completed", "reused"}
+
+
+def test_alpaca_exchange_calendar_skips_weekend_and_detects_only_in_session_gap(project_root, tmp_path) -> None:
+    class StaticProvider:
+        def __init__(self, bars: list[MarketBar]):
+            self.bars = bars
+
+        def fetch(self, request: BarRequest) -> list[MarketBar]:
+            return [bar for bar in self.bars if request.start <= bar.open_timestamp < request.end]
+
+    _configure_strategy(project_root)
+    friday = pd.date_range("2026-03-06T14:30:00Z", periods=78, freq="5min")
+    monday = pd.date_range("2026-03-09T13:30:00Z", periods=78, freq="5min")
+    session_opens = [timestamp.to_pydatetime() for timestamp in (*friday, *monday)]
+    bars = [
+        _market_bar(
+            opened_at,
+            provider="alpaca",
+            feed="iex",
+            symbol="AAPL",
+            close=100 + index / 100,
+        )
+        for index, opened_at in enumerate(session_opens)
+    ]
+    scope = StrategyScope(
+        strategy_id="rsi_reversal",
+        provider=BarProviderName.ALPACA,
+        feed="iex",
+        symbol="AAPL",
+        interval=BarInterval.FIVE_MINUTES,
+        mode=StrategyMode.PAPER,
+    )
+    options = IngestOptions(
+        scope=scope,
+        start=datetime(2026, 3, 6, 14, 30, tzinfo=UTC),
+        end=datetime(2026, 3, 9, 20, 0, tzinfo=UTC),
+    )
+
+    complete_url = f"duckdb:///{tmp_path / 'calendar-complete.duckdb'}"
+    complete_pipeline, complete_database = _csv_pipeline(project_root, complete_url, tmp_path / "unused.csv")
+    complete_pipeline.providers[BarProviderName.ALPACA] = StaticProvider(bars)
+    complete = complete_pipeline.ingest(options)
+    evaluated = complete_pipeline.evaluate(EvaluationOptions(scope=scope))
+    snapshot_path = tmp_path / "calendar-snapshot.json"
+    complete_pipeline.export(
+        ExportOptions(
+            snapshot_path=snapshot_path,
+            report_path=tmp_path / "calendar-report.md",
+        )
+    )
+    snapshot = AppSnapshot.model_validate_json(snapshot_path.read_text(encoding="utf-8"))
+    coverage_evidence = complete_database.frame("select gaps from dataset_coverage_requests").iloc[0]["gaps"]
+
+    missing_url = f"duckdb:///{tmp_path / 'calendar-missing.duckdb'}"
+    missing_pipeline, missing_database = _csv_pipeline(project_root, missing_url, tmp_path / "unused-missing.csv")
+    missing_pipeline.providers[BarProviderName.ALPACA] = StaticProvider(
+        [bar for bar in bars if bar.open_timestamp != datetime(2026, 3, 9, 15, 0, tzinfo=UTC)]
+    )
+    incomplete = missing_pipeline.ingest(options)
+    missing_evidence = missing_database.frame("select gaps from dataset_coverage_requests").iloc[0]["gaps"]
+
+    assert complete.status == evaluated.status == "completed"
+    assert coverage_evidence["calendar_id"] == "XNYS"
+    assert coverage_evidence["calendar_version"]
+    assert coverage_evidence["missing"] == []
+    assert snapshot.dataset_coverage[0].calendar_id == "XNYS"
+    assert snapshot.dataset_coverage[0].calendar_version == coverage_evidence["calendar_version"]
+    assert incomplete.status == "unavailable"
+    assert missing_evidence["calendar_id"] == "XNYS"
+    assert missing_evidence["missing"] == [
+        {
+            "start": "2026-03-09T15:00:00+00:00",
+            "end": "2026-03-09T15:05:00+00:00",
+            "missing_bars": 1,
+        }
+    ]
 
 
 def test_strategy_evaluation_reuses_exact_cache_key_and_force_appends_only_that_key(
@@ -598,6 +808,48 @@ def test_concurrent_fixed_clock_forced_evaluations_reserve_distinct_runs(project
     assert runs.loc[runs["strategy_run_id"] == "unrelated-concurrent-sentinel", "status"].tolist() == [
         "unrelated_sentinel"
     ]
+
+
+def test_three_forced_generations_have_complete_immutable_run_evidence_links(project_root, tmp_path) -> None:
+    _configure_strategy(project_root)
+    bars = tmp_path / "run-evidence-bars.csv"
+    _write_bars(bars, 80)
+    database_url = f"duckdb:///{tmp_path / 'run-evidence.duckdb'}"
+    pipeline, database = _csv_pipeline(project_root, database_url, bars)
+    scope = _scope("rsi_reversal")
+    assert pipeline.ingest(_ingest_options(scope)).status == "completed"
+
+    outcomes = [pipeline.evaluate(EvaluationOptions(scope=scope, force=force)) for force in (False, True, True)]
+    table_names = set(database.table_names())
+
+    assert [outcome.status for outcome in outcomes] == ["completed", "completed", "completed"]
+    assert {"strategy_run_signal_links", "strategy_run_execution_links"} <= table_names
+    runs = database.frame(
+        "select strategy_run_id, dataset_hash, strategy_id, strategy_version, symbol, interval, mode "
+        "from strategy_runs where status = 'evaluated' order by run_timestamp"
+    )
+    signal_counts = database.frame(
+        "select strategy_run_id, count(*) as count from strategy_run_signal_links "
+        "group by strategy_run_id order by strategy_run_id"
+    )
+    execution_counts = database.frame(
+        "select strategy_run_id, count(*) as count from strategy_run_execution_links "
+        "group by strategy_run_id order by strategy_run_id"
+    )
+    context_mismatches = database.scalar(
+        "select count(*) from strategy_run_signal_links l "
+        "join strategy_runs r on r.strategy_run_id = l.strategy_run_id "
+        "join strategy_signals s on s.strategy_signal_id = l.strategy_signal_id "
+        "where r.dataset_hash != s.dataset_hash or r.strategy_id != s.strategy_id "
+        "or r.strategy_version != s.strategy_version or r.symbol != s.symbol "
+        "or r.interval != s.interval or r.mode != s.mode"
+    )
+
+    assert len(runs) == len(signal_counts) == len(execution_counts) == 3
+    assert signal_counts["count"].tolist() == [80, 80, 80]
+    assert execution_counts["count"].min() > 0
+    assert execution_counts["count"].nunique() == 1
+    assert context_mismatches == 0
 
 
 def test_evaluation_later_write_failure_rolls_back_children_marks_failed_and_retries(project_root, tmp_path) -> None:
@@ -810,6 +1062,83 @@ def test_plural_strategy_evaluation_persists_ensemble_decision_and_snapshot_prov
         "rsi_reversal",
     ]
     assert all(item.evidence["current_decision"]["decision_hash"] for item in snapshot.ensemble_components)
+
+
+def test_scalar_component_runs_do_not_satisfy_plural_cohort_cache(project_root, tmp_path) -> None:
+    _configure_plural_strategies(project_root)
+    bars = tmp_path / "cohort-bars.csv"
+    _write_bars(bars, 80)
+    database_url = f"duckdb:///{tmp_path / 'cohort.duckdb'}"
+    pipeline, database = _csv_pipeline(project_root, database_url, bars)
+    plural_scope = _scope("rsi_reversal", "extreme_return_reversal")
+    assert pipeline.ingest(_ingest_options(plural_scope)).status == "completed"
+    assert pipeline.evaluate(EvaluationOptions(scope=_scope("rsi_reversal"))).status == "completed"
+    assert pipeline.evaluate(EvaluationOptions(scope=_scope("extreme_return_reversal"))).status == "completed"
+
+    plural = pipeline.evaluate(EvaluationOptions(scope=plural_scope))
+    run_count_after_plural = database.scalar("select count(*) from strategy_runs where status = 'evaluated'")
+    weight_count_after_plural = database.scalar("select count(*) from ensemble_weights")
+    repeated = pipeline.evaluate(EvaluationOptions(scope=plural_scope))
+    snapshot_path = tmp_path / "cohort-snapshot.json"
+    pipeline.export(
+        ExportOptions(
+            snapshot_path=snapshot_path,
+            report_path=tmp_path / "cohort-report.md",
+        )
+    )
+    snapshot = AppSnapshot.model_validate_json(snapshot_path.read_text(encoding="utf-8"))
+    latest_weights = database.frame(
+        "select effective_at, evidence from ensemble_weights order by effective_at desc, strategy_id limit 2"
+    )
+    plural_runs = database.frame(
+        "select metrics from strategy_runs where status = 'evaluated' order by run_timestamp desc limit 2"
+    )
+
+    assert plural.status == "completed"
+    assert run_count_after_plural == 4
+    assert weight_count_after_plural == 4
+    assert repeated.status == "reused"
+    assert database.scalar("select count(*) from strategy_runs where status = 'evaluated'") == 4
+    assert latest_weights["effective_at"].nunique() == 1
+    assert len({row["current_decision"]["decision_hash"] for row in latest_weights["evidence"]}) == 1
+    assert len({row["cohort_id"] for row in latest_weights["evidence"]}) == 1
+    assert all(len(row["cohort_members"]) == 2 for row in plural_runs["metrics"])
+    assert len(snapshot.ensemble_components) == 2
+    assert len({item.evidence["cohort_id"] for item in snapshot.ensemble_components}) == 1
+
+
+def test_configured_caps_are_persisted_and_policy_change_invalidates_cohort_cache(project_root, tmp_path) -> None:
+    _configure_plural_strategies(project_root, strategy_weight_cap=0.6, family_weight_cap=1.0)
+    bars = tmp_path / "configured-cap-bars.csv"
+    _write_bars(bars, 80)
+    database_url = f"duckdb:///{tmp_path / 'configured-caps.duckdb'}"
+    scope = _scope("rsi_reversal", "extreme_return_reversal")
+    first_pipeline, database = _csv_pipeline(project_root, database_url, bars)
+    assert first_pipeline.ingest(_ingest_options(scope)).status == "completed"
+    first = first_pipeline.evaluate(EvaluationOptions(scope=scope))
+    first_weights = database.frame("select weight, evidence from ensemble_weights order by strategy_id")
+
+    _configure_plural_strategies(project_root, strategy_weight_cap=0.55, family_weight_cap=1.0)
+    second_pipeline, _ = _csv_pipeline(project_root, database_url, bars)
+    second = second_pipeline.evaluate(EvaluationOptions(scope=scope))
+    all_weights = database.frame("select weight, evidence from ensemble_weights order by effective_at, strategy_id")
+
+    assert first.status == second.status == "completed"
+    assert len(first_weights) == 2 and len(all_weights) == 4
+    assert all(row["ensemble_config"]["maximum_strategy_weight"] == 0.6 for row in first_weights["evidence"])
+    assert all(
+        row["ensemble_config"]["family_weight_caps"] == {"mean_reversion": 1.0}
+        for row in first_weights["evidence"]
+    )
+    assert first_weights["weight"].max() <= 0.6
+    assert len({row["cohort_id"] for row in all_weights["evidence"]}) == 2
+
+
+def test_invalid_configured_family_cap_is_rejected_before_pipeline_creation(project_root) -> None:
+    _configure_plural_strategies(project_root, strategy_weight_cap=0.7, family_weight_cap=0.6)
+
+    with pytest.raises(ValueError, match="strategy weight cap"):
+        Settings.load(project_root, mode="test")
 
 
 def test_strategy_export_writes_snapshot_and_cautious_compact_report(project_root, tmp_path) -> None:

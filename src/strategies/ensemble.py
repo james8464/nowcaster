@@ -29,6 +29,7 @@ class EnsembleConfig:
     equal_weight_shrinkage: float = 0.5
     maximum_strategy_weight: float = 0.4
     maximum_family_weight: float = 0.6
+    family_weight_caps: Mapping[StrategyFamily, float] = field(default_factory=lambda: MappingProxyType({}))
     sharpe_clip: float = 2.0
     sample_size_target: int = 100
     fixed_share: float = 0.05
@@ -61,6 +62,20 @@ class EnsembleConfig:
             raise ValueError("evidence and learning scales must be positive")
         if self.minimum_breadth <= 0 or self.cost_buffer_multiplier < 0:
             raise ValueError("breadth must be positive and the cost buffer cannot be negative")
+        normalized_caps = {
+            key if isinstance(key, StrategyFamily) else StrategyFamily(str(key)): float(value)
+            for key, value in self.family_weight_caps.items()
+        }
+        if any(not math.isfinite(value) or not 0 < value <= 1 for value in normalized_caps.values()):
+            raise ValueError("family weight caps must be finite values in (0, 1]")
+        object.__setattr__(
+            self,
+            "family_weight_caps",
+            MappingProxyType(dict(sorted(normalized_caps.items(), key=lambda item: item[0].value))),
+        )
+
+    def family_cap(self, family: StrategyFamily) -> float:
+        return self.family_weight_caps.get(family, self.maximum_family_weight)
 
 
 DEFAULT_ENSEMBLE_CONFIG = EnsembleConfig()
@@ -155,6 +170,10 @@ def _config_payload(config: EnsembleConfig) -> dict[str, Any]:
         "equal_weight_shrinkage": config.equal_weight_shrinkage,
         "maximum_strategy_weight": config.maximum_strategy_weight,
         "maximum_family_weight": config.maximum_family_weight,
+        "family_weight_caps": {
+            family.value: cap
+            for family, cap in sorted(config.family_weight_caps.items(), key=lambda item: item[0].value)
+        },
         "sharpe_clip": config.sharpe_clip,
         "sample_size_target": config.sample_size_target,
         "fixed_share": config.fixed_share,
@@ -692,7 +711,7 @@ def _project_caps(
         family.value: sum(desired[strategy_id] for strategy_id in members) for family, members in by_family.items()
     }
     family_capacities = {
-        family.value: min(config.maximum_family_weight, len(members) * config.maximum_strategy_weight)
+        family.value: min(config.family_cap(family), len(members) * config.maximum_strategy_weight)
         for family, members in by_family.items()
     }
     family_mass = _allocate_capped(family_targets, family_capacities, total=1.0)
@@ -1394,7 +1413,7 @@ def _validate_current_weight_mass(weights: Sequence[EvidenceWeight], config: Ens
     family_mass: dict[StrategyFamily, float] = {}
     for weight in weights:
         family_mass[weight.family] = family_mass.get(weight.family, 0.0) + weight.weight
-    if any(value > config.maximum_family_weight + 1e-12 for value in family_mass.values()):
+    if any(value > config.family_cap(family) + 1e-12 for family, value in family_mass.items()):
         raise ValueError("evidence weight mass exceeds the family cap")
 
 

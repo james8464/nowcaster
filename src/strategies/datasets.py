@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from src.database.engine import Database
 from src.ingestion.bars import INTERVAL_DURATION, BarQuery, MarketBar, require_utc
+from src.strategies.calendars import ExpectedBarCalendar, calendar_for
 from src.strategies.types import BarInterval, canonical_hash
 
 
@@ -40,6 +41,8 @@ class DatasetManifest(BaseModel):
     row_count: int = Field(ge=0)
     gaps: tuple[DatasetGap, ...]
     payload_hashes: tuple[str, ...]
+    calendar_id: str
+    calendar_version: str
 
     @field_validator("requested_start", "requested_end", "coverage_start", "coverage_end")
     @classmethod
@@ -106,6 +109,35 @@ class BarRepository:
         ]
         return self._latest(eligible)
 
+    def revision_ledger_as_of(self, request: BarQuery, decision_timestamp: datetime) -> pd.DataFrame:
+        """Return every finalized revision eligible at the point-in-time boundary."""
+
+        decision_timestamp = require_utc(decision_timestamp)
+        frame = self._matching_frame(request)
+        if frame.empty:
+            return frame
+        eligible = frame[
+            frame["finalized"]
+            & (frame["available_at"] <= decision_timestamp)
+            & (frame["close_timestamp"] <= decision_timestamp)
+        ]
+        return eligible.sort_values(["available_at", "open_timestamp", "revision"], kind="stable").reset_index(
+            drop=True
+        )
+
+    def causal_bars_as_of(self, request: BarQuery, decision_timestamp: datetime) -> pd.DataFrame:
+        """Resolve the first observable version of each execution bar without repainting history."""
+
+        ledger = self.revision_ledger_as_of(request, decision_timestamp)
+        if ledger.empty:
+            return ledger
+        return (
+            ledger.sort_values(["open_timestamp", "available_at", "revision"], kind="stable")
+            .drop_duplicates(["provider", "feed", "symbol", "interval", "open_timestamp"], keep="first")
+            .sort_values("open_timestamp", kind="stable")
+            .reset_index(drop=True)
+        )
+
     def coverage(self, request: BarQuery) -> tuple[datetime | None, datetime | None]:
         frame = self._latest(self._matching_frame(request))
         if frame.empty:
@@ -116,11 +148,22 @@ class BarRepository:
         frame = self._latest(self._matching_frame(request))
         present = set(frame["open_timestamp"].tolist()) if not frame.empty else set()
         duration = INTERVAL_DURATION[request.interval]
+        expected = self.calendar(request).expected_opens(request.start, request.end, request.interval)
+        if not expected and len(present) >= 2:
+            observed = sorted(timestamp.to_pydatetime() for timestamp in present)
+            expected = tuple(
+                cursor.to_pydatetime()
+                for cursor in pd.date_range(observed[0], observed[-1], freq=duration, tz="UTC")
+            )
         gaps: list[DatasetGap] = []
-        cursor = request.start
         gap_start: datetime | None = None
         missing = 0
-        while cursor < request.end:
+        previous: datetime | None = None
+        for cursor in expected:
+            if previous is not None and cursor != previous + duration and gap_start is not None:
+                gaps.append(DatasetGap(start=gap_start, end=previous + duration, missing_bars=missing))
+                gap_start = None
+                missing = 0
             if pd.Timestamp(cursor) not in present:
                 if gap_start is None:
                     gap_start = cursor
@@ -129,13 +172,19 @@ class BarRepository:
                 gaps.append(DatasetGap(start=gap_start, end=cursor, missing_bars=missing))
                 gap_start = None
                 missing = 0
-            cursor += duration
+            previous = cursor
         if gap_start is not None:
-            gaps.append(DatasetGap(start=gap_start, end=request.end, missing_bars=missing))
+            assert previous is not None
+            gaps.append(DatasetGap(start=gap_start, end=previous + duration, missing_bars=missing))
         return tuple(gaps)
+
+    @staticmethod
+    def calendar(request: BarQuery) -> ExpectedBarCalendar:
+        return calendar_for(request.provider, request.feed)
 
     def manifest(self, request: BarQuery) -> DatasetManifest:
         frame = self._latest(self._matching_frame(request))
+        calendar = self.calendar(request)
         records = [
             {
                 "provider": row.provider,
@@ -158,6 +207,8 @@ class BarRepository:
                     "interval": request.interval,
                     "start": request.start,
                     "end": request.end,
+                    "calendar_id": calendar.calendar_id,
+                    "calendar_version": calendar.version,
                 },
                 "bars": records,
             }
@@ -176,6 +227,8 @@ class BarRepository:
             row_count=len(frame),
             gaps=self.gaps(request),
             payload_hashes=tuple(str(value) for value in frame.get("payload_hash", [])),
+            calendar_id=calendar.calendar_id,
+            calendar_version=calendar.version,
         )
 
     def _matching_frame(self, request: BarQuery) -> pd.DataFrame:

@@ -76,6 +76,60 @@ def test_binance_rejects_non_spot_request_feed_before_http_call():
         list(provider.fetch(request))
 
 
+def test_binance_receipt_timestamp_is_after_each_paginated_response() -> None:
+    start = datetime(2026, 8, 22, 10, tzinfo=UTC)
+    events: list[str] = []
+    receipts = iter(
+        (
+            datetime(2026, 8, 22, 10, 20, tzinfo=UTC),
+            datetime(2026, 8, 22, 10, 25, tzinfo=UTC),
+        )
+    )
+
+    def row(index: int) -> list[object]:
+        opened = start.timestamp() * 1_000 + index * 300_000
+        return [
+            int(opened),
+            "100",
+            "110",
+            "99",
+            str(101 + index),
+            "10",
+            int(opened + 299_999),
+            "1000",
+            10,
+            "5",
+            "500",
+            "0",
+        ]
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        events.append("response")
+        cursor = int(request.url.params["startTime"])
+        payload = [row(0), row(1)] if cursor == int(start.timestamp() * 1_000) else [row(2)]
+        return httpx.Response(200, json=payload)
+
+    def clock() -> datetime:
+        events.append("clock")
+        return next(receipts)
+
+    provider = BinanceBarProvider(httpx.Client(transport=httpx.MockTransport(respond)), clock=clock)
+    bars = list(
+        provider.fetch(
+            BarRequest(
+                symbol="BTCUSDT",
+                interval=BarInterval.FIVE_MINUTES,
+                start=start,
+                end=datetime(2026, 8, 22, 10, 15, tzinfo=UTC),
+                page_size=2,
+            )
+        )
+    )
+
+    assert events == ["response", "clock", "response", "clock"]
+    assert [bar.retrieved_at.minute for bar in bars if bar.retrieved_at is not None] == [20, 20, 25]
+
+
 def test_alpaca_preserves_feed_pages_exclusive_end_and_deduplicates_page_boundary(monkeypatch):
     pages = {
         None: _json_fixture("alpaca_bars_page_1.json"),
@@ -115,6 +169,45 @@ def test_alpaca_preserves_feed_pages_exclusive_end_and_deduplicates_page_boundar
     assert [bar.available_at.minute for bar in bars] == [5, 10, 15]
     assert {bar.feed for bar in bars} == {"iex"}
     assert bars[0].payload_hash == "de38fb0c9934106f57db3dca6ceb9a1ebe622a857e2e3df13658a6b075ee7d9f"
+
+
+def test_alpaca_receipt_timestamp_is_after_each_paginated_response(monkeypatch) -> None:
+    pages = {
+        None: _json_fixture("alpaca_bars_page_1.json"),
+        "page-2": _json_fixture("alpaca_bars_page_2.json"),
+    }
+    events: list[str] = []
+    receipts = iter(
+        (
+            datetime(2026, 8, 22, 10, 20, tzinfo=UTC),
+            datetime(2026, 8, 22, 10, 25, tzinfo=UTC),
+        )
+    )
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        events.append("response")
+        return httpx.Response(200, json=pages[request.url.params.get("page_token")])
+
+    def clock() -> datetime:
+        events.append("clock")
+        return next(receipts)
+
+    monkeypatch.setenv("APCA_API_KEY_ID", "test-key")
+    monkeypatch.setenv("APCA_API_SECRET_KEY", "test-secret")
+    provider = AlpacaBarProvider(httpx.Client(transport=httpx.MockTransport(respond)), clock=clock)
+    bars = list(
+        provider.fetch(
+            BarRequest(
+                symbol="AAPL",
+                interval=BarInterval.FIVE_MINUTES,
+                start=datetime(2026, 8, 22, 10, 0, tzinfo=UTC),
+                end=datetime(2026, 8, 22, 10, 15, tzinfo=UTC),
+            )
+        )
+    )
+
+    assert events == ["response", "clock", "response", "clock"]
+    assert [bar.retrieved_at.minute for bar in bars if bar.retrieved_at is not None] == [20, 20, 25]
 
 
 def test_alpaca_rate_limit_retries_are_bounded(monkeypatch):
