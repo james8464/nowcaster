@@ -150,3 +150,5 @@ Task 10: Ruling: run one narrowly scoped fixture-parity validation micro-fix wit
 Task 10: exceptional fixture-parity micro-fix in progress (1 open; exceptional-wave-2 commit 7bed7bc).
 Task 10: exceptional fixture-parity micro-fix (1 addressed, 0 open; commits 7bed7bc..2cfc4fe).
 Task 10: final whole-branch review and all authorized exceptional fixes are clean; fresh release verification, native visual audit, merge, push, and remote confirmation in progress.
+Task 10: Ruling: exclude Git revision and refresh receipts from the live semantic snapshot hash after two exhaustive replays differed only by a documentation-only commit — data, code-input, config, and normalized snapshot hashes remain independently auditable — cost if wrong: semantic receipts no longer identify the exact repository commit by themselves, so consumers must pair them with the separately published code hash and Git provenance.
+Task 10: semantic-receipt determinism micro-fix complete (commit 926727a; focused integration tests 7 passed; two 2,722,446-row live replays normalize to the same semantic hash).

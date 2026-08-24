@@ -187,3 +187,20 @@ The release candidate was assembled with `make macos-app`, validated with `codes
 4. **Affected research/system screens — healthy.** Backtests clearly separate development from final test and show `Not ready`; Signals identifies `Research Only` and invalidation evidence; Data Quality has a descriptive empty state; Pipeline Runs exposes status, stage, mode, duration, rows, and errors.
 
 No release-blocking visual, interaction, or screenshot-visible accessibility defect was found. Screenshot evidence cannot prove full keyboard, VoiceOver, contrast-ratio, Dynamic Type, or reduced-motion compliance; the native test suite separately covers stable accessibility labels, non-color status descriptions, keyboard-oriented selection/search contracts, chart table alternatives, and window resizing.
+
+## Fresh Exhaustive Live Replay and Semantic Receipt Fix
+
+Two isolated cache-only live replays completed against the external checksummed Binance cache at the fixed `2026-08-24T00:00:00Z` cutoff. Both produced the same dataset hash, code-input hash, configuration hash, 2,722,446 bars, 2,722,438 return observations, 880 coverage attempts, 736 completed chunks, 144 unavailable chunks, 4,848 missing requested bars across 206 gap segments, and zero duplicate logical bars, invalid OHLCV rows, or revision rows. All 19 strategies and the learning benchmark remain honestly unavailable; no live posture was promoted. Alpaca remains unavailable because credentials are absent.
+
+The compact files initially differed only in `metadata.git_commit`: a documentation-only commit landed between the two runs, and `_semantic_snapshot_payload` incorrectly included that export receipt in the field labelled a semantic hash. A strict regression now proves that `generated_at`, `last_refresh`, and `git_commit` do not alter semantic identity. The exact normalized snapshots from both exhaustive runs hash to `1a1b3dbfeeaaa69b63cd309d1446db8c499b296cb2e42bfba2db8d55effa054a`; dataset identity remains `626badda6cb58cf142115519c557e60b2e58abc0243dc081227ec689d65eaada`, cache-manifest identity remains `30228b87de6e2687064fcf9ad63842c2cc89f0fca087f7b4cdc6ea5749e570ff`, and the corrected source/config receipt is published separately.
+
+Fresh feature-tree verification after the correction:
+
+- `.venv/bin/pytest -q` — **504 passed in 323.54s**.
+- `.venv/bin/ruff format --check .` — **182 files already formatted**.
+- `.venv/bin/ruff check .` and `git diff --check` — passed.
+- `swift test --package-path macos/Nowcaster` — **53 Swift Testing tests plus 1 XCTest passed (54 total)**.
+- `swift build -c release --package-path macos/Nowcaster` — production build completed.
+- The first fixture verification correctly detected the expected regenerated CI receipt drift; the regenerated artifacts are committed before the final read-only fixture/parity rerun.
+
+Raw DuckDB files remain ignored and the 463 MB provider cache remains outside the repository. These exhaustive attempts validate deterministic ingestion and honest failure behavior; missing historical coverage and unauthenticated revision vintages still prohibit a profitability claim.
