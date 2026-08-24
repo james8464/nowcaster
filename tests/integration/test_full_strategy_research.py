@@ -161,7 +161,7 @@ def test_ci_research_accounts_for_every_strategy_and_is_reproducible(tmp_path: P
     assert summary["data_quality"]["duplicate_logical_bars"] == 0
 
 
-def test_ci_research_ledgers_a_real_strategy_failure_and_excludes_it_from_ensemble(
+def test_ci_research_rebuilds_successful_survivors_as_one_cohort_after_a_real_strategy_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from src.research import full_history
@@ -193,6 +193,63 @@ def test_ci_research_ledgers_a_real_strategy_failure_and_excludes_it_from_ensemb
     assert failed["status"] == "failed"
     assert "deliberate research failure" in failed["reason"]
     assert "rsi_reversal" not in {item["strategy_id"] for item in summary["ensemble_components"]}
+
+    database = Database.from_url(f"duckdb:///{output_dir / 'research.duckdb'}")
+    runs = database.frame(
+        "select strategy_run_id, strategy_id, symbol, interval, status, metrics "
+        "from strategy_runs order by run_timestamp, strategy_id"
+    )
+    assert runs.loc[(runs["strategy_id"] == "rsi_reversal") & (runs["status"] == "evaluated")].empty
+    weights = database.frame("select strategy_id, evidence from ensemble_weights order by strategy_id")
+    assert "rsi_reversal" not in set(weights["strategy_id"])
+
+    survivor_cohorts: dict[str, set[str]] = {}
+    affected_attempts = [attempt for attempt in summary["attempts"] if "rsi_reversal" in attempt.get("strategies", [])]
+    assert affected_attempts
+    for attempt in affected_attempts:
+        survivors = set(attempt["strategies"]) - {"rsi_reversal"}
+        scope_runs = runs.loc[
+            (runs["symbol"] == attempt["symbol"])
+            & (runs["interval"] == attempt["interval"])
+            & (runs["status"] == "evaluated")
+        ]
+
+        def member_ids(metrics: object) -> set[str]:
+            if not isinstance(metrics, dict):
+                return set()
+            return {
+                str(member["strategy_id"])
+                for member in metrics.get("cohort_members", [])
+                if isinstance(member, dict) and "strategy_id" in member
+            }
+
+        joint = scope_runs.loc[
+            scope_runs["metrics"].map(
+                lambda metrics, expected_survivors=survivors: member_ids(metrics) == expected_survivors
+            )
+        ]
+        assert set(joint["strategy_id"]) == survivors
+        cohort_ids = {str(metrics["cohort_id"]) for metrics in joint["metrics"]}
+        decision_hashes = {str(metrics["cohort_decision_hash"]) for metrics in joint["metrics"]}
+        assert len(cohort_ids) == len(decision_hashes) == 1
+        cohort_id = cohort_ids.pop()
+        cohort_weights = weights.loc[
+            weights["evidence"].map(
+                lambda evidence, selected_cohort_id=cohort_id: (
+                    isinstance(evidence, dict) and evidence.get("cohort_id") == selected_cohort_id
+                )
+            )
+        ]
+        assert set(cohort_weights["strategy_id"]) == survivors
+        assert all(member_ids(evidence) == survivors for evidence in cohort_weights["evidence"])
+        survivor_cohorts[cohort_id] = survivors
+
+    snapshot = AppSnapshot.model_validate_json((output_dir / "nowcaster-snapshot.json").read_text())
+    snapshot_cohort_ids = {item.cohort_id for item in snapshot.ensemble_components}
+    assert len(snapshot_cohort_ids) == 1
+    snapshot_cohort_id = snapshot_cohort_ids.pop()
+    published_survivors = survivor_cohorts[snapshot_cohort_id]
+    assert {item.strategy_id for item in snapshot.ensemble_components} == published_survivors
 
 
 def test_research_fails_closed_on_prepopulated_or_post_cutoff_database(tmp_path: Path) -> None:

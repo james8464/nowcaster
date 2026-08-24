@@ -162,7 +162,7 @@ def _evaluate_with_failure_isolation(pipeline: StrategyPipeline, scope: Strategy
     try:
         return pipeline.evaluate(EvaluationOptions(scope=scope))
     except Exception as cohort_error:
-        successful: list[StageOutcome] = []
+        successful_ids: list[str] = []
         failures: list[str] = []
         for strategy_id in scope.strategy_ids:
             isolated_scope = scope.model_copy(update={"strategy_ids": (strategy_id,)})
@@ -172,15 +172,21 @@ def _evaluate_with_failure_isolation(pipeline: StrategyPipeline, scope: Strategy
                 failures.append(f"{strategy_id}: {type(error).__name__}: {str(error)[:300]}")
                 continue
             if outcome.status in {"completed", "reused"}:
-                successful.append(outcome)
+                successful_ids.append(strategy_id)
             else:
                 failures.append(f"{strategy_id}: {outcome.message}")
-        message = (
-            f"isolated {len(successful)} successful strategies after cohort failure; "
-            f"failures={failures or [str(cohort_error)[:300]]}"
-        )
-        if successful:
-            return StageOutcome("completed", message, dataset_hash=successful[0].dataset_hash)
+        if successful_ids:
+            survivor_scope = scope.model_copy(update={"strategy_ids": tuple(successful_ids)})
+            rebuilt = pipeline.evaluate(EvaluationOptions(scope=survivor_scope))
+            return StageOutcome(
+                rebuilt.status,
+                f"rebuilt {len(successful_ids)} successful survivors after cohort failure; failures={failures}; "
+                f"{rebuilt.message}",
+                dataset_hash=rebuilt.dataset_hash,
+                strategy_run_id=rebuilt.strategy_run_id,
+                strategy_run_ids=rebuilt.strategy_run_ids,
+            )
+        message = f"no successful strategies after cohort failure; failures={failures or [str(cohort_error)[:300]]}"
         return StageOutcome("unavailable", message)
 
 

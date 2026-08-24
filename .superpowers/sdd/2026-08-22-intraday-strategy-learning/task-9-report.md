@@ -333,3 +333,115 @@ No `__pycache__`, raw cache page, checksum sidecar, DuckDB/WAL, credential, or i
 2. The 463 MB raw cache and multi-GB collection of initial/replay databases are deliberately external. Reproducibility beyond their compact checksums requires retaining that external cache or redownloading the official pages.
 3. Alpaca equity/session evidence remains unavailable until a usable local credential pair and feed entitlement are supplied; credentials must stay out of Git/logs.
 4. The live manifest is compact relative to raw bars but is approximately 1.3 MB because it retains exact metadata/checksums for 3,084 provider pages.
+
+---
+
+# Fix round 2/5 — coherent survivor cohorts
+
+## Status
+
+Complete. When a candidate generator fails inside an otherwise compatible plural evaluation, singleton evaluations now identify viable candidates and the successful survivor IDs are immediately rebuilt as one joint cohort. The rebuilt members share one cohort ID and decision hash, receive one complete ensemble-weight cohort, and exclude the failed member from evaluated and ensemble evidence. Existing coverage/data-quality gates are unchanged; unavailable live scopes remain unavailable.
+
+## Files changed
+
+- `src/research/full_history.py`: rebuild and return one joint survivor cohort after singleton failure isolation.
+- `tests/integration/test_full_strategy_research.py`: real end-to-end regression covering all affected scopes, cohort/decision identities, failed-member exclusion, complete survivor weights, and snapshot publication.
+- `data/research/ci/research-summary.json`, `data/research/ci/strategy-research.md`: regenerated compact CI metadata from the final source hash; the semantic snapshot remains byte-identical.
+- `data/research/live/research-summary.json`, `data/research/live/strategy-research.md`: regenerated from a fresh isolated database using the verified external cache; live evidence remains unavailable because exact provider gaps still fail quality gates.
+- `docs/research-results.md`: current code/artifact hashes.
+- This report: Fix Round 2 audit ledger.
+- Controller ledger edits: none were visible in this worktree at the start or during implementation (`git status --short` initially returned no path). Any controller edit that appears before commit will be retained and listed rather than restored.
+- Deleted: none. The SDD plan was not edited by this implementer.
+
+## Failing regression evidence
+
+The red-state production behavior omitted the survivor-only joint `pipeline.evaluate(...)` call. The test executes the real CI research command and inspects persisted runs, weights, and the exported snapshot; only the deliberately failing generator is replaced.
+
+```text
+.venv/bin/pytest -v tests/integration/test_full_strategy_research.py::test_ci_research_rebuilds_successful_survivors_as_one_cohort_after_a_real_strategy_failure
+```
+
+Before implementation: `1 failed in 32.83s`. The intended assertion found no evaluated row whose `cohort_members` equaled the full compatible survivor set (`set() != survivors`), proving the old singleton-only behavior.
+
+The first implementation run advanced past every database cohort/weight assertion, then failed only because the test incorrectly chose lexical `max` among several equal-time deterministic CI cohorts: `1 failed in 52.52s`. The assertion was narrowed to the required observable contract—snapshot cohort ID must identify one of the complete survivor cohorts, with exactly that cohort's members. It then passed: `1 passed in 52.89s`. A green-state test cleanup removed the unused timestamp lookup and remained green: `1 passed in 49.77s`.
+
+## Implementation decisions
+
+- The original plural evaluation remains the fast path. Only a raised cohort exception enters isolation.
+- Singleton evaluations identify which requested generators/evaluations can complete. Successful IDs preserve requested order; failed IDs retain their persisted terminal failure/error reason.
+- If at least one strategy survives, the runner creates a scope containing exactly those survivor IDs and invokes the normal plural evaluation path again. This reuses the pipeline's existing atomic cohort reservation, shared cohort identity/decision, evidence-weight construction, caps, provenance, and snapshot completeness checks rather than synthesizing an ensemble in the research runner.
+- The returned `StageOutcome` carries the rebuilt cohort's status, dataset hash, primary run ID, and complete run-ID tuple. The message records the survivor count and isolated failures.
+- With no survivors, the result remains explicitly unavailable. Coverage failure handling was not changed: live scopes with gaps never call evaluation or this recovery path.
+- If the survivor cohort itself raises, the exception is allowed to fail closed instead of publishing singleton probes as a claimed coherent cohort.
+
+## Regression findings
+
+The deliberate `rsi_reversal` failure affects the CI 5m, 15m, and 1h scopes. For each scope, the final database contains evaluated survivor rows whose member set equals every requested compatible strategy except `rsi_reversal`; every member shares one cohort ID and one cohort decision hash. Each corresponding ensemble cohort has exactly the survivor IDs and identical survivor member provenance. `rsi_reversal` has no evaluated run and no ensemble-weight row. Snapshot export selects one complete survivor cohort rather than a latest singleton.
+
+Normal CI output is semantically unchanged because its generators do not fail: 36 causal audits, 10 snapshot ensemble components, one learning run, and 36 strategy presentations. The CI snapshot remains SHA-256 `f73ebad40e812d2de82a41f530ba910f2e844fe526e5b6c4c952ca8cf4cbfaf8` with semantic hash `e9f0e33867b833d6d769272e7ba9ce1a9bf511133d8294323fa7942a672af18d`.
+
+## Final hashes
+
+| Artifact / identity | Hash |
+|---|---|
+| Code | `0f79745cf6f9393908820f758032864fe468ca1179e72e173a2daaa62092e6e8` |
+| CI config | `bdd5db762ac98ad464c552409781a71a944928083061cdc6979240e5bec324cc` |
+| CI aggregate dataset | `f3b7a8131155c59abe7b7c6e03b66af5252e0304f8649f12aa5fa32978b1e34c` |
+| CI semantic snapshot | `e9f0e33867b833d6d769272e7ba9ce1a9bf511133d8294323fa7942a672af18d` |
+| CI summary file | `8a54e46124c7ac4e1b1b70c244e5b90b2cd74f2610ea890971546d5b179dc488` |
+| CI snapshot file | `f73ebad40e812d2de82a41f530ba910f2e844fe526e5b6c4c952ca8cf4cbfaf8` |
+| Live aggregate dataset | `4fad454ba2f3695fe135d828dc741a862f482a5bacdcae54999f60604385c09e` |
+| Live semantic snapshot | `967c08eeccaa8e11028e3010acddb6a988e7d2dbda0c8fdd52e9c9904c12c60f` |
+| External cache manifest | `30228b87de6e2687064fcf9ad63842c2cc89f0fca087f7b4cdc6ea5749e570ff` |
+| Live summary file | `2221adaa827cce52d38bfffea1c736a2d1f8f79179e163773c682ba085822a84` |
+| Live snapshot file | `f8631ae688396864a5da589f65b6d5ed5b545422211312664ebea6fc8a562a7f` |
+
+## Commands and exact results
+
+- Red regression command above: `1 failed in 32.83s` at the missing joint-survivor assertion.
+- First implementation run of the same command: required database evidence passed; over-specified equal-time snapshot tie assertion failed, `1 failed in 52.52s`.
+- Corrected command: `1 passed in 52.89s`; after green-state cleanup: `1 passed in 49.77s`.
+- `.venv/bin/pytest -v tests/integration/test_full_strategy_research.py`: `6 passed in 103.18s (0:01:43)`.
+- `.venv/bin/ruff format src/research/full_history.py tests/integration/test_full_strategy_research.py`: `2 files reformatted`; the first check identified two test-only B023 loop captures, which were bound explicitly.
+- `.venv/bin/ruff format ... && .venv/bin/ruff check ... && .venv/bin/ruff format --check . && .venv/bin/ruff check . && git diff --check`: final pre-replay output `2 files left unchanged`, `All checks passed`, `178 files already formatted`, `All checks passed`, diff check exit 0.
+- `make research-ci`: completed with status `completed`.
+- `.venv/bin/pytest -q`: `477 passed in 325.48s (0:05:25)`.
+- `swift test --package-path macos/Nowcaster && swift build -c release --package-path macos/Nowcaster`: 1 XCTest and 52 Swift Testing cases passed; release build completed, exit 0.
+- `test ! -e /Users/james/Library/Caches/Nowcaster/research/full-history-20260824-round2.duckdb && .venv/bin/python -m src.cli strategy research --profile live --database-url duckdb:////Users/james/Library/Caches/Nowcaster/research/full-history-20260824-round2.duckdb --output-dir data/research/live --cache-dir /Users/james/Library/Caches/Nowcaster/binance-spot-20260824 --cutoff 2026-08-24T00:00:00Z`: exit 0 after a fresh isolated cache-only replay; output `{"event": "strategy_research_complete", ..., "profile": "live", "status": "unavailable"}`.
+- Live invariant check over the generated JSON: `880` attempts (`736` exact-coverage completed chunks, `144` explicit unavailable chunks), `2,722,446` rows, `4,848` missing requested bars, `206` gap segments, `3,084` verified external cache files; code, dataset, config, and cache-manifest hashes matched the table above; `live invariant checks: PASS`.
+- `shasum -a 256` over generated artifacts: live summary `2221adaa827cce52d38bfffea1c736a2d1f8f79179e163773c682ba085822a84`, live Markdown `202e3f27b20a98a0f97a13d63aac6bfa33bfff03478365b785890942064ec762`, external live snapshot `f8631ae688396864a5da589f65b6d5ed5b545422211312664ebea6fc8a562a7f`, CI summary `8a54e46124c7ac4e1b1b70c244e5b90b2cd74f2610ea890971546d5b179dc488`, CI Markdown `8dfca95b420230c23970b181999d43d70fff664395b3aad6acfa303ff2f4301b`, CI snapshot `f73ebad40e812d2de82a41f530ba910f2e844fe526e5b6c4c952ca8cf4cbfaf8`.
+- `make verify-research-fixtures`: regenerated deterministic CI research (`status: completed`), validated snapshot schema v2, and `git diff --exit-code -- data/research/ci` passed.
+- `make secret-scan`: `Tracked-file secret scan passed`.
+- `git diff --cached --check` plus explicit plan and forbidden staged-path checks: exit 0; `staged cleanliness and forbidden-path checks: PASS`.
+- Final `.venv/bin/ruff format --check . && .venv/bin/ruff check . && git diff --check && git diff --cached --check`: `178 files already formatted`, `All checks passed`, both diff checks exit 0.
+
+## Git status
+
+Before commit, `git status --short` listed exactly these eight staged modifications and no unstaged/untracked files:
+
+```text
+M  .superpowers/sdd/2026-08-22-intraday-strategy-learning/task-9-report.md
+M  data/research/ci/research-summary.json
+M  data/research/ci/strategy-research.md
+M  data/research/live/research-summary.json
+M  data/research/live/strategy-research.md
+M  docs/research-results.md
+M  src/research/full_history.py
+M  tests/integration/test_full_strategy_research.py
+```
+
+## Self-review
+
+- Mutated the design mentally back to singleton-only success: the new test fails at the joint member-set assertion, as demonstrated by the red run.
+- Confirmed every rebuilt strategy row and weight row shares the survivor cohort identity and decision hash; the failed member has neither evaluated nor ensemble evidence.
+- Confirmed snapshot completeness through the real schema-v2 exporter, not a mocked builder.
+- Confirmed the runner delegates cohort reservation, persistence, nonnegative weighting, caps, and provenance to the existing pipeline.
+- Confirmed no data-quality, chronology, final-test, or execution-assumption path changed.
+- Confirmed unavailable scopes do not enter recovery/evaluation.
+- Confirmed raw cache, DuckDB/WAL files, credentials, and Python caches remain outside Git.
+
+## Concerns
+
+1. Isolation intentionally performs singleton probes before the joint survivor rebuild, increasing work only on an exceptional cohort failure path. The final joint cohort is authoritative; singleton probes are not selected by snapshot export once the joint cohort completes.
+2. Provider-backed live evidence remains unavailable for the already documented 4,848 missing expected Binance bars; this fix does not and must not relax those gates.
+3. Alpaca credentials remain absent, so equity/session evidence remains unavailable.

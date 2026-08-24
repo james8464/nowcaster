@@ -25,16 +25,16 @@ Reproducibility identifiers for the committed run:
 
 | Identifier | SHA-256 / canonical hash |
 |---|---|
-| Code | `0abf50fb81420fe08f93c9e341a49bfbeb8308172c4e6febc4b46e317eda4d9f` |
+| Code | `0f79745cf6f9393908820f758032864fe468ca1179e72e173a2daaa62092e6e8` |
 | CI configuration | `bdd5db762ac98ad464c552409781a71a944928083061cdc6979240e5bec324cc` |
 | CI aggregate dataset | `f3b7a8131155c59abe7b7c6e03b66af5252e0304f8649f12aa5fa32978b1e34c` |
 | CI semantic snapshot | `e9f0e33867b833d6d769272e7ba9ce1a9bf511133d8294323fa7942a672af18d` |
-| CI summary file | `2f6527305108615df5df3205cb66426e01a8c1b81b34d7160688e4ae4ace559f` |
+| CI summary file | `8a54e46124c7ac4e1b1b70c244e5b90b2cd74f2610ea890971546d5b179dc488` |
 | CI snapshot file | `f73ebad40e812d2de82a41f530ba910f2e844fe526e5b6c4c952ca8cf4cbfaf8` |
 
 ## Exhaustive official Binance attempt on 24 August 2026 UTC
 
-Task 9 ran the unbounded official Binance spot REST profile from the earliest provider boundary through the fixed cutoff `2026-08-24T00:00:00Z`. It attempted all 880 deterministic 30-day chunks: 110 chunks for each of BTCUSDT/ETHUSDT at every configured `5m`, `15m`, `1h`, and `4h` interval. There was no diagnostic chunk cap. Every request completed successfully and all 3,084 raw JSON pages were written outside Git with adjacent SHA-256 checksums; the final replay verified the cache without network access.
+Task 9 ran the unbounded official Binance spot REST profile from the earliest provider boundary through the fixed cutoff `2026-08-24T00:00:00Z`. It attempted all 880 deterministic 30-day chunks: 110 chunks for each of BTCUSDT/ETHUSDT at every configured `5m`, `15m`, `1h`, and `4h` interval. There was no diagnostic chunk cap. All 3,084 raw JSON pages were written outside Git with adjacent SHA-256 checksums; the final replay verified the cache without network access. Of the 880 requested chunks, 736 met exact coverage and 144 were explicitly unavailable because requested bars remained missing.
 
 | Provider pair | Interval | Attempted UTC coverage | Chunks | Rows stored | Missing expected bars | Gap segments | Result |
 |---|---:|---|---:|---:|---:|---:|---|
@@ -53,16 +53,17 @@ The isolated working database stored 2,722,446 finalized bars. It found 4,848 mi
 
 The exact attempt and page checksums are kept in the compact live manifest generated during Task 9. The 463 MB raw page cache and 1.1 GB working DuckDB remained outside Git.
 
-The final reproducibility identifiers are updated from the post-format cache-only reruns below:
+The final reproducibility identifiers are updated from the post-format cache-only replay below:
 
 | Identifier | SHA-256 / canonical hash |
 |---|---|
-| Code | `0abf50fb81420fe08f93c9e341a49bfbeb8308172c4e6febc4b46e317eda4d9f` |
+| Code | `0f79745cf6f9393908820f758032864fe468ca1179e72e173a2daaa62092e6e8` |
 | Live configuration | `2775d97ed7934398ce2086d2c5f71e760263d2121c635328470c30565cfeada0` |
 | Live aggregate dataset | `4fad454ba2f3695fe135d828dc741a862f482a5bacdcae54999f60604385c09e` |
-| Semantic snapshot | `2760cd93f0fb09f8259f3762167b1cc415cb8b96d7425e9f7fdb94528a710b63` |
+| Semantic snapshot | `967c08eeccaa8e11028e3010acddb6a988e7d2dbda0c8fdd52e9c9904c12c60f` |
 | External cache manifest (3,084 pages) | `30228b87de6e2687064fcf9ad63842c2cc89f0fca087f7b4cdc6ea5749e570ff` |
-| Live summary file, both final reruns | `d996b87a08f1f15aa9a1256e5c8b866ed52193eea7e0f3c17af1f65f70bd3df6` |
+| Live summary file, final replay | `2221adaa827cce52d38bfffea1c736a2d1f8f79179e163773c682ba085822a84` |
+| Live snapshot file, final replay | `f8631ae688396864a5da589f65b6d5ed5b545422211312664ebea6fc8a562a7f` |
 
 ## Alpaca status
 

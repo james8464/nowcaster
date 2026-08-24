@@ -26439,7 +26439,7 @@
     "location": "external_to_repository",
     "manifest_hash": "30228b87de6e2687064fcf9ad63842c2cc89f0fca087f7b4cdc6ea5749e570ff"
   },
-  "code_hash": "0abf50fb81420fe08f93c9e341a49bfbeb8308172c4e6febc4b46e317eda4d9f",
+  "code_hash": "0f79745cf6f9393908820f758032864fe468ca1179e72e173a2daaa62092e6e8",
   "config_hash": "2775d97ed7934398ce2086d2c5f71e760263d2121c635328470c30565cfeada0",
   "cutoff": "2026-08-24T00:00:00Z",
   "data_quality": {
@@ -35308,7 +35308,7 @@
   },
   "quote_disclosure": "BTCUSDT and ETHUSDT are Binance venue-specific USDT spot pairs, not composite USD data",
   "schema_version": 1,
-  "semantic_snapshot_hash": "2760cd93f0fb09f8259f3762167b1cc415cb8b96d7425e9f7fdb94528a710b63",
+  "semantic_snapshot_hash": "967c08eeccaa8e11028e3010acddb6a988e7d2dbda0c8fdd52e9c9904c12c60f",
   "snapshot_counts": {
     "causal_audits": 0,
     "ensemble_components": 0,
