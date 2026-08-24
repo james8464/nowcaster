@@ -30,7 +30,7 @@ def _load_synchronizer():
 
 def test_semantic_snapshot_hash_ignores_export_receipt_metadata_only() -> None:
     expected = {
-        "schema_version": 3,
+        "schema_version": 5,
         "metadata": {
             "generated_at": "2026-08-24T15:00:00Z",
             "last_refresh": "2026-08-24T14:59:00Z",
@@ -80,23 +80,25 @@ def test_semantic_snapshot_hash_ignores_export_receipt_metadata_only() -> None:
 def test_snapshot_sync_preserves_demo_sections_and_replaces_research_sections() -> None:
     synchronizer = _load_synchronizer()
     base = {
-        "schema_version": 3,
+        "schema_version": 5,
         "metadata": {"data_mode": "demo"},
         "earnings": [{"id": "legacy"}],
         "strategies": [],
         "ensemble_components": [],
         "dataset_coverage": [],
         "learning_runs": [],
+        "deep_research_runs": [],
         "causal_audits": [],
     }
     research = {
-        "schema_version": 3,
+        "schema_version": 5,
         "metadata": {"data_mode": "ci"},
         "earnings": [],
         "strategies": [{"strategy_id": "causal"}],
         "ensemble_components": [{"strategy_id": f"causal-{index}"} for index in range(12)],
         "dataset_coverage": [{"symbol": "BTCUSDT"}],
         "learning_runs": [{"run_id": "bounded"}],
+        "deep_research_runs": [{"run_id": "deep-bounded"}],
         "causal_audits": [{"passed": True}],
     }
 
@@ -113,12 +115,13 @@ def test_snapshot_sync_preserves_demo_sections_and_replaces_research_sections() 
 def test_python_research_semantic_mutation_breaks_swift_parity(tmp_path, monkeypatch) -> None:
     synchronizer = _load_synchronizer()
     base = {
-        "schema_version": 3,
+        "schema_version": 5,
         "metadata": {"data_mode": "demo"},
         "strategies": [],
         "ensemble_components": [],
         "dataset_coverage": [],
         "learning_runs": [],
+        "deep_research_runs": [],
         "causal_audits": [],
     }
     python_research = {
@@ -127,6 +130,7 @@ def test_python_research_semantic_mutation_breaks_swift_parity(tmp_path, monkeyp
         "ensemble_components": [{"strategy_id": "causal"}],
         "dataset_coverage": [{"dataset_hash": "d" * 64}],
         "learning_runs": [{"learning_run_id": "bounded"}],
+        "deep_research_runs": [{"run_id": "deep-bounded"}],
         "causal_audits": [{"audit_id": "audit", "passed": True}],
     }
     swift = synchronizer.merge_research_sections(base, python_research)
@@ -151,11 +155,12 @@ def test_python_research_semantic_mutation_breaks_swift_parity(tmp_path, monkeyp
 
 def test_make_parity_target_is_read_only_for_matching_and_divergent_fixtures(tmp_path) -> None:
     research = {
-        "schema_version": 3,
+        "schema_version": 5,
         "strategies": [{"strategy_id": "causal", "promotion_state": "rejected"}],
         "ensemble_components": [{"strategy_id": "causal"}],
         "dataset_coverage": [{"dataset_hash": "d" * 64}],
         "learning_runs": [{"learning_run_id": "bounded"}],
+        "deep_research_runs": [{"run_id": "deep-bounded"}],
         "causal_audits": [{"audit_id": "audit", "passed": True}],
     }
     python_path = tmp_path / "data/research/ci/nowcaster-snapshot.json"

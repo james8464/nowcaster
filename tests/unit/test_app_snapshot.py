@@ -21,7 +21,7 @@ def test_snapshot_contract_is_strictly_versioned_and_uses_safe_confidence_copy()
         )
     )
 
-    assert snapshot.schema_version == 3
+    assert snapshot.schema_version == 5
     assert snapshot.broker_status.state == "live_locked"
     assert snapshot.forward_readiness.state == "live_locked"
     assert "probability of profit" not in snapshot.model_dump_json().lower()
@@ -128,7 +128,7 @@ def test_atomic_writer_replaces_a_complete_valid_document(tmp_path):
     path = write_snapshot_atomic(snapshot, tmp_path / "nested" / "nowcaster-snapshot.json")
 
     text = path.read_text()
-    assert AppSnapshot.model_validate_json(text).schema_version == 3
+    assert AppSnapshot.model_validate_json(text).schema_version == 5
     assert text.count("\n") == 1
     assert not list(path.parent.glob("*.tmp"))
 

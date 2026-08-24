@@ -37,6 +37,38 @@ def render_strategy_research_report(snapshot: AppSnapshot) -> str:
                 f"state={strategy.state} · warnings={warnings}"
             )
         lines.append("")
+    if snapshot.deep_research_runs:
+        lines.extend(
+            [
+                "## Deep Research evidence",
+                "",
+                "Hypothetical research result — every value below is simulated, not a promise or live recommendation.",
+                "",
+            ]
+        )
+        for run in snapshot.deep_research_runs:
+            budget = "continuous" if run.trial_budget is None else str(run.trial_budget)
+            lines.append(
+                f"### {run.symbol} {run.interval} · {run.outcome}"
+            )
+            lines.extend(
+                [
+                    "",
+                    f"- Run: `{run.run_id}`",
+                    f"- Provider/feed: {run.provider}/{run.feed}",
+                    f"- Attempts: {run.evaluated_attempts}/{budget} "
+                    f"({run.succeeded_attempts} succeeded, {run.failed_attempts} failed)",
+                    f"- Generation: {run.generation}",
+                    f"- Champion score: {run.champion_score if run.champion_score is not None else 'unavailable'}",
+                    f"- Final holdout begins: {run.final_test_start.isoformat()}",
+                    "- Failed reliability gates:",
+                ]
+            )
+            if run.failed_gates:
+                lines.extend(f"  - {gate}" for gate in run.failed_gates)
+            else:
+                lines.append("  - None recorded")
+            lines.append("")
     return "\n".join(lines)
 
 

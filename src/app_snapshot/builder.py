@@ -18,6 +18,8 @@ from src.app_snapshot.models import (
     CausalAuditSnapshot,
     DatasetCoverageSnapshot,
     DatasetGapSnapshot,
+    DeepResearchResourceSnapshot,
+    DeepResearchRunSnapshot,
     DiscoveredRuleSnapshot,
     EarningsSnapshot,
     EmergencyStatusSnapshot,
@@ -1272,6 +1274,106 @@ def _learning_runs(database: Database, audits: list[CausalAuditSnapshot]) -> lis
     return runs
 
 
+def _deep_research_runs(database: Database) -> list[DeepResearchRunSnapshot]:
+    run_rows = database.frame(
+        "select run_id, protocol_id, dataset_hash, symbol, provider, feed, interval, workers, "
+        "trial_budget, continuous, cycle_budget, final_test_start, started_at, updated_at, state "
+        "from deep_research_runs order by started_at desc, run_id"
+    )
+    if run_rows.empty:
+        return []
+
+    trials = database.frame(
+        "select run_id, status, generation, candidate_hash, fitness from deep_research_trials "
+        "order by run_id, ordinal"
+    )
+    promotions = database.frame(
+        "select run_id, candidate_hash, outcome, score, failed_gates, evaluated_at, promotion_id "
+        "from deep_research_promotions order by run_id, evaluated_at desc, promotion_id desc"
+    )
+    samples = database.frame(
+        "select run_id, active_workers, queued_trials, memory_bytes, thermal_state, sampled_at, resource_sample_id "
+        "from deep_research_resource_samples order by run_id, sampled_at desc, resource_sample_id desc"
+    )
+
+    projected: list[DeepResearchRunSnapshot] = []
+    for row in run_rows.itertuples(index=False):
+        run_id = str(row.run_id)
+        run_trials = trials.loc[trials["run_id"] == run_id]
+        evaluated = len(run_trials)
+        succeeded = int((run_trials["status"] == "succeeded").sum()) if evaluated else 0
+        failed = int(run_trials["status"].isin(("failed", "invalid", "interrupted")).sum()) if evaluated else 0
+        generation = int(run_trials["generation"].max()) if evaluated else 1
+
+        run_promotions = promotions.loc[promotions["run_id"] == run_id]
+        promotion = run_promotions.iloc[0] if not run_promotions.empty else None
+        state = str(row.state)
+        if promotion is not None:
+            outcome = str(promotion.outcome)
+            gates_value = promotion.failed_gates
+            failed_gates = [str(item) for item in gates_value] if isinstance(gates_value, list) else []
+            best_candidate_hash = str(promotion.candidate_hash) if promotion.candidate_hash else None
+            champion_score = _finite(promotion.score)
+        else:
+            outcome = {"stopped": "stopped", "failed": "failed"}.get(state, "research_running")
+            failed_gates = []
+            successful = run_trials.loc[run_trials["status"] == "succeeded"].dropna(subset=["fitness"])
+            if successful.empty:
+                best_candidate_hash = None
+                champion_score = None
+            else:
+                best = successful.sort_values(
+                    ["fitness", "candidate_hash"], ascending=[False, True], kind="stable"
+                ).iloc[0]
+                best_candidate_hash = str(best.candidate_hash)
+                champion_score = _finite(best.fitness)
+
+        run_samples = samples.loc[samples["run_id"] == run_id]
+        if run_samples.empty:
+            resources = DeepResearchResourceSnapshot()
+        else:
+            sample = run_samples.iloc[0]
+            resources = DeepResearchResourceSnapshot(
+                active_workers=int(sample.active_workers),
+                queued_trials=int(sample.queued_trials),
+                memory_bytes=None if pd.isna(sample.memory_bytes) else int(sample.memory_bytes),
+                thermal_state=str(sample.thermal_state),
+            )
+
+        trial_budget = None if pd.isna(row.trial_budget) else int(row.trial_budget)
+        denominator = trial_budget if trial_budget is not None else int(row.cycle_budget)
+        progress = min(1.0, float(evaluated / denominator)) if denominator else 0.0
+        projected.append(
+            DeepResearchRunSnapshot(
+                run_id=run_id,
+                state=state,
+                symbol=str(row.symbol),
+                interval=str(row.interval),
+                provider=str(row.provider),
+                feed=str(row.feed),
+                dataset_hash=str(row.dataset_hash),
+                protocol_id=str(row.protocol_id),
+                started_at=_python_datetime(row.started_at),
+                updated_at=_python_datetime(row.updated_at),
+                final_test_start=_python_datetime(row.final_test_start),
+                continuous=bool(row.continuous),
+                trial_budget=trial_budget,
+                cycle_budget=int(row.cycle_budget),
+                evaluated_attempts=evaluated,
+                succeeded_attempts=succeeded,
+                failed_attempts=failed,
+                generation=generation,
+                progress=progress,
+                best_candidate_hash=best_candidate_hash,
+                champion_score=champion_score,
+                outcome=outcome,
+                failed_gates=failed_gates,
+                resources=resources,
+            )
+        )
+    return projected
+
+
 def build_app_snapshot(database: Database, settings: Settings) -> AppSnapshot:
     statistics = research_statistics(database)
     instruments = _instruments(database)
@@ -1306,6 +1408,7 @@ def build_app_snapshot(database: Database, settings: Settings) -> AppSnapshot:
         ensemble_components=_ensemble_components(database),
         dataset_coverage=_dataset_coverage(database),
         learning_runs=_learning_runs(database, causal_audits),
+        deep_research_runs=_deep_research_runs(database),
         causal_audits=causal_audits,
         **_execution_projection(database),
     )

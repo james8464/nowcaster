@@ -14,18 +14,19 @@ RESEARCH_SECTIONS = (
     "ensemble_components",
     "dataset_coverage",
     "learning_runs",
+    "deep_research_runs",
     "causal_audits",
 )
 MAX_NATIVE_ENSEMBLE_COMPONENTS = 10
 
 
 def merge_research_sections(base: dict[str, Any], research: dict[str, Any]) -> dict[str, Any]:
-    if base.get("schema_version") not in {2, 3} or research.get("schema_version") not in {2, 3}:
-        raise ValueError("snapshot synchronization requires schema v2 or v3 inputs")
+    if base.get("schema_version") not in {2, 3, 5} or research.get("schema_version") not in {2, 3, 5}:
+        raise ValueError("snapshot synchronization requires schema v2, v3, or v5 inputs")
     if missing := [section for section in RESEARCH_SECTIONS if section not in research]:
         raise ValueError(f"research snapshot is missing sections: {missing}")
     merged = deepcopy(base)
-    merged["schema_version"] = 3
+    merged["schema_version"] = 5
     for section in RESEARCH_SECTIONS:
         merged[section] = deepcopy(research[section])
     merged["ensemble_components"] = merged["ensemble_components"][:MAX_NATIVE_ENSEMBLE_COMPONENTS]

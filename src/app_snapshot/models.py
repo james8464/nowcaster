@@ -336,6 +336,57 @@ class LearningRunSnapshot(SnapshotModel):
         return self
 
 
+class DeepResearchResourceSnapshot(SnapshotModel):
+    active_workers: int = Field(default=0, ge=0)
+    queued_trials: int = Field(default=0, ge=0)
+    memory_bytes: int | None = Field(default=None, ge=0)
+    thermal_state: str = "unknown"
+
+
+class DeepResearchRunSnapshot(SnapshotModel):
+    run_id: str
+    state: str
+    symbol: str
+    interval: str
+    provider: str
+    feed: str
+    dataset_hash: str
+    protocol_id: str
+    started_at: UTCInstant
+    updated_at: UTCInstant
+    final_test_start: UTCInstant
+    continuous: bool = False
+    trial_budget: int | None = Field(default=None, gt=0)
+    cycle_budget: int = Field(gt=0)
+    evaluated_attempts: int = Field(default=0, ge=0)
+    succeeded_attempts: int = Field(default=0, ge=0)
+    failed_attempts: int = Field(default=0, ge=0)
+    generation: int = Field(default=1, ge=1)
+    progress: float = Field(default=0.0, ge=0, le=1)
+    best_candidate_hash: str | None = None
+    champion_score: float | None = None
+    outcome: Literal[
+        "research_running",
+        "no_reliable_strategy_found",
+        "research_champion_found",
+        "existing_champion_retained",
+        "stopped",
+        "failed",
+    ] = "research_running"
+    failed_gates: list[str] = Field(default_factory=list, max_length=100)
+    resources: DeepResearchResourceSnapshot = Field(default_factory=DeepResearchResourceSnapshot)
+
+    @model_validator(mode="after")
+    def validate_deep_research_counts(self) -> DeepResearchRunSnapshot:
+        if self.succeeded_attempts + self.failed_attempts > self.evaluated_attempts:
+            raise ValueError("terminal attempt counts cannot exceed evaluated attempts")
+        if self.trial_budget is not None and self.evaluated_attempts > self.trial_budget:
+            raise ValueError("evaluated attempts cannot exceed a bounded trial budget")
+        if self.updated_at < self.started_at:
+            raise ValueError("updated_at cannot precede started_at")
+        return self
+
+
 class CausalAuditSnapshot(SnapshotModel):
     audit_id: str
     dataset_hash: str
@@ -428,7 +479,7 @@ class EmergencyStatusSnapshot(SnapshotModel):
 
 
 class AppSnapshot(SnapshotModel):
-    schema_version: Literal[3] = 3
+    schema_version: Literal[5] = 5
     metadata: SnapshotMetadata
     overview: OverviewSnapshot = Field(default_factory=OverviewSnapshot)
     instruments: list[InstrumentSnapshot] = Field(default_factory=list)
@@ -442,6 +493,7 @@ class AppSnapshot(SnapshotModel):
     ensemble_components: list[EnsembleComponentSnapshot] = Field(default_factory=list)
     dataset_coverage: list[DatasetCoverageSnapshot] = Field(default_factory=list)
     learning_runs: list[LearningRunSnapshot] = Field(default_factory=list)
+    deep_research_runs: list[DeepResearchRunSnapshot] = Field(default_factory=list)
     causal_audits: list[CausalAuditSnapshot] = Field(default_factory=list)
     broker_status: BrokerStatusSnapshot = Field(default_factory=BrokerStatusSnapshot)
     broker_positions: list[BrokerPositionSnapshot] = Field(default_factory=list, max_length=100)

@@ -141,6 +141,7 @@ struct NowcasterSnapshot: Decodable, Sendable {
     let ensembleComponents: [EnsembleComponentSnapshot]
     let datasetCoverage: [DatasetCoverageSnapshot]
     let learningRuns: [LearningRunSnapshot]
+    let deepResearchRuns: [DeepResearchRunSnapshot]?
     let causalAudits: [CausalAuditSnapshot]
     let brokerStatus: BrokerStatusSnapshot?
     let brokerPositions: [BrokerPositionSnapshot]?
@@ -614,6 +615,42 @@ struct LearningRunSnapshot: Decodable, Identifiable, Sendable {
     var id: String { learningRunId }
 }
 
+struct DeepResearchResourceSnapshot: Decodable, Sendable {
+    let activeWorkers: Int
+    let queuedTrials: Int
+    let memoryBytes: Int?
+    let thermalState: String
+}
+
+struct DeepResearchRunSnapshot: Decodable, Identifiable, Sendable {
+    let runId: String
+    let state: String
+    let symbol: String
+    let interval: String
+    let provider: String
+    let feed: String
+    let datasetHash: String
+    let protocolId: String
+    let startedAt: Date
+    let updatedAt: Date
+    let finalTestStart: Date
+    let continuous: Bool
+    let trialBudget: Int?
+    let cycleBudget: Int
+    let evaluatedAttempts: Int
+    let succeededAttempts: Int
+    let failedAttempts: Int
+    let generation: Int
+    let progress: Double
+    let bestCandidateHash: String?
+    let championScore: Double?
+    let outcome: String
+    let failedGates: [String]
+    let resources: DeepResearchResourceSnapshot
+
+    var id: String { runId }
+}
+
 struct CausalAuditSnapshot: Decodable, Identifiable, Sendable {
     let auditId: String
     let datasetHash: String
@@ -632,8 +669,8 @@ struct CausalAuditSnapshot: Decodable, Identifiable, Sendable {
 }
 
 extension NowcasterSnapshot {
-    func validateSchemaV3() throws {
-        guard schemaVersion == 3 else { throw SnapshotValidationError.unsupportedSchema(schemaVersion) }
+    func validateSchemaV5() throws {
+        guard schemaVersion == 5 else { throw SnapshotValidationError.unsupportedSchema(schemaVersion) }
         guard (brokerPositions?.count ?? 0) <= 100,
               (brokerOrders?.count ?? 0) <= 100,
               (brokerEvents?.count ?? 0) <= 200,
@@ -658,6 +695,16 @@ extension NowcasterSnapshot {
                 && (0 ... 1).contains(run.progress) && run.trials.allSatisfy { $0.complexity >= 0 }
                 && run.discoveredRules.allSatisfy { $0.complexity >= 0 }
         }) else { throw SnapshotValidationError.invalidResearchEvidence("learning run bounds") }
+        guard (deepResearchRuns ?? []).allSatisfy({ run in
+            run.cycleBudget > 0 && (run.trialBudget == nil || run.trialBudget! > 0)
+                && run.evaluatedAttempts >= 0 && run.succeededAttempts >= 0 && run.failedAttempts >= 0
+                && run.succeededAttempts + run.failedAttempts <= run.evaluatedAttempts
+                && (run.trialBudget == nil || run.evaluatedAttempts <= run.trialBudget!)
+                && run.generation >= 1 && (0 ... 1).contains(run.progress)
+                && run.resources.activeWorkers >= 0 && run.resources.queuedTrials >= 0
+                && (run.resources.memoryBytes == nil || run.resources.memoryBytes! >= 0)
+                && run.updatedAt >= run.startedAt && run.failedGates.count <= 100
+        }) else { throw SnapshotValidationError.invalidResearchEvidence("deep research bounds") }
         var evidenceNodes = 0
         for component in ensembleComponents {
             try validateEvidence(component.evidence, nodes: &evidenceNodes, depth: 0)

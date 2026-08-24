@@ -6,7 +6,7 @@ import Testing
 private let completeV2Payload = Data(
     """
     {
-      "schema_version": 3,
+      "schema_version": 5,
       "metadata": {
         "generated_at": "2026-08-22T12:34:56.123456Z",
         "git_commit": "abc123",
@@ -142,6 +142,37 @@ private let completeV2Payload = Data(
         "causal_audit_id": "audit-1",
         "no_repaint_badge": "passed"
       }],
+      "deep_research_runs": [{
+        "run_id": "deep-1",
+        "state": "completed",
+        "symbol": "BTCUSDT",
+        "interval": "5m",
+        "provider": "binance",
+        "feed": "spot",
+        "dataset_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "protocol_id": "pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+        "started_at": "2026-08-22T09:00:00Z",
+        "updated_at": "2026-08-22T12:00:00Z",
+        "final_test_start": "2026-08-23T00:00:00Z",
+        "continuous": false,
+        "trial_budget": 10,
+        "cycle_budget": 10,
+        "evaluated_attempts": 3,
+        "succeeded_attempts": 2,
+        "failed_attempts": 1,
+        "generation": 1,
+        "progress": 0.3,
+        "best_candidate_hash": null,
+        "champion_score": 0.5,
+        "outcome": "no_reliable_strategy_found",
+        "failed_gates": ["minimum 300 closed trades not met"],
+        "resources": {
+          "active_workers": 4,
+          "queued_trials": 7,
+          "memory_bytes": 1000000,
+          "thermal_state": "nominal"
+        }
+      }],
       "causal_audits": [{
         "audit_id": "audit-1",
         "dataset_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
@@ -169,7 +200,7 @@ private let completeV2Payload = Data(
         )
     )
     let snapshot = try JSONDecoder.nowcaster.decode(NowcasterSnapshot.self, from: Data(contentsOf: url))
-    #expect(snapshot.schemaVersion == 3)
+    #expect(snapshot.schemaVersion == 5)
     #expect(snapshot.instruments.contains { $0.assetClass == .crypto })
     #expect(snapshot.backtests.contains { $0.assetClass == .crypto })
     #expect(!snapshot.strategies.isEmpty)
@@ -206,6 +237,11 @@ private let completeV2Payload = Data(
     #expect(run.trials.first?.candidateHash.count == 64)
     #expect(run.discoveredRules.first?.noRepaintBadge == .passed)
 
+    let deepRun = try #require(snapshot.deepResearchRuns?.first)
+    #expect(deepRun.outcome == "no_reliable_strategy_found")
+    #expect(deepRun.failedGates == ["minimum 300 closed trades not met"])
+    #expect(deepRun.resources.activeWorkers == 4)
+
     let audit = try #require(snapshot.causalAudits.first)
     #expect(audit.outerBlockConsumed == false)
     #expect(audit.details["prefix_invariant"] == .bool(true))
@@ -214,7 +250,7 @@ private let completeV2Payload = Data(
 @Test func repositoryAcceptsOnlySchemaV2() async throws {
     let repository = SnapshotRepository()
     let snapshot = try await repository.load(data: completeV2Payload)
-    #expect(snapshot.schemaVersion == 3)
+    #expect(snapshot.schemaVersion == 5)
 
     await #expect(throws: SnapshotRepositoryError.incompatibleSchema(1)) {
         try await repository.load(data: Data("{\"schema_version\":1}".utf8))
@@ -224,7 +260,7 @@ private let completeV2Payload = Data(
 @Test func repositoryRejectsMalformedSchemaV2() async {
     let malformed = Data(
         """
-        {"schema_version":3,"metadata":{"generated_at":"not-a-date"}}
+        {"schema_version":5,"metadata":{"generated_at":"not-a-date"}}
         """.utf8
     )
     await #expect(throws: SnapshotRepositoryError.self) {

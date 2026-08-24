@@ -5164,6 +5164,7 @@
       ]
     }
   ],
+  "deep_research_runs": [],
   "causal_audits": [
     {
       "audit_id": "034389e154f868c4fdad7ecbb6e5afe8b3a3da81cdf748178178c7ee9f9fccb0",
@@ -68805,7 +68806,7 @@
     }
   ],
   "quality_issues": [],
-  "schema_version": 3,
+  "schema_version": 5,
   "signals": [
     {
       "asset_class": "crypto",
