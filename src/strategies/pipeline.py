@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import threading
+import time
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import ExitStack
 from dataclasses import asdict, dataclass, replace
@@ -27,7 +28,7 @@ from src.config.settings import Settings
 from src.database.engine import Database
 from src.database.schema import NATURAL_KEYS, TABLES, causal_audits, dataset_coverage_requests, strategy_runs
 from src.deep_research.candidates import CandidateSearchSpace, generate_candidates
-from src.deep_research.contracts import ResearchProtocol
+from src.deep_research.contracts import ResearchProtocol, RunState
 from src.deep_research.control import ResearchControl
 from src.deep_research.coordinator import CandidateWork, DeepResearchCoordinator
 from src.deep_research.evaluation import CandidateEvaluationPayload, evaluate_candidate_payload
@@ -821,38 +822,6 @@ class StrategyPipeline:
             max_depth=experiment.max_depth,
             max_nodes=experiment.max_nodes,
         )
-        generated = generate_candidates(search_space, count=budget, seed=options.seed)
-        work: list[CandidateWork] = []
-        for attempt in generated:
-            payload = None
-            if attempt.duplicate_of is None:
-                payload = CandidateEvaluationPayload(
-                    candidate=attempt.candidate,
-                    base_spec_payload=registered.spec.model_dump(mode="json"),
-                    signal_bars=development_signal_bars,
-                    causal_bars=development_causal_bars,
-                    provider=options.scope.provider.value,
-                    feed=options.scope.feed,
-                    symbol=options.scope.symbol,
-                    evaluation_start=_utc_datetime(development.iloc[0]["decision_timestamp"]),
-                    evaluation_end=final_start,
-                    fold_ranges=fold_ranges,
-                    execution_assumptions=assumptions,
-                    risk_limits=risk,
-                )
-            work.append(
-                CandidateWork(
-                    ordinal=attempt.ordinal,
-                    candidate_hash=attempt.candidate.identity,
-                    definition={**attempt.candidate.payload(), "liquidity_observed": False},
-                    fold_returns=(),
-                    gross_returns=(),
-                    costs=(),
-                    duplicate_of=attempt.duplicate_of,
-                    evaluation_payload=payload,
-                )
-            )
-
         search_hash = canonical_hash(
             {
                 "strategy": registered.spec.definition_hash,
@@ -884,9 +853,87 @@ class StrategyPipeline:
             final_test_start=final_start,
             created_at=started_at,
         )
-        run_id = options.run_id or f"deep-{canonical_hash([protocol.identity, started_at])[:24]}"
+        run_id = (
+            options.resume_run_id
+            or options.run_id
+            or f"deep-{canonical_hash([protocol.identity, started_at])[:24]}"
+        )
         control = ResearchControl(options.control_directory, run_id=run_id, nonce=options.control_nonce)
         control.initialize()
+        repository = DeepResearchRepository(self.database, clock=self.clock)
+        if options.resume_run_id is not None:
+            resume = repository.resume_run(run_id, protocol)
+            next_ordinal = resume.next_ordinal
+            generation = resume.generation
+            cycle_completed = int(resume.payload.get("completed_attempts", 0))
+            cycle_skip = cycle_completed if 0 < cycle_completed < budget else 0
+            create_run = False
+        else:
+            next_ordinal = 1
+            generation = 1
+            cycle_skip = 0
+            create_run = True
+        previous = self.database.frame(
+            "select candidate_hash, min(ordinal) as first_ordinal from deep_research_trials "
+            "where run_id = :run_id group by candidate_hash",
+            {"run_id": run_id},
+        )
+        first_ordinal_by_hash = {
+            str(row.candidate_hash): int(row.first_ordinal) for row in previous.itertuples(index=False)
+        }
+
+        def cycle_work(
+            count: int,
+            *,
+            ordinal_start: int,
+            cycle_generation: int,
+            skip: int = 0,
+        ) -> tuple[CandidateWork, ...]:
+            generated = generate_candidates(
+                search_space,
+                count=count + skip,
+                seed=options.seed + cycle_generation - 1,
+            )[skip:]
+            work: list[CandidateWork] = []
+            local_ordinals: dict[int, int] = {}
+            for attempt in generated:
+                ordinal = ordinal_start + attempt.ordinal - 1
+                local_ordinals[attempt.ordinal] = ordinal
+                candidate_hash = attempt.candidate.identity
+                duplicate_of = first_ordinal_by_hash.get(candidate_hash)
+                if duplicate_of is None and attempt.duplicate_of is not None:
+                    duplicate_of = local_ordinals[attempt.duplicate_of]
+                if duplicate_of is None:
+                    first_ordinal_by_hash[candidate_hash] = ordinal
+                payload = None
+                if duplicate_of is None:
+                    payload = CandidateEvaluationPayload(
+                        candidate=attempt.candidate,
+                        base_spec_payload=registered.spec.model_dump(mode="json"),
+                        signal_bars=development_signal_bars,
+                        causal_bars=development_causal_bars,
+                        provider=options.scope.provider.value,
+                        feed=options.scope.feed,
+                        symbol=options.scope.symbol,
+                        evaluation_start=_utc_datetime(development.iloc[0]["decision_timestamp"]),
+                        evaluation_end=final_start,
+                        fold_ranges=fold_ranges,
+                        execution_assumptions=assumptions,
+                        risk_limits=risk,
+                    )
+                work.append(
+                    CandidateWork(
+                        ordinal=ordinal,
+                        candidate_hash=candidate_hash,
+                        definition={**attempt.candidate.payload(), "liquidity_observed": False},
+                        fold_returns=(),
+                        gross_returns=(),
+                        costs=(),
+                        duplicate_of=duplicate_of,
+                        evaluation_payload=payload,
+                    )
+                )
+            return tuple(work)
 
         def sealed_evaluator(selected: CandidateWork) -> tuple[float, ...]:
             source = selected.evaluation_payload
@@ -916,13 +963,39 @@ class StrategyPipeline:
         coordinator = DeepResearchCoordinator(
             run_id=run_id,
             protocol=protocol,
-            repository=DeepResearchRepository(self.database, clock=self.clock),
+            repository=repository,
             control=control,
             sealed_evaluator=sealed_evaluator,
             emit=coordinator_event,
             clock=self.clock,
         )
-        outcome = coordinator.run(tuple(work))
+        deadline = time.monotonic() + options.time_budget_seconds if options.time_budget_seconds else None
+        evaluated_total = next_ordinal - 1
+        while True:
+            count = budget - cycle_skip if cycle_skip else budget
+            work = cycle_work(
+                count,
+                ordinal_start=next_ordinal,
+                cycle_generation=generation,
+                skip=cycle_skip,
+            )
+            outcome = coordinator.run(
+                work,
+                generation=generation,
+                create_run=create_run,
+                finish_run=not options.continuous,
+            )
+            evaluated_total += outcome.evaluated_attempts
+            if outcome.state is not RunState.RUNNING:
+                break
+            next_ordinal = work[-1].ordinal + 1
+            generation += 1
+            cycle_skip = 0
+            create_run = False
+            if deadline is not None and time.monotonic() >= deadline:
+                repository.set_state(run_id, RunState.COMPLETED, reason="time_budget_elapsed")
+                outcome = replace(outcome, state=RunState.COMPLETED)
+                break
         message = outcome.promotion_outcome.replace("_", " ")
         self._emit(emit, "progress", "deep_research", 1.0, message)
         return StageOutcome(
@@ -930,7 +1003,7 @@ class StrategyPipeline:
             message,
             dataset_hash=snapshot.manifest.dataset_hash,
             deep_research_run_id=run_id,
-            evaluated_candidates=outcome.evaluated_attempts,
+            evaluated_candidates=evaluated_total,
         )
 
     def _deep_research_assumptions(self, provider: BarProviderName) -> ExecutionAssumptions:

@@ -109,5 +109,8 @@ def test_checkpoint_resume_requires_exact_protocol_identity(tmp_path) -> None:
     assert state.generation == 1
     assert state.payload == {"leader": "1"}
 
+    repository.resume_run("run-1", protocol)
+    assert repository.database.scalar("select state from deep_research_runs where run_id = 'run-1'") == "running"
+
     with pytest.raises(ValueError, match="protocol identity"):
         repository.load_resume_state("run-1", _protocol(dataset_hash="9" * 64))

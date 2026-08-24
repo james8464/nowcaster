@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 import time
 from datetime import UTC, datetime
@@ -22,8 +23,10 @@ class ResearchControl:
         self.directory = Path(directory)
         self.run_id = run_id.strip()
         self.nonce = nonce.strip()
-        if not self.run_id or len(self.nonce) < 32:
-            raise ValueError("control identity requires a run ID and a nonce of at least 32 characters")
+        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", self.run_id) is None:
+            raise ValueError("control run ID must be a safe local identifier")
+        if len(self.nonce) < 32:
+            raise ValueError("control identity requires a nonce of at least 32 characters")
         self.path = self.directory / f"{self.run_id}.control.json"
 
     def _write(self, state: ControlState) -> None:

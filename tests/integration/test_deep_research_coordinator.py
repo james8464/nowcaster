@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from threading import Timer
 
 from src.database.engine import Database
 from src.deep_research.contracts import ResearchProtocol, RunState
@@ -11,7 +12,7 @@ from src.deep_research.repository import DeepResearchRepository
 NOW = datetime(2026, 8, 24, 12, tzinfo=UTC)
 
 
-def _protocol(*, workers: int, trial_budget: int = 4) -> ResearchProtocol:
+def _protocol(*, workers: int, trial_budget: int = 4, continuous: bool = False) -> ResearchProtocol:
     return ResearchProtocol(
         dataset_hash="a" * 64,
         code_hash="b" * 64,
@@ -23,8 +24,9 @@ def _protocol(*, workers: int, trial_budget: int = 4) -> ResearchProtocol:
         interval="5m",
         seed=42,
         workers=workers,
-        trial_budget=trial_budget,
-        continuous=False,
+        trial_budget=None if continuous else trial_budget,
+        continuous=continuous,
+        cycle_budget=trial_budget,
         final_test_start=NOW,
         created_at=NOW,
     )
@@ -152,3 +154,67 @@ def test_pre_requested_stop_preserves_a_resumable_checkpoint_and_never_touches_b
     assert database.scalar("select count(*) from deep_research_checkpoints") == 1
     assert database.scalar("select count(*) from broker_order_intents") == 0
     assert database.scalar("select count(*) from broker_orders") == 0
+
+
+def test_stop_during_search_drains_only_the_active_bounded_batch_and_checkpoints_completed_work(tmp_path) -> None:
+    database = Database.from_url(f"duckdb:///{tmp_path / 'mid-stop.duckdb'}")
+    database.initialize()
+    repository = DeepResearchRepository(database, clock=lambda: NOW)
+    protocol = _protocol(workers=1, trial_budget=4)
+    control = ResearchControl(tmp_path / "mid-stop", run_id="mid-stop", nonce="n" * 32)
+    control.initialize()
+    timer = Timer(0.02, lambda: control.request(ControlState.STOPPED))
+    timer.start()
+    try:
+        outcome = DeepResearchCoordinator(
+            run_id="mid-stop",
+            protocol=protocol,
+            repository=repository,
+            control=control,
+            sealed_evaluator=lambda _: (0.01,),
+        ).run(tuple(_work(ordinal) for ordinal in range(1, 5)))
+    finally:
+        timer.cancel()
+
+    assert outcome.state is RunState.STOPPED
+    assert outcome.evaluated_attempts == 1
+    assert database.scalar("select count(*) from deep_research_trials") == 1
+    assert database.scalar("select max(next_ordinal) from deep_research_checkpoints") == 2
+
+
+def test_continuous_run_resumes_at_the_checkpointed_ordinal_and_generation(tmp_path) -> None:
+    database = Database.from_url(f"duckdb:///{tmp_path / 'resume-cycle.duckdb'}")
+    database.initialize()
+    repository = DeepResearchRepository(database)
+    protocol = _protocol(workers=2, trial_budget=2, continuous=True)
+    first_control = ResearchControl(tmp_path / "resume-first", run_id="resume-cycle", nonce="a" * 32)
+    first_control.initialize()
+    first = DeepResearchCoordinator(
+        run_id="resume-cycle",
+        protocol=protocol,
+        repository=repository,
+        control=first_control,
+        sealed_evaluator=lambda work: tuple([0.002 + work.ordinal * 0.0001, -0.0001] * 160),
+    ).run((_work(1), _work(2)), generation=1, finish_run=False)
+    assert first.state is RunState.RUNNING
+
+    resume = repository.resume_run("resume-cycle", protocol)
+    assert (resume.next_ordinal, resume.generation) == (3, 2)
+    second_control = ResearchControl(tmp_path / "resume-second", run_id="resume-cycle", nonce="b" * 32)
+    second_control.initialize()
+    second = DeepResearchCoordinator(
+        run_id="resume-cycle",
+        protocol=protocol,
+        repository=repository,
+        control=second_control,
+        sealed_evaluator=lambda work: tuple([0.002 + work.ordinal * 0.0001, -0.0001] * 160),
+    ).run((_work(3), _work(4)), generation=resume.generation, create_run=False, finish_run=True)
+
+    assert second.state is RunState.COMPLETED
+    rows = database.frame("select ordinal, generation from deep_research_trials order by ordinal")
+    assert rows.to_dict("records") == [
+        {"ordinal": 1, "generation": 1},
+        {"ordinal": 2, "generation": 1},
+        {"ordinal": 3, "generation": 2},
+        {"ordinal": 4, "generation": 2},
+    ]

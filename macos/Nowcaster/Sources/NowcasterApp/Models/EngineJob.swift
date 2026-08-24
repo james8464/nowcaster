@@ -158,6 +158,7 @@ struct EngineInvocation: Sendable {
     let executableURL: URL
     let arguments: [String]
     let workingDirectoryURL: URL
+    let environment: [String: String]
 }
 
 enum EngineJobError: Error, Equatable, LocalizedError, Sendable {
@@ -227,6 +228,7 @@ enum EngineJob: Sendable, Equatable {
 
     func invocation(configuration: EngineConfiguration) throws -> EngineInvocation {
         var command: [String]
+        var invocationEnvironment: [String: String] = [:]
         switch self {
         case .rebuildAll:
             command = ["demo", "--mode", configuration.mode.rawValue]
@@ -293,9 +295,9 @@ enum EngineJob: Sendable, Equatable {
             command += [
                 "--seed", String(request.seed),
                 "--control-directory", request.controlDirectory.path,
-                "--control-nonce", request.controlNonce,
                 "--run-id", request.runID,
             ]
+            invocationEnvironment["NOWCASTER_DEEP_RESEARCH_CONTROL_NONCE"] = request.controlNonce
             if let resumeRunID = request.resumeRunID {
                 command += ["--resume-run-id", resumeRunID]
             }
@@ -310,7 +312,8 @@ enum EngineJob: Sendable, Equatable {
         return EngineInvocation(
             executableURL: configuration.pythonExecutable,
             arguments: ["-m", "src.cli"] + command,
-            workingDirectoryURL: configuration.projectRoot
+            workingDirectoryURL: configuration.projectRoot,
+            environment: invocationEnvironment
         )
     }
 

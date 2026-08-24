@@ -146,9 +146,10 @@ private let learningConfiguration = EngineConfiguration(
         "--csv-path", "/tmp/Nowcaster Project/bars;literal.csv",
         "--workers", "8", "--continuous", "--time-budget-seconds", "3600", "--seed", "43",
         "--control-directory", "/tmp/Nowcaster Project/control",
-        "--control-nonce", String(repeating: "n", count: 64),
         "--run-id", "deep-run-1", "--project-root", "/tmp/Nowcaster Project",
     ])
+    #expect(invocation.environment["NOWCASTER_DEEP_RESEARCH_CONTROL_NONCE"] == String(repeating: "n", count: 64))
+    #expect(!invocation.arguments.contains(String(repeating: "n", count: 64)))
     #expect(!invocation.arguments.contains(where: { $0 == "sh" || $0 == "-c" }))
     #expect(EngineJob.deepResearch(request).followUpExport(configuration: fixtureConfiguration) == .exportSnapshot(databaseURL: csvContext.databaseURL))
 }

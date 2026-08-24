@@ -202,6 +202,7 @@ struct EngineRunner: EngineRunning, Sendable {
                 let brokerEnvironment = configuration.secretEnvironment?.consume() ?? [:]
                 process.environment = ProcessInfo.processInfo.environment
                     .merging(["PYTHONUNBUFFERED": "1"]) { _, new in new }
+                    .merging(invocation.environment) { _, new in new }
                     .merging(brokerEnvironment) { _, new in new }
                 await beforeLaunch()
                 do {
@@ -218,7 +219,9 @@ struct EngineRunner: EngineRunning, Sendable {
                 }
 
                 continuation.yield(EngineProgressEvent(event: "job_started", stage: job.stageName, progress: 0))
-                var decoder = EngineOutputDecoder(redactedValues: Array(brokerEnvironment.values))
+                var decoder = EngineOutputDecoder(
+                    redactedValues: Array(brokerEnvironment.values) + Array(invocation.environment.values)
+                )
                 do {
                     while true {
                         let data = output.fileHandleForReading.availableData

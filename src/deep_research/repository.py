@@ -205,6 +205,11 @@ class DeepResearchRepository:
         checkpoint_id = canonical_hash(
             {"run_id": run_id, "protocol_id": protocol_id, "next_ordinal": next_ordinal, "generation": generation}
         )
+        if self.database.scalar(
+            "select count(*) from deep_research_checkpoints where checkpoint_id = :checkpoint_id",
+            {"checkpoint_id": checkpoint_id},
+        ):
+            return checkpoint_id
         self.database.insert(
             "deep_research_checkpoints",
             [
@@ -275,6 +280,21 @@ class DeepResearchRepository:
             generation=int(row.generation),
             payload=dict(row.payload),
         )
+
+    def resume_run(self, run_id: str, protocol: ResearchProtocol) -> ResumeState:
+        state = self.load_resume_state(run_id, protocol)
+        runs = TABLES["deep_research_runs"]
+        now = self._now()
+        with self.database.engine.begin() as connection:
+            current = connection.execute(select(runs.c.state).where(runs.c.run_id == run_id)).scalar_one()
+            if RunState(current) in {RunState.COMPLETED, RunState.STOPPED, RunState.FAILED}:
+                raise ValueError("terminal deep research runs cannot be resumed")
+            connection.execute(
+                update(runs)
+                .where(runs.c.run_id == run_id)
+                .values(state=RunState.RUNNING.value, updated_at=now, terminal_reason=None)
+            )
+        return state
 
     def append_resource_sample(self, run_id: str, sample: ResourceSample) -> str:
         identity = canonical_hash({"run_id": run_id, "sampled_at": sample.sampled_at})

@@ -41,3 +41,9 @@ def test_control_rejects_tampered_identity_and_unknown_commands(tmp_path) -> Non
     control.path.write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(ValueError, match="state"):
         control.read()
+
+
+@pytest.mark.parametrize("run_id", ("../escape", "nested/run", "", "x" * 129))
+def test_control_rejects_run_ids_that_could_escape_the_private_directory(tmp_path, run_id) -> None:
+    with pytest.raises(ValueError, match="run ID"):
+        ResearchControl(tmp_path, run_id=run_id, nonce="n" * 32)
