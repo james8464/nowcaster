@@ -6,7 +6,7 @@ import Foundation
 
 let arguments = CommandLine.arguments
 guard arguments.count >= 3 else {
-    FileHandle.standardError.write(Data("Usage: capture_macos_app.swift APP_PATH OUTPUT_DIR [--verify-only|--strategy-lab-only]\n".utf8))
+    FileHandle.standardError.write(Data("Usage: capture_macos_app.swift APP_PATH OUTPUT_DIR [--verify-only|--strategy-lab-only] [--stale-banner]\n".utf8))
     exit(2)
 }
 
@@ -14,6 +14,7 @@ let appURL = URL(fileURLWithPath: arguments[1]).standardizedFileURL
 let outputDirectory = URL(fileURLWithPath: arguments[2]).standardizedFileURL
 let verifyOnly = arguments.contains("--verify-only")
 let strategyLabOnly = arguments.contains("--strategy-lab-only")
+let staleBanner = arguments.contains("--stale-banner")
 let bundleIdentifier = "com.james8464.nowcaster"
 try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
 
@@ -53,7 +54,7 @@ func launch(_ capture: Capture) throws -> NSRunningApplication {
         "--destination=\(capture.destination)",
         capture.appearance == "dark" ? "--ui-dark" : "--ui-light",
         capture.narrow ? "--ui-narrow" : "--ui-wide",
-    ]
+    ] + (staleBanner ? ["--ui-stale"] : [])
     let semaphore = DispatchSemaphore(value: 0)
     var result: Result<NSRunningApplication, Error>?
     NSWorkspace.shared.openApplication(at: appURL, configuration: configuration) { application, error in

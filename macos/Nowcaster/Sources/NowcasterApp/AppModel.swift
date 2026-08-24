@@ -1,6 +1,37 @@
 import Foundation
 import Observation
 
+struct SelectedStrategyResearchContext: Equatable, Sendable {
+    let datasetHash: String
+    let cohortId: String
+    let mode: StrategyRunMode
+    let asset: StrategyAssetContext
+    let strategyIDs: [String]
+}
+
+struct ActiveJobProgress: Equatable, Sendable {
+    let stage: String?
+    let value: Double?
+    let message: String
+}
+
+enum EngineJobOutcome: Equatable, Sendable {
+    case idle
+    case running(EngineJob)
+    case success(EngineJob, message: String)
+    case failure(EngineJob, message: String)
+
+    var failureMessage: String? {
+        guard case let .failure(_, message) = self else { return nil }
+        return message
+    }
+
+    var isSuccess: Bool {
+        if case .success = self { return true }
+        return false
+    }
+}
+
 @MainActor
 @Observable
 final class AppModel {
@@ -16,13 +47,14 @@ final class AppModel {
     private(set) var loadState: SnapshotLoadState = .idle
     private(set) var isRunningJob = false
     private(set) var progressEvents: [EngineProgressEvent] = []
+    private(set) var lastJobOutcome: EngineJobOutcome = .idle
     private let repository: SnapshotRepository
-    private let runner: EngineRunner
+    private let runner: any EngineRunning
 
     init(
         snapshot: NowcasterSnapshot? = nil,
         repository: SnapshotRepository = SnapshotRepository(),
-        runner: EngineRunner = EngineRunner()
+        runner: any EngineRunning = EngineRunner()
     ) {
         self.snapshot = snapshot
         self.repository = repository
@@ -86,8 +118,38 @@ final class AppModel {
         selectedStrategies.first
     }
 
+    var selectedResearchContext: SelectedStrategyResearchContext? {
+        strategySelectionResolution.context
+    }
+
+    var strategySelectionIssue: String? {
+        strategySelectionResolution.issue
+    }
+
+    var learningSelectionIssue: String? {
+        guard selectedResearchContext != nil else { return strategySelectionIssue }
+        return selectedStrategies.count == 1 ? nil : "Select exactly one strategy for bounded learning."
+    }
+
+    var strategyActionStatusIssue: String? {
+        strategySelectionIssue ?? learningSelectionIssue
+    }
+
     var selectedLearningRun: LearningRunSnapshot? {
         snapshot?.learningRuns.first { $0.id == selectedLearningRunID }
+    }
+
+    var activeJobProgress: ActiveJobProgress? {
+        guard isRunningJob,
+              let event = progressEvents.reversed().first(where: {
+                  $0.progress != nil || $0.message?.isEmpty == false || $0.stage?.isEmpty == false
+              })
+        else { return nil }
+        return ActiveJobProgress(
+            stage: event.stage,
+            value: event.progress.map { min(max($0, 0), 1) },
+            message: event.message ?? event.stage ?? "Running research job"
+        )
     }
 
     func selectSearchResult(_ instrument: InstrumentSnapshot) {
@@ -118,6 +180,14 @@ final class AppModel {
         await loadSnapshot(url: url)
     }
 
+    func applyScreenshotState(arguments: [String]) {
+        guard snapshot != nil,
+              arguments.contains(where: { $0.hasPrefix("--destination=") }),
+              arguments.contains("--ui-stale")
+        else { return }
+        loadState = .stale("Snapshot schema 1 is incompatible; cached research remains visible.")
+    }
+
     func loadSnapshot(url: URL) async {
         loadState = .loading
         do {
@@ -135,17 +205,44 @@ final class AppModel {
         guard !isRunningJob else { return }
         isRunningJob = true
         progressEvents = []
+        lastJobOutcome = .running(job)
         defer { isRunningJob = false }
         do {
-            for try await event in runner.run(job, configuration: configuration) {
-                progressEvents.append(event)
-                if progressEvents.count > 200 {
-                    progressEvents.removeFirst(progressEvents.count - 200)
-                }
+            try await consume(job, configuration: configuration)
+            if job.exportsSnapshotAfterSuccess {
+                try await consume(.exportSnapshot, configuration: configuration)
             }
             await loadSnapshot(url: configuration.snapshotURL)
+            switch loadState {
+            case .loaded:
+                lastJobOutcome = .success(job, message: "Snapshot exported and reloaded.")
+            case let .stale(message), let .failure(message):
+                lastJobOutcome = .failure(job, message: "Snapshot refresh failed: \(message)")
+            case let .incompatible(version):
+                lastJobOutcome = .failure(job, message: "Snapshot schema \(version) is incompatible after refresh.")
+            case .idle, .loading:
+                lastJobOutcome = .failure(job, message: "Snapshot refresh did not complete.")
+            }
         } catch {
-            progressEvents.append(EngineProgressEvent(event: "job_failed", message: error.localizedDescription))
+            let preferred = progressEvents.reversed().first {
+                $0.event == "error" && $0.message?.isEmpty == false
+            }?.message
+            let message = preferred ?? error.localizedDescription
+            lastJobOutcome = .failure(job, message: message)
+            appendProgress(EngineProgressEvent(event: "job_failed", stage: job.stageName, message: message))
+        }
+    }
+
+    private func consume(_ job: EngineJob, configuration: EngineConfiguration) async throws {
+        for try await event in runner.run(job, configuration: configuration) {
+            appendProgress(event)
+        }
+    }
+
+    private func appendProgress(_ event: EngineProgressEvent) {
+        progressEvents.append(event)
+        if progressEvents.count > 200 {
+            progressEvents.removeFirst(progressEvents.count - 200)
         }
     }
 
@@ -163,5 +260,54 @@ final class AppModel {
         if !snapshot.learningRuns.contains(where: { $0.id == selectedLearningRunID }) {
             selectedLearningRunID = snapshot.learningRuns.first?.id
         }
+    }
+
+    private var strategySelectionResolution: (context: SelectedStrategyResearchContext?, issue: String?) {
+        guard let snapshot, !selectedStrategies.isEmpty else {
+            return (nil, "Select at least one strategy.")
+        }
+        guard selectedStrategies.allSatisfy({ $0.cohortId != nil }) else {
+            return (nil, "Legacy strategy context is incomplete. Export a current schema v2 snapshot.")
+        }
+        let signatures = Set(selectedStrategies.map {
+            [$0.datasetHash, $0.symbol, $0.interval, $0.mode, $0.cohortId ?? ""]
+                .joined(separator: "\u{1F}")
+        })
+        guard signatures.count == 1, let first = selectedStrategies.first else {
+            return (
+                nil,
+                "Selected strategies must share the same dataset, source, asset, interval, mode, and cohort."
+            )
+        }
+        guard let interval = StrategyInterval(rawValue: first.interval),
+              let mode = StrategyRunMode(rawValue: first.mode)
+        else { return (nil, "The selected strategy interval or mode is unsupported.") }
+        let matchingCoverage = snapshot.datasetCoverage.filter {
+            $0.datasetHash == first.datasetHash && $0.symbol == first.symbol && $0.interval == first.interval
+                && $0.complete
+        }
+        let sources = Set(matchingCoverage.map { "\($0.provider)\u{1F}\($0.feed)" })
+        guard sources.count == 1,
+              let coverage = matchingCoverage.first,
+              let provider = StrategyProvider(rawValue: coverage.provider)
+        else {
+            return (nil, "Complete source coverage for the exact selected dataset is unavailable or ambiguous.")
+        }
+        let ids = Array(Set(selectedStrategies.map(\.strategyId))).sorted()
+        return (
+            SelectedStrategyResearchContext(
+                datasetHash: first.datasetHash,
+                cohortId: first.cohortId ?? "",
+                mode: mode,
+                asset: StrategyAssetContext(
+                    provider: provider,
+                    feed: coverage.feed,
+                    symbol: first.symbol,
+                    interval: interval
+                ),
+                strategyIDs: ids
+            ),
+            nil
+        )
     }
 }

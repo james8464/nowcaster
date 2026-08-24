@@ -1,5 +1,23 @@
 import SwiftUI
 
+struct LearningProgressPresentation: Equatable, Sendable {
+    let value: Double
+    let title: String
+    let isLive: Bool
+
+    init(run: LearningRunPresentation, live: ActiveJobProgress?) {
+        if let live, let progress = live.value {
+            value = progress
+            title = live.message
+            isLive = true
+        } else {
+            value = run.progressValue
+            title = run.progressTitle
+            isLive = false
+        }
+    }
+}
+
 struct LearningWorkspaceView: View {
     @Bindable var model: AppModel
     let runs: [LearningRunPresentation]
@@ -98,13 +116,14 @@ struct LearningWorkspaceView: View {
     }
 
     private func progressSummary(_ selected: LearningRunPresentation, width: CGFloat?) -> some View {
-        VStack(alignment: width == nil ? .leading : .trailing, spacing: 6) {
-            Text(selected.progressTitle).monospacedDigit()
-            ProgressView(value: selected.progressValue)
+        let progress = LearningProgressPresentation(run: selected, live: model.activeJobProgress)
+        return VStack(alignment: width == nil ? .leading : .trailing, spacing: 6) {
+            Text(progress.title).monospacedDigit().lineLimit(2)
+            ProgressView(value: progress.value)
                 .frame(width: width)
                 .accessibilityLabel(StrategyLabAccessibility.progressLabel)
-                .accessibilityValue(selected.progressTitle)
-            Text(reduceMotion ? "Static progress" : "Live bounded progress")
+                .accessibilityValue(progress.title)
+            Text(progress.isLive ? "Live engine progress" : reduceMotion ? "Static progress" : "Bounded progress")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }

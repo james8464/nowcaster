@@ -94,3 +94,44 @@ Final observation: all reported clipping/truncation was corrected; no overlap, c
 - Development and sealed-final evidence are never visually blended, and current signed contribution is never described as an order or profit expectation.
 - The bundled v2 fixture is intentionally small for Task 8 UI/tests. Task 9 will generate the full research fixture.
 - No credentialed live provider call was made, and no broker integration or order placement was added.
+
+## Review fix round 1/5 addendum
+
+### Outcome
+
+All six Important review findings are resolved without changing the progress ledger. Strategy and ensemble rows now carry `dataset_hash`, `mode`, and cohort identity; joins and native row IDs use the exact research context, with causal audit matching through the exact fields available to the audit schema. Plural evaluation fails closed unless every selected row shares one dataset/provider/feed/symbol/interval/mode/cohort context, and bounded learning additionally requires exactly one unique strategy.
+
+Typed requests deduplicate strategy IDs, enforce a `1...100` learning budget, and reuse stored CSV datasets without requiring `csv_path`. Schema-v2 instants accept literal `Z` UTC only while legacy date-only fields remain supported. Snapshot input, recursive depth, aggregate nodes, collection sizes, keys, and strings are bounded before/during native decoding; Python evidence and audit-detail models enforce the matching structural limits.
+
+Early stream cancellation now persists a termination request, retains/cancels the worker, and checks cancellation immediately before and after launch. Successful evaluate/learn jobs stream live determinate progress, automatically export the Task 7 snapshot, and reload it. Structured Task 7 errors outrank generic nonzero diagnostics and remain visible. Cached data remains on refresh failure with an accessible stale/incompatible banner.
+
+### TDD checkpoints
+
+- RED: the prescribed Swift slice failed to compile on the intentionally absent context DTOs, bounded decoder, homogeneous selection resolution, early-launch gate, live progress/outcome state, and stale-banner contracts.
+- RED: Python snapshot tests failed on the absent context fields/exact joins and literal-`Z`/bounded evidence contracts.
+- RED: the real early-cancel subprocess test proved a cancellation arriving before worker registration could otherwise launch work; the marker-file assertion now remains empty deterministically.
+- RED: the complete Python run exposed persisted internal gap timestamps using `+00:00`; export failed under the strict wire model. Normalizing stored timestamps to UTC datetime objects before public-model validation made the focused regression and full suite pass without weakening literal-`Z` input validation.
+- RED visual: stale banner placement initially occluded sidebar rows, action controls, and the inspector title; after moving it into the root vertical layout, macOS 26's automatic top-edge fade still obscured wide-dark content. The final guarded edge-effect treatment makes every column begin visibly below the banner.
+- GREEN: `swift test --filter 'SnapshotDecodingTests|EngineRunnerTests|StrategyLabTests|AppModelTests'` — **37 passed**.
+- GREEN: focused Python snapshot compatibility — **19 passed in 70.29s**.
+
+### Final verification
+
+- `cd macos/Nowcaster && swift test` — **1 XCTest + 48 Swift Testing tests passed (49 total)** in the final post-visual-fix run.
+- `cd macos/Nowcaster && swift build -c release` — **passed** after the final layout change.
+- `.venv/bin/pytest -q` — **464 passed in 149.40s**.
+- Ruff check and format-check for all changed Python files — **passed**.
+- `scripts/build_macos_app.sh` — **passed**; `build/Nowcaster.app` rebuilt and signed.
+- `xcrun swift scripts/capture_macos_app.swift build/Nowcaster.app build/task8-fix1-captures-final --strategy-lab-only` — **4 normal screenshots captured**.
+- The same command with `build/task8-fix1-stale-captures-final --stale-banner` — **4 stale-banner screenshots captured**.
+- `xcrun swift scripts/capture_macos_app.swift build/Nowcaster.app build/task8-fix1-smoke-final --verify-only` — **Nowcaster UI smoke test passed**.
+- `git diff --check` — **passed**.
+
+### Visual QA observations
+
+- `build/task8-fix1-captures-final/strategyLab-light.png` and `strategyLab-dark.png`: native wide hierarchy, exact action status, Budget `20`, bounded progress, table/inspector labels, and semantic contrast are readable.
+- `build/task8-fix1-captures-final/strategyLab-light-narrow.png` and `strategyLab-dark-narrow.png`: Monitor/Research/System headers are complete, action controls and Budget remain untruncated, and progress/evidence sections do not overlap.
+- `build/task8-fix1-stale-captures-final/strategyLab-light.png` and `strategyLab-dark.png`: full-width stale banner, Refresh action, center action toolbar, and complete `Rsi Reversal` inspector title are visible in separate rows; cached research remains visible.
+- `build/task8-fix1-stale-captures-final/strategyLab-light-narrow.png` and `strategyLab-dark-narrow.png`: banner title/message/action fit without clipping and all three columns start below it.
+
+Final assessment remains HIG-aligned, not Apple-certified. No broker action was introduced. `cohort_id` remains nullable only for legacy snapshot compatibility; newly built v2 strategy/ensemble outputs populate it when cohort evidence exists. Audit rows do not invent cohort identity because the Task 7 audit store has no cohort column; they match exactly through dataset/strategy/version/symbol/interval/mode.

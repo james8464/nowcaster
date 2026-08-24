@@ -1,5 +1,44 @@
 import Foundation
 
+enum SnapshotDecodingLimits {
+    // The bundled fixture is about 2.5 MB; 8 MiB leaves practical headroom while
+    // rejecting an unbounded native-app document before JSON decoding begins.
+    static let maximumSnapshotBytes = 8 * 1_024 * 1_024
+    static let maximumEvidenceDepth = 16
+    static let maximumEvidenceNodes = 50_000
+    static let maximumCollectionLength = 2_000
+    static let maximumStringBytes = 16 * 1_024
+}
+
+private final class SnapshotDecodingBudget: @unchecked Sendable {
+    private var nodes = 0
+    private let lock = NSLock()
+
+    func consumeNode(codingPath: [any CodingKey]) throws {
+        let count = lock.withLock {
+            nodes += 1
+            return nodes
+        }
+        guard count <= SnapshotDecodingLimits.maximumEvidenceNodes else {
+            throw DecodingError.dataCorrupted(
+                .init(codingPath: codingPath, debugDescription: "Research evidence exceeds the node limit")
+            )
+        }
+    }
+}
+
+private extension CodingUserInfoKey {
+    static let snapshotDecodingBudget = CodingUserInfoKey(rawValue: "Nowcaster.snapshotDecodingBudget")!
+}
+
+private struct DynamicJSONKey: CodingKey {
+    let stringValue: String
+    let intValue: Int? = nil
+
+    init?(stringValue: String) { self.stringValue = stringValue }
+    init?(intValue: Int) { return nil }
+}
+
 enum AssetClass: Hashable, Sendable {
     case equity
     case crypto
@@ -277,6 +316,19 @@ indirect enum JSONValue: Codable, Equatable, Sendable {
     case null
 
     init(from decoder: Decoder) throws {
+        try (decoder.userInfo[.snapshotDecodingBudget] as? SnapshotDecodingBudget)?.consumeNode(
+            codingPath: decoder.codingPath
+        )
+        let evidenceRoot = decoder.codingPath.lastIndex {
+            ["evidence", "details"].contains($0.stringValue)
+        }
+        let depth = evidenceRoot.map { decoder.codingPath.distance(from: $0, to: decoder.codingPath.endIndex) - 1 }
+            ?? decoder.codingPath.count
+        guard depth <= SnapshotDecodingLimits.maximumEvidenceDepth else {
+            throw DecodingError.dataCorrupted(
+                .init(codingPath: decoder.codingPath, debugDescription: "Research evidence exceeds the depth limit")
+            )
+        }
         let container = try decoder.singleValueContainer()
         if container.decodeNil() {
             self = .null
@@ -285,13 +337,49 @@ indirect enum JSONValue: Codable, Equatable, Sendable {
         } else if let value = try? container.decode(Double.self) {
             self = .number(value)
         } else if let value = try? container.decode(String.self) {
+            guard value.utf8.count <= SnapshotDecodingLimits.maximumStringBytes else {
+                throw DecodingError.dataCorruptedError(
+                    in: container,
+                    debugDescription: "Research evidence string exceeds the byte limit"
+                )
+            }
             self = .string(value)
-        } else if let value = try? container.decode([String: JSONValue].self) {
-            self = .object(value)
-        } else if let value = try? container.decode([JSONValue].self) {
-            self = .array(value)
         } else {
-            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unsupported JSON value")
+            if let keyed = try? decoder.container(keyedBy: DynamicJSONKey.self) {
+                guard keyed.allKeys.count <= SnapshotDecodingLimits.maximumCollectionLength else {
+                    throw DecodingError.dataCorrupted(
+                        .init(codingPath: decoder.codingPath, debugDescription: "Research evidence collection is too large")
+                    )
+                }
+                var value: [String: JSONValue] = [:]
+                value.reserveCapacity(keyed.allKeys.count)
+                for key in keyed.allKeys {
+                    guard key.stringValue.utf8.count <= SnapshotDecodingLimits.maximumStringBytes else {
+                        throw DecodingError.dataCorrupted(
+                            .init(codingPath: decoder.codingPath, debugDescription: "Research evidence key is too large")
+                        )
+                    }
+                    value[key.stringValue] = try keyed.decode(JSONValue.self, forKey: key)
+                }
+                self = .object(value)
+                return
+            }
+            var unkeyed = try decoder.unkeyedContainer()
+            if let count = unkeyed.count, count > SnapshotDecodingLimits.maximumCollectionLength {
+                throw DecodingError.dataCorrupted(
+                    .init(codingPath: decoder.codingPath, debugDescription: "Research evidence collection is too large")
+                )
+            }
+            var value: [JSONValue] = []
+            while !unkeyed.isAtEnd {
+                guard value.count < SnapshotDecodingLimits.maximumCollectionLength else {
+                    throw DecodingError.dataCorrupted(
+                        .init(codingPath: decoder.codingPath, debugDescription: "Research evidence collection is too large")
+                    )
+                }
+                value.append(try unkeyed.decode(JSONValue.self))
+            }
+            self = .array(value)
         }
     }
 
@@ -318,8 +406,11 @@ struct StrategySnapshot: Decodable, Identifiable, Sendable {
     let strategyId: String
     let version: String
     let family: String
+    let datasetHash: String
     let symbol: String
     let interval: String
+    let mode: String
+    let cohortId: String?
     let state: String
     let weight: Double
     let developmentMetrics: [String: Double?]
@@ -333,22 +424,29 @@ struct StrategySnapshot: Decodable, Identifiable, Sendable {
     let noRepaintBadge: NoRepaintBadge
     let latestRunAt: Date?
 
-    var id: String { "\(strategyId)-\(version)-\(symbol)-\(interval)" }
+    var id: String {
+        [strategyId, version, datasetHash, symbol, interval, mode, cohortId ?? "legacy"].joined(separator: "-")
+    }
 }
 
 struct EnsembleComponentSnapshot: Decodable, Identifiable, Sendable {
     let strategyId: String
     let version: String
     let family: String
+    let datasetHash: String
     let symbol: String
     let interval: String
     let mode: String
+    let cohortId: String?
     let effectiveAt: Date
     let weight: Double
     let contribution: Double?
     let evidence: [String: JSONValue]
 
-    var id: String { "\(strategyId)-\(version)-\(symbol)-\(interval)-\(mode)-\(effectiveAt.timeIntervalSince1970)" }
+    var id: String {
+        [strategyId, version, datasetHash, symbol, interval, mode, cohortId ?? "legacy"]
+            .joined(separator: "-") + "-\(effectiveAt.timeIntervalSince1970)"
+    }
 }
 
 struct DatasetGapSnapshot: Decodable, Identifiable, Sendable {
@@ -463,6 +561,53 @@ extension NowcasterSnapshot {
                 && (0 ... 1).contains(run.progress) && run.trials.allSatisfy { $0.complexity >= 0 }
                 && run.discoveredRules.allSatisfy { $0.complexity >= 0 }
         }) else { throw SnapshotValidationError.invalidResearchEvidence("learning run bounds") }
+        var evidenceNodes = 0
+        for component in ensembleComponents {
+            try validateEvidence(component.evidence, nodes: &evidenceNodes, depth: 0)
+        }
+        for audit in causalAudits {
+            try validateEvidence(audit.details, nodes: &evidenceNodes, depth: 0)
+        }
+    }
+
+    private func validateEvidence(
+        _ value: [String: JSONValue],
+        nodes: inout Int,
+        depth: Int
+    ) throws {
+        guard value.count <= SnapshotDecodingLimits.maximumCollectionLength else {
+            throw SnapshotValidationError.invalidResearchEvidence("collection length")
+        }
+        for (key, nested) in value {
+            guard key.utf8.count <= SnapshotDecodingLimits.maximumStringBytes else {
+                throw SnapshotValidationError.invalidResearchEvidence("key length")
+            }
+            try validateEvidence(nested, nodes: &nodes, depth: depth + 1)
+        }
+    }
+
+    private func validateEvidence(_ value: JSONValue, nodes: inout Int, depth: Int) throws {
+        nodes += 1
+        guard nodes <= SnapshotDecodingLimits.maximumEvidenceNodes,
+              depth <= SnapshotDecodingLimits.maximumEvidenceDepth
+        else { throw SnapshotValidationError.invalidResearchEvidence("evidence complexity") }
+        switch value {
+        case let .string(string):
+            guard string.utf8.count <= SnapshotDecodingLimits.maximumStringBytes else {
+                throw SnapshotValidationError.invalidResearchEvidence("string length")
+            }
+        case let .object(object):
+            try validateEvidence(object, nodes: &nodes, depth: depth)
+        case let .array(array):
+            guard array.count <= SnapshotDecodingLimits.maximumCollectionLength else {
+                throw SnapshotValidationError.invalidResearchEvidence("collection length")
+            }
+            for nested in array {
+                try validateEvidence(nested, nodes: &nodes, depth: depth + 1)
+            }
+        case .number, .bool, .null:
+            break
+        }
     }
 }
 
@@ -475,8 +620,28 @@ extension JSONDecoder {
     static var nowcaster: JSONDecoder {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
+        decoder.userInfo[.snapshotDecodingBudget] = SnapshotDecodingBudget()
         decoder.dateDecodingStrategy = .custom { decoder in
             let value = try decoder.singleValueContainer().decode(String.self)
+            let key = decoder.codingPath.last?.stringValue ?? ""
+            let legacyDateOnlyKeys: Set<String> = [
+                "date", "earnings_date", "earningsDate", "forecast_cutoff_date", "forecastCutoffDate",
+                "decision_date", "decisionDate", "freshness_date", "freshnessDate",
+            ]
+            if legacyDateOnlyKeys.contains(key), value.count == 10, !value.contains("T") {
+                let dateOnly = DateFormatter()
+                dateOnly.calendar = Calendar(identifier: .iso8601)
+                dateOnly.locale = Locale(identifier: "en_US_POSIX")
+                dateOnly.timeZone = TimeZone(secondsFromGMT: 0)
+                dateOnly.dateFormat = "yyyy-MM-dd"
+                if let date = dateOnly.date(from: value) { return date }
+            }
+            guard value.contains("T"), value.hasSuffix("Z") else {
+                throw DecodingError.dataCorruptedError(
+                    in: try decoder.singleValueContainer(),
+                    debugDescription: "Instant must be an ISO-8601 timestamp with literal Z UTC: \(value)"
+                )
+            }
             let fractional = ISO8601DateFormatter()
             fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
             if let date = fractional.date(from: value) {
@@ -485,14 +650,6 @@ extension JSONDecoder {
             let internet = ISO8601DateFormatter()
             internet.formatOptions = [.withInternetDateTime]
             if let date = internet.date(from: value) {
-                return date
-            }
-            let dateOnly = DateFormatter()
-            dateOnly.calendar = Calendar(identifier: .iso8601)
-            dateOnly.locale = Locale(identifier: "en_US_POSIX")
-            dateOnly.timeZone = TimeZone(secondsFromGMT: 0)
-            dateOnly.dateFormat = "yyyy-MM-dd"
-            if let date = dateOnly.date(from: value) {
                 return date
             }
             throw DecodingError.dataCorruptedError(

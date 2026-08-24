@@ -503,25 +503,26 @@ def _causal_audits(database: Database) -> list[CausalAuditSnapshot]:
         from causal_audits order by audited_at desc, audit_id limit 500
         """
     )
-    return [
-        CausalAuditSnapshot(
-            audit_id=str(row.audit_id),
-            dataset_hash=str(row.dataset_hash),
-            strategy_id=str(row.strategy_id),
-            version=str(row.strategy_version),
-            symbol=str(row.symbol),
-            interval=str(row.interval),
-            mode=str(row.mode),
-            audited_at=_python_datetime(row.audited_at) or datetime.now(UTC),
-            passed=bool(row.passed),
-            outer_block_consumed=bool(
-                (row.details if isinstance(row.details, dict) else {}).get("outer_block_consumed", False)
-            ),
-            details=row.details if isinstance(row.details, dict) else {},
-            no_repaint_badge="passed" if bool(row.passed) else "failed",
+    snapshots: list[CausalAuditSnapshot] = []
+    for row in frame.itertuples(index=False):
+        details = row.details if isinstance(row.details, dict) else {}
+        snapshots.append(
+            CausalAuditSnapshot(
+                audit_id=str(row.audit_id),
+                dataset_hash=str(row.dataset_hash),
+                strategy_id=str(row.strategy_id),
+                version=str(row.strategy_version),
+                symbol=str(row.symbol),
+                interval=str(row.interval),
+                mode=str(row.mode),
+                audited_at=_python_datetime(row.audited_at) or datetime.now(UTC),
+                passed=bool(row.passed),
+                outer_block_consumed=bool(details.get("outer_block_consumed", False)),
+                details=details,
+                no_repaint_badge="passed" if bool(row.passed) else "failed",
+            )
         )
-        for row in frame.itertuples(index=False)
-    ]
+    return snapshots
 
 
 def _strategies(database: Database, audits: list[CausalAuditSnapshot]) -> list[StrategySnapshot]:
@@ -544,16 +545,16 @@ def _strategies(database: Database, audits: list[CausalAuditSnapshot]) -> list[S
     latest = frame.sort_values([*key_columns, "run_timestamp"], kind="stable").drop_duplicates(key_columns, keep="last")
     weights = database.frame(
         """
-        select dataset_hash, strategy_id, strategy_version, symbol, interval, mode,
-               effective_at, weight
+        select strategy_run_id, effective_at, weight, evidence
         from ensemble_weights
-        order by dataset_hash, strategy_id, strategy_version, symbol, interval, mode, effective_at
+        order by strategy_run_id, effective_at
         """
     )
-    weight_lookup: dict[tuple[str, ...], float] = {}
+    weight_lookup: dict[tuple[str, str | None], float] = {}
     for row in weights.itertuples(index=False):
-        key = tuple(str(getattr(row, column)) for column in key_columns)
-        weight_lookup[key] = float(row.weight)
+        evidence = row.evidence if isinstance(row.evidence, dict) else {}
+        cohort_id = str(evidence["cohort_id"]) if evidence.get("cohort_id") else None
+        weight_lookup[(str(row.strategy_run_id), cohort_id)] = float(row.weight)
     audit_lookup: dict[tuple[str, ...], CausalAuditSnapshot] = {}
     for audit in reversed(audits):
         key = (
@@ -570,6 +571,7 @@ def _strategies(database: Database, audits: list[CausalAuditSnapshot]) -> list[S
     for row in latest.itertuples(index=False):
         key = tuple(str(getattr(row, column)) for column in key_columns)
         metrics = row.metrics if isinstance(row.metrics, dict) else {}
+        cohort_id = str(metrics["cohort_id"]) if metrics.get("cohort_id") else None
         promotion = metrics.get("promotion") if isinstance(metrics.get("promotion"), dict) else {}
         audit = audit_lookup.get(key)
         raw_warnings = metrics.get("warnings") if isinstance(metrics.get("warnings"), list) else []
@@ -590,10 +592,13 @@ def _strategies(database: Database, audits: list[CausalAuditSnapshot]) -> list[S
                 strategy_id=str(row.strategy_id),
                 version=str(row.strategy_version),
                 family=str(row.family),
+                dataset_hash=str(row.dataset_hash),
                 symbol=str(row.symbol),
                 interval=str(row.interval),
+                mode=str(row.mode),
+                cohort_id=cohort_id,
                 state=str(metrics.get("state") or row.mode or row.status),
-                weight=weight_lookup.get(key, 0.0),
+                weight=weight_lookup.get((str(row.strategy_run_id), cohort_id), 0.0),
                 development_metrics=_finite_metrics(metrics.get("development_metrics")),
                 final_test_metrics=_finite_metrics(metrics.get("final_test_metrics")),
                 warnings=warnings,
@@ -612,7 +617,15 @@ def _strategies(database: Database, audits: list[CausalAuditSnapshot]) -> list[S
         )
     return sorted(
         snapshots,
-        key=lambda item: (item.strategy_id, item.version, item.symbol, item.interval, item.state),
+        key=lambda item: (
+            item.strategy_id,
+            item.version,
+            item.dataset_hash,
+            item.symbol,
+            item.interval,
+            item.mode,
+            item.cohort_id or "",
+        ),
     )
 
 
@@ -691,16 +704,29 @@ def _ensemble_components(database: Database) -> list[EnsembleComponentSnapshot]:
                 strategy_id=str(row.strategy_id),
                 version=str(row.strategy_version),
                 family=str(row.family),
+                dataset_hash=str(row.dataset_hash),
                 symbol=str(row.symbol),
                 interval=str(row.interval),
                 mode=str(row.mode),
+                cohort_id=str(evidence["cohort_id"]) if evidence.get("cohort_id") else None,
                 effective_at=_python_datetime(row.effective_at) or datetime.now(UTC),
                 weight=float(row.weight),
                 contribution=_finite(evidence.get("contribution")),
                 evidence=evidence,
             )
         )
-    return sorted(rows, key=lambda item: (item.strategy_id, item.version, item.symbol, item.interval, item.mode))
+    return sorted(
+        rows,
+        key=lambda item: (
+            item.strategy_id,
+            item.version,
+            item.dataset_hash,
+            item.symbol,
+            item.interval,
+            item.mode,
+            item.cohort_id or "",
+        ),
+    )
 
 
 def _coverage_gaps(frame: pd.DataFrame, interval: BarInterval) -> list[DatasetGapSnapshot]:
@@ -893,8 +919,8 @@ def _dataset_coverage(database: Database) -> list[DatasetCoverageSnapshot]:
             missing_gaps = gap_evidence.get("missing", row.gaps if isinstance(row.gaps, list) else [])
             gaps = [
                 DatasetGapSnapshot(
-                    start=item["start"],
-                    end=item["end"],
+                    start=_python_datetime(item["start"]),
+                    end=_python_datetime(item["end"]),
                     missing_bars=int(item["missing_bars"]),
                 )
                 for item in missing_gaps[:100]

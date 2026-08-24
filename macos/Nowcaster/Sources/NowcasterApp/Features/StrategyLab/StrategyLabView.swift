@@ -153,15 +153,21 @@ struct StrategyLabPresentation: Sendable {
         self.strategies = strategies.map { strategy in
             let matchingComponents = components.filter {
                 $0.strategyId == strategy.strategyId && $0.version == strategy.version
-                    && $0.symbol == strategy.symbol && $0.interval == strategy.interval
+                    && $0.datasetHash == strategy.datasetHash && $0.symbol == strategy.symbol
+                    && $0.interval == strategy.interval && $0.mode == strategy.mode
+                    && $0.cohortId == strategy.cohortId
             }
             let matchingCoverage = coverage
-                .filter { $0.symbol == strategy.symbol && $0.interval == strategy.interval }
+                .filter {
+                    $0.datasetHash == strategy.datasetHash && $0.symbol == strategy.symbol
+                        && $0.interval == strategy.interval
+                }
                 .max { $0.requestedEnd < $1.requestedEnd }
             let matchingAudit = audits
                 .filter {
                     $0.strategyId == strategy.strategyId && $0.version == strategy.version
-                        && $0.symbol == strategy.symbol && $0.interval == strategy.interval
+                        && $0.datasetHash == strategy.datasetHash && $0.symbol == strategy.symbol
+                        && $0.interval == strategy.interval && $0.mode == strategy.mode
                 }
                 .max { $0.auditedAt < $1.auditedAt }
             return StrategyPresentation(
@@ -199,6 +205,49 @@ enum StrategyLabLayout {
     static func budgetOptionTitle(_ budget: Int) -> String { String(budget) }
 }
 
+struct StrategyJobStatusPresentation: Equatable, Sendable {
+    let message: String
+    let progressValue: Double?
+    let isRunning: Bool
+    let isFailure: Bool
+    let symbolName: String
+
+    init(
+        isRunning: Bool,
+        progress: ActiveJobProgress?,
+        outcome: EngineJobOutcome,
+        selectionIssue: String?
+    ) {
+        self.isRunning = isRunning
+        progressValue = isRunning ? progress?.value : nil
+        if isRunning {
+            message = progress?.message ?? "Running research job…"
+            isFailure = false
+            symbolName = "gearshape.2"
+        } else if case let .failure(_, failure) = outcome {
+            message = failure
+            isFailure = true
+            symbolName = "exclamationmark.triangle"
+        } else if let selectionIssue {
+            message = selectionIssue
+            isFailure = false
+            symbolName = "info.circle"
+        } else if case let .success(_, success) = outcome {
+            message = success
+            isFailure = false
+            symbolName = "checkmark.circle"
+        } else {
+            message = "Research only · no broker connection"
+            isFailure = false
+            symbolName = "doc.text.magnifyingglass"
+        }
+    }
+
+    var accessibilityLabel: String {
+        isFailure ? "Research job failed. \(message)" : message
+    }
+}
+
 struct StrategyLabView: View {
     @Bindable var model: AppModel
     let settings: AppSettings
@@ -206,21 +255,7 @@ struct StrategyLabView: View {
     @State private var learningBudget = 20
 
     private var presentation: StrategyLabPresentation { StrategyLabPresentation(snapshot: snapshot) }
-    private var selectedAssetContext: StrategyAssetContext? {
-        guard let strategy = model.selectedStrategy,
-              let interval = StrategyInterval(rawValue: strategy.interval),
-              let coverage = snapshot.datasetCoverage.first(where: {
-                  $0.symbol == strategy.symbol && $0.interval == strategy.interval
-              }),
-              let provider = StrategyProvider(rawValue: coverage.provider)
-        else { return nil }
-        return StrategyAssetContext(
-            provider: provider,
-            feed: coverage.feed,
-            symbol: strategy.symbol,
-            interval: interval
-        )
-    }
+    private var selectedResearchContext: SelectedStrategyResearchContext? { model.selectedResearchContext }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -255,14 +290,17 @@ struct StrategyLabView: View {
                 budgetPicker
                 exportButton(compact: false)
                 Spacer()
-                jobStatus
+                jobStatus(compact: false)
             }
-            HStack(spacing: 8) {
-                evaluateButton(compact: true)
-                learnButton(compact: true)
-                exportButton(compact: true)
-                budgetPicker
-                Spacer()
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    evaluateButton(compact: true)
+                    learnButton(compact: true)
+                    exportButton(compact: true)
+                    budgetPicker
+                    Spacer()
+                }
+                jobStatus(compact: true)
             }
         }
         .padding()
@@ -272,29 +310,29 @@ struct StrategyLabView: View {
 
     private func evaluateButton(compact: Bool) -> some View {
         Button {
-            guard let asset = selectedAssetContext else { return }
+            guard let context = selectedResearchContext else { return }
             let job = EngineJob.evaluateStrategies(
-                strategyIDs: model.selectedStrategies.map(\.strategyId),
-                mode: .paper,
-                asset: asset
+                strategyIDs: context.strategyIDs,
+                mode: context.mode,
+                asset: context.asset
             )
             Task { await model.run(job, configuration: settings.configuration) }
         } label: {
             actionLabel("Evaluate Selected", systemImage: "play.fill", compact: compact)
         }
         .buttonStyle(.borderedProminent)
-        .disabled(model.isRunningJob || model.selectedStrategyIDs.isEmpty || selectedAssetContext == nil)
+        .disabled(model.isRunningJob || selectedResearchContext == nil)
         .accessibilityLabel("Evaluate selected strategies")
         .accessibilityIdentifier(StrategyLabAccessibility.evaluateButton)
-        .help("Evaluate selected strategies")
+        .help(model.strategySelectionIssue ?? "Evaluate selected strategies")
     }
 
     private func learnButton(compact: Bool) -> some View {
         Button {
-            guard let strategy = model.selectedStrategy, let asset = selectedAssetContext else { return }
+            guard let strategy = model.selectedStrategy, let context = selectedResearchContext else { return }
             let configuration = settings.configuration.scoped(
-                strategyIDs: model.selectedStrategies.map(\.strategyId),
-                asset: asset
+                strategyIDs: context.strategyIDs,
+                asset: context.asset
             )
             Task {
                 await model.run(
@@ -305,10 +343,10 @@ struct StrategyLabView: View {
         } label: {
             actionLabel("Learn", systemImage: "wand.and.stars", compact: compact)
         }
-        .disabled(model.isRunningJob || model.selectedStrategy == nil || selectedAssetContext == nil)
+        .disabled(model.isRunningJob || model.learningSelectionIssue != nil)
         .accessibilityLabel("Run bounded learning")
         .accessibilityIdentifier(StrategyLabAccessibility.learnButton)
-        .help("Run bounded learning")
+        .help(model.learningSelectionIssue ?? "Run bounded learning")
     }
 
     private func exportButton(compact: Bool) -> some View {
@@ -341,18 +379,33 @@ struct StrategyLabView: View {
         }
     }
 
-    @ViewBuilder private var jobStatus: some View {
-        if model.isRunningJob {
-            ProgressView().controlSize(.small).accessibilityLabel("Strategy research job running")
-            Text(model.progressEvents.last?.message ?? model.progressEvents.last?.stage ?? "Running…")
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-        } else {
-            Text("Research only · no broker connection")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+    private func jobStatus(compact: Bool) -> some View {
+        let status = StrategyJobStatusPresentation(
+            isRunning: model.isRunningJob,
+            progress: model.activeJobProgress,
+            outcome: model.lastJobOutcome,
+            selectionIssue: model.strategyActionStatusIssue
+        )
+        return HStack(spacing: 6) {
+            if status.isRunning {
+                if let value = status.progressValue {
+                    ProgressView(value: value).frame(width: compact ? 48 : 72)
+                } else {
+                    ProgressView().controlSize(.small)
+                }
+            } else {
+                Image(systemName: status.symbolName)
+            }
+            Text(status.message)
+                .lineLimit(compact ? 2 : 1)
+                .foregroundStyle(status.isFailure ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+                .font(compact ? .caption : .body)
+                .fixedSize(horizontal: false, vertical: compact)
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(status.accessibilityLabel)
+        .accessibilityIdentifier("strategyLab.jobStatus")
+        .help(status.message)
     }
 
     private var strategyTable: some View {

@@ -39,8 +39,11 @@ private let completeV2Payload = Data(
         "strategy_id": "rsi_reversal",
         "version": "1.0.0-abc",
         "family": "mean_reversion",
+        "dataset_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
         "symbol": "BTCUSDT",
         "interval": "5m",
+        "mode": "paper",
+        "cohort_id": "cohort-paper-d",
         "state": "evaluated",
         "weight": 0.35,
         "development_metrics": {"sharpe": 1.25, "dsr_probability": null},
@@ -58,9 +61,11 @@ private let completeV2Payload = Data(
         "strategy_id": "rsi_reversal",
         "version": "1.0.0-abc",
         "family": "mean_reversion",
+        "dataset_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
         "symbol": "BTCUSDT",
         "interval": "5m",
         "mode": "paper",
+        "cohort_id": "cohort-paper-d",
         "effective_at": "2026-08-22T12:05:00Z",
         "weight": 0.35,
         "contribution": -0.18,
@@ -178,9 +183,15 @@ private let completeV2Payload = Data(
     #expect(strategy.developmentMetrics["sharpe"] == 1.25)
     #expect(strategy.finalTestMetrics["maximum_drawdown"] == -0.12)
     #expect(strategy.noRepaintBadge == .passed)
+    #expect(strategy.datasetHash == String(repeating: "d", count: 64))
+    #expect(strategy.mode == "paper")
+    #expect(strategy.cohortId == "cohort-paper-d")
+    #expect(strategy.id.contains("cohort-paper-d"))
 
     let component = try #require(snapshot.ensembleComponents.first)
     #expect(component.contribution == -0.18)
+    #expect(component.datasetHash == strategy.datasetHash)
+    #expect(component.cohortId == strategy.cohortId)
     #expect(component.evidence["gate"] == .string("development_only"))
     #expect(component.evidence["cost_survived"] == .bool(true))
 
@@ -252,4 +263,79 @@ private let completeV2Payload = Data(
     )
     let metadata = try JSONDecoder.nowcaster.decode(SnapshotMetadata.self, from: data)
     #expect(metadata.lastRefresh != nil)
+}
+
+@Test func schemaV2InstantsRequireZuluUTCWhileLegacyDatesRemainDateOnlyCompatible() async throws {
+    let repository = SnapshotRepository()
+    let offset = Data(
+        String(decoding: completeV2Payload, as: UTF8.self)
+            .replacingOccurrences(of: "2026-08-23T00:00:00Z", with: "2026-08-23T00:00:00+00:00")
+            .utf8
+    )
+    await #expect(throws: SnapshotRepositoryError.self) {
+        try await repository.load(data: offset)
+    }
+
+    let dateOnlyInstant = Data(
+        String(decoding: completeV2Payload, as: UTF8.self)
+            .replacingOccurrences(of: "2026-08-23T00:00:00Z", with: "2026-08-23")
+            .utf8
+    )
+    await #expect(throws: SnapshotRepositoryError.self) {
+        try await repository.load(data: dateOnlyInstant)
+    }
+
+    let legacy = try JSONDecoder.nowcaster.decode(
+        PricePoint.self,
+        from: Data("{\"date\":\"2026-08-23\",\"close\":100,\"volume\":null}".utf8)
+    )
+    #expect(legacy.close == 100)
+}
+
+@Test func repositoryRejectsOversizedInputBeforeSnapshotDecoding() async {
+    let oversized = Data(repeating: 0x20, count: SnapshotDecodingLimits.maximumSnapshotBytes + 1)
+    await #expect(throws: SnapshotRepositoryError.self) {
+        try await SnapshotRepository().load(data: oversized)
+    }
+}
+
+@Test func evidenceDecoderRejectsDeepLargeAndOversizedValues() {
+    func component(evidence: String) -> Data {
+        Data(
+            """
+            {"strategy_id":"rsi","version":"1","family":"mean_reversion",\
+            "dataset_hash":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",\
+            "symbol":"BTCUSDT","interval":"5m","mode":"paper","cohort_id":"cohort-d",\
+            "effective_at":"2026-08-22T12:05:00Z","weight":0.5,"contribution":0.1,\
+            "evidence":\(evidence)}
+            """.utf8
+        )
+    }
+
+    var nested = "true"
+    for _ in 0 ... SnapshotDecodingLimits.maximumEvidenceDepth {
+        nested = "{\"nested\":\(nested)}"
+    }
+    #expect(throws: DecodingError.self) {
+        try JSONDecoder.nowcaster.decode(EnsembleComponentSnapshot.self, from: component(evidence: nested))
+    }
+
+    let collection = "[" + Array(
+        repeating: "0",
+        count: SnapshotDecodingLimits.maximumCollectionLength + 1
+    ).joined(separator: ",") + "]"
+    #expect(throws: DecodingError.self) {
+        try JSONDecoder.nowcaster.decode(
+            EnsembleComponentSnapshot.self,
+            from: component(evidence: "{\"items\":\(collection)}")
+        )
+    }
+
+    let oversizedString = String(repeating: "x", count: SnapshotDecodingLimits.maximumStringBytes + 1)
+    #expect(throws: DecodingError.self) {
+        try JSONDecoder.nowcaster.decode(
+            EnsembleComponentSnapshot.self,
+            from: component(evidence: "{\"text\":\"\(oversizedString)\"}")
+        )
+    }
 }

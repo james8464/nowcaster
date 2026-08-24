@@ -22,6 +22,11 @@ struct SnapshotRepository: Sendable {
     }
 
     func load(data: Data) async throws -> NowcasterSnapshot {
+        guard data.count <= SnapshotDecodingLimits.maximumSnapshotBytes else {
+            throw SnapshotRepositoryError.unreadable(
+                "Snapshot exceeds the \(SnapshotDecodingLimits.maximumSnapshotBytes)-byte safety limit."
+            )
+        }
         let envelope: SchemaEnvelope
         do {
             envelope = try JSONDecoder.nowcaster.decode(SchemaEnvelope.self, from: data)
@@ -42,6 +47,12 @@ struct SnapshotRepository: Sendable {
 
     func load(url: URL) async throws -> NowcasterSnapshot {
         do {
+            if let fileSize = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+               fileSize > SnapshotDecodingLimits.maximumSnapshotBytes {
+                throw SnapshotRepositoryError.unreadable(
+                    "Snapshot exceeds the \(SnapshotDecodingLimits.maximumSnapshotBytes)-byte safety limit."
+                )
+            }
             return try await load(data: Data(contentsOf: url, options: [.mappedIfSafe]))
         } catch let error as SnapshotRepositoryError {
             throw error

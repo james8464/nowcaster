@@ -775,3 +775,136 @@ def test_crypto_backtest_exports_when_equity_event_observations_are_zero(tmp_pat
     snapshot = build_app_snapshot(database, settings)
 
     assert [(item.backtest_id, item.asset_class) for item in snapshot.backtests] == [("crypto-only", "crypto")]
+
+
+def test_strategy_snapshot_joins_weight_and_audit_to_its_exact_cohort(tmp_path) -> None:
+    settings, database = _empty_snapshot_database(tmp_path)
+    created_at = datetime(2026, 8, 22, 12, tzinfo=UTC)
+    dataset_hash = "d" * 64
+
+    def run(run_id: str, cohort_id: str, at: datetime) -> dict[str, object]:
+        return {
+            "strategy_run_id": run_id,
+            "dataset_hash": dataset_hash,
+            "strategy_id": "rsi_reversal",
+            "strategy_version": "1",
+            "family": "mean_reversion",
+            "symbol": "BTCUSDT",
+            "interval": "5m",
+            "mode": "paper",
+            "run_timestamp": at,
+            "parameters": {},
+            "status": "evaluated",
+            "metrics": {
+                "cohort_id": cohort_id,
+                "development_metrics": {"sharpe": 1.0},
+                "final_test_metrics": {},
+            },
+            "started_at": at,
+            "ended_at": at,
+            "source": "test",
+            "source_version": "2",
+            "created_at": at,
+        }
+
+    database.insert(
+        "strategy_runs",
+        [
+            run("run-a", "cohort-a", created_at),
+            run("run-b", "cohort-b", created_at + timedelta(minutes=1)),
+        ],
+    )
+    member = [{"strategy_id": "rsi_reversal", "strategy_version": "1"}]
+    database.insert(
+        "ensemble_weights",
+        [
+            {
+                "weight_id": "weight-b",
+                "strategy_run_id": "run-b",
+                "dataset_hash": dataset_hash,
+                "strategy_id": "rsi_reversal",
+                "strategy_version": "1",
+                "family": "mean_reversion",
+                "symbol": "BTCUSDT",
+                "interval": "5m",
+                "mode": "paper",
+                "effective_at": created_at + timedelta(minutes=1),
+                "weight": 0.2,
+                "evidence": {
+                    "cohort_id": "cohort-b",
+                    "cohort_members": member,
+                    "cohort_decision_hash": "decision-b",
+                },
+                "source": "test",
+                "source_version": "1",
+                "created_at": created_at,
+            },
+            {
+                "weight_id": "weight-a-late",
+                "strategy_run_id": "run-a",
+                "dataset_hash": dataset_hash,
+                "strategy_id": "rsi_reversal",
+                "strategy_version": "1",
+                "family": "mean_reversion",
+                "symbol": "BTCUSDT",
+                "interval": "5m",
+                "mode": "paper",
+                "effective_at": created_at + timedelta(minutes=2),
+                "weight": 0.9,
+                "evidence": {
+                    "cohort_id": "cohort-a",
+                    "cohort_members": member,
+                    "cohort_decision_hash": "decision-a",
+                },
+                "source": "test",
+                "source_version": "1",
+                "created_at": created_at,
+            },
+        ],
+    )
+    database.insert(
+        "causal_audits",
+        [
+            {
+                "audit_id": "audit-b",
+                "dataset_hash": dataset_hash,
+                "strategy_id": "rsi_reversal",
+                "strategy_version": "1",
+                "symbol": "BTCUSDT",
+                "interval": "5m",
+                "mode": "paper",
+                "audited_at": created_at + timedelta(minutes=1),
+                "passed": True,
+                "details": {"cohort_id": "cohort-b"},
+                "source": "test",
+                "source_version": "1",
+                "created_at": created_at,
+            },
+            {
+                "audit_id": "audit-a-late",
+                "dataset_hash": dataset_hash,
+                "strategy_id": "rsi_reversal",
+                "strategy_version": "1",
+                "symbol": "BTCUSDT",
+                "interval": "5m",
+                "mode": "frozen",
+                "audited_at": created_at + timedelta(minutes=2),
+                "passed": False,
+                "details": {"cohort_id": "cohort-a"},
+                "source": "test",
+                "source_version": "1",
+                "created_at": created_at,
+            },
+        ],
+    )
+
+    snapshot = build_app_snapshot(database, settings)
+    strategy = snapshot.strategies[0]
+    assert strategy.dataset_hash == dataset_hash
+    assert strategy.mode == "paper"
+    assert strategy.cohort_id == "cohort-b"
+    assert strategy.weight == pytest.approx(0.2)
+    assert strategy.causal_audit_passed is True
+    assert strategy.no_repaint_badge == "passed"
+    assert snapshot.ensemble_components[0].dataset_hash == dataset_hash
+    assert snapshot.ensemble_components[0].cohort_id == "cohort-a"

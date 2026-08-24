@@ -9,6 +9,20 @@ enum RootSidebarPresentation {
     static let sectionHeaderLeadingPadding: CGFloat = 24
 }
 
+struct RootSnapshotStatusPresentation: Equatable, Sendable {
+    let title: String
+    let message: String
+    let accessibilityIdentifier = "snapshot.staleBanner"
+
+    init?(state: SnapshotLoadState) {
+        guard case let .stale(message) = state else { return nil }
+        self.message = message
+        title = message.localizedCaseInsensitiveContains("incompatible")
+            ? "Snapshot refresh required"
+            : "Showing last-known-good snapshot"
+    }
+}
+
 struct RootView: View {
     @Bindable var model: AppModel
     let settings: AppSettings
@@ -16,8 +30,10 @@ struct RootView: View {
     @FocusState private var searchIsFocused: Bool
 
     var body: some View {
-        navigationLayout
-        .navigationSplitViewStyle(.balanced)
+        VStack(spacing: 0) {
+            snapshotRefreshBanner
+            bannerAwareNavigationLayout
+        }
         .searchable(text: $model.searchText, placement: .toolbar, prompt: "Search symbols")
         .searchFocused($searchIsFocused)
         .searchSuggestions {
@@ -37,7 +53,9 @@ struct RootView: View {
             }
             await model.loadBundledSnapshot()
             if screenshotMode {
-                let presentation = NowcasterWindowPresentation(arguments: ProcessInfo.processInfo.arguments)
+                let arguments = ProcessInfo.processInfo.arguments
+                model.applyScreenshotState(arguments: arguments)
+                let presentation = NowcasterWindowPresentation(arguments: arguments)
                 NSApplication.shared.keyWindow?.setContentSize(
                     NSSize(width: presentation.defaultWidth, height: presentation.defaultHeight)
                 )
@@ -46,6 +64,42 @@ struct RootView: View {
         }
         .onChange(of: model.destination) { _, destination in storedDestination = destination.rawValue }
         .onReceive(NotificationCenter.default.publisher(for: .focusGlobalSearch)) { _ in searchIsFocused = true }
+    }
+
+    @ViewBuilder private var bannerAwareNavigationLayout: some View {
+        if #available(macOS 26.0, *), RootSnapshotStatusPresentation(state: model.loadState) != nil {
+            navigationLayout
+                .scrollEdgeEffectHidden(true, for: .top)
+                .navigationSplitViewStyle(.balanced)
+        } else {
+            navigationLayout.navigationSplitViewStyle(.balanced)
+        }
+    }
+
+    @ViewBuilder private var snapshotRefreshBanner: some View {
+        if let presentation = RootSnapshotStatusPresentation(state: model.loadState), model.snapshot != nil {
+            HStack(spacing: 10) {
+                Label {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(presentation.title).fontWeight(.semibold)
+                        Text(presentation.message).font(.caption).lineLimit(2)
+                    }
+                } icon: {
+                    Image(systemName: "arrow.triangle.2.circlepath.circle")
+                }
+                Spacer()
+                Button("Refresh") {
+                    Task { await model.run(.rebuildAll, configuration: settings.configuration) }
+                }
+                .disabled(model.isRunningJob)
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 8)
+            .background(.thinMaterial)
+            .overlay(alignment: .bottom) { Divider() }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier(presentation.accessibilityIdentifier)
+        }
     }
 
     private var usesInspector: Bool {

@@ -51,7 +51,6 @@ struct StrategyAssetContext: Equatable, Sendable {
         self.databaseURL = databaseURL
         self.csvURL = csvURL
     }
-
 }
 
 struct EngineConfiguration: Sendable {
@@ -98,6 +97,7 @@ struct EngineInvocation: Sendable {
 
 enum EngineJobError: Error, Equatable, LocalizedError, Sendable {
     case emptyStrategyIDs
+    case learningRequiresSingleStrategy
     case invalidAsset(String)
     case invalidInterval(String)
     case invalidBudget(Int)
@@ -105,9 +105,10 @@ enum EngineJobError: Error, Equatable, LocalizedError, Sendable {
     var errorDescription: String? {
         switch self {
         case .emptyStrategyIDs: "Select at least one strategy to evaluate."
+        case .learningRequiresSingleStrategy: "Bounded learning requires exactly one unique strategy."
         case let .invalidAsset(value): "The strategy asset is invalid: \(value)"
         case let .invalidInterval(value): "The strategy interval is invalid: \(value)"
-        case let .invalidBudget(value): "The learning budget must be positive, not \(value)."
+        case let .invalidBudget(value): "The learning budget must be between 1 and 100, not \(value)."
         }
     }
 }
@@ -139,6 +140,13 @@ enum EngineJob: Sendable, Equatable {
         }
     }
 
+    var exportsSnapshotAfterSuccess: Bool {
+        switch self {
+        case .evaluateStrategies, .learn: true
+        default: false
+        }
+    }
+
     func invocation(configuration: EngineConfiguration) throws -> EngineInvocation {
         var command: [String]
         switch self {
@@ -147,7 +155,7 @@ enum EngineJob: Sendable, Equatable {
         case .fullBacktest:
             command = ["run-all", "--mode", configuration.mode.rawValue]
         case let .evaluateStrategies(strategyIDs, mode, asset):
-            let normalizedIDs = strategyIDs.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            let normalizedIDs = normalizedStrategyIDs(strategyIDs)
             guard !normalizedIDs.isEmpty, normalizedIDs.allSatisfy({ !$0.isEmpty }) else {
                 throw EngineJobError.emptyStrategyIDs
             }
@@ -163,11 +171,9 @@ enum EngineJob: Sendable, Equatable {
             guard let interval = StrategyInterval(rawValue: rawInterval) else {
                 throw EngineJobError.invalidInterval(rawInterval)
             }
-            guard budget > 0 else { throw EngineJobError.invalidBudget(budget) }
-            let normalizedIDs = configuration.strategyIDs.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            guard !normalizedIDs.isEmpty, normalizedIDs.allSatisfy({ !$0.isEmpty }) else {
-                throw EngineJobError.emptyStrategyIDs
-            }
+            guard (1 ... 100).contains(budget) else { throw EngineJobError.invalidBudget(budget) }
+            let normalizedIDs = normalizedStrategyIDs(configuration.strategyIDs)
+            guard normalizedIDs.count == 1 else { throw EngineJobError.learningRequiresSingleStrategy }
             guard let asset = configuration.strategyAsset,
                   asset.symbol == assetID,
                   asset.interval == interval
@@ -194,8 +200,14 @@ enum EngineJob: Sendable, Equatable {
         guard !asset.feed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !asset.symbol.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else { throw EngineJobError.invalidAsset(asset.symbol) }
-        if asset.provider == .csv, asset.csvURL == nil {
-            throw EngineJobError.invalidAsset("CSV provider requires a local CSV path")
+    }
+
+    private func normalizedStrategyIDs(_ strategyIDs: [String]) -> [String] {
+        var seen: Set<String> = []
+        return strategyIDs.compactMap { rawValue in
+            let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !value.isEmpty, seen.insert(value).inserted else { return nil }
+            return value
         }
     }
 

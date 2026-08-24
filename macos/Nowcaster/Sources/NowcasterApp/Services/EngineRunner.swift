@@ -1,5 +1,12 @@
 import Foundation
 
+protocol EngineRunning: Sendable {
+    func run(
+        _ job: EngineJob,
+        configuration: EngineConfiguration
+    ) -> AsyncThrowingStream<EngineProgressEvent, Error>
+}
+
 enum EngineRunnerError: Error, Equatable, LocalizedError, Sendable {
     case invalidProjectRoot(String)
     case invalidExecutable(String)
@@ -78,20 +85,60 @@ struct EngineOutputDecoder: Sendable {
 private final class RunningProcess: @unchecked Sendable {
     private let lock = NSLock()
     private var process: Process?
+    private var worker: Task<Void, Never>?
+    private var terminationRequested = false
 
-    func set(_ process: Process) {
-        lock.withLock { self.process = process }
+    func setWorker(_ worker: Task<Void, Never>) {
+        let cancel = lock.withLock {
+            self.worker = worker
+            return terminationRequested
+        }
+        if cancel { worker.cancel() }
+    }
+
+    func clearWorker() {
+        lock.withLock { worker = nil }
+    }
+
+    func checkCancellation() throws {
+        let requested = lock.withLock { terminationRequested }
+        if requested || Task.isCancelled { throw CancellationError() }
+    }
+
+    func launch(_ process: Process) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !terminationRequested, !Task.isCancelled else { throw CancellationError() }
+        self.process = process
+        do {
+            try process.run()
+        } catch {
+            self.process = nil
+            throw error
+        }
+        if terminationRequested || Task.isCancelled {
+            if process.isRunning { process.terminate() }
+            throw CancellationError()
+        }
     }
 
     func terminate() {
-        lock.withLock {
-            guard let process, process.isRunning else { return }
-            process.terminate()
+        let active = lock.withLock { () -> (Task<Void, Never>?, Process?) in
+            terminationRequested = true
+            return (worker, process)
         }
+        active.0?.cancel()
+        if let process = active.1, process.isRunning { process.terminate() }
     }
 }
 
-struct EngineRunner: Sendable {
+struct EngineRunner: EngineRunning, Sendable {
+    private let beforeLaunch: @Sendable () async -> Void
+
+    init(beforeLaunch: @escaping @Sendable () async -> Void = {}) {
+        self.beforeLaunch = beforeLaunch
+    }
+
     func run(
         _ job: EngineJob,
         configuration: EngineConfiguration
@@ -99,7 +146,14 @@ struct EngineRunner: Sendable {
         let holder = RunningProcess()
         return AsyncThrowingStream(bufferingPolicy: .bufferingNewest(256)) { continuation in
             continuation.onTermination = { _ in holder.terminate() }
-            Task.detached(priority: .userInitiated) {
+            let worker = Task.detached(priority: .userInitiated) {
+                defer { holder.clearWorker() }
+                do {
+                    try holder.checkCancellation()
+                } catch {
+                    continuation.finish(throwing: error)
+                    return
+                }
                 var isDirectory: ObjCBool = false
                 guard FileManager.default.fileExists(
                     atPath: configuration.projectRoot.path,
@@ -128,11 +182,17 @@ struct EngineRunner: Sendable {
                 process.standardOutput = output
                 process.standardError = output
                 process.environment = ProcessInfo.processInfo.environment.merging(["PYTHONUNBUFFERED": "1"]) { _, new in new }
-                holder.set(process)
+                await beforeLaunch()
                 do {
-                    try process.run()
+                    try holder.checkCancellation()
+                    try holder.launch(process)
+                    try holder.checkCancellation()
                 } catch {
-                    continuation.finish(throwing: EngineRunnerError.launchFailed(error.localizedDescription))
+                    if error is CancellationError {
+                        continuation.finish(throwing: error)
+                    } else {
+                        continuation.finish(throwing: EngineRunnerError.launchFailed(error.localizedDescription))
+                    }
                     return
                 }
 
@@ -148,10 +208,7 @@ struct EngineRunner: Sendable {
                                 EngineProgressEvent(event: "diagnostic", stage: job.stageName, message: diagnostic)
                             )
                         }
-                        if Task.isCancelled {
-                            holder.terminate()
-                            throw CancellationError()
-                        }
+                        try holder.checkCancellation()
                     }
                     for event in decoder.finish() { continuation.yield(event) }
                     for diagnostic in decoder.emittedDiagnostics {
@@ -177,6 +234,7 @@ struct EngineRunner: Sendable {
                 continuation.yield(EngineProgressEvent(event: "job_completed", stage: job.stageName, progress: 1))
                 continuation.finish()
             }
+            holder.setWorker(worker)
         }
     }
 }

@@ -24,7 +24,7 @@ private let learningConfiguration = EngineConfiguration(
     pythonExecutable: fixtureConfiguration.pythonExecutable,
     snapshotURL: fixtureConfiguration.snapshotURL,
     mode: fixtureConfiguration.mode,
-    strategyIDs: ["rsi_reversal", "ema_adx_trend"],
+    strategyIDs: ["rsi_reversal"],
     strategyAsset: csvContext
 )
 
@@ -75,7 +75,6 @@ private let learningConfiguration = EngineConfiguration(
         learning.arguments == [
             "-m", "src.cli", "strategy", "learn",
             "--strategy-id", "rsi_reversal",
-            "--strategy-id", "ema_adx_trend",
             "--provider", "csv",
             "--feed", "local",
             "--symbol", "BTCUSDT",
@@ -96,6 +95,57 @@ private let learningConfiguration = EngineConfiguration(
             "--project-root", "/tmp/Nowcaster Project",
         ]
     )
+}
+
+@Test func strategyRequestsDedupeIDsBoundLearningAndReuseStoredCSV() throws {
+    let storedCSV = StrategyAssetContext(
+        provider: .csv,
+        feed: "local",
+        symbol: "BTCUSDT",
+        interval: .fiveMinutes
+    )
+    let evaluation = try EngineJob.evaluateStrategies(
+        strategyIDs: ["rsi_reversal", " rsi_reversal ", "ema_adx_trend"],
+        mode: .paper,
+        asset: storedCSV
+    ).invocation(configuration: fixtureConfiguration)
+    #expect(evaluation.arguments.filter { $0 == "--strategy-id" }.count == 2)
+    #expect(!evaluation.arguments.contains("--csv-path"))
+
+    let storedConfiguration = EngineConfiguration(
+        projectRoot: fixtureConfiguration.projectRoot,
+        pythonExecutable: fixtureConfiguration.pythonExecutable,
+        snapshotURL: fixtureConfiguration.snapshotURL,
+        mode: fixtureConfiguration.mode,
+        strategyIDs: ["rsi_reversal", "rsi_reversal"],
+        strategyAsset: storedCSV
+    )
+    let learning = try EngineJob.learn(assetID: "BTCUSDT", interval: "5m", budget: 100)
+        .invocation(configuration: storedConfiguration)
+    #expect(learning.arguments.filter { $0 == "--strategy-id" }.count == 1)
+    #expect(!learning.arguments.contains("--csv-path"))
+
+    let plural = EngineConfiguration(
+        projectRoot: fixtureConfiguration.projectRoot,
+        pythonExecutable: fixtureConfiguration.pythonExecutable,
+        snapshotURL: fixtureConfiguration.snapshotURL,
+        mode: fixtureConfiguration.mode,
+        strategyIDs: ["rsi_reversal", "ema_adx_trend"],
+        strategyAsset: storedCSV
+    )
+    #expect(throws: EngineJobError.learningRequiresSingleStrategy) {
+        try EngineJob.learn(assetID: "BTCUSDT", interval: "5m", budget: 20)
+            .invocation(configuration: plural)
+    }
+    #expect(throws: EngineJobError.invalidBudget(0)) {
+        try EngineJob.learn(assetID: "BTCUSDT", interval: "5m", budget: 0)
+            .invocation(configuration: storedConfiguration)
+    }
+    #expect(throws: EngineJobError.invalidBudget(101)) {
+        try EngineJob.learn(assetID: "BTCUSDT", interval: "5m", budget: 101)
+            .invocation(configuration: storedConfiguration)
+    }
+    #expect(EngineJobError.invalidBudget(101).localizedDescription == "The learning budget must be between 1 and 100, not 101.")
 }
 
 @Test func rejectsInvalidTypedStrategyRequests() {
@@ -194,4 +244,54 @@ private let learningConfiguration = EngineConfiguration(
     await #expect(throws: EngineRunnerError.nonzeroExit(1, diagnostics: "")) {
         for try await _ in runner.run(.fullBacktest, configuration: configuration) {}
     }
+}
+
+private actor LaunchGate {
+    private var entered = false
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    func wait() async {
+        entered = true
+        await withCheckedContinuation { continuation = $0 }
+    }
+
+    func waitUntilEntered() async {
+        while !entered { await Task.yield() }
+    }
+
+    func open() {
+        continuation?.resume()
+        continuation = nil
+    }
+}
+
+@Test func cancellationBeforeLaunchCannotStartOrOrphanAProcess() async throws {
+    let temporaryRoot = FileManager.default.temporaryDirectory
+        .appending(path: "NowcasterEarlyCancel-\(UUID().uuidString)", directoryHint: .isDirectory)
+    let sourceRoot = temporaryRoot.appending(path: "src", directoryHint: .isDirectory)
+    let marker = temporaryRoot.appending(path: "launched.txt")
+    try FileManager.default.createDirectory(at: sourceRoot, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+    try Data().write(to: sourceRoot.appending(path: "__init__.py"))
+    try Data(
+        "from pathlib import Path\nPath(r'\(marker.path)').write_text('launched')\n".utf8
+    ).write(to: sourceRoot.appending(path: "cli.py"))
+    let configuration = EngineConfiguration(
+        projectRoot: temporaryRoot,
+        pythonExecutable: URL(fileURLWithPath: "/usr/bin/python3"),
+        snapshotURL: temporaryRoot.appending(path: "snapshot.json"),
+        mode: .demo
+    )
+    let gate = LaunchGate()
+    let runner = EngineRunner(beforeLaunch: { await gate.wait() })
+    let consumer = Task {
+        for try await _ in runner.run(.exportSnapshot, configuration: configuration) {}
+    }
+
+    await gate.waitUntilEntered()
+    consumer.cancel()
+    await gate.open()
+    _ = try? await consumer.value
+    try await Task.sleep(for: .milliseconds(100))
+    #expect(!FileManager.default.fileExists(atPath: marker.path))
 }

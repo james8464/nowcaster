@@ -1,10 +1,61 @@
 from __future__ import annotations
 
 import math
+import re
 from datetime import UTC, date, datetime, timedelta
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
+
+# Wire-safety limits shared conceptually with the native decoder. They keep the
+# aggregate evidence useful without allowing recursive/unbounded JSON payloads.
+MAX_EVIDENCE_DEPTH = 16
+MAX_EVIDENCE_NODES = 50_000
+MAX_EVIDENCE_COLLECTION_LENGTH = 2_000
+MAX_EVIDENCE_STRING_BYTES = 16 * 1_024
+
+_ZULU_INSTANT = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$")
+
+
+def _require_literal_z(value: Any) -> Any:
+    if isinstance(value, str) and _ZULU_INSTANT.fullmatch(value) is None:
+        raise ValueError("instant must use an ISO-8601 timestamp with literal Z UTC")
+    return value
+
+
+UTCInstant = Annotated[datetime, BeforeValidator(_require_literal_z)]
+
+
+def _validate_bounded_json(value: Any) -> Any:
+    nodes = 0
+
+    def visit(item: Any, depth: int) -> None:
+        nonlocal nodes
+        nodes += 1
+        if nodes > MAX_EVIDENCE_NODES:
+            raise ValueError("evidence exceeds the maximum node count")
+        if depth > MAX_EVIDENCE_DEPTH:
+            raise ValueError("evidence exceeds the maximum recursion depth")
+        if isinstance(item, str):
+            if len(item.encode("utf-8")) > MAX_EVIDENCE_STRING_BYTES:
+                raise ValueError("evidence string exceeds the maximum byte length")
+        elif isinstance(item, dict):
+            if len(item) > MAX_EVIDENCE_COLLECTION_LENGTH:
+                raise ValueError("evidence collection exceeds the maximum length")
+            for key, nested in item.items():
+                visit(str(key), depth + 1)
+                visit(nested, depth + 1)
+        elif isinstance(item, (list, tuple)):
+            if len(item) > MAX_EVIDENCE_COLLECTION_LENGTH:
+                raise ValueError("evidence collection exceeds the maximum length")
+            for nested in item:
+                visit(nested, depth + 1)
+
+    visit(value, 0)
+    return value
+
+
+BoundedJSONObject = Annotated[dict[str, Any], BeforeValidator(_validate_bounded_json)]
 
 
 class SnapshotModel(BaseModel):
@@ -33,12 +84,12 @@ class SnapshotModel(BaseModel):
 
 
 class SnapshotMetadata(SnapshotModel):
-    generated_at: datetime
+    generated_at: UTCInstant
     git_commit: str
     data_mode: str
     source_posture: str
     expectation_mode: str
-    last_refresh: datetime | None = None
+    last_refresh: UTCInstant | None = None
 
 
 class OverviewSnapshot(SnapshotModel):
@@ -161,15 +212,15 @@ class QualityIssueSnapshot(SnapshotModel):
     rule: str
     entity_key: str
     message: str
-    detected_at: datetime
+    detected_at: UTCInstant
 
 
 class PipelineRunSnapshot(SnapshotModel):
     pipeline_run_id: str
     command: str
     mode: str
-    started_at: datetime
-    ended_at: datetime | None = None
+    started_at: UTCInstant
+    ended_at: UTCInstant | None = None
     status: str
     row_counts: dict[str, int] = Field(default_factory=dict)
     error_summary: str | None = None
@@ -179,8 +230,11 @@ class StrategySnapshot(SnapshotModel):
     strategy_id: str
     version: str
     family: str
+    dataset_hash: str
     symbol: str
     interval: str
+    mode: str
+    cohort_id: str | None = None
     state: str
     weight: float = Field(ge=0)
     development_metrics: dict[str, float | None] = Field(default_factory=dict)
@@ -192,25 +246,27 @@ class StrategySnapshot(SnapshotModel):
     promotion_state: str = "research_only"
     causal_audit_passed: bool | None = None
     no_repaint_badge: Literal["passed", "failed", "not_audited"] = "not_audited"
-    latest_run_at: datetime | None = None
+    latest_run_at: UTCInstant | None = None
 
 
 class EnsembleComponentSnapshot(SnapshotModel):
     strategy_id: str
     version: str
     family: str
+    dataset_hash: str
     symbol: str
     interval: str
     mode: str
-    effective_at: datetime
+    cohort_id: str | None = None
+    effective_at: UTCInstant
     weight: float = Field(ge=0)
     contribution: float | None = None
-    evidence: dict[str, Any] = Field(default_factory=dict)
+    evidence: BoundedJSONObject = Field(default_factory=dict)
 
 
 class DatasetGapSnapshot(SnapshotModel):
-    start: datetime
-    end: datetime
+    start: UTCInstant
+    end: UTCInstant
     missing_bars: int = Field(gt=0)
 
 
@@ -220,10 +276,10 @@ class DatasetCoverageSnapshot(SnapshotModel):
     feed: str
     symbol: str
     interval: str
-    requested_start: datetime
-    requested_end: datetime
-    coverage_start: datetime | None = None
-    coverage_end: datetime | None = None
+    requested_start: UTCInstant
+    requested_end: UTCInstant
+    coverage_start: UTCInstant | None = None
+    coverage_end: UTCInstant | None = None
     row_count: int = Field(ge=0)
     gaps: list[DatasetGapSnapshot] = Field(default_factory=list)
     complete: bool = False
@@ -236,7 +292,7 @@ class LearningTrialSnapshot(SnapshotModel):
     candidate_hash: str
     status: str
     fitness: float | None = None
-    evaluated_at: datetime
+    evaluated_at: UTCInstant
     rule_text: str
     complexity: int = Field(ge=0)
     error_summary: str | None = None
@@ -250,8 +306,8 @@ class DiscoveredRuleSnapshot(SnapshotModel):
     rule_text: str
     fitness: float | None = None
     complexity: int = Field(ge=0)
-    discovered_at: datetime
-    evidence_through: datetime | None = None
+    discovered_at: UTCInstant
+    evidence_through: UTCInstant | None = None
     promotion_state: str = "shadow"
     causal_audit_id: str | None = None
     no_repaint_badge: Literal["passed", "failed", "not_audited"] = "not_audited"
@@ -264,7 +320,7 @@ class LearningRunSnapshot(SnapshotModel):
     evaluation_budget: int = Field(gt=0)
     best_rule: str | None = None
     best_rule_detail: DiscoveredRuleSnapshot | None = None
-    final_boundary: datetime
+    final_boundary: UTCInstant
     generation: int = Field(default=1, ge=1)
     progress: float = Field(default=0.0, ge=0, le=1)
     trials: list[LearningTrialSnapshot] = Field(default_factory=list)
@@ -288,10 +344,10 @@ class CausalAuditSnapshot(SnapshotModel):
     symbol: str
     interval: str
     mode: str
-    audited_at: datetime
+    audited_at: UTCInstant
     passed: bool
     outer_block_consumed: bool = False
-    details: dict[str, Any] = Field(default_factory=dict)
+    details: BoundedJSONObject = Field(default_factory=dict)
     no_repaint_badge: Literal["passed", "failed"]
 
 

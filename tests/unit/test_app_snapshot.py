@@ -46,8 +46,11 @@ def test_strategy_and_learning_contracts_are_strict_finite_and_utc() -> None:
         strategy_id="rsi_reversal",
         version="1.0.0-abc",
         family="mean_reversion",
+        dataset_hash="d" * 64,
         symbol="BTCUSDT",
         interval="5m",
+        mode="paper",
+        cohort_id="cohort-paper-d",
         state="paper",
         weight=0.25,
         development_metrics={"sharpe": 1.1, "dsr_probability": None},
@@ -87,6 +90,9 @@ def test_strategy_and_learning_contracts_are_strict_finite_and_utc() -> None:
     )
 
     assert strategy.weight == 0.25
+    assert strategy.dataset_hash == "d" * 64
+    assert strategy.mode == "paper"
+    assert strategy.cohort_id == "cohort-paper-d"
     assert learning.evaluated_candidates == learning.evaluation_budget == 1
     with pytest.raises(ValidationError):
         strategy_model(**{**strategy.model_dump(), "weight": float("inf")})
@@ -163,3 +169,62 @@ def test_learning_run_wire_contract_uses_string_summary_and_required_utc_boundar
                 "best_rule": None,
             }
         )
+
+
+def test_snapshot_wire_instants_require_literal_z_utc() -> None:
+    learning_run_model = _snapshot_model("LearningRunSnapshot")
+    base = {
+        "learning_run_id": "learn-utc",
+        "state": "completed",
+        "evaluated_candidates": 0,
+        "evaluation_budget": 1,
+        "best_rule": None,
+    }
+    assert learning_run_model.model_validate({**base, "final_boundary": "2026-08-23T00:00:00Z"})
+    with pytest.raises(ValidationError, match="literal Z"):
+        learning_run_model.model_validate({**base, "final_boundary": "2026-08-23T00:00:00+00:00"})
+    with pytest.raises(ValidationError, match="literal Z"):
+        learning_run_model.model_validate({**base, "final_boundary": "2026-08-23"})
+
+
+def test_snapshot_evidence_and_details_are_structurally_bounded() -> None:
+    component_model = _snapshot_model("EnsembleComponentSnapshot")
+    audit_model = _snapshot_model("CausalAuditSnapshot")
+    nested: object = True
+    for _ in range(snapshot_models.MAX_EVIDENCE_DEPTH + 1):
+        nested = {"nested": nested}
+    component = {
+        "strategy_id": "rsi_reversal",
+        "version": "1",
+        "family": "mean_reversion",
+        "dataset_hash": "d" * 64,
+        "symbol": "BTCUSDT",
+        "interval": "5m",
+        "mode": "paper",
+        "cohort_id": "cohort-d",
+        "effective_at": "2026-08-22T12:00:00Z",
+        "weight": 0.5,
+        "evidence": nested,
+    }
+    with pytest.raises(ValidationError, match="depth"):
+        component_model.model_validate(component)
+
+    audit = {
+        "audit_id": "audit-d",
+        "dataset_hash": "d" * 64,
+        "strategy_id": "rsi_reversal",
+        "version": "1",
+        "symbol": "BTCUSDT",
+        "interval": "5m",
+        "mode": "paper",
+        "audited_at": "2026-08-22T12:00:00Z",
+        "passed": True,
+        "details": {"items": list(range(snapshot_models.MAX_EVIDENCE_COLLECTION_LENGTH + 1))},
+        "no_repaint_badge": "passed",
+    }
+    with pytest.raises(ValidationError, match="collection"):
+        audit_model.model_validate(audit)
+
+    component["evidence"] = {"text": "x" * (snapshot_models.MAX_EVIDENCE_STRING_BYTES + 1)}
+    with pytest.raises(ValidationError, match="string"):
+        component_model.model_validate(component)
