@@ -28,6 +28,23 @@ enum StrategyInterval: String, Codable, CaseIterable, Sendable {
     case oneDay = "1d"
 }
 
+enum DeepResearchResourceProfile: String, Codable, CaseIterable, Sendable {
+    case performance
+    case balanced
+    case efficient
+    case custom
+
+    func workerCount(activeProcessors: Int, customWorkers: Int) -> Int {
+        let available = max(activeProcessors, 1)
+        return switch self {
+        case .performance: available
+        case .balanced: max(available - 1, 1)
+        case .efficient: max(available / 2, 1)
+        case .custom: min(max(customWorkers, 1), available)
+        }
+    }
+}
+
 struct StrategyAssetContext: Equatable, Sendable {
     let provider: StrategyProvider
     let feed: String
@@ -51,6 +68,20 @@ struct StrategyAssetContext: Equatable, Sendable {
         self.databaseURL = databaseURL
         self.csvURL = csvURL
     }
+}
+
+struct DeepResearchRequest: Equatable, Sendable {
+    let strategyIDs: [String]
+    let asset: StrategyAssetContext
+    let workers: Int
+    let evaluationBudget: Int?
+    let continuous: Bool
+    let timeBudgetSeconds: Int?
+    let seed: Int
+    let runID: String
+    let controlDirectory: URL
+    let controlNonce: String
+    let resumeRunID: String?
 }
 
 struct EngineConfiguration: Sendable {
@@ -135,6 +166,7 @@ enum EngineJobError: Error, Equatable, LocalizedError, Sendable {
     case invalidAsset(String)
     case invalidInterval(String)
     case invalidBudget(Int)
+    case invalidDeepResearch(String)
 
     var errorDescription: String? {
         switch self {
@@ -143,6 +175,7 @@ enum EngineJobError: Error, Equatable, LocalizedError, Sendable {
         case let .invalidAsset(value): "The strategy asset is invalid: \(value)"
         case let .invalidInterval(value): "The strategy interval is invalid: \(value)"
         case let .invalidBudget(value): "The learning budget must be between 1 and 100, not \(value)."
+        case let .invalidDeepResearch(message): "Deep Research configuration is invalid: \(message)"
         }
     }
 }
@@ -152,6 +185,7 @@ enum EngineJob: Sendable, Equatable {
     case fullBacktest
     case evaluateStrategies(strategyIDs: [String], mode: StrategyRunMode, asset: StrategyAssetContext)
     case learn(assetID: String, interval: String, budget: Int)
+    case deepResearch(DeepResearchRequest)
     case exportSnapshot(databaseURL: String?)
 
     var title: String {
@@ -160,6 +194,7 @@ enum EngineJob: Sendable, Equatable {
         case .fullBacktest: "Run full backtest"
         case .evaluateStrategies: "Evaluate selected strategies"
         case .learn: "Run bounded learning"
+        case .deepResearch: "Run Deep Research"
         case .exportSnapshot: "Export app snapshot"
         }
     }
@@ -170,6 +205,7 @@ enum EngineJob: Sendable, Equatable {
         case .fullBacktest: "full_backtest"
         case .evaluateStrategies: "evaluate"
         case .learn: "learn"
+        case .deepResearch: "deep_research"
         case .exportSnapshot: "export"
         }
     }
@@ -182,6 +218,8 @@ enum EngineJob: Sendable, Equatable {
             .exportSnapshot(databaseURL: asset.databaseURL)
         case .learn:
             .exportSnapshot(databaseURL: configuration.strategyAsset?.databaseURL)
+        case let .deepResearch(request):
+            .exportSnapshot(databaseURL: request.asset.databaseURL)
         case .exportSnapshot:
             nil
         }
@@ -225,6 +263,42 @@ enum EngineJob: Sendable, Equatable {
             }
             command += strategyArguments(asset: asset, mode: .walkForwardLearning)
             command += ["--evaluation-budget", String(budget)]
+        case let .deepResearch(request):
+            try validate(request: request)
+            command = ["strategy", "deep-research"]
+            for strategyID in normalizedStrategyIDs(request.strategyIDs) {
+                command += ["--strategy-id", strategyID]
+            }
+            command += [
+                "--provider", request.asset.provider.rawValue,
+                "--feed", request.asset.feed,
+                "--symbol", request.asset.symbol,
+                "--interval", request.asset.interval.rawValue,
+            ]
+            if let databaseURL = request.asset.databaseURL {
+                command += ["--database-url", databaseURL]
+            }
+            if let csvURL = request.asset.csvURL {
+                command += ["--csv-path", csvURL.path]
+            }
+            command += ["--workers", String(request.workers)]
+            if request.continuous {
+                command.append("--continuous")
+            } else if let budget = request.evaluationBudget {
+                command += ["--evaluation-budget", String(budget)]
+            }
+            if let seconds = request.timeBudgetSeconds {
+                command += ["--time-budget-seconds", String(seconds)]
+            }
+            command += [
+                "--seed", String(request.seed),
+                "--control-directory", request.controlDirectory.path,
+                "--control-nonce", request.controlNonce,
+                "--run-id", request.runID,
+            ]
+            if let resumeRunID = request.resumeRunID {
+                command += ["--resume-run-id", resumeRunID]
+            }
         case let .exportSnapshot(databaseURL):
             command = ["strategy", "export"]
             if let databaseURL {
@@ -244,6 +318,23 @@ enum EngineJob: Sendable, Equatable {
         guard !asset.feed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !asset.symbol.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else { throw EngineJobError.invalidAsset(asset.symbol) }
+    }
+
+    private func validate(request: DeepResearchRequest) throws {
+        try validate(asset: request.asset)
+        guard request.workers > 0 else { throw EngineJobError.invalidDeepResearch("workers must be positive") }
+        guard !request.runID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              request.controlNonce.count >= 32
+        else { throw EngineJobError.invalidDeepResearch("run identity is incomplete") }
+        guard request.continuous == (request.evaluationBudget == nil) else {
+            throw EngineJobError.invalidDeepResearch("continuous and bounded budgets conflict")
+        }
+        if let budget = request.evaluationBudget, !(1 ... 100_000).contains(budget) {
+            throw EngineJobError.invalidDeepResearch("evaluation budget must be between 1 and 100000")
+        }
+        if let seconds = request.timeBudgetSeconds, seconds < 1 {
+            throw EngineJobError.invalidDeepResearch("time budget must be positive")
+        }
     }
 
     private func normalizedStrategyIDs(_ strategyIDs: [String]) -> [String] {

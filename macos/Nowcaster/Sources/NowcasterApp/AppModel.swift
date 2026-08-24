@@ -43,13 +43,19 @@ final class AppModel {
     var selectedBacktestID: String?
     var selectedStrategyIDs: Set<String> = []
     var selectedLearningRunID: String?
+    var selectedDeepResearchRunID: String?
     private(set) var snapshot: NowcasterSnapshot?
     private(set) var loadState: SnapshotLoadState = .idle
     private(set) var isRunningJob = false
     private(set) var progressEvents: [EngineProgressEvent] = []
     private(set) var lastJobOutcome: EngineJobOutcome = .idle
+    private(set) var deepResearchControlState: DeepResearchControlState?
+    private(set) var deepResearchThermalState = "Nominal"
     private let repository: SnapshotRepository
     private let runner: any EngineRunning
+    @ObservationIgnored private var activeDeepResearchControl: DeepResearchControlFile?
+    @ObservationIgnored private var thermalMonitor: Task<Void, Never>?
+    @ObservationIgnored private var automaticallyPausedForThermals = false
 
     init(
         snapshot: NowcasterSnapshot? = nil,
@@ -139,6 +145,10 @@ final class AppModel {
         snapshot?.learningRuns.first { $0.id == selectedLearningRunID }
     }
 
+    var selectedDeepResearchRun: DeepResearchRunSnapshot? {
+        snapshot?.deepResearchRuns?.first { $0.id == selectedDeepResearchRunID }
+    }
+
     var activeJobProgress: ActiveJobProgress? {
         guard isRunningJob,
               let event = progressEvents.reversed().first(where: {
@@ -206,8 +216,12 @@ final class AppModel {
         isRunningJob = true
         progressEvents = []
         lastJobOutcome = .running(job)
-        defer { isRunningJob = false }
+        defer {
+            isRunningJob = false
+            finishDeepResearchControl(for: job)
+        }
         do {
+            try beginDeepResearchControl(for: job)
             try await consume(job, configuration: configuration)
             if let exportJob = job.followUpExport(configuration: configuration) {
                 try await consume(exportJob, configuration: configuration)
@@ -230,6 +244,30 @@ final class AppModel {
             let message = preferred ?? error.localizedDescription
             lastJobOutcome = .failure(job, message: message)
             appendProgress(EngineProgressEvent(event: "job_failed", stage: job.stageName, message: message))
+        }
+    }
+
+    func requestDeepResearchControl(_ state: DeepResearchControlState) {
+        guard let activeDeepResearchControl else { return }
+        do {
+            try activeDeepResearchControl.request(state)
+            deepResearchControlState = state
+            automaticallyPausedForThermals = false
+            appendProgress(
+                EngineProgressEvent(
+                    event: "deep_research_control",
+                    stage: "deep_research",
+                    message: "Deep Research \(state.rawValue)."
+                )
+            )
+        } catch {
+            appendProgress(
+                EngineProgressEvent(
+                    event: "error",
+                    stage: "deep_research_control",
+                    message: error.localizedDescription
+                )
+            )
         }
     }
 
@@ -260,6 +298,83 @@ final class AppModel {
         if !snapshot.learningRuns.contains(where: { $0.id == selectedLearningRunID }) {
             selectedLearningRunID = snapshot.learningRuns.first?.id
         }
+        let deepRuns = snapshot.deepResearchRuns ?? []
+        if !deepRuns.contains(where: { $0.id == selectedDeepResearchRunID }) {
+            selectedDeepResearchRunID = deepRuns.first?.id
+        }
+    }
+
+    private func beginDeepResearchControl(for job: EngineJob) throws {
+        guard case let .deepResearch(request) = job else { return }
+        let identity = DeepResearchControlIdentity(
+            runID: request.runID,
+            nonce: request.controlNonce,
+            directory: request.controlDirectory
+        )
+        let control = DeepResearchControlFile(identity: identity)
+        try control.initialize()
+        activeDeepResearchControl = control
+        deepResearchControlState = .running
+        automaticallyPausedForThermals = false
+        startThermalMonitoring()
+    }
+
+    private func finishDeepResearchControl(for job: EngineJob) {
+        guard case .deepResearch = job else { return }
+        thermalMonitor?.cancel()
+        thermalMonitor = nil
+        activeDeepResearchControl = nil
+        automaticallyPausedForThermals = false
+    }
+
+    private func startThermalMonitoring() {
+        thermalMonitor?.cancel()
+        thermalMonitor = Task { [weak self] in
+            while !Task.isCancelled {
+                self?.applyThermalState(ProcessInfo.processInfo.thermalState)
+                try? await Task.sleep(for: .seconds(2))
+            }
+        }
+    }
+
+    private func applyThermalState(_ state: ProcessInfo.ThermalState) {
+        deepResearchThermalState = DeepResearchThermalPolicy.label(for: state)
+        guard let control = activeDeepResearchControl else { return }
+        let action = DeepResearchThermalPolicy.action(for: state, automaticallyPaused: automaticallyPausedForThermals)
+        do {
+            switch action {
+            case .none:
+                return
+            case .pause:
+                guard deepResearchControlState == .running else { return }
+                try control.request(.paused)
+                automaticallyPausedForThermals = true
+                deepResearchControlState = .paused
+                appendProgress(
+                    EngineProgressEvent(
+                        event: "thermal_pause",
+                        stage: "deep_research",
+                        message: "Paused automatically because Mac thermal pressure is \(deepResearchThermalState.lowercased())."
+                    )
+                )
+            case .resume:
+                guard deepResearchControlState == .paused else { return }
+                try control.request(.running)
+                automaticallyPausedForThermals = false
+                deepResearchControlState = .running
+                appendProgress(
+                    EngineProgressEvent(
+                        event: "thermal_resume",
+                        stage: "deep_research",
+                        message: "Resumed after Mac thermal pressure recovered."
+                    )
+                )
+            }
+        } catch {
+            appendProgress(
+                EngineProgressEvent(event: "error", stage: "deep_research_control", message: error.localizedDescription)
+            )
+        }
     }
 
     private var strategySelectionResolution: (context: SelectedStrategyResearchContext?, issue: String?) {
@@ -267,7 +382,7 @@ final class AppModel {
             return (nil, "Select at least one strategy.")
         }
         guard selectedStrategies.allSatisfy({ $0.cohortId != nil }) else {
-            return (nil, "Legacy strategy context is incomplete. Export a current schema v3 snapshot.")
+            return (nil, "Legacy strategy context is incomplete. Export a current schema v5 snapshot.")
         }
         let signatures = Set(selectedStrategies.map {
             [$0.datasetHash, $0.symbol, $0.interval, $0.mode, $0.cohortId ?? ""]

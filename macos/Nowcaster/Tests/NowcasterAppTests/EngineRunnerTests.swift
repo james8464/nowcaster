@@ -121,6 +121,66 @@ private let learningConfiguration = EngineConfiguration(
     )
 }
 
+@Test func deepResearchArgumentsUseTypedResourceAndPrivateControlValuesWithoutAShell() throws {
+    let request = DeepResearchRequest(
+        strategyIDs: ["rsi_reversal"],
+        asset: csvContext,
+        workers: 8,
+        evaluationBudget: nil,
+        continuous: true,
+        timeBudgetSeconds: 3_600,
+        seed: 43,
+        runID: "deep-run-1",
+        controlDirectory: URL(fileURLWithPath: "/tmp/Nowcaster Project/control"),
+        controlNonce: String(repeating: "n", count: 64),
+        resumeRunID: nil
+    )
+
+    let invocation = try EngineJob.deepResearch(request).invocation(configuration: fixtureConfiguration)
+
+    #expect(invocation.arguments == [
+        "-m", "src.cli", "strategy", "deep-research",
+        "--strategy-id", "rsi_reversal",
+        "--provider", "csv", "--feed", "local", "--symbol", "BTCUSDT", "--interval", "5m",
+        "--database-url", "duckdb:////tmp/Nowcaster Project/research.duckdb",
+        "--csv-path", "/tmp/Nowcaster Project/bars;literal.csv",
+        "--workers", "8", "--continuous", "--time-budget-seconds", "3600", "--seed", "43",
+        "--control-directory", "/tmp/Nowcaster Project/control",
+        "--control-nonce", String(repeating: "n", count: 64),
+        "--run-id", "deep-run-1", "--project-root", "/tmp/Nowcaster Project",
+    ])
+    #expect(!invocation.arguments.contains(where: { $0 == "sh" || $0 == "-c" }))
+    #expect(EngineJob.deepResearch(request).followUpExport(configuration: fixtureConfiguration) == .exportSnapshot(databaseURL: csvContext.databaseURL))
+}
+
+@Test func deepResearchResourceProfilesBoundWorkersToAvailableProcessors() {
+    #expect(DeepResearchResourceProfile.performance.workerCount(activeProcessors: 12, customWorkers: 99) == 12)
+    #expect(DeepResearchResourceProfile.balanced.workerCount(activeProcessors: 12, customWorkers: 99) == 11)
+    #expect(DeepResearchResourceProfile.efficient.workerCount(activeProcessors: 12, customWorkers: 99) == 6)
+    #expect(DeepResearchResourceProfile.custom.workerCount(activeProcessors: 12, customWorkers: 99) == 12)
+    #expect(DeepResearchResourceProfile.custom.workerCount(activeProcessors: 12, customWorkers: 3) == 3)
+}
+
+@Test func deepResearchControlFileIsPrivateAtomicAndRejectsTerminalResume() throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appending(path: "NowcasterControl-\(UUID().uuidString)", directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let identity = DeepResearchControlIdentity(
+        runID: "deep-run",
+        nonce: String(repeating: "x", count: 64),
+        directory: directory
+    )
+    let control = DeepResearchControlFile(identity: identity)
+
+    try control.initialize()
+    try control.request(.paused)
+    #expect(try control.read() == .paused)
+    let attributes = try FileManager.default.attributesOfItem(atPath: identity.fileURL.path)
+    #expect((attributes[.posixPermissions] as? NSNumber)?.intValue == 0o600)
+    try control.request(.stopped)
+    #expect(throws: DeepResearchControlError.terminal) { try control.request(.running) }
+}
+
 @Test func strategyRequestsDedupeIDsBoundLearningAndReuseStoredCSV() throws {
     let storedCSV = StrategyAssetContext(
         provider: .csv,

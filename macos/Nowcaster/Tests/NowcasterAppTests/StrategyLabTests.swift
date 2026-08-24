@@ -231,7 +231,7 @@ private func strategyLabFixtureWithDuplicateContext() throws -> NowcasterSnapsho
     )
 
     #expect(empty.strategyEmptyTitle == "Strategy evidence unavailable")
-    #expect(empty.strategyEmptyDescription.contains("schema v3"))
+    #expect(empty.strategyEmptyDescription.contains("schema v5"))
     #expect(empty.learningEmptyTitle == "No learning runs")
     #expect(empty.learningEmptyDescription.contains("bounded learning"))
 }
@@ -257,6 +257,9 @@ private func strategyLabFixtureWithDuplicateContext() throws -> NowcasterSnapsho
     #expect(StrategyLabAccessibility.learning == "strategyLab.learning")
     #expect(StrategyLabAccessibility.evaluateButton == "strategyLab.evaluate")
     #expect(StrategyLabAccessibility.learnButton == "strategyLab.learn")
+    #expect(StrategyLabAccessibility.deepResearchButton == "strategyLab.deepResearch")
+    #expect(StrategyLabAccessibility.deepResearchStartButton == "strategyLab.deepResearch.start")
+    #expect(StrategyLabAccessibility.deepResearchWorkspace == "strategyLab.deepResearch.workspace")
     #expect(StrategyLabAccessibility.exportButton == "strategyLab.export")
     #expect(StrategyLabAccessibility.directionLabel.contains("ensemble contribution"))
     #expect(StrategyLabAccessibility.progressLabel.contains("evaluation budget"))
@@ -292,4 +295,35 @@ private func strategyLabFixtureWithDuplicateContext() throws -> NowcasterSnapsho
     #expect(RootSidebarPresentation.sectionHeaderLeadingPadding >= 20)
     #expect(StrategyLabLayout.budgetPickerWidth >= 100)
     #expect(StrategyLabLayout.budgetOptionTitle(20) == "20")
+}
+
+@Test func thermalPolicyPausesAtSeriousPressureAndOnlyAutoResumesItsOwnPause() {
+    #expect(DeepResearchThermalPolicy.action(for: .nominal, automaticallyPaused: false) == .none)
+    #expect(DeepResearchThermalPolicy.action(for: .fair, automaticallyPaused: true) == .resume)
+    #expect(DeepResearchThermalPolicy.action(for: .serious, automaticallyPaused: false) == .pause)
+    #expect(DeepResearchThermalPolicy.action(for: .critical, automaticallyPaused: false) == .pause)
+}
+
+@Test func deepResearchPresentationMakesFailedGatesAndHypotheticalStatusExplicit() throws {
+    let data = Data(
+        """
+        {"run_id":"deep-1","state":"completed","symbol":"BTCUSDT","interval":"5m",
+        "provider":"binance","feed":"spot","dataset_hash":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "protocol_id":"pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+        "started_at":"2026-08-25T00:00:00Z","updated_at":"2026-08-25T01:00:00Z",
+        "final_test_start":"2026-08-26T00:00:00Z","continuous":false,"trial_budget":10,"cycle_budget":10,
+        "evaluated_attempts":3,"succeeded_attempts":2,"failed_attempts":1,"generation":1,"progress":0.3,
+        "best_candidate_hash":null,"champion_score":0.5,"outcome":"no_reliable_strategy_found",
+        "failed_gates":["minimum 300 closed trades not met"],
+        "resources":{"active_workers":4,"queued_trials":7,"memory_bytes":1000000,"thermal_state":"nominal"}}
+        """.utf8
+    )
+    let run = try JSONDecoder.nowcaster.decode(DeepResearchRunSnapshot.self, from: data)
+    let presentation = DeepResearchRunPresentation(run: run)
+
+    #expect(presentation.outcomeTitle == "No Reliable Strategy Found")
+    #expect(presentation.attemptsTitle == "3 of 10 attempts")
+    #expect(presentation.failedGates == ["minimum 300 closed trades not met"])
+    #expect(presentation.disclosure.localizedCaseInsensitiveContains("hypothetical"))
+    #expect(presentation.disclosure.localizedCaseInsensitiveContains("not a trade instruction"))
 }

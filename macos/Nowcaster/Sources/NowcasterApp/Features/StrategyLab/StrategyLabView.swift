@@ -36,6 +36,9 @@ enum StrategyLabAccessibility {
     static let learning = "strategyLab.learning"
     static let evaluateButton = "strategyLab.evaluate"
     static let learnButton = "strategyLab.learn"
+    static let deepResearchButton = "strategyLab.deepResearch"
+    static let deepResearchStartButton = "strategyLab.deepResearch.start"
+    static let deepResearchWorkspace = "strategyLab.deepResearch.workspace"
     static let exportButton = "strategyLab.export"
     static let directionLabel = "Research posture from signed current ensemble contribution"
     static let progressLabel = "Learning progress against the fixed evaluation budget"
@@ -132,6 +135,7 @@ struct LearningRunPresentation: Identifiable, Sendable {
 struct StrategyLabPresentation: Sendable {
     let strategies: [StrategyPresentation]
     let learningRuns: [LearningRunPresentation]
+    let deepResearchRuns: [DeepResearchRunPresentation]
 
     init(snapshot: NowcasterSnapshot) {
         self.init(
@@ -139,7 +143,8 @@ struct StrategyLabPresentation: Sendable {
             components: snapshot.ensembleComponents,
             coverage: snapshot.datasetCoverage,
             audits: snapshot.causalAudits,
-            learningRuns: snapshot.learningRuns
+            learningRuns: snapshot.learningRuns,
+            deepResearchRuns: snapshot.deepResearchRuns ?? []
         )
     }
 
@@ -148,7 +153,8 @@ struct StrategyLabPresentation: Sendable {
         components: [EnsembleComponentSnapshot],
         coverage: [DatasetCoverageSnapshot],
         audits: [CausalAuditSnapshot],
-        learningRuns: [LearningRunSnapshot]
+        learningRuns: [LearningRunSnapshot],
+        deepResearchRuns: [DeepResearchRunSnapshot] = []
     ) {
         self.strategies = strategies.map { strategy in
             let matchingComponents = components.filter {
@@ -178,11 +184,12 @@ struct StrategyLabPresentation: Sendable {
             )
         }
         self.learningRuns = learningRuns.map(LearningRunPresentation.init)
+        self.deepResearchRuns = deepResearchRuns.map(DeepResearchRunPresentation.init)
     }
 
     var strategyEmptyTitle: String { "Strategy evidence unavailable" }
     var strategyEmptyDescription: String {
-        "This schema v3 snapshot contains no compatible strategy evidence. Run a scoped evaluation, then export again."
+        "This schema v5 snapshot contains no compatible strategy evidence. Run a scoped evaluation, then export again."
     }
     var learningEmptyTitle: String { "No learning runs" }
     var learningEmptyDescription: String {
@@ -190,7 +197,7 @@ struct StrategyLabPresentation: Sendable {
     }
 }
 
-private extension String {
+extension String {
     var researchTitle: String {
         replacingOccurrences(of: "_", with: " ")
             .split(separator: " ")
@@ -253,6 +260,7 @@ struct StrategyLabView: View {
     let settings: AppSettings
     let snapshot: NowcasterSnapshot
     @State private var learningBudget = 20
+    @State private var showingDeepResearchConfiguration = false
 
     private var presentation: StrategyLabPresentation { StrategyLabPresentation(snapshot: snapshot) }
     private var selectedResearchContext: SelectedStrategyResearchContext? { model.selectedResearchContext }
@@ -270,14 +278,24 @@ struct StrategyLabView: View {
             } else {
                 VSplitView {
                     strategyTable.frame(minHeight: 250)
-                    LearningWorkspaceView(
-                        model: model,
-                        runs: presentation.learningRuns,
-                        emptyTitle: presentation.learningEmptyTitle,
-                        emptyDescription: presentation.learningEmptyDescription
-                    )
+                    TabView {
+                        DeepResearchWorkspaceView(model: model, runs: presentation.deepResearchRuns)
+                            .tabItem { Label("Deep Research", systemImage: "cpu") }
+                        LearningWorkspaceView(
+                            model: model,
+                            runs: presentation.learningRuns,
+                            emptyTitle: presentation.learningEmptyTitle,
+                            emptyDescription: presentation.learningEmptyDescription
+                        )
+                        .tabItem { Label("Bounded Learning", systemImage: "wand.and.stars") }
+                    }
                     .frame(minHeight: 250)
                 }
+            }
+        }
+        .sheet(isPresented: $showingDeepResearchConfiguration) {
+            if let context = selectedResearchContext {
+                DeepResearchConfigurationView(model: model, settings: settings, context: context)
             }
         }
     }
@@ -286,15 +304,18 @@ struct StrategyLabView: View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 10) {
                 evaluateButton(compact: false)
+                deepResearchButton(compact: false)
                 learnButton(compact: false)
                 budgetPicker
                 exportButton(compact: false)
                 Spacer()
+                deepResearchControls
                 jobStatus(compact: false)
             }
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
                     evaluateButton(compact: true)
+                    deepResearchButton(compact: true)
                     learnButton(compact: true)
                     exportButton(compact: true)
                     budgetPicker
@@ -306,6 +327,38 @@ struct StrategyLabView: View {
         .padding()
         .fixedSize(horizontal: false, vertical: true)
         .frame(minHeight: 52)
+    }
+
+    private func deepResearchButton(compact: Bool) -> some View {
+        Button {
+            showingDeepResearchConfiguration = true
+        } label: {
+            actionLabel("Deep Research", systemImage: "cpu", compact: compact)
+        }
+        .disabled(model.isRunningJob || selectedResearchContext == nil)
+        .accessibilityLabel("Configure and start Deep Research")
+        .accessibilityIdentifier(StrategyLabAccessibility.deepResearchButton)
+        .help(model.strategySelectionIssue ?? "Search and stress-test strategy challengers")
+    }
+
+    @ViewBuilder private var deepResearchControls: some View {
+        if model.isRunningJob, let state = model.deepResearchControlState {
+            HStack(spacing: 6) {
+                if state == .paused {
+                    Button("Resume", systemImage: "play.fill") { model.requestDeepResearchControl(.running) }
+                } else if state == .running {
+                    Button("Pause", systemImage: "pause.fill") { model.requestDeepResearchControl(.paused) }
+                }
+                Button("Stop", systemImage: "stop.fill", role: .destructive) {
+                    model.requestDeepResearchControl(.stopped)
+                }
+                .disabled(state == .stopped)
+                Text("Thermals: \(model.deepResearchThermalState)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .controlSize(.small)
+        }
     }
 
     private func evaluateButton(compact: Bool) -> some View {
