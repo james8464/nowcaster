@@ -78,19 +78,19 @@ def _event(*, fill_price: str = "190.40") -> TradeUpdate:
     )
 
 
-def test_v3_database_migrates_to_v4_idempotently_without_altering_research_tables(tmp_path) -> None:
-    path = tmp_path / "v3.duckdb"
+def test_v4_database_migrates_to_v5_idempotently_without_altering_trading_tables(tmp_path) -> None:
+    path = tmp_path / "v4.duckdb"
     database = Database.from_url(f"duckdb:///{path}")
     database.initialize()
     with database.engine.begin() as connection:
-        connection.execute(text("DELETE FROM schema_versions WHERE version = 4"))
-        connection.execute(text("INSERT OR IGNORE INTO schema_versions VALUES (3, CURRENT_TIMESTAMP)"))
+        connection.execute(text("DELETE FROM schema_versions WHERE version = 5"))
+        connection.execute(text("INSERT OR IGNORE INTO schema_versions VALUES (4, CURRENT_TIMESTAMP)"))
 
     database.initialize()
     database.initialize()
 
-    assert database.schema_version() == 4
-    assert database.scalar("SELECT count(*) FROM schema_versions WHERE version = 4") == 1
+    assert database.schema_version() == 5
+    assert database.scalar("SELECT count(*) FROM schema_versions WHERE version = 5") == 1
     assert {"strategy_runs", "broker_sessions", "broker_order_events", "readiness_receipts"} <= set(
         database.table_names()
     )

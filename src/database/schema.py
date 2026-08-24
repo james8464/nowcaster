@@ -741,6 +741,123 @@ causal_audits = Table(
     ),
 )
 
+# Version 5 records trial-aware, resumable Deep Research evidence. Workers never
+# write these tables directly; the coordinator is the single ordered writer.
+deep_research_runs = Table(
+    "deep_research_runs",
+    metadata,
+    Column("run_id", String, primary_key=True),
+    Column("protocol_id", String, nullable=False),
+    Column("dataset_hash", String, nullable=False),
+    Column("code_hash", String, nullable=False),
+    Column("search_space_hash", String, nullable=False),
+    Column("cost_policy_hash", String, nullable=False),
+    Column("symbol", String, nullable=False),
+    Column("provider", String, nullable=False),
+    Column("feed", String, nullable=False),
+    Column("interval", String, nullable=False),
+    Column("seed", Integer, nullable=False),
+    Column("workers", Integer, nullable=False),
+    Column("trial_budget", Integer),
+    Column("continuous", Boolean, nullable=False),
+    Column("cycle_budget", Integer, nullable=False),
+    Column("final_test_start", DateTime(timezone=True), nullable=False),
+    Column("started_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+    Column("ended_at", DateTime(timezone=True)),
+    Column("state", String, nullable=False),
+    Column("terminal_reason", Text),
+    Column("protocol", JSON, nullable=False),
+    *common_columns(),
+)
+
+deep_research_trials = Table(
+    "deep_research_trials",
+    metadata,
+    Column("trial_id", String, primary_key=True),
+    Column("run_id", String, nullable=False),
+    Column("ordinal", Integer, nullable=False),
+    Column("persisted_sequence", Integer, nullable=False),
+    Column("generation", Integer, nullable=False),
+    Column("candidate_hash", String, nullable=False),
+    Column("definition", JSON, nullable=False),
+    Column("status", String, nullable=False),
+    Column("attempted_at", DateTime(timezone=True), nullable=False),
+    Column("completed_at", DateTime(timezone=True)),
+    Column("fitness", Float),
+    Column("error_summary", Text),
+    *common_columns(),
+    UniqueConstraint("run_id", "ordinal", name="uq_deep_research_trial_ordinal"),
+)
+
+deep_research_fold_metrics = Table(
+    "deep_research_fold_metrics",
+    metadata,
+    Column("fold_metric_id", String, primary_key=True),
+    Column("run_id", String, nullable=False),
+    Column("ordinal", Integer, nullable=False),
+    Column("fold_index", Integer, nullable=False),
+    Column("metrics", JSON, nullable=False),
+    *common_columns(),
+    UniqueConstraint("run_id", "ordinal", "fold_index", name="uq_deep_research_fold_metric"),
+)
+
+deep_research_stress_metrics = Table(
+    "deep_research_stress_metrics",
+    metadata,
+    Column("stress_metric_id", String, primary_key=True),
+    Column("run_id", String, nullable=False),
+    Column("ordinal", Integer, nullable=False),
+    Column("scenario", String, nullable=False),
+    Column("metrics", JSON, nullable=False),
+    Column("passed", Boolean, nullable=False),
+    *common_columns(),
+    UniqueConstraint("run_id", "ordinal", "scenario", name="uq_deep_research_stress_metric"),
+)
+
+deep_research_promotions = Table(
+    "deep_research_promotions",
+    metadata,
+    Column("promotion_id", String, primary_key=True),
+    Column("run_id", String, nullable=False),
+    Column("candidate_hash", String),
+    Column("incumbent_hash", String),
+    Column("evaluated_at", DateTime(timezone=True), nullable=False),
+    Column("promoted", Boolean, nullable=False),
+    Column("outcome", String, nullable=False),
+    Column("score", Float),
+    Column("evidence", JSON, nullable=False),
+    Column("failed_gates", JSON, nullable=False),
+    *common_columns(),
+)
+
+deep_research_checkpoints = Table(
+    "deep_research_checkpoints",
+    metadata,
+    Column("checkpoint_id", String, primary_key=True),
+    Column("run_id", String, nullable=False),
+    Column("protocol_id", String, nullable=False),
+    Column("next_ordinal", Integer, nullable=False),
+    Column("generation", Integer, nullable=False),
+    Column("payload", JSON, nullable=False),
+    Column("checkpointed_at", DateTime(timezone=True), nullable=False),
+    *common_columns(),
+    UniqueConstraint("run_id", "next_ordinal", "generation", name="uq_deep_research_checkpoint"),
+)
+
+deep_research_resource_samples = Table(
+    "deep_research_resource_samples",
+    metadata,
+    Column("resource_sample_id", String, primary_key=True),
+    Column("run_id", String, nullable=False),
+    Column("sampled_at", DateTime(timezone=True), nullable=False),
+    Column("active_workers", Integer, nullable=False),
+    Column("queued_trials", Integer, nullable=False),
+    Column("memory_bytes", Integer),
+    Column("thermal_state", String, nullable=False),
+    *common_columns(),
+)
+
 # Version 4 adds broker execution and live-readiness evidence. These records
 # remain parallel to the v3 intraday research tables: research evidence can
 # propose an intent, but only this ledger records external broker effects.
@@ -1063,6 +1180,13 @@ NATURAL_KEYS: dict[str, tuple[str, ...]] = {
         "mode",
         "audited_at",
     ),
+    "deep_research_runs": ("run_id",),
+    "deep_research_trials": ("run_id", "ordinal"),
+    "deep_research_fold_metrics": ("run_id", "ordinal", "fold_index"),
+    "deep_research_stress_metrics": ("run_id", "ordinal", "scenario"),
+    "deep_research_promotions": ("promotion_id",),
+    "deep_research_checkpoints": ("run_id", "next_ordinal", "generation"),
+    "deep_research_resource_samples": ("resource_sample_id",),
     "broker_sessions": ("session_id",),
     "broker_order_intents": ("intent_id",),
     "broker_orders": ("environment", "account_suffix", "broker_order_id"),
