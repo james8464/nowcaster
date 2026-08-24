@@ -25,3 +25,11 @@ def test_frozen_engine_initializes_multiprocessing_before_cli_dispatch() -> None
             calls.append(statement.value.func.id)
 
     assert calls[:2] == ["freeze_support", "app"]
+
+
+def test_engine_bundle_declares_dynamic_database_timezone_dependency() -> None:
+    build_script = Path(__file__).resolve().parents[2] / "scripts" / "build_engine_bundle.sh"
+    source = build_script.read_text(encoding="utf-8")
+
+    assert "--collect-submodules src.deep_research" in source
+    assert "--hidden-import pytz" in source

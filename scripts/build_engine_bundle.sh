@@ -19,6 +19,7 @@ rm -rf "$BUILD_ROOT"
 mkdir -p "$BUILD_ROOT"
 "$PYTHON" -m PyInstaller --clean --noconfirm --onefile --name nowcaster-engine \
   --collect-submodules src.deep_research \
+  --hidden-import pytz \
   --distpath "$DIST_ROOT" --workpath "$BUILD_ROOT/work" --specpath "$BUILD_ROOT" \
   "$PROJECT_ROOT/scripts/engine_entry.py"
 "$PYTHON" "$PROJECT_ROOT/scripts/engine_manifest.py" \
