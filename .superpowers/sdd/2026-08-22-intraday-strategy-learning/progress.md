@@ -148,3 +148,5 @@ Task 10: exceptional final fix wave 2 in progress (4 open; residual-review head 
 Task 10: exceptional final fix wave 2 (3 addressed, 1 open; commits f4f1dd3..7bed7bc): learning event timestamps, robustness receipts, and economic-cost fail-closed behavior are clean; the Make/CI parity gate still synchronizes the Swift fixture before comparing and can silently repair drift.
 Task 10: Ruling: run one narrowly scoped fixture-parity validation micro-fix within the user-authorized exceptional wave — the remaining defect is a direct incomplete implementation of the authorized fourth finding, and publishing with a self-healing CI gate would hide schema drift — cost if wrong: one additional focused implementation/re-review cycle and a small Make/CI workflow change before release.
 Task 10: exceptional fixture-parity micro-fix in progress (1 open; exceptional-wave-2 commit 7bed7bc).
+Task 10: exceptional fixture-parity micro-fix (1 addressed, 0 open; commits 7bed7bc..2cfc4fe).
+Task 10: final whole-branch review and all authorized exceptional fixes are clean; fresh release verification, native visual audit, merge, push, and remote confirmation in progress.
