@@ -239,7 +239,8 @@ def _scope(
 
 def _semantic_snapshot_payload(snapshot: Any) -> dict[str, Any]:
     payload = snapshot.model_dump(mode="json")
-    payload["metadata"].pop("generated_at", None)
+    for receipt_field in ("generated_at", "last_refresh", "git_commit"):
+        payload["metadata"].pop(receipt_field, None)
     return payload
 
 
