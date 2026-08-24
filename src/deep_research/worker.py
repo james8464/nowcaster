@@ -35,6 +35,9 @@ class WorkerResult:
     folds: tuple[WorkerFoldMetric, ...]
     fitness: float
     thread_limit: str
+    gross_returns: tuple[float, ...]
+    costs: tuple[float, ...]
+    trade_count: int
 
 
 def _fold_metric(values: tuple[float, ...]) -> WorkerFoldMetric:
@@ -55,7 +58,20 @@ def evaluate_candidate_work(work, attempt_number: int) -> WorkerResult:
         time.sleep(work.delay_seconds)
     if attempt_number <= work.failures_before_success:
         raise RuntimeError(f"injected worker failure {attempt_number}")
-    folds = tuple(_fold_metric(tuple(values)) for values in work.fold_returns)
+    if work.evaluation_payload is not None:
+        from src.deep_research.evaluation import evaluate_candidate_payload
+
+        evaluated = evaluate_candidate_payload(work.evaluation_payload)
+        fold_returns = evaluated.fold_returns
+        gross_returns = evaluated.gross_returns
+        costs = evaluated.costs
+        trade_count = evaluated.trade_count
+    else:
+        fold_returns = work.fold_returns
+        gross_returns = work.gross_returns
+        costs = work.costs
+        trade_count = work.trade_count if work.trade_count is not None else len(gross_returns)
+    folds = tuple(_fold_metric(tuple(values)) for values in fold_returns)
     sharpes = np.asarray([fold.net_sharpe for fold in folds], dtype=float)
     drawdowns = np.asarray([fold.maximum_drawdown for fold in folds], dtype=float)
     fitness = float(np.median(sharpes) - np.median(drawdowns))
@@ -64,6 +80,9 @@ def evaluate_candidate_work(work, attempt_number: int) -> WorkerResult:
         folds=folds,
         fitness=fitness,
         thread_limit=os.environ.get("OMP_NUM_THREADS", ""),
+        gross_returns=tuple(gross_returns),
+        costs=tuple(costs),
+        trade_count=trade_count,
     )
 
 

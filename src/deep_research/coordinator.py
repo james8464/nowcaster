@@ -45,17 +45,24 @@ class CandidateWork:
     fold_returns: tuple[tuple[float, ...], ...]
     gross_returns: tuple[float, ...]
     costs: tuple[float, ...]
+    trade_count: int | None = None
+    evaluation_payload: Any | None = None
     failures_before_success: int = 0
     duplicate_of: int | None = None
     delay_seconds: float = 0.0
 
     def __post_init__(self) -> None:
-        if self.ordinal < 1 or len(self.candidate_hash) != 64 or not self.fold_returns:
-            raise ValueError("candidate work identity and folds are invalid")
+        if self.ordinal < 1 or len(self.candidate_hash) != 64:
+            raise ValueError("candidate work identity is invalid")
         if self.failures_before_success < 0 or self.delay_seconds < 0:
             raise ValueError("candidate work retry and delay values cannot be negative")
-        if len(self.gross_returns) != len(self.costs) or not self.gross_returns:
-            raise ValueError("candidate work requires aligned research returns and costs")
+        precomputed = (
+            bool(self.gross_returns) and len(self.gross_returns) == len(self.costs) and bool(self.fold_returns)
+        )
+        if not precomputed and self.evaluation_payload is None and self.duplicate_of is None:
+            raise ValueError("candidate work requires precomputed returns or a typed evaluation payload")
+        if self.trade_count is not None and self.trade_count < 0:
+            raise ValueError("candidate work trade_count cannot be negative")
 
 
 @dataclass(frozen=True, slots=True)
@@ -227,8 +234,8 @@ class DeepResearchCoordinator:
             best_work = work_by_ordinal[best_ordinal]
             best_hash = best_work.candidate_hash
             stress = evaluate_stress_matrix(
-                list(best_work.gross_returns),
-                list(best_work.costs),
+                list(best_result.gross_returns),
+                list(best_result.costs),
                 seed=self.protocol.seed,
                 liquidity_observed=bool(best_work.definition.get("liquidity_observed", False)),
             )
@@ -284,7 +291,7 @@ class DeepResearchCoordinator:
         )
 
     def _promotion(self, work, result, all_results, stress, sealed_returns):
-        net = np.asarray(work.gross_returns, dtype=float) - np.asarray(work.costs, dtype=float)
+        net = np.asarray(result.gross_returns, dtype=float) - np.asarray(result.costs, dtype=float)
         sealed = np.asarray(sealed_returns, dtype=float)
         trial_sharpes = [item.fitness for item in all_results.values()]
         if len(trial_sharpes) >= 2 and len(net) >= 3:
@@ -315,7 +322,7 @@ class DeepResearchCoordinator:
         doubled = stress.by_name("doubled_costs")
         return evaluate_research_promotion(
             ReliabilityEvidence(
-                trade_count=len(net),
+                trade_count=result.trade_count,
                 fold_net_returns=tuple(fold.net_return for fold in result.folds),
                 fold_net_sharpes=tuple(fold.net_sharpe for fold in result.folds),
                 doubled_cost_return=doubled.cumulative_return,

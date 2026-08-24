@@ -1,0 +1,6 @@
+default_cycle_budget: 100
+maximum_workers: 256
+crypto_fee_bps: 10.0
+equity_fee_bps: 0.0
+half_spread_bps: 2.0
+slippage_bps: 5.0

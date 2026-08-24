@@ -5,7 +5,7 @@ import math
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import ExitStack
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
@@ -20,11 +20,18 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 
 from src.app_snapshot.builder import build_app_snapshot
 from src.app_snapshot.writer import write_snapshot_atomic
+from src.backtest.costs import CostAssumptions
 from src.backtest.execution import ExecutionAssumptions
 from src.backtest.intraday import RiskLimits, run_intraday_backtest
 from src.config.settings import Settings
 from src.database.engine import Database
 from src.database.schema import NATURAL_KEYS, TABLES, causal_audits, dataset_coverage_requests, strategy_runs
+from src.deep_research.candidates import CandidateSearchSpace, generate_candidates
+from src.deep_research.contracts import ResearchProtocol
+from src.deep_research.control import ResearchControl
+from src.deep_research.coordinator import CandidateWork, DeepResearchCoordinator
+from src.deep_research.evaluation import CandidateEvaluationPayload, evaluate_candidate_payload
+from src.deep_research.repository import DeepResearchRepository
 from src.ingestion.alpaca_bars import AlpacaBarProvider
 from src.ingestion.bars import INTERVAL_DURATION, BarProvider, BarQuery, BarRequest
 from src.ingestion.binance_bars import BinanceBarProvider
@@ -56,6 +63,7 @@ from src.strategies.validation import (
     select_final_boundary,
     validation_policy_hash,
 )
+from src.utils.provenance import git_commit
 
 
 class BarProviderName(StrEnum):
@@ -163,6 +171,31 @@ class LearningOptions(BaseModel):
     force: bool = False
 
 
+class DeepResearchOptions(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    scope: StrategyScope
+    workers: int = Field(ge=1, le=256)
+    evaluation_budget: int | None = Field(default=100, ge=1, le=100_000)
+    continuous: bool = False
+    time_budget_seconds: int | None = Field(default=None, ge=1)
+    seed: int = 42
+    control_directory: Path
+    control_nonce: str = Field(min_length=32, max_length=256)
+    run_id: str | None = None
+    resume_run_id: str | None = None
+
+    @model_validator(mode="after")
+    def coherent_budget(self) -> DeepResearchOptions:
+        if self.continuous and self.evaluation_budget is not None:
+            raise ValueError("continuous research cannot set an evaluation budget")
+        if not self.continuous and self.evaluation_budget is None:
+            raise ValueError("bounded research requires an evaluation budget")
+        if self.resume_run_id is not None and self.run_id is not None:
+            raise ValueError("resume_run_id and run_id are mutually exclusive")
+        return self
+
+
 class ExportOptions(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -209,6 +242,7 @@ class StageOutcome:
     strategy_run_id: str | None = None
     strategy_run_ids: tuple[str, ...] = ()
     learning_run_id: str | None = None
+    deep_research_run_id: str | None = None
     evaluated_candidates: int = 0
     snapshot_path: Path | None = None
     report_path: Path | None = None
@@ -737,6 +771,194 @@ class StrategyPipeline:
                 learning_run_id=result.learning_run_id,
                 evaluated_candidates=result.trial_count,
             )
+
+    def deep_research(self, options: DeepResearchOptions, emit: EventSink | None = None) -> StageOutcome:
+        registered = self._registered(options.scope)
+        if options.workers > self._settings.deep_research.maximum_workers:
+            raise ValueError("workers exceed the configured deep research maximum")
+        snapshot, unavailable = self._capture_research_snapshot(options.scope)
+        if snapshot is None:
+            return StageOutcome("unavailable", unavailable or "authenticated coverage is unavailable")
+        budget = options.evaluation_budget or self._settings.deep_research.default_cycle_budget
+        learning_options = LearningOptions(
+            scope=options.scope,
+            evaluation_budget=min(budget, 100),
+            seed=options.seed,
+        )
+        experiment, development = self._learning_experiment(
+            learning_options,
+            registered,
+            snapshot.manifest,
+            snapshot.causal_bars,
+            self._raw_final_boundary(snapshot.causal_bars),
+        )
+        final_start = experiment.sealed_final_start
+        duration = INTERVAL_DURATION[options.scope.interval]
+        fold_ranges = tuple(
+            (
+                _utc_datetime(development.iloc[min(fold.validation_index)]["decision_timestamp"]),
+                _utc_datetime(development.iloc[max(fold.validation_index)]["decision_timestamp"]) + duration,
+            )
+            for fold in experiment.inner_folds
+        )
+        development_signal_bars = snapshot.signal_bars.loc[
+            pd.to_datetime(snapshot.signal_bars["close_timestamp"], utc=True) < final_start
+        ].copy()
+        development_causal_bars = snapshot.causal_bars.loc[
+            pd.to_datetime(snapshot.causal_bars["close_timestamp"], utc=True) < final_start
+        ].copy()
+
+        assumptions = self._deep_research_assumptions(options.scope.provider)
+        risk = RiskLimits(initial_cash=100_000, periods_per_year=_periods_per_year(options.scope.interval))
+        search_space = CandidateSearchSpace(
+            strategy_id=registered.spec.strategy_id,
+            base_parameters=dict(registered.spec.parameters),
+            parameter_grid=_deep_parameter_grid(dict(registered.spec.parameters)),
+            seed_rules=experiment.seed_rules,
+            indicators=experiment.indicators,
+            thresholds=experiment.thresholds,
+            maximum_lag=experiment.maximum_lag,
+            max_depth=experiment.max_depth,
+            max_nodes=experiment.max_nodes,
+        )
+        generated = generate_candidates(search_space, count=budget, seed=options.seed)
+        work: list[CandidateWork] = []
+        for attempt in generated:
+            payload = None
+            if attempt.duplicate_of is None:
+                payload = CandidateEvaluationPayload(
+                    candidate=attempt.candidate,
+                    base_spec_payload=registered.spec.model_dump(mode="json"),
+                    signal_bars=development_signal_bars,
+                    causal_bars=development_causal_bars,
+                    provider=options.scope.provider.value,
+                    feed=options.scope.feed,
+                    symbol=options.scope.symbol,
+                    evaluation_start=_utc_datetime(development.iloc[0]["decision_timestamp"]),
+                    evaluation_end=final_start,
+                    fold_ranges=fold_ranges,
+                    execution_assumptions=assumptions,
+                    risk_limits=risk,
+                )
+            work.append(
+                CandidateWork(
+                    ordinal=attempt.ordinal,
+                    candidate_hash=attempt.candidate.identity,
+                    definition={**attempt.candidate.payload(), "liquidity_observed": False},
+                    fold_returns=(),
+                    gross_returns=(),
+                    costs=(),
+                    duplicate_of=attempt.duplicate_of,
+                    evaluation_payload=payload,
+                )
+            )
+
+        search_hash = canonical_hash(
+            {
+                "strategy": registered.spec.definition_hash,
+                "indicators": search_space.indicators,
+                "thresholds": search_space.thresholds,
+                "parameter_grid": dict(search_space.parameter_grid),
+                "grammar": (search_space.maximum_lag, search_space.max_depth, search_space.max_nodes),
+            }
+        )
+        try:
+            commit = git_commit(self._settings.project_root)
+        except Exception:
+            commit = "unavailable"
+        started_at = self._run_timestamp()
+        protocol = ResearchProtocol(
+            dataset_hash=snapshot.manifest.dataset_hash,
+            code_hash=canonical_hash({"git_commit": commit}),
+            search_space_hash=search_hash,
+            cost_policy_hash=canonical_hash(_execution_assumptions_record(assumptions)),
+            symbol=options.scope.symbol,
+            provider=options.scope.provider.value,
+            feed=options.scope.feed,
+            interval=options.scope.interval.value,
+            seed=options.seed,
+            workers=options.workers,
+            trial_budget=None if options.continuous else budget,
+            continuous=options.continuous,
+            cycle_budget=budget,
+            final_test_start=final_start,
+            created_at=started_at,
+        )
+        run_id = options.run_id or f"deep-{canonical_hash([protocol.identity, started_at])[:24]}"
+        control = ResearchControl(options.control_directory, run_id=run_id, nonce=options.control_nonce)
+        control.initialize()
+
+        def sealed_evaluator(selected: CandidateWork) -> tuple[float, ...]:
+            source = selected.evaluation_payload
+            if not isinstance(source, CandidateEvaluationPayload):
+                raise ValueError("selected candidate has no typed evaluation payload")
+            last_close = _utc_datetime(snapshot.causal_bars["close_timestamp"].max()) + duration
+            payload = replace(
+                source,
+                signal_bars=snapshot.signal_bars.copy(deep=True),
+                causal_bars=snapshot.causal_bars.copy(deep=True),
+                evaluation_start=final_start,
+                evaluation_end=last_close,
+                fold_ranges=((final_start, last_close),),
+            )
+            evidence = evaluate_candidate_payload(payload)
+            return tuple(gross - cost for gross, cost in zip(evidence.gross_returns, evidence.costs, strict=True))
+
+        def coordinator_event(event: dict[str, Any]) -> None:
+            self._emit(
+                emit,
+                "progress",
+                "deep_research",
+                float(event.get("progress", 0.0)),
+                str(event.get("message", "deep research running")),
+            )
+
+        coordinator = DeepResearchCoordinator(
+            run_id=run_id,
+            protocol=protocol,
+            repository=DeepResearchRepository(self.database, clock=self.clock),
+            control=control,
+            sealed_evaluator=sealed_evaluator,
+            emit=coordinator_event,
+            clock=self.clock,
+        )
+        outcome = coordinator.run(tuple(work))
+        message = outcome.promotion_outcome.replace("_", " ")
+        self._emit(emit, "progress", "deep_research", 1.0, message)
+        return StageOutcome(
+            "completed",
+            message,
+            dataset_hash=snapshot.manifest.dataset_hash,
+            deep_research_run_id=run_id,
+            evaluated_candidates=outcome.evaluated_attempts,
+        )
+
+    def _deep_research_assumptions(self, provider: BarProviderName) -> ExecutionAssumptions:
+        configured = self.execution_assumptions
+        costs = configured.costs
+        if all(
+            value == 0
+            for value in (
+                costs.maker_fee_bps,
+                costs.taker_fee_bps,
+                costs.commission_per_unit,
+                costs.half_spread_bps,
+                costs.slippage_bps,
+                costs.funding_bps_per_period,
+                costs.borrow_bps_per_period,
+            )
+        ):
+            fee = (
+                self._settings.deep_research.crypto_fee_bps
+                if provider is BarProviderName.BINANCE
+                else self._settings.deep_research.equity_fee_bps
+            )
+            costs = CostAssumptions(
+                taker_fee_bps=fee,
+                half_spread_bps=self._settings.deep_research.half_spread_bps,
+                slippage_bps=self._settings.deep_research.slippage_bps,
+            )
+        return replace(configured, costs=costs)
 
     def export(self, options: ExportOptions, emit: EventSink | None = None) -> StageOutcome:
         settings = self._settings
@@ -2118,6 +2340,24 @@ def create_strategy_pipeline(
         provider_unavailable=unavailable,
         ensemble_config=ensemble_config,
     ).bind_settings(settings)
+
+
+def _deep_parameter_grid(parameters: Mapping[str, Any]) -> dict[str, tuple[Any, ...]]:
+    """Create conservative neighboring values without inventing parameter names."""
+
+    grid: dict[str, tuple[Any, ...]] = {}
+    for name, value in sorted(parameters.items()):
+        if isinstance(value, (bool, str)):
+            grid[name] = (value,)
+        elif isinstance(value, int):
+            lower = max(1, int(round(value * 0.75)))
+            upper = max(lower + 1, int(round(value * 1.25)))
+            grid[name] = tuple(dict.fromkeys((lower, value, upper)))
+        elif isinstance(value, float) and math.isfinite(value):
+            grid[name] = tuple(dict.fromkeys((value * 0.75, value, value * 1.25)))
+        else:
+            raise ValueError(f"unsupported deep research parameter: {name}")
+    return grid
 
 
 def _selected_registry(registered: Sequence[RegisteredStrategy]) -> StrategyRegistry:

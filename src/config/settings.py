@@ -185,6 +185,19 @@ class TradingConfig(BaseModel):
         return self
 
 
+class DeepResearchConfig(BaseModel):
+    """Conservative local-search defaults; UI and CLI may only tighten bounded values."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    default_cycle_budget: int = Field(default=100, ge=4, le=100_000)
+    maximum_workers: int = Field(default=256, ge=1, le=256)
+    crypto_fee_bps: float = Field(default=10.0, ge=0)
+    equity_fee_bps: float = Field(default=0.0, ge=0)
+    half_spread_bps: float = Field(default=2.0, ge=0)
+    slippage_bps: float = Field(default=5.0, ge=0)
+
+
 class Settings(BaseModel):
     project_root: Path
     mode: Literal["live", "demo", "test"] = "live"
@@ -199,6 +212,7 @@ class Settings(BaseModel):
     instruments: InstrumentsConfig = InstrumentsConfig()
     strategies: StrategiesConfig = StrategiesConfig()
     trading: TradingConfig = TradingConfig()
+    deep_research: DeepResearchConfig = DeepResearchConfig()
 
     @classmethod
     def load(cls, project_root: Path | None = None, *, mode: str | None = None) -> Settings:
@@ -228,6 +242,7 @@ class Settings(BaseModel):
             instruments=InstrumentsConfig.model_validate(read_yaml("instruments.yaml", required=False)),
             strategies=StrategiesConfig.model_validate(read_yaml("strategies.yaml", required=False)),
             trading=TradingConfig.model_validate(read_yaml("trading.yaml", required=False)),
+            deep_research=DeepResearchConfig.model_validate(read_yaml("deep_research.yaml", required=False)),
         )
 
     def config_hash_payload(self) -> dict[str, Any]:

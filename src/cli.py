@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import secrets
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -16,6 +18,7 @@ from src.reporting.research_report import generate_research_report
 from src.research import run_full_strategy_research
 from src.strategies.pipeline import (
     BarProviderName,
+    DeepResearchOptions,
     EvaluationOptions,
     ExportOptions,
     IngestOptions,
@@ -428,6 +431,55 @@ def strategy_learn(
         return pipeline.learn(options, emit)
 
     _run_strategy_stage("learn", execute)
+
+
+@strategy_app.command("deep-research")
+def strategy_deep_research(
+    project_root: Annotated[Path, typer.Option(exists=True, file_okay=False)] = DEFAULT_PROJECT_ROOT,
+    database_url: Annotated[str | None, typer.Option()] = None,
+    strategy_id: Annotated[list[str] | None, typer.Option()] = None,
+    provider: Annotated[str, typer.Option()] = BarProviderName.BINANCE.value,
+    feed: Annotated[str, typer.Option()] = "spot",
+    symbol: Annotated[str, typer.Option()] = "BTCUSDT",
+    interval: Annotated[str, typer.Option()] = BarInterval.FIVE_MINUTES.value,
+    csv_path: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
+    workers: Annotated[int, typer.Option(min=1)] = max(1, os.cpu_count() or 1),
+    evaluation_budget: Annotated[int | None, typer.Option(min=1, max=100_000)] = None,
+    continuous: Annotated[bool, typer.Option()] = False,
+    time_budget_seconds: Annotated[int | None, typer.Option(min=1)] = None,
+    seed: Annotated[int, typer.Option()] = 42,
+    control_directory: Annotated[Path | None, typer.Option(file_okay=False)] = None,
+    control_nonce: Annotated[str | None, typer.Option(hidden=True)] = None,
+    run_id: Annotated[str | None, typer.Option()] = None,
+    resume_run_id: Annotated[str | None, typer.Option()] = None,
+) -> None:
+    """Search local authenticated history for robust research-only challengers."""
+
+    def execute(emit: Callable[[PipelineEvent], None]) -> StageOutcome:
+        pipeline = _strategy_pipeline(project_root, database_url, csv_path)
+        selected_control_directory = control_directory or project_root / "data" / "deep-research-control"
+        options = DeepResearchOptions(
+            scope=_strategy_scope(
+                strategy_id,
+                provider,
+                feed,
+                symbol,
+                interval,
+                StrategyMode.WALK_FORWARD_LEARNING.value,
+            ),
+            workers=workers,
+            evaluation_budget=None if continuous else evaluation_budget or 100,
+            continuous=continuous,
+            time_budget_seconds=time_budget_seconds,
+            seed=seed,
+            control_directory=selected_control_directory,
+            control_nonce=control_nonce or secrets.token_hex(32),
+            run_id=run_id,
+            resume_run_id=resume_run_id,
+        )
+        return pipeline.deep_research(options, emit)
+
+    _run_strategy_stage("deep_research", execute)
 
 
 @strategy_app.command("export")
