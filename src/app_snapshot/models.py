@@ -351,8 +351,84 @@ class CausalAuditSnapshot(SnapshotModel):
     no_repaint_badge: Literal["passed", "failed"]
 
 
+class BrokerStatusSnapshot(SnapshotModel):
+    environment: Literal["research", "shadow", "paper", "live"] = "research"
+    state: str = "live_locked"
+    account_suffix: str | None = None
+    session_status: str = "not_started"
+    reconciled_at: UTCInstant | None = None
+    unresolved_mismatches: int = Field(default=0, ge=0)
+
+
+class BrokerPositionSnapshot(SnapshotModel):
+    symbol: str
+    quantity: float
+    market_value: float
+    unrealized_pnl: float
+    received_at: UTCInstant
+
+
+class BrokerOrderSnapshot(SnapshotModel):
+    client_order_id: str
+    symbol: str
+    side: str
+    quantity: float
+    filled_quantity: float
+    limit_price: float
+    status: str
+    updated_at: UTCInstant
+
+
+class BrokerEventSnapshot(SnapshotModel):
+    event_id: str
+    client_order_id: str
+    event: str
+    known_event: bool
+    status: str
+    received_at: UTCInstant
+
+
+class RiskStatusSnapshot(SnapshotModel):
+    state: str = "not_evaluated"
+    allowed: bool = False
+    reasons: list[str] = Field(default_factory=lambda: ["live_locked"])
+    utilization: dict[str, str | int] = Field(default_factory=dict)
+    decided_at: UTCInstant | None = None
+
+
+class ReadinessGateSnapshot(SnapshotModel):
+    name: str
+    passed: bool
+    detail: str
+
+
+class ForwardReadinessSnapshot(SnapshotModel):
+    state: Literal["live_locked", "eligible", "armed"] = "live_locked"
+    cohort_hash: str | None = None
+    observed_periods: int = Field(default=0, ge=0)
+    closed_trades: int = Field(default=0, ge=0)
+    receipt_expires_at: UTCInstant | None = None
+    gates: list[ReadinessGateSnapshot] = Field(
+        default_factory=lambda: [
+            ReadinessGateSnapshot(
+                name="external_forward_evidence",
+                passed=False,
+                detail="Paper evidence and external release conditions are not yet complete.",
+            )
+        ],
+        max_length=50,
+    )
+
+
+class EmergencyStatusSnapshot(SnapshotModel):
+    frozen: bool = False
+    flatten_state: str = "not_requested"
+    reason: str | None = None
+    observed_at: UTCInstant | None = None
+
+
 class AppSnapshot(SnapshotModel):
-    schema_version: Literal[2] = 2
+    schema_version: Literal[3] = 3
     metadata: SnapshotMetadata
     overview: OverviewSnapshot = Field(default_factory=OverviewSnapshot)
     instruments: list[InstrumentSnapshot] = Field(default_factory=list)
@@ -367,3 +443,10 @@ class AppSnapshot(SnapshotModel):
     dataset_coverage: list[DatasetCoverageSnapshot] = Field(default_factory=list)
     learning_runs: list[LearningRunSnapshot] = Field(default_factory=list)
     causal_audits: list[CausalAuditSnapshot] = Field(default_factory=list)
+    broker_status: BrokerStatusSnapshot = Field(default_factory=BrokerStatusSnapshot)
+    broker_positions: list[BrokerPositionSnapshot] = Field(default_factory=list, max_length=100)
+    broker_orders: list[BrokerOrderSnapshot] = Field(default_factory=list, max_length=100)
+    broker_events: list[BrokerEventSnapshot] = Field(default_factory=list, max_length=200)
+    risk_status: RiskStatusSnapshot = Field(default_factory=RiskStatusSnapshot)
+    forward_readiness: ForwardReadinessSnapshot = Field(default_factory=ForwardReadinessSnapshot)
+    emergency_status: EmergencyStatusSnapshot = Field(default_factory=EmergencyStatusSnapshot)

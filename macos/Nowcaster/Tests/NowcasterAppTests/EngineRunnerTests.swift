@@ -4,6 +4,26 @@ import Darwin
 
 @testable import NowcasterApp
 
+@Test func brokerSecretsAreConsumedForEnvironmentAndRedactedFromDiagnostics() throws {
+    let secret = "never-display-this-secret"
+    let environment = EngineSecretEnvironment(
+        credentials: BrokerCredentials(keyID: "paper-key", secret: secret),
+        environment: .paper
+    )
+    let values = environment.consume()
+    #expect(values["APCA_API_KEY_ID"] == "paper-key")
+    #expect(values["APCA_API_SECRET_KEY"] == secret)
+    #expect(environment.isCleared)
+    #expect(environment.consume().isEmpty)
+
+    var decoder = EngineOutputDecoder(redactedValues: Array(values.values))
+    _ = decoder.append(Data("broker said \(secret) and paper-key\n".utf8))
+    let rendered = decoder.diagnostics.joined()
+    #expect(!rendered.contains(secret))
+    #expect(!rendered.contains("paper-key"))
+    #expect(rendered.contains("[REDACTED]"))
+}
+
 private let fixtureConfiguration = EngineConfiguration(
     projectRoot: URL(fileURLWithPath: "/tmp/Nowcaster Project"),
     pythonExecutable: URL(fileURLWithPath: "/usr/bin/python3"),

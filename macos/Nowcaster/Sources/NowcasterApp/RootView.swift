@@ -154,6 +154,7 @@ struct RootView: View {
             Section {
                 destinationRow(.dataQuality)
                 destinationRow(.pipelineRuns)
+                destinationRow(.executionCenter)
             } header: {
                 sidebarSectionHeader("System")
             }
@@ -194,6 +195,8 @@ struct RootView: View {
                 DataQualityView(snapshot: snapshot)
             case .pipelineRuns:
                 PipelineRunsView(model: model, settings: settings, snapshot: snapshot)
+            case .executionCenter:
+                ExecutionCenterView(snapshot: snapshot)
             }
         } else {
             switch model.loadState {

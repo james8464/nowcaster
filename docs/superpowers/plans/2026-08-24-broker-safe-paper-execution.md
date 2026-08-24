@@ -84,7 +84,7 @@ git add src/trading src/config/settings.py config/trading.yaml tests/unit/test_t
 git commit -m "feat: define broker-safe trading contracts"
 ```
 
-### Task 2: Schema v3 and append-only trading repository
+### Task 2: Schema v4 and append-only trading repository
 
 **Files:**
 - Modify: `src/database/schema.py`
@@ -97,7 +97,7 @@ git commit -m "feat: define broker-safe trading contracts"
 - Consumes: Task 1 DTOs.
 - Produces: `TradingRepository.start_session`, `record_intent`, `record_submission`, `record_event`, `record_account_snapshot`, `record_position_snapshot`, `record_reconciliation`, `finish_session`, and read projections used by later tasks.
 
-- [ ] **Step 1: Write failing migration/repository tests** that initialize an existing v2 database, apply v3 idempotently, persist a complete paper lifecycle, deduplicate the same event, reject a conflicting duplicate, and prove no table has a secret-bearing column.
+- [ ] **Step 1: Write failing migration/repository tests** that initialize an existing v3 database, apply v4 idempotently, persist a complete paper lifecycle, deduplicate the same event, reject a conflicting duplicate, and prove no table has a secret-bearing column.
 
 ```python
 def test_trade_event_is_idempotent_but_conflicting_payload_fails(database: Database) -> None:

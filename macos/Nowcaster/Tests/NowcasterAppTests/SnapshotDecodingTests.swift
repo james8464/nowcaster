@@ -6,7 +6,7 @@ import Testing
 private let completeV2Payload = Data(
     """
     {
-      "schema_version": 2,
+      "schema_version": 3,
       "metadata": {
         "generated_at": "2026-08-22T12:34:56.123456Z",
         "git_commit": "abc123",
@@ -169,7 +169,7 @@ private let completeV2Payload = Data(
         )
     )
     let snapshot = try JSONDecoder.nowcaster.decode(NowcasterSnapshot.self, from: Data(contentsOf: url))
-    #expect(snapshot.schemaVersion == 2)
+    #expect(snapshot.schemaVersion == 3)
     #expect(snapshot.instruments.contains { $0.assetClass == .crypto })
     #expect(snapshot.backtests.contains { $0.assetClass == .crypto })
     #expect(!snapshot.strategies.isEmpty)
@@ -214,7 +214,7 @@ private let completeV2Payload = Data(
 @Test func repositoryAcceptsOnlySchemaV2() async throws {
     let repository = SnapshotRepository()
     let snapshot = try await repository.load(data: completeV2Payload)
-    #expect(snapshot.schemaVersion == 2)
+    #expect(snapshot.schemaVersion == 3)
 
     await #expect(throws: SnapshotRepositoryError.incompatibleSchema(1)) {
         try await repository.load(data: Data("{\"schema_version\":1}".utf8))
@@ -224,7 +224,7 @@ private let completeV2Payload = Data(
 @Test func repositoryRejectsMalformedSchemaV2() async {
     let malformed = Data(
         """
-        {"schema_version":2,"metadata":{"generated_at":"not-a-date"}}
+        {"schema_version":3,"metadata":{"generated_at":"not-a-date"}}
         """.utf8
     )
     await #expect(throws: SnapshotRepositoryError.self) {

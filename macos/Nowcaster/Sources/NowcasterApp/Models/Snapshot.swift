@@ -142,6 +142,95 @@ struct NowcasterSnapshot: Decodable, Sendable {
     let datasetCoverage: [DatasetCoverageSnapshot]
     let learningRuns: [LearningRunSnapshot]
     let causalAudits: [CausalAuditSnapshot]
+    let brokerStatus: BrokerStatusSnapshot?
+    let brokerPositions: [BrokerPositionSnapshot]?
+    let brokerOrders: [BrokerOrderSnapshot]?
+    let brokerEvents: [BrokerEventSnapshot]?
+    let riskStatus: RiskStatusSnapshot?
+    let forwardReadiness: ForwardReadinessSnapshot?
+    let emergencyStatus: EmergencyStatusSnapshot?
+}
+
+struct BrokerStatusSnapshot: Decodable, Sendable {
+    let environment: String
+    let state: String
+    let accountSuffix: String?
+    let sessionStatus: String
+    let reconciledAt: Date?
+    let unresolvedMismatches: Int
+}
+
+struct BrokerPositionSnapshot: Decodable, Identifiable, Sendable {
+    let symbol: String
+    let quantity: Double
+    let marketValue: Double
+    let unrealizedPnl: Double
+    let receivedAt: Date
+    var id: String { symbol }
+}
+
+struct BrokerOrderSnapshot: Decodable, Identifiable, Sendable {
+    let clientOrderId: String
+    let symbol: String
+    let side: String
+    let quantity: Double
+    let filledQuantity: Double
+    let limitPrice: Double
+    let status: String
+    let updatedAt: Date
+    var id: String { clientOrderId }
+}
+
+struct BrokerEventSnapshot: Decodable, Identifiable, Sendable {
+    let eventId: String
+    let clientOrderId: String
+    let event: String
+    let knownEvent: Bool
+    let status: String
+    let receivedAt: Date
+    var id: String { eventId }
+}
+
+struct RiskStatusSnapshot: Decodable, Sendable {
+    let state: String
+    let allowed: Bool
+    let reasons: [String]
+    let utilization: [String: StringOrInt]
+    let decidedAt: Date?
+}
+
+enum StringOrInt: Decodable, Sendable {
+    case string(String)
+    case integer(Int)
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let value = try? container.decode(Int.self) { self = .integer(value) }
+        else { self = .string(try container.decode(String.self)) }
+    }
+}
+
+struct ReadinessGateSnapshot: Decodable, Identifiable, Sendable {
+    let name: String
+    let passed: Bool
+    let detail: String
+    var id: String { name }
+}
+
+struct ForwardReadinessSnapshot: Decodable, Sendable {
+    let state: String
+    let cohortHash: String?
+    let observedPeriods: Int
+    let closedTrades: Int
+    let receiptExpiresAt: Date?
+    let gates: [ReadinessGateSnapshot]
+}
+
+struct EmergencyStatusSnapshot: Decodable, Sendable {
+    let frozen: Bool
+    let flattenState: String
+    let reason: String?
+    let observedAt: Date?
 }
 
 struct SnapshotMetadata: Decodable, Sendable {
@@ -543,8 +632,16 @@ struct CausalAuditSnapshot: Decodable, Identifiable, Sendable {
 }
 
 extension NowcasterSnapshot {
-    func validateSchemaV2() throws {
-        guard schemaVersion == 2 else { throw SnapshotValidationError.unsupportedSchema(schemaVersion) }
+    func validateSchemaV3() throws {
+        guard schemaVersion == 3 else { throw SnapshotValidationError.unsupportedSchema(schemaVersion) }
+        guard (brokerPositions?.count ?? 0) <= 100,
+              (brokerOrders?.count ?? 0) <= 100,
+              (brokerEvents?.count ?? 0) <= 200,
+              (forwardReadiness?.gates.count ?? 0) <= 50,
+              (brokerStatus?.unresolvedMismatches ?? 0) >= 0,
+              (forwardReadiness?.observedPeriods ?? 0) >= 0,
+              (forwardReadiness?.closedTrades ?? 0) >= 0
+        else { throw SnapshotValidationError.invalidResearchEvidence("execution bounds") }
         guard strategies.allSatisfy({
             $0.weight >= 0 && (0 ... 1).contains($0.progress) && $0.generation >= 1 && ($0.complexity ?? 0) >= 0
         }) else { throw SnapshotValidationError.invalidResearchEvidence("strategy bounds") }

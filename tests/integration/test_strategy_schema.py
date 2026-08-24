@@ -77,7 +77,7 @@ def test_fresh_database_initialization_creates_timestamped_strategy_tables(tmp_p
     database.initialize()
 
     _assert_timestamped_strategy_schema(database)
-    assert database.schema_version() == 3
+    assert database.schema_version() == 4
 
 
 def test_legacy_database_migrates_idempotently_without_altering_daily_table(tmp_path):
@@ -90,8 +90,8 @@ def test_legacy_database_migrates_idempotently_without_altering_daily_table(tmp_
 
     _assert_timestamped_strategy_schema(database)
     assert "legacy_daily_prices" in database.table_names()
-    assert database.schema_version() == 3
-    assert database.scalar("SELECT count(*) FROM schema_versions WHERE version = 3") == 1
+    assert database.schema_version() == 4
+    assert database.scalar("SELECT count(*) FROM schema_versions WHERE version = 4") == 1
 
 
 def test_v2_market_bar_table_migrates_observation_provenance_idempotently(tmp_path) -> None:
@@ -100,7 +100,7 @@ def test_v2_market_bar_table_migrates_observation_provenance_idempotently(tmp_pa
     with database.engine.begin() as connection:
         connection.execute(text("DROP TABLE market_bars CASCADE"))
         connection.execute(text("CREATE TABLE market_bars (available_at TIMESTAMPTZ, created_at TIMESTAMPTZ)"))
-        connection.execute(text("DELETE FROM schema_versions WHERE version = 3"))
+        connection.execute(text("DELETE FROM schema_versions WHERE version = 4"))
         connection.execute(text("INSERT INTO schema_versions VALUES (2, CURRENT_TIMESTAMP)"))
 
     database.initialize()
@@ -108,7 +108,7 @@ def test_v2_market_bar_table_migrates_observation_provenance_idempotently(tmp_pa
 
     columns = {column["name"] for column in inspect(database.engine).get_columns("market_bars")}
     assert {"source_available_at", "observed_at", "vintage_fidelity"} <= columns
-    assert database.schema_version() == 3
+    assert database.schema_version() == 4
 
 
 def test_ensemble_weights_reject_negative_database_weights(tmp_path):

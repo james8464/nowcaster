@@ -151,7 +151,7 @@ def test_ci_research_accounts_for_every_strategy_and_is_reproducible(tmp_path: P
 
     snapshot = AppSnapshot.model_validate_json((first_dir / "nowcaster-snapshot.json").read_text(encoding="utf-8"))
     report = (first_dir / "strategy-research.md").read_text(encoding="utf-8")
-    assert snapshot.schema_version == 2
+    assert snapshot.schema_version == 3
     assert len(snapshot.strategies) == summary["snapshot_counts"]["strategies"]
     assert len(snapshot.ensemble_components) == summary["snapshot_counts"]["ensemble_components"]
     assert summary["semantic_snapshot_hash"] in report

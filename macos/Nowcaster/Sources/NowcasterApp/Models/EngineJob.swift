@@ -60,6 +60,7 @@ struct EngineConfiguration: Sendable {
     let mode: EngineMode
     let strategyIDs: [String]
     let strategyAsset: StrategyAssetContext?
+    let secretEnvironment: EngineSecretEnvironment?
 
     init(
         projectRoot: URL,
@@ -67,7 +68,8 @@ struct EngineConfiguration: Sendable {
         snapshotURL: URL,
         mode: EngineMode,
         strategyIDs: [String] = [],
-        strategyAsset: StrategyAssetContext? = nil
+        strategyAsset: StrategyAssetContext? = nil,
+        secretEnvironment: EngineSecretEnvironment? = nil
     ) {
         self.projectRoot = projectRoot
         self.pythonExecutable = pythonExecutable
@@ -75,6 +77,7 @@ struct EngineConfiguration: Sendable {
         self.mode = mode
         self.strategyIDs = strategyIDs
         self.strategyAsset = strategyAsset
+        self.secretEnvironment = secretEnvironment
     }
 
     func scoped(strategyIDs: [String], asset: StrategyAssetContext) -> EngineConfiguration {
@@ -84,9 +87,40 @@ struct EngineConfiguration: Sendable {
             snapshotURL: snapshotURL,
             mode: mode,
             strategyIDs: strategyIDs,
-            strategyAsset: asset
+            strategyAsset: asset,
+            secretEnvironment: secretEnvironment
         )
     }
+}
+
+final class EngineSecretEnvironment: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [String: String]?
+
+    init(credentials: BrokerCredentials, environment: BrokerCredentialEnvironment) {
+        switch environment {
+        case .paper:
+            values = [
+                "APCA_" + "API_KEY_ID": credentials.keyID,
+                "APCA_" + "API_SECRET_KEY": credentials.secret,
+            ]
+        case .live:
+            values = [
+                "APCA_LIVE_" + "API_KEY_ID": credentials.keyID,
+                "APCA_LIVE_" + "API_SECRET_KEY": credentials.secret,
+            ]
+        }
+    }
+
+    func consume() -> [String: String] {
+        lock.withLock {
+            let result = values ?? [:]
+            values = nil
+            return result
+        }
+    }
+
+    var isCleared: Bool { lock.withLock { values == nil } }
 }
 
 struct EngineInvocation: Sendable {

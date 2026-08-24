@@ -26,12 +26,111 @@ from src.strategies.pipeline import (
     create_strategy_pipeline,
 )
 from src.strategies.types import BarInterval, StrategyMode
+from src.trading.service import (
+    create_paper_supervisor,
+    create_shadow_supervisor,
+    paper_credentials_from_environment,
+    trading_status,
+)
 from src.utils.logging import configure_logging
 
 app = typer.Typer(help="Alternative-data earnings nowcasting research pipeline.", no_args_is_help=True)
 strategy_app = typer.Typer(help="Run scoped intraday strategy research stages.", no_args_is_help=True)
+trading_app = typer.Typer(help="Operate fail-closed shadow and Alpaca paper sessions.", no_args_is_help=True)
 app.add_typer(strategy_app, name="strategy")
+app.add_typer(trading_app, name="trading")
 DEFAULT_PROJECT_ROOT = Path.cwd()
+
+
+def _trading_settings(project_root: Path, database_url: str | None) -> Settings:
+    settings = Settings.load(project_root, mode="live")
+    if database_url:
+        settings = settings.model_copy(update={"database_url": database_url})
+    return settings
+
+
+@trading_app.command("paper")
+def trading_paper(
+    project_root: Annotated[Path, typer.Option(exists=True, file_okay=False)] = DEFAULT_PROJECT_ROOT,
+    database_url: Annotated[str | None, typer.Option()] = None,
+) -> None:
+    """Authenticate to the fixed Alpaca paper endpoint and reconcile once."""
+    try:
+        paper_credentials_from_environment()
+    except ValueError:
+        typer.echo(json.dumps({"event": "paper_error", "reason": "paper_credentials_required"}), err=True)
+        raise typer.Exit(code=1) from None
+    try:
+        settings = _trading_settings(project_root, database_url)
+        session_id = f"paper-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S%fZ')}"
+        supervisor = create_paper_supervisor(settings, session_id=session_id)
+        result = supervisor.start()
+        typer.echo(json.dumps({"event": "paper_checked", "status": result.status, "live": "locked"}, sort_keys=True))
+        supervisor.shutdown("check_complete")
+        if result.status != "matched":
+            raise typer.Exit(code=1)
+    except typer.Exit:
+        raise
+    except Exception as error:
+        typer.echo(json.dumps({"event": "paper_error", "error": type(error).__name__}), err=True)
+        raise typer.Exit(code=1) from None
+
+
+@trading_app.command("shadow")
+def trading_shadow(
+    project_root: Annotated[Path, typer.Option(exists=True, file_okay=False)] = DEFAULT_PROJECT_ROOT,
+    database_url: Annotated[str | None, typer.Option()] = None,
+) -> None:
+    """Run a local broker-shaped reconciliation with no external effects."""
+    settings = _trading_settings(project_root, database_url)
+    session_id = f"shadow-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S%fZ')}"
+    supervisor = create_shadow_supervisor(settings, session_id=session_id)
+    result = supervisor.start()
+    supervisor.shutdown("check_complete")
+    typer.echo(json.dumps({"event": "shadow_checked", "status": result.status, "live": "locked"}, sort_keys=True))
+
+
+@trading_app.command("status")
+def trading_status_command(
+    project_root: Annotated[Path, typer.Option(exists=True, file_okay=False)] = DEFAULT_PROJECT_ROOT,
+    database_url: Annotated[str | None, typer.Option()] = None,
+) -> None:
+    """Print a bounded, secret-free summary of the latest trading session."""
+    typer.echo(json.dumps(trading_status(_trading_settings(project_root, database_url)), sort_keys=True, default=str))
+
+
+@trading_app.command("reconcile")
+def trading_reconcile() -> None:
+    """Explain how reconciliation is requested from the owning session."""
+    typer.echo(json.dumps({"event": "reconcile_unavailable", "reason": "no_active_session_control_channel"}))
+    raise typer.Exit(code=1)
+
+
+@trading_app.command("freeze")
+def trading_freeze() -> None:
+    """Fail closed when no active supervised session control channel exists."""
+    typer.echo(json.dumps({"event": "freeze_unavailable", "reason": "no_active_session_control_channel"}))
+    raise typer.Exit(code=1)
+
+
+@trading_app.command("stop")
+def trading_stop() -> None:
+    """Fail closed when no active supervised session control channel exists."""
+    typer.echo(json.dumps({"event": "stop_unavailable", "reason": "no_active_session_control_channel"}))
+    raise typer.Exit(code=1)
+
+
+@trading_app.command("flatten")
+def trading_flatten(
+    account_suffix: Annotated[str, typer.Option(prompt=True, hide_input=False)],
+    confirmation: Annotated[str, typer.Option(prompt=True, hide_input=False)],
+) -> None:
+    """Validate destructive confirmation; the owning supervised session must execute it."""
+    if confirmation != f"FLATTEN {account_suffix}":
+        typer.echo(json.dumps({"event": "flatten_rejected", "reason": "exact_confirmation_required"}))
+        raise typer.Exit(code=1)
+    typer.echo(json.dumps({"event": "flatten_unavailable", "reason": "no_active_session_control_channel"}))
+    raise typer.Exit(code=1)
 
 
 @app.callback()

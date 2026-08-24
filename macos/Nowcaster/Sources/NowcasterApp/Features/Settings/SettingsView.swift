@@ -77,6 +77,7 @@ struct SettingsView: View {
             Section("Native snapshot") {
                 pathRow("Snapshot JSON", text: $settings.snapshotPath)
             }
+            BrokerCredentialsView(vault: BrokerCredentialVault())
             let issues = settings.validationIssues()
             if !issues.isEmpty {
                 Section("Configuration health") {
@@ -93,7 +94,7 @@ struct SettingsView: View {
                 }
             }
             Section {
-                Text("Nowcaster stores only these local paths and the selected mode. Provider credentials remain in your shell environment or .env file.")
+                Text("Nowcaster stores only these local paths and the selected mode in preferences. Broker credentials use Keychain.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }

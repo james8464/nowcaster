@@ -29,12 +29,14 @@ struct EngineOutputDecoder: Sendable {
     private var buffer = Data()
     private let maximumDiagnostics: Int
     private let maximumLineBytes: Int
+    private let redactedValues: [String]
     private(set) var diagnostics: [String] = []
     private(set) var emittedDiagnostics: [String] = []
 
-    init(maximumDiagnostics: Int = 20, maximumLineBytes: Int = 64 * 1_024) {
+    init(maximumDiagnostics: Int = 20, maximumLineBytes: Int = 64 * 1_024, redactedValues: [String] = []) {
         self.maximumDiagnostics = max(maximumDiagnostics, 1)
         self.maximumLineBytes = max(maximumLineBytes, 1_024)
+        self.redactedValues = redactedValues.filter { !$0.isEmpty }
     }
 
     mutating func append(_ data: Data) -> [EngineProgressEvent] {
@@ -62,8 +64,9 @@ struct EngineOutputDecoder: Sendable {
     }
 
     private mutating func process(_ data: Data) -> EngineProgressEvent? {
-        let line = String(decoding: data, as: UTF8.self)
+        var line = String(decoding: data, as: UTF8.self)
             .trimmingCharacters(in: .newlines)
+        for value in redactedValues { line = line.replacingOccurrences(of: value, with: "[REDACTED]") }
         guard !line.isEmpty else { return nil }
         if let event = try? EngineProgressEvent.parse(line) { return event }
         recordDiagnostic(line)
@@ -196,7 +199,10 @@ struct EngineRunner: EngineRunning, Sendable {
                 process.currentDirectoryURL = invocation.workingDirectoryURL
                 process.standardOutput = output
                 process.standardError = output
-                process.environment = ProcessInfo.processInfo.environment.merging(["PYTHONUNBUFFERED": "1"]) { _, new in new }
+                let brokerEnvironment = configuration.secretEnvironment?.consume() ?? [:]
+                process.environment = ProcessInfo.processInfo.environment
+                    .merging(["PYTHONUNBUFFERED": "1"]) { _, new in new }
+                    .merging(brokerEnvironment) { _, new in new }
                 await beforeLaunch()
                 do {
                     try holder.checkCancellation()
@@ -212,7 +218,7 @@ struct EngineRunner: EngineRunning, Sendable {
                 }
 
                 continuation.yield(EngineProgressEvent(event: "job_started", stage: job.stageName, progress: 0))
-                var decoder = EngineOutputDecoder()
+                var decoder = EngineOutputDecoder(redactedValues: Array(brokerEnvironment.values))
                 do {
                     while true {
                         let data = output.fileHandleForReading.availableData

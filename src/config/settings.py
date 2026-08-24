@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, field_validator, model_validator
 
 from src.strategies.types import StrategyFamily, StrategySpec
+from src.trading.risk import RiskPolicy
 
 ImmutableFamilyWeightCaps = Annotated[
     Mapping[StrategyFamily, float],
@@ -164,6 +165,26 @@ class StrategiesConfig(BaseModel):
         return tuple(spec for spec in self.strategies if spec.enabled)
 
 
+class TradingConfig(BaseModel):
+    """Fail-closed broker session configuration; live mode is introduced only by the gated pilot plan."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    paper_enabled: bool = True
+    live_enabled: bool = False
+    paper_base_url: Literal["https://paper-api.alpaca.markets"] = "https://paper-api.alpaca.markets"
+    paper_stream_url: Literal["wss://paper-api.alpaca.markets/stream"] = "wss://paper-api.alpaca.markets/stream"
+    reconciliation_interval_seconds: int = Field(default=30, ge=5, le=300)
+    market_data_stale_after_seconds: int = Field(default=30, ge=1, le=300)
+    risk: RiskPolicy = RiskPolicy()
+
+    @model_validator(mode="after")
+    def live_remains_locked(self) -> TradingConfig:
+        if self.live_enabled:
+            raise ValueError("live trading is unavailable until the gated live-pilot plan is complete")
+        return self
+
+
 class Settings(BaseModel):
     project_root: Path
     mode: Literal["live", "demo", "test"] = "live"
@@ -177,6 +198,7 @@ class Settings(BaseModel):
     features: FeatureConfig
     instruments: InstrumentsConfig = InstrumentsConfig()
     strategies: StrategiesConfig = StrategiesConfig()
+    trading: TradingConfig = TradingConfig()
 
     @classmethod
     def load(cls, project_root: Path | None = None, *, mode: str | None = None) -> Settings:
@@ -205,6 +227,7 @@ class Settings(BaseModel):
             features=FeatureConfig.model_validate(read_yaml("features.yaml")),
             instruments=InstrumentsConfig.model_validate(read_yaml("instruments.yaml", required=False)),
             strategies=StrategiesConfig.model_validate(read_yaml("strategies.yaml", required=False)),
+            trading=TradingConfig.model_validate(read_yaml("trading.yaml", required=False)),
         )
 
     def config_hash_payload(self) -> dict[str, Any]:

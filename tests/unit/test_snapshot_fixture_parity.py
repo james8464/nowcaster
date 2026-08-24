@@ -30,7 +30,7 @@ def _load_synchronizer():
 
 def test_semantic_snapshot_hash_ignores_export_receipt_metadata_only() -> None:
     expected = {
-        "schema_version": 2,
+        "schema_version": 3,
         "metadata": {
             "generated_at": "2026-08-24T15:00:00Z",
             "last_refresh": "2026-08-24T14:59:00Z",
@@ -80,7 +80,7 @@ def test_semantic_snapshot_hash_ignores_export_receipt_metadata_only() -> None:
 def test_snapshot_sync_preserves_demo_sections_and_replaces_research_sections() -> None:
     synchronizer = _load_synchronizer()
     base = {
-        "schema_version": 2,
+        "schema_version": 3,
         "metadata": {"data_mode": "demo"},
         "earnings": [{"id": "legacy"}],
         "strategies": [],
@@ -90,7 +90,7 @@ def test_snapshot_sync_preserves_demo_sections_and_replaces_research_sections() 
         "causal_audits": [],
     }
     research = {
-        "schema_version": 2,
+        "schema_version": 3,
         "metadata": {"data_mode": "ci"},
         "earnings": [],
         "strategies": [{"strategy_id": "causal"}],
@@ -113,7 +113,7 @@ def test_snapshot_sync_preserves_demo_sections_and_replaces_research_sections() 
 def test_python_research_semantic_mutation_breaks_swift_parity(tmp_path, monkeypatch) -> None:
     synchronizer = _load_synchronizer()
     base = {
-        "schema_version": 2,
+        "schema_version": 3,
         "metadata": {"data_mode": "demo"},
         "strategies": [],
         "ensemble_components": [],
@@ -151,7 +151,7 @@ def test_python_research_semantic_mutation_breaks_swift_parity(tmp_path, monkeyp
 
 def test_make_parity_target_is_read_only_for_matching_and_divergent_fixtures(tmp_path) -> None:
     research = {
-        "schema_version": 2,
+        "schema_version": 3,
         "strategies": [{"strategy_id": "causal", "promotion_state": "rejected"}],
         "ensemble_components": [{"strategy_id": "causal"}],
         "dataset_coverage": [{"dataset_hash": "d" * 64}],

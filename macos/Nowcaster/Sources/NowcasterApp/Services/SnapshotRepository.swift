@@ -15,7 +15,7 @@ enum SnapshotRepositoryError: Error, Equatable, LocalizedError, Sendable {
 }
 
 struct SnapshotRepository: Sendable {
-    static let supportedSchemaVersion = 2
+    static let supportedSchemaVersion = 3
 
     private struct SchemaEnvelope: Decodable {
         let schemaVersion: Int
@@ -38,7 +38,7 @@ struct SnapshotRepository: Sendable {
         }
         do {
             let snapshot = try JSONDecoder.nowcaster.decode(NowcasterSnapshot.self, from: data)
-            try snapshot.validateSchemaV2()
+            try snapshot.validateSchemaV3()
             return snapshot
         } catch {
             throw SnapshotRepositoryError.unreadable(error.localizedDescription)

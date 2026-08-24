@@ -34,9 +34,13 @@ jobs:
           make demo
           make sync-macos-snapshot
           make macos-test
-          make macos-app
+          test -n "$APPLE_CERTIFICATE_BASE64"
+          test -n "$APPLE_CERTIFICATE_PASSWORD"
+          test -n "$APPLE_SIGNING_IDENTITY"
+          test -n "$APPLE_ID"
+          test -n "$APPLE_TEAM_ID"
+          test -n "$APPLE_APP_PASSWORD"
       - name: Import Developer ID certificate
-        if: ${{ env.APPLE_CERTIFICATE_BASE64 != '' && env.APPLE_CERTIFICATE_PASSWORD != '' && env.APPLE_SIGNING_IDENTITY != '' }}
         run: |
           KEYCHAIN_PATH="$RUNNER_TEMP/nowcaster-signing.keychain-db"
           CERTIFICATE_PATH="$RUNNER_TEMP/developer-id.p12"
@@ -46,13 +50,13 @@ jobs:
           security unlock-keychain -p actions "$KEYCHAIN_PATH"
           security import "$CERTIFICATE_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
           security list-keychain -d user -s "$KEYCHAIN_PATH"
-          codesign --force --deep --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" build/Nowcaster.app
+          NOWCASTER_CODESIGN_IDENTITY="$APPLE_SIGNING_IDENTITY" make macos-app
       - name: Notarize signed app
-        if: ${{ env.APPLE_SIGNING_IDENTITY != '' && env.APPLE_ID != '' && env.APPLE_TEAM_ID != '' && env.APPLE_APP_PASSWORD != '' }}
         run: |
           ditto -c -k --sequesterRsrc --keepParent build/Nowcaster.app "$RUNNER_TEMP/Nowcaster-notarize.zip"
           xcrun notarytool submit "$RUNNER_TEMP/Nowcaster-notarize.zip" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
           xcrun stapler staple build/Nowcaster.app
+          ./scripts/verify_production_release.sh build/Nowcaster.app
       - name: Package app and checksum
         run: |
           cd build

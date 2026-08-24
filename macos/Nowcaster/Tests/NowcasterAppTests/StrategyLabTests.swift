@@ -231,7 +231,7 @@ private func strategyLabFixtureWithDuplicateContext() throws -> NowcasterSnapsho
     )
 
     #expect(empty.strategyEmptyTitle == "Strategy evidence unavailable")
-    #expect(empty.strategyEmptyDescription.contains("schema v2"))
+    #expect(empty.strategyEmptyDescription.contains("schema v3"))
     #expect(empty.learningEmptyTitle == "No learning runs")
     #expect(empty.learningEmptyDescription.contains("bounded learning"))
 }

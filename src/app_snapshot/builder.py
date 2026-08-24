@@ -11,12 +11,18 @@ from src.app_snapshot.models import (
     AppSnapshot,
     BacktestPoint,
     BacktestSnapshot,
+    BrokerEventSnapshot,
+    BrokerOrderSnapshot,
+    BrokerPositionSnapshot,
+    BrokerStatusSnapshot,
     CausalAuditSnapshot,
     DatasetCoverageSnapshot,
     DatasetGapSnapshot,
     DiscoveredRuleSnapshot,
     EarningsSnapshot,
+    EmergencyStatusSnapshot,
     EnsembleComponentSnapshot,
+    ForwardReadinessSnapshot,
     InstrumentSnapshot,
     LearningRunSnapshot,
     LearningTrialSnapshot,
@@ -25,7 +31,9 @@ from src.app_snapshot.models import (
     PipelineRunSnapshot,
     PricePoint,
     QualityIssueSnapshot,
+    ReadinessGateSnapshot,
     ResearchSignalSnapshot,
+    RiskStatusSnapshot,
     SensitivitySnapshot,
     SnapshotMetadata,
     StrategySnapshot,
@@ -55,6 +63,144 @@ def _python_datetime(value: Any) -> datetime | None:
 
 def _python_date(value: Any) -> date:
     return pd.Timestamp(value).date()
+
+
+def _execution_projection(database: Database) -> dict[str, Any]:
+    sessions = database.frame(
+        "select environment, account_suffix, status from broker_sessions order by started_at desc limit 1"
+    )
+    reconciliations = database.frame(
+        "select compared_at, unresolved_mismatch_count from reconciliation_runs order by compared_at desc limit 1"
+    )
+    if sessions.empty:
+        broker_status = BrokerStatusSnapshot()
+    else:
+        session = sessions.iloc[0]
+        unresolved = int(reconciliations.iloc[0].unresolved_mismatch_count) if not reconciliations.empty else 0
+        environment = str(session.environment)
+        broker_status = BrokerStatusSnapshot(
+            environment=environment,
+            state="live_locked" if environment == "live" else environment,
+            account_suffix=str(session.account_suffix),
+            session_status=str(session.status),
+            reconciled_at=(
+                _python_datetime(reconciliations.iloc[0].compared_at) if not reconciliations.empty else None
+            ),
+            unresolved_mismatches=unresolved,
+        )
+
+    position_rows = database.frame(
+        "select symbol, broker_quantity, broker_market_value, unrealized_pnl, received_at "
+        "from broker_positions qualify row_number() over (partition by symbol order by received_at desc) = 1 "
+        "order by symbol limit 100"
+    )
+    positions = [
+        BrokerPositionSnapshot(
+            symbol=str(row.symbol),
+            quantity=float(row.broker_quantity),
+            market_value=float(row.broker_market_value),
+            unrealized_pnl=float(row.unrealized_pnl),
+            received_at=_python_datetime(row.received_at),
+        )
+        for row in position_rows.itertuples(index=False)
+    ]
+    order_rows = database.frame(
+        "select client_order_id, symbol, side, quantity, filled_quantity, limit_price, status, updated_at "
+        "from broker_orders order by updated_at desc, client_order_id limit 100"
+    )
+    orders = [
+        BrokerOrderSnapshot(
+            client_order_id=str(row.client_order_id),
+            symbol=str(row.symbol),
+            side=str(row.side),
+            quantity=float(row.quantity),
+            filled_quantity=float(row.filled_quantity),
+            limit_price=float(row.limit_price),
+            status=str(row.status),
+            updated_at=_python_datetime(row.updated_at),
+        )
+        for row in order_rows.itertuples(index=False)
+    ]
+    event_rows = database.frame(
+        "select order_event_id, client_order_id, event, known_event, status, received_at "
+        "from broker_order_events order by received_at desc, order_event_id limit 200"
+    )
+    events = [
+        BrokerEventSnapshot(
+            event_id=str(row.order_event_id),
+            client_order_id=str(row.client_order_id),
+            event=str(row.event),
+            known_event=bool(row.known_event),
+            status=str(row.status),
+            received_at=_python_datetime(row.received_at),
+        )
+        for row in event_rows.itertuples(index=False)
+    ]
+
+    risk_rows = database.frame(
+        "select allowed, reasons, utilization, decided_at from risk_decisions order by decided_at desc limit 1"
+    )
+    if risk_rows.empty:
+        risk_status = RiskStatusSnapshot()
+    else:
+        risk = risk_rows.iloc[0]
+        risk_status = RiskStatusSnapshot(
+            state="allowed" if bool(risk.allowed) else "rejected",
+            allowed=bool(risk.allowed),
+            reasons=list(risk.reasons or []),
+            utilization=dict(risk.utilization or {}),
+            decided_at=_python_datetime(risk.decided_at),
+        )
+
+    receipt_rows = database.frame(
+        "select cohort_hash, gates, expires_at, status from readiness_receipts order by issued_at desc limit 1"
+    )
+    if receipt_rows.empty:
+        readiness = ForwardReadinessSnapshot()
+    else:
+        receipt = receipt_rows.iloc[0]
+        cohort_hash = str(receipt.cohort_hash)
+        evidence = database.frame(
+            "select count(*) as periods, coalesce(sum(closed_trades), 0) as trades "
+            "from forward_evidence_daily where cohort_hash = :cohort_hash",
+            {"cohort_hash": cohort_hash},
+        ).iloc[0]
+        raw_gates = list(receipt.gates or [])
+        readiness = ForwardReadinessSnapshot(
+            state="eligible" if str(receipt.status) == "active" else "live_locked",
+            cohort_hash=cohort_hash,
+            observed_periods=int(evidence.periods),
+            closed_trades=int(evidence.trades),
+            receipt_expires_at=_python_datetime(receipt.expires_at),
+            gates=[ReadinessGateSnapshot.model_validate(gate) for gate in raw_gates[:50]],
+        )
+
+    health_rows = database.frame(
+        "select event, details, observed_at from trading_health_events order by observed_at desc limit 1"
+    )
+    if health_rows.empty:
+        emergency = EmergencyStatusSnapshot()
+    else:
+        health = health_rows.iloc[0]
+        event = str(health.event)
+        details = dict(health.details or {})
+        emergency = EmergencyStatusSnapshot(
+            frozen=event in {"freeze", "flatten_close_failed", "flatten_unresolved", "flatten_complete"},
+            flatten_state=(
+                "complete" if event == "flatten_complete" else "unresolved" if "flatten" in event else "not_requested"
+            ),
+            reason=str(details.get("reason")) if details.get("reason") is not None else None,
+            observed_at=_python_datetime(health.observed_at),
+        )
+    return {
+        "broker_status": broker_status,
+        "broker_positions": positions,
+        "broker_orders": orders,
+        "broker_events": events,
+        "risk_status": risk_status,
+        "forward_readiness": readiness,
+        "emergency_status": emergency,
+    }
 
 
 def _metadata(database: Database, settings: Settings) -> SnapshotMetadata:
@@ -1161,4 +1307,5 @@ def build_app_snapshot(database: Database, settings: Settings) -> AppSnapshot:
         dataset_coverage=_dataset_coverage(database),
         learning_runs=_learning_runs(database, causal_audits),
         causal_audits=causal_audits,
+        **_execution_projection(database),
     )

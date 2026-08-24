@@ -267,7 +267,7 @@ final class AppModel {
             return (nil, "Select at least one strategy.")
         }
         guard selectedStrategies.allSatisfy({ $0.cohortId != nil }) else {
-            return (nil, "Legacy strategy context is incomplete. Export a current schema v2 snapshot.")
+            return (nil, "Legacy strategy context is incomplete. Export a current schema v3 snapshot.")
         }
         let signatures = Set(selectedStrategies.map {
             [$0.datasetHash, $0.symbol, $0.interval, $0.mode, $0.cohortId ?? ""]

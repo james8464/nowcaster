@@ -68805,7 +68805,7 @@
     }
   ],
   "quality_issues": [],
-  "schema_version": 2,
+  "schema_version": 3,
   "signals": [
     {
       "asset_class": "crypto",
@@ -107503,5 +107503,45 @@
       ],
       "weight": 0.0
     }
-  ]
+  ],
+  "broker_status": {
+    "environment": "research",
+    "state": "live_locked",
+    "account_suffix": null,
+    "session_status": "not_started",
+    "reconciled_at": null,
+    "unresolved_mismatches": 0
+  },
+  "broker_positions": [],
+  "broker_orders": [],
+  "broker_events": [],
+  "risk_status": {
+    "state": "not_evaluated",
+    "allowed": false,
+    "reasons": [
+      "live_locked"
+    ],
+    "utilization": {},
+    "decided_at": null
+  },
+  "forward_readiness": {
+    "state": "live_locked",
+    "cohort_hash": null,
+    "observed_periods": 0,
+    "closed_trades": 0,
+    "receipt_expires_at": null,
+    "gates": [
+      {
+        "name": "external_forward_evidence",
+        "passed": false,
+        "detail": "Paper evidence and external release conditions are not yet complete."
+      }
+    ]
+  },
+  "emergency_status": {
+    "frozen": false,
+    "flatten_state": "not_requested",
+    "reason": null,
+    "observed_at": null
+  }
 }

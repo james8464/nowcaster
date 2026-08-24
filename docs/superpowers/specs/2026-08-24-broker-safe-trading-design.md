@@ -39,9 +39,9 @@ The existing causal strategy and deterministic fill simulator remain the researc
 
 The first paper implementation may use the repository Python runtime. Live pilot execution additionally requires the signed bundled engine identity recorded by the native app; an arbitrary Python path cannot arm live mode.
 
-### Database schema v3
+### Database schema v4
 
-Append-only or versioned tables are added without changing v1/v2 natural keys:
+Append-only or versioned tables are added without changing v1/v2/v3 natural keys. Version 3 is already the intraday-research migration, so broker execution records use database schema version 4:
 
 - `broker_sessions`: environment, account suffix, code/config hash, start/end, status, heartbeat, and terminal reason.
 - `broker_order_intents`: deterministic intent ID, strategy and cohort identity, decision provenance, requested order, risk policy hash, and status.

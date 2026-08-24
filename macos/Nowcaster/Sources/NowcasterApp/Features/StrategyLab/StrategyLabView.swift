@@ -182,7 +182,7 @@ struct StrategyLabPresentation: Sendable {
 
     var strategyEmptyTitle: String { "Strategy evidence unavailable" }
     var strategyEmptyDescription: String {
-        "This schema v2 snapshot contains no compatible strategy evidence. Run a scoped evaluation, then export again."
+        "This schema v3 snapshot contains no compatible strategy evidence. Run a scoped evaluation, then export again."
     }
     var learningEmptyTitle: String { "No learning runs" }
     var learningEmptyDescription: String {

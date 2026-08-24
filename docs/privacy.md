@@ -1,6 +1,6 @@
 # Privacy and security
 
-Nowcaster is local-first. The macOS app has no user account, advertising SDK, telemetry, analytics beacon, cloud database, brokerage connection, or embedded web runtime.
+Nowcaster is local-first. The macOS app has no user account, advertising SDK, telemetry, analytics beacon, cloud database, or embedded web runtime. An optional Alpaca paper connection is explicit and operator initiated.
 
 ## Data stored locally
 
@@ -8,8 +8,10 @@ Nowcaster is local-first. The macOS app has no user account, advertising SDK, te
 - The last-known-good decoded snapshot in application memory.
 - Local Python executable, repository, and snapshot paths in `UserDefaults`.
 - Generated DuckDB, logs, reports, app bundles, and screenshots under ignored build/data paths.
+- Separate Alpaca paper/live credentials in macOS Keychain generic-password items. Values are never stored in `UserDefaults`.
+- Bounded broker order, position, reconciliation, risk, and forward-readiness evidence in local DuckDB/snapshots. Full account IDs and raw broker payloads are excluded from the native snapshot.
 
-The app does not persist API keys, exchange keys, brokerage credentials, positions, or orders. `.env` is ignored by Git. Snapshot models do not define secret-bearing fields.
+The app persists broker credentials only in Keychain using device-only after-first-unlock accessibility. `.env` is ignored by Git. Snapshot models do not define secret-bearing fields, executable arm tokens, or full account IDs.
 
 ## Network behavior
 
@@ -17,8 +19,8 @@ The native application itself reads local files and launches the local research 
 
 ## Process safety
 
-The app invokes a fixed executable with a structured argument array and never routes configured paths through a shell. It surfaces non-zero exits, supports cancellation, and preserves the last-known-good snapshot after failures. Release artifacts publish SHA-256 checksums.
+The app invokes a fixed executable with a structured argument array and never routes configured paths through a shell. Session credentials are consumed once into the child environment and exact-redacted from diagnostics. It surfaces non-zero exits, supports cancellation, and preserves the last-known-good snapshot after failures. Release artifacts publish SHA-256 checksums.
 
 ## Production considerations
 
-Anyone adding brokerage or licensed market-data integrations should use Keychain-backed credentials, least-privilege entitlements, explicit consent, data-retention controls, audit logging, authenticated services, and an independent security review. None of those integrations are present here.
+A real-money pilot must remain locked until forward evidence, a production-signed bundled engine, hardened runtime, notarization, stapling, broker/account matching, a current readiness receipt, and a short-lived manual arm all pass. Independent security review is still an external prerequisite.

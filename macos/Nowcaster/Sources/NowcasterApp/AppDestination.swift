@@ -10,6 +10,7 @@ enum AppDestination: String, CaseIterable, Identifiable, Sendable {
     case modelLab
     case dataQuality
     case pipelineRuns
+    case executionCenter
 
     var id: String { rawValue }
 
@@ -24,6 +25,7 @@ enum AppDestination: String, CaseIterable, Identifiable, Sendable {
         case .modelLab: "Model Lab"
         case .dataQuality: "Data Quality"
         case .pipelineRuns: "Pipeline Runs"
+        case .executionCenter: "Execution Center"
         }
     }
 
@@ -38,6 +40,7 @@ enum AppDestination: String, CaseIterable, Identifiable, Sendable {
         case .modelLab: "slider.horizontal.3"
         case .dataQuality: "checkmark.shield"
         case .pipelineRuns: "clock.arrow.trianglehead.counterclockwise.rotate.90"
+        case .executionCenter: "shield.lefthalf.filled.badge.checkmark"
         }
     }
 }

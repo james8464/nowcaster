@@ -4,7 +4,7 @@ Nowcaster is a native Mac app for learning how a computer can study stocks and c
 
 It collects historical market and company information, asks models what that information might have suggested at the time, and then checks those ideas against what happened later. The app presents the result as a **research posture**—long, short, or abstain—along with the evidence, risks, and historical test results behind it.
 
-Nowcaster is a research and education tool. It is not a brokerage, does not place trades, cannot guarantee profit, and is not investment advice.
+Nowcaster is a research and risk-control tool. It can monitor **shadow** decisions and submit separately configured **Alpaca paper** orders, but real-money trading remains hard-locked unless every forward-evidence, security, signing, account, and manual-arming gate passes. It cannot guarantee profit and is not investment advice.
 
 ![Nowcaster Today view](docs/images/macos/today-light.png)
 
@@ -78,7 +78,7 @@ The tests also look for unstable subperiods, excessive drawdowns, sensitivity to
 
 The Python engine writes one validated JSON snapshot. The SwiftUI app reads that file directly, so there is no WebView, JavaScript frontend, account server, or background website.
 
-The app keeps the last known good snapshot if a refresh fails. It never stores brokerage credentials or sends an order.
+The app keeps the last known good snapshot if a refresh fails. Broker credentials are stored in the macOS Keychain, passed to the engine only for one process session, and never placed in command arguments, snapshots, logs, preferences, or Git.
 
 ## What you can explore in the app
 
@@ -91,6 +91,7 @@ The app keeps the last known good snapshot if a refresh fails. It never stores b
 - **Model Lab** — model comparisons, calibration, and diagnostic information.
 - **Data Quality** — missing, late, or invalid information that could weaken a result.
 - **Pipeline Runs** — the steps used to rebuild the local research snapshot.
+- **Execution Center** — broker environment, reconciliation health, paper activity, risk decisions, emergency state, and every reason real-money trading is still locked.
 
 A sensible beginner workflow is: start on **Today**, open one signal, read its invalidation evidence, and only then look at its backtest. Avoid judging a model from its headline return alone.
 
@@ -152,6 +153,8 @@ make sync-macos-snapshot # Merge authoritative CI research into the app's first-
 make verify-swift-fixture-parity # Read-only check that the committed app fixture matches CI research
 make macos-test          # Run Swift model and app tests
 make macos-app           # Assemble build/Nowcaster.app
+make verify-paper-trading # Broker adapter, idempotency, stream, recovery, and CLI tests
+make verify-trading-readiness # Risk, emergency, forward evidence, readiness, live-lock, and arming tests
 make macos-ui-test       # Launch the app and verify a real native window
 make macos-screenshots   # Capture the primary native views
 make release-archive     # Build the app ZIP and SHA-256 checksum
@@ -181,7 +184,8 @@ For deeper technical detail, see the [strategy methodology](docs/strategy-method
 - Users are responsible for data-provider terms and production data licences.
 - `BTC-USD` and `ETH-USD` map to Binance `BTCUSDT` and `ETHUSDT` for provider research. These are venue-specific USDT spot pairs, not composite USD prices.
 - Raw credentials and bulk/licensed bars stay outside Git. Only fixture descriptors, checksummed manifests, and compact results are committed.
-- The app does not collect personal information, connect to a broker, or store brokerage credentials.
+- Optional Alpaca paper trading contacts Alpaca only after the user stores separate paper credentials in Keychain. Live credentials use a different Keychain service and endpoint and cannot fall back to paper credentials.
+- Broker orders, positions, reconciliation results, and risk decisions remain local in DuckDB and a bounded snapshot; full account IDs and raw secret-bearing payloads are excluded.
 - Short selling, leverage, crypto trading, and derivatives can lose more money or move faster than a beginner expects.
 
-This standalone project was originally developed inside a downloaded GS Quant source tree and can optionally cross-check a small return calculation with the open-source `gs_quant` package. Nowcaster is not affiliated with or endorsed by Goldman Sachs.
+This standalone project was originally developed inside a downloaded GS Quant source tree and can optionally cross-check a small return calculation with the open-source `gs_quant` package. The trading control plane is a separate Nowcaster implementation. Nowcaster is not affiliated with or endorsed by Goldman Sachs or Alpaca.

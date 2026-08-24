@@ -50,7 +50,7 @@ def test_export_app_snapshot_cli_emits_structured_completion(tmp_path, demo_data
     )
 
     assert result.exit_code == 0
-    assert json.loads(result.output)["schema_version"] == 2
+    assert json.loads(result.output)["schema_version"] == 3
     assert AppSnapshot.model_validate_json(output.read_text()).overview.company_count == 3
 
 
@@ -269,7 +269,7 @@ def test_snapshot_v2_builds_strategy_ensemble_coverage_learning_and_causal_audit
     )
     snapshot = build_app_snapshot(database, settings)
 
-    assert snapshot.schema_version == 2
+    assert snapshot.schema_version == 3
     assert [(item.strategy_id, item.version, item.weight) for item in snapshot.strategies] == [
         ("rsi_reversal", "1.0.0-abc", 0.25)
     ]
