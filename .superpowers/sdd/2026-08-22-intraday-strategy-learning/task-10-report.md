@@ -176,3 +176,14 @@ The Makefile change updates the deterministic research code hash to `b05fd784633
 - Changed: `Makefile`, `README.md`, `tests/unit/test_snapshot_fixture_parity.py`, deterministic research summary/report, controller `progress.md`, and this report.
 - The Swift fixture did not require regeneration because its authoritative research semantics already match. Explicit synchronization still updates volatile demo receipt bytes by design; verification never invokes it.
 - The parity gate covers schema version and the five native research sections, including the documented ten-component native projection. It intentionally does not claim byte identity for unrelated demo/export receipt sections.
+
+## Fresh Native Visual Audit
+
+The release candidate was assembled with `make macos-app`, validated with `codesign --verify --deep --strict`, and captured with `make macos-screenshots`. The capture tool launched real native windows and asserted their dimensions before saving 22 current-run PNGs: every primary destination in light and dark appearance, plus representative 900×700 narrow layouts. `make macos-ui-test` also passed against a live Strategy Lab window.
+
+1. **Today / task entry — healthy.** The research briefing, explicit long/short research labels, calibration state, and no-assurance copy are legible without depending on color.
+2. **Strategy Lab wide — healthy.** Three-column hierarchy, research-only/no-broker disclosure, bounded budget control, strategy/posture table, evidence status, separate development/final evidence, chart-data alternative, and coverage provenance are visible in light and dark appearance.
+3. **Strategy Lab narrow — healthy.** At 900×700, navigation, strategy selection, learning progress, evidence cards, and scrolling remain usable; no cropped toolbar or duplicated wide capture was observed.
+4. **Affected research/system screens — healthy.** Backtests clearly separate development from final test and show `Not ready`; Signals identifies `Research Only` and invalidation evidence; Data Quality has a descriptive empty state; Pipeline Runs exposes status, stage, mode, duration, rows, and errors.
+
+No release-blocking visual, interaction, or screenshot-visible accessibility defect was found. Screenshot evidence cannot prove full keyboard, VoiceOver, contrast-ratio, Dynamic Type, or reduced-motion compliance; the native test suite separately covers stable accessibility labels, non-color status descriptions, keyboard-oriented selection/search contracts, chart table alternatives, and window resizing.

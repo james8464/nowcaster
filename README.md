@@ -87,11 +87,14 @@ The app keeps the last known good snapshot if a refresh fails. It never stores b
 - **Earnings** — historical company events and revenue forecasts.
 - **Signals** — long, short, and abstain postures with supporting and invalidating evidence.
 - **Backtests** — returns, risk, drawdowns, costs, and development versus final-test results.
+- **Strategy Lab** — compare intraday rules, inspect their ensemble contribution and causal checks, and run a bounded learning experiment. It shows research evidence only and never places an order.
 - **Model Lab** — model comparisons, calibration, and diagnostic information.
 - **Data Quality** — missing, late, or invalid information that could weaken a result.
 - **Pipeline Runs** — the steps used to rebuild the local research snapshot.
 
 A sensible beginner workflow is: start on **Today**, open one signal, read its invalidation evidence, and only then look at its backtest. Avoid judging a model from its headline return alone.
+
+![Nowcaster Strategy Lab](docs/images/macos/strategyLab-light.png)
 
 ## What the bundled results currently say
 
