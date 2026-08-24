@@ -292,4 +292,26 @@ def mutate_rule(
     raise ValueError("the bounded mutation space contains no semantic alternative")
 
 
-__all__ = ["RuleNode", "RuleOperator", "mutate_rule", "semantic_dedupe"]
+def crossover_rules(
+    left: RuleNode,
+    right: RuleNode,
+    *,
+    conjunction: Literal["and", "or"],
+    max_depth: int,
+    max_nodes: int,
+) -> RuleNode:
+    """Combine two Boolean rules without extending the closed grammar."""
+
+    if left.value_type != "boolean" or right.value_type != "boolean":
+        raise ValueError("crossover requires two Boolean rules")
+    if conjunction == "and":
+        child = RuleNode.all_of(left, right)
+    elif conjunction == "or":
+        child = RuleNode.any_of(left, right)
+    else:
+        raise ValueError("conjunction must be 'and' or 'or'")
+    child.validate_bounds(max_depth=max_depth, max_nodes=max_nodes)
+    return child
+
+
+__all__ = ["RuleNode", "RuleOperator", "crossover_rules", "mutate_rule", "semantic_dedupe"]
