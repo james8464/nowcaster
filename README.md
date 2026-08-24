@@ -87,13 +87,27 @@ The app keeps the last known good snapshot if a refresh fails. Broker credential
 - **Earnings** — historical company events and revenue forecasts.
 - **Signals** — long, short, and abstain postures with supporting and invalidating evidence.
 - **Backtests** — returns, risk, drawdowns, costs, and development versus final-test results.
-- **Strategy Lab** — compare intraday rules, inspect their ensemble contribution and causal checks, and run a bounded learning experiment. It shows research evidence only and never places an order.
+- **Strategy Lab** — compare intraday rules, run bounded learning, or start multi-generation Deep Research. It shows research evidence only and never places an order.
 - **Model Lab** — model comparisons, calibration, and diagnostic information.
 - **Data Quality** — missing, late, or invalid information that could weaken a result.
 - **Pipeline Runs** — the steps used to rebuild the local research snapshot.
 - **Execution Center** — broker environment, reconciliation health, paper activity, risk decisions, emergency state, and every reason real-money trading is still locked.
 
 A sensible beginner workflow is: start on **Today**, open one signal, read its invalidation evidence, and only then look at its backtest. Avoid judging a model from its headline return alone.
+
+### Using Deep Research
+
+Open **Strategy Lab**, select a strategy with complete data coverage, then choose **Deep Research**. The configuration sheet lets you choose:
+
+- **Performance** to use every logical CPU, **Balanced** to leave one free, **Efficient** to use about half, or a custom worker count.
+- A fixed number of candidate attempts, or continuous generations that run until you press **Stop**.
+- An optional time limit and reproducible random seed.
+
+Each generation creates typed parameter/rule challengers, evaluates them only on chronological development folds, records failures and duplicates as real trials, and stress-tests the strongest development candidate. The sealed final period is never sent to search workers. Pause drains the current small worker batch before dispatch stops; Stop checkpoints completed evidence. The app also pauses automatically under serious Mac thermal pressure.
+
+Trying more formulas creates more chances to find a lucky historical accident. Nowcaster therefore counts every attempt and tightens its statistical interpretation using the true trial ledger, block bootstrap, Deflated Sharpe, probability of backtest overfitting, parameter stability, doubled-cost stress, drawdown, trade-count, concentration, causal, provenance, coverage, execution, sealed-holdout, and incumbent-improvement gates. A failed gate produces **No reliable strategy found** rather than hiding the failure. **Abstain** is a successful safety outcome, not an app error.
+
+Deep Research can discover a historically stronger hypothesis; it cannot make an app fully reliable or guarantee money. Before risking capital, freeze a candidate and complete a long, untouched forward paper-trading period with measured real fills and independent review. Deep Research does not unlock live trading.
 
 ![Nowcaster Strategy Lab](docs/images/macos/strategyLab-light.png)
 
@@ -155,6 +169,7 @@ make macos-test          # Run Swift model and app tests
 make macos-app           # Assemble build/Nowcaster.app
 make verify-paper-trading # Broker adapter, idempotency, stream, recovery, and CLI tests
 make verify-trading-readiness # Risk, emergency, forward evidence, readiness, live-lock, and arming tests
+make verify-deep-research # End-to-end ledger, controls, resume, export, and broker-isolation tests
 make macos-ui-test       # Launch the app and verify a real native window
 make macos-screenshots   # Capture the primary native views
 make release-archive     # Build the app ZIP and SHA-256 checksum

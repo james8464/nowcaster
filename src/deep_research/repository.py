@@ -297,7 +297,16 @@ class DeepResearchRepository:
         return state
 
     def append_resource_sample(self, run_id: str, sample: ResourceSample) -> str:
-        identity = canonical_hash({"run_id": run_id, "sampled_at": sample.sampled_at})
+        identity = canonical_hash(
+            {
+                "run_id": run_id,
+                "sampled_at": sample.sampled_at,
+                "active_workers": sample.active_workers,
+                "queued_trials": sample.queued_trials,
+                "memory_bytes": sample.memory_bytes,
+                "thermal_state": sample.thermal_state,
+            }
+        )
         self.database.insert(
             "deep_research_resource_samples",
             [

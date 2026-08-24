@@ -48,9 +48,7 @@ def render_strategy_research_report(snapshot: AppSnapshot) -> str:
         )
         for run in snapshot.deep_research_runs:
             budget = "continuous" if run.trial_budget is None else str(run.trial_budget)
-            lines.append(
-                f"### {run.symbol} {run.interval} · {run.outcome}"
-            )
+            lines.append(f"### {run.symbol} {run.interval} · {run.outcome}")
             lines.extend(
                 [
                     "",

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import math
+import os
+import pickle
+import shutil
 import statistics
 from collections.abc import Callable, Sequence
 from concurrent.futures import Future, ProcessPoolExecutor, as_completed
@@ -36,6 +39,35 @@ from src.deep_research.worker import WorkerResult, configure_worker_environment,
 
 EventSink = Callable[[dict[str, Any]], None]
 SealedEvaluator = Callable[["CandidateWork"], tuple[float, ...]]
+ResourceGuard = Callable[[Sequence["CandidateWork"], int, str], tuple[bool, str, int | None]]
+
+
+def evaluate_resource_capacity(
+    works: Sequence[CandidateWork],
+    workers: int,
+    control_directory: str,
+) -> tuple[bool, str, int | None]:
+    if not works:
+        return True, "no work", 0
+    try:
+        bytes_per_worker = len(pickle.dumps(works[0], protocol=pickle.HIGHEST_PROTOCOL))
+    except (MemoryError, pickle.PickleError, TypeError, ValueError):
+        return False, "candidate payload memory estimate failed", None
+    estimated = bytes_per_worker * min(max(workers, 1), len(works))
+    try:
+        physical = int(os.sysconf("SC_PHYS_PAGES")) * int(os.sysconf("SC_PAGE_SIZE"))
+    except (OSError, TypeError, ValueError):
+        physical = 0
+    if physical and estimated > int(physical * 0.70):
+        return False, "estimated worker memory exceeds 70% of physical memory", estimated
+    try:
+        free_disk = shutil.disk_usage(control_directory).free
+    except OSError:
+        return False, "resource guard could not inspect free disk space", estimated
+    required_disk = max(64 * 1_024 * 1_024, estimated * 2)
+    if free_disk < required_disk:
+        return False, "free disk space is below the checkpoint safety reserve", estimated
+    return True, "resource capacity available", estimated
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +120,7 @@ class DeepResearchCoordinator:
         sealed_evaluator: SealedEvaluator,
         emit: EventSink | None = None,
         clock: Callable[[], datetime] | None = None,
+        resource_guard: ResourceGuard | None = None,
     ):
         self.run_id = run_id
         self.protocol = protocol
@@ -96,6 +129,7 @@ class DeepResearchCoordinator:
         self.sealed_evaluator = sealed_evaluator
         self.emit = emit
         self.clock = clock or (lambda: datetime.now(UTC))
+        self.resource_guard = resource_guard or evaluate_resource_capacity
 
     def _now(self) -> datetime:
         value = self.clock()
@@ -172,6 +206,40 @@ class DeepResearchCoordinator:
         work_by_ordinal = {item.ordinal: item for item in ordered_work}
         worker_limits: set[str] = set()
         completed_count = 0
+        capacity_ok, capacity_reason, memory_estimate = self.resource_guard(
+            ordered_work,
+            self.protocol.workers,
+            str(self.control.directory),
+        )
+        self.repository.append_resource_sample(
+            self.run_id,
+            ResourceSample(
+                sampled_at=self._now(),
+                active_workers=min(self.protocol.workers, len(ordered_work)),
+                queued_trials=len(ordered_work),
+                memory_bytes=memory_estimate,
+                thermal_state="host_managed",
+            ),
+        )
+        if not capacity_ok:
+            first_ordinal = ordered_work[0].ordinal if ordered_work else 1
+            self.repository.checkpoint(
+                self.run_id,
+                next_ordinal=first_ordinal,
+                generation=generation,
+                payload={"reason": "resource_guard", "detail": capacity_reason},
+            )
+            self.repository.set_state(self.run_id, RunState.FAILED, reason=capacity_reason)
+            self._event("resource_guard", 0.0, capacity_reason)
+            return DeepResearchOutcome(
+                self.run_id,
+                RunState.FAILED,
+                0,
+                (),
+                None,
+                "failed",
+                (),
+            )
         with ProcessPoolExecutor(
             max_workers=self.protocol.workers,
             initializer=configure_worker_environment,
@@ -244,9 +312,7 @@ class DeepResearchCoordinator:
                             generation=generation,
                         )
 
-                self.repository.append_attempts_ordered(
-                    self.run_id, [batch_attempts[item.ordinal] for item in batch]
-                )
+                self.repository.append_attempts_ordered(self.run_id, [batch_attempts[item.ordinal] for item in batch])
                 attempts.update(batch_attempts)
                 for item in batch:
                     result = results.get(item.ordinal)
@@ -444,4 +510,9 @@ class DeepResearchCoordinator:
         )
 
 
-__all__ = ["CandidateWork", "DeepResearchCoordinator", "DeepResearchOutcome"]
+__all__ = [
+    "CandidateWork",
+    "DeepResearchCoordinator",
+    "DeepResearchOutcome",
+    "evaluate_resource_capacity",
+]

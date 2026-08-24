@@ -474,9 +474,7 @@ def strategy_deep_research(
             seed=seed,
             control_directory=selected_control_directory,
             control_nonce=(
-                control_nonce
-                or os.environ.get("NOWCASTER_DEEP_RESEARCH_CONTROL_NONCE")
-                or secrets.token_hex(32)
+                control_nonce or os.environ.get("NOWCASTER_DEEP_RESEARCH_CONTROL_NONCE") or secrets.token_hex(32)
             ),
             run_id=run_id,
             resume_run_id=resume_run_id,

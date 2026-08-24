@@ -5,7 +5,9 @@ struct DeepResearchConfigurationView: View {
     let settings: AppSettings
     let context: SelectedStrategyResearchContext
     @Environment(\.dismiss) private var dismiss
-    @State private var resourceProfile = DeepResearchResourceProfile.performance
+    @State private var resourceProfile = ProcessInfo.processInfo.isLowPowerModeEnabled
+        ? DeepResearchResourceProfile.balanced
+        : DeepResearchResourceProfile.performance
     @State private var customWorkers = max(ProcessInfo.processInfo.activeProcessorCount, 1)
     @State private var continuous = true
     @State private var evaluationBudget = 1_000

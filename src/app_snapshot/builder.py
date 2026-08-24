@@ -1284,8 +1284,7 @@ def _deep_research_runs(database: Database) -> list[DeepResearchRunSnapshot]:
         return []
 
     trials = database.frame(
-        "select run_id, status, generation, candidate_hash, fitness from deep_research_trials "
-        "order by run_id, ordinal"
+        "select run_id, status, generation, candidate_hash, fitness from deep_research_trials order by run_id, ordinal"
     )
     promotions = database.frame(
         "select run_id, candidate_hash, outcome, score, failed_gates, evaluated_at, promotion_id "
@@ -1341,8 +1340,13 @@ def _deep_research_runs(database: Database) -> list[DeepResearchRunSnapshot]:
             )
 
         trial_budget = None if pd.isna(row.trial_budget) else int(row.trial_budget)
-        denominator = trial_budget if trial_budget is not None else int(row.cycle_budget)
-        progress = min(1.0, float(evaluated / denominator)) if denominator else 0.0
+        cycle_budget = int(row.cycle_budget)
+        if trial_budget is not None:
+            progress = min(1.0, float(evaluated / trial_budget))
+        elif state == "running":
+            progress = float((evaluated % cycle_budget) / cycle_budget)
+        else:
+            progress = 1.0 if evaluated else 0.0
         projected.append(
             DeepResearchRunSnapshot(
                 run_id=run_id,
@@ -1358,7 +1362,7 @@ def _deep_research_runs(database: Database) -> list[DeepResearchRunSnapshot]:
                 final_test_start=_python_datetime(row.final_test_start),
                 continuous=bool(row.continuous),
                 trial_budget=trial_budget,
-                cycle_budget=int(row.cycle_budget),
+                cycle_budget=cycle_budget,
                 evaluated_attempts=evaluated,
                 succeeded_attempts=succeeded,
                 failed_attempts=failed,

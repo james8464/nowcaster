@@ -10,6 +10,7 @@ Nowcaster is local-first. The macOS app has no user account, advertising SDK, te
 - Generated DuckDB, logs, reports, app bundles, and screenshots under ignored build/data paths.
 - Separate Alpaca paper/live credentials in macOS Keychain generic-password items. Values are never stored in `UserDefaults`.
 - Bounded broker order, position, reconciliation, risk, and forward-readiness evidence in local DuckDB/snapshots. Full account IDs and raw broker payloads are excluded from the native snapshot.
+- Append-only Deep Research trials, aggregate fold/stress evidence, checkpoints, and resource samples in local DuckDB. Private control files are mode `0600` inside a mode `0700` local directory and are not exported.
 
 The app persists broker credentials only in Keychain using device-only after-first-unlock accessibility. `.env` is ignored by Git. Snapshot models do not define secret-bearing fields, executable arm tokens, or full account IDs.
 
@@ -19,7 +20,7 @@ The native application itself reads local files and launches the local research 
 
 ## Process safety
 
-The app invokes a fixed executable with a structured argument array and never routes configured paths through a shell. Session credentials are consumed once into the child environment and exact-redacted from diagnostics. It surfaces non-zero exits, supports cancellation, and preserves the last-known-good snapshot after failures. Release artifacts publish SHA-256 checksums.
+The app invokes a fixed executable with a structured argument array and never routes configured paths through a shell. Session credentials and the Deep Research control nonce are consumed through the child environment, never command arguments, and exact-redacted from diagnostics. It surfaces non-zero exits, supports cancellation, and preserves the last-known-good snapshot after failures. Release artifacts publish SHA-256 checksums.
 
 ## Production considerations
 

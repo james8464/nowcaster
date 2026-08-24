@@ -158,11 +158,70 @@ def _rule_candidates(space: CandidateSearchSpace, seed: int, required: int) -> l
     return [CandidateDefinition("rule", space.strategy_id, rule=rule) for rule in rules]
 
 
+def _incumbent_variants(
+    space: CandidateSearchSpace,
+    incumbent: CandidateDefinition | None,
+    *,
+    seed: int,
+) -> list[CandidateDefinition]:
+    if incumbent is None:
+        return []
+    if incumbent.strategy_id != space.strategy_id:
+        raise ValueError("incumbent strategy does not match the registered search space")
+    variants: list[CandidateDefinition] = []
+    if incumbent.rule is not None:
+        for offset in range(1, 5):
+            with suppress(ValueError):
+                variants.append(
+                    CandidateDefinition(
+                        "rule",
+                        space.strategy_id,
+                        rule=mutate_rule(
+                            incumbent.rule,
+                            indicators=space.indicators,
+                            thresholds=space.thresholds,
+                            maximum_lag=space.maximum_lag,
+                            max_depth=space.max_depth,
+                            max_nodes=space.max_nodes,
+                            seed=seed + offset,
+                        ),
+                    )
+                )
+        if space.seed_rules:
+            with suppress(ValueError):
+                variants.append(
+                    CandidateDefinition(
+                        "crossover",
+                        space.strategy_id,
+                        rule=crossover_rules(
+                            incumbent.rule,
+                            space.seed_rules[0],
+                            conjunction="and",
+                            max_depth=space.max_depth,
+                            max_nodes=space.max_nodes,
+                        ),
+                    )
+                )
+    else:
+        incumbent_parameters = dict(incumbent.parameters)
+        for name, values in space.parameter_grid.items():
+            for value in values:
+                if incumbent_parameters.get(name) == value:
+                    continue
+                parameters = dict(incumbent_parameters)
+                parameters[name] = value
+                variants.append(
+                    CandidateDefinition("parameter", space.strategy_id, parameters=tuple(parameters.items()))
+                )
+    return variants
+
+
 def generate_candidates(
     space: CandidateSearchSpace,
     *,
     count: int,
     seed: int,
+    incumbent: CandidateDefinition | None = None,
 ) -> tuple[CandidateGenerationAttempt, ...]:
     if isinstance(count, bool) or count < 1:
         raise ValueError("candidate count must be positive")
@@ -174,7 +233,12 @@ def generate_candidates(
         space.strategy_id,
         tuple(space.base_parameters.items()),
     )
-    pool = [baseline, *_parameter_candidates(space, generator), *_rule_candidates(space, seed, count)]
+    pool = [
+        *_incumbent_variants(space, incumbent, seed=seed),
+        baseline,
+        *_parameter_candidates(space, generator),
+        *_rule_candidates(space, seed, count),
+    ]
     if not pool:
         raise ValueError("candidate search space is empty")
     attempts: list[CandidateGenerationAttempt] = []

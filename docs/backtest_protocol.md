@@ -44,6 +44,14 @@ Status is the most conservative failed gate:
 
 The bundled snapshot currently promotes no strategy to decision-ready. BTC-USD is research-only and ETH-USD is not ready. This is expected behavior, not an error.
 
+## Deep Research reliability protocol
+
+Deep Research freezes source/feed, dataset hash, chronology, search space, seed, costs, folds, and final boundary before candidate generation. Workers receive development data only and execute signals on the next actionable bar. Every generated, duplicate, invalid, failed, interrupted, and successful attempt remains in the trial ledger so unsuccessful searches cannot disappear from the statistical denominator.
+
+A research challenger passes only if it has at least 300 closed trades; positive median walk-forward return and Sharpe after costs; positive doubled-cost return; Deflated Sharpe and block-bootstrap positive-edge probabilities of at least 99%; probability of backtest overfitting no more than 10%; parameter stability of at least 80%; drawdown no more than 10%; profit concentration below 50%; a positive sealed final result; complete causal, provenance, coverage, and execution audits; and a material improvement over the existing research champion. These are rejection filters, not promises of future performance.
+
+Continuous mode is a sequence of finite generations. Work dispatch is bounded to the chosen CPU count, numeric libraries use one thread per process, completed batches are checkpointed in ordinal order, a crash is retried once, and repeated failure is recorded. Pause stops new batches after active work drains; Stop preserves completed evidence. Resume requires the exact dataset, code, search-space, cost-policy, and protocol identity.
+
 ## Threats that remain
 
 Public-data survivorship, regime change, unofficial price data, capacity, taxes, latency, unavailable borrow, exchange failures, spreads during stress, selection bias, and further researcher degrees of freedom can all make live results worse. Backtests are not investment advice or evidence of guaranteed profitability.

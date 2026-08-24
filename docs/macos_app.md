@@ -2,7 +2,7 @@
 
 ## Product boundary
 
-Nowcaster is a local research monitor. The SwiftUI application displays a typed snapshot and may ask the local Python engine to rebuild it. It does not connect to a brokerage, submit orders, run continuously in the background, or represent a posture as financial advice.
+Nowcaster is a local research monitor. The SwiftUI application displays a typed snapshot and may ask the local Python engine to rebuild it or run explicitly started Deep Research. It does not submit live orders or represent a posture as financial advice. Continuous research runs only while the user-started local engine process is active.
 
 ## Navigation
 
@@ -25,10 +25,13 @@ Research actions are explicit:
 
 - **Rebuild all research** runs the deterministic pipeline.
 - **Run full backtest** refreshes model and robustness outputs.
+- **Start Deep Research** runs finite, checkpointed strategy-search generations with bounded workers; Pause, Resume, and Stop use a private run-scoped control file.
 - **Export snapshot** republishes the strict native contract.
 - **Cancel** terminates the current child process.
 
 An unsuccessful job leaves the last-known-good snapshot visible with an error state.
+
+Deep Research defaults to the available local machine profiles, caps one numeric thread per worker, and automatically pauses under serious or critical thermal pressure. Its workspace shows attempts, generations, resource state, the sealed boundary, champion score, and every failed reliability gate. All results are labelled hypothetical and live trading remains locked.
 
 After intentionally refreshing the checked-in first-launch evidence, run `make demo && make sync-macos-snapshot`. CI repeats and validates the export before native assembly.
 

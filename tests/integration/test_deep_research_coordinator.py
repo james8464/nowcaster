@@ -218,3 +218,25 @@ def test_continuous_run_resumes_at_the_checkpointed_ordinal_and_generation(tmp_p
         {"ordinal": 3, "generation": 2},
         {"ordinal": 4, "generation": 2},
     ]
+
+
+def test_resource_guard_fails_closed_before_worker_dispatch_and_preserves_broker_isolation(tmp_path) -> None:
+    database = Database.from_url(f"duckdb:///{tmp_path / 'resource-guard.duckdb'}")
+    database.initialize()
+    repository = DeepResearchRepository(database, clock=lambda: NOW)
+    control = ResearchControl(tmp_path / "guard", run_id="guard", nonce="g" * 32)
+    control.initialize()
+    outcome = DeepResearchCoordinator(
+        run_id="guard",
+        protocol=_protocol(workers=2, trial_budget=2),
+        repository=repository,
+        control=control,
+        sealed_evaluator=lambda _: (0.01,),
+        resource_guard=lambda _works, _workers, _directory: (False, "memory reserve exhausted", 1234),
+    ).run((_work(1), _work(2)))
+
+    assert outcome.state is RunState.FAILED
+    assert database.scalar("select count(*) from deep_research_trials") == 0
+    assert database.scalar("select state from deep_research_runs") == "failed"
+    assert database.scalar("select terminal_reason from deep_research_runs") == "memory reserve exhausted"
+    assert database.scalar("select count(*) from broker_order_intents") == 0

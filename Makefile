@@ -2,7 +2,7 @@ PYTHON ?= python3
 VENV ?= .venv
 PIP_INDEX ?= https://pypi.org/simple
 
-.PHONY: setup test lint init-db fetch features train backtest report demo research-ci research-live research-live-probe verify-research-fixtures verify-swift-fixture-parity verify-paper-trading verify-trading-readiness secret-scan clean-generated sync-macos-snapshot engine-bundle macos-build macos-test macos-app macos-open macos-ui-test macos-screenshots release-archive
+.PHONY: setup test lint init-db fetch features train backtest report demo research-ci research-live research-live-probe verify-research-fixtures verify-swift-fixture-parity verify-deep-research verify-paper-trading verify-trading-readiness secret-scan clean-generated sync-macos-snapshot engine-bundle macos-build macos-test macos-app macos-open macos-ui-test macos-screenshots release-archive
 setup:
 	uv venv --python 3.13 $(VENV)
 	uv pip install --python $(VENV)/bin/python --index-url $(PIP_INDEX) -e '.[dev]'
@@ -55,7 +55,7 @@ research-live-probe:
 	$(VENV)/bin/python -m src.cli strategy research --profile live --database-url duckdb:///build/research-live-probe.duckdb --output-dir build/research-live-probe --cache-dir "$(CACHE_DIR)" --cutoff 2026-08-24T00:00:00Z --max-chunks-per-scope 1
 
 verify-research-fixtures: research-ci
-	$(VENV)/bin/python -c 'from pathlib import Path; from src.app_snapshot.models import AppSnapshot; snapshot = AppSnapshot.model_validate_json(Path("data/research/ci/nowcaster-snapshot.json").read_text()); assert snapshot.schema_version == 3'
+	$(VENV)/bin/python -c 'from pathlib import Path; from src.app_snapshot.models import AppSnapshot; snapshot = AppSnapshot.model_validate_json(Path("data/research/ci/nowcaster-snapshot.json").read_text()); assert snapshot.schema_version == 5'
 	git diff --exit-code -- data/research/ci
 
 verify-swift-fixture-parity:
@@ -63,6 +63,9 @@ verify-swift-fixture-parity:
 
 secret-scan:
 	$(VENV)/bin/python scripts/scan_tracked_secrets.py
+
+verify-deep-research:
+	$(VENV)/bin/pytest -q tests/integration/test_deep_research_end_to_end.py tests/integration/test_deep_research_coordinator.py tests/integration/test_deep_research_pipeline.py
 
 sync-macos-snapshot:
 	$(VENV)/bin/python -m src.cli export-app-snapshot --output data/app/nowcaster-snapshot.json

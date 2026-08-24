@@ -854,12 +854,13 @@ class StrategyPipeline:
             created_at=started_at,
         )
         run_id = (
-            options.resume_run_id
-            or options.run_id
-            or f"deep-{canonical_hash([protocol.identity, started_at])[:24]}"
+            options.resume_run_id or options.run_id or f"deep-{canonical_hash([protocol.identity, started_at])[:24]}"
         )
         control = ResearchControl(options.control_directory, run_id=run_id, nonce=options.control_nonce)
-        control.initialize()
+        if control.path.exists():
+            control.read()
+        else:
+            control.initialize()
         repository = DeepResearchRepository(self.database, clock=self.clock)
         if options.resume_run_id is not None:
             resume = repository.resume_run(run_id, protocol)
@@ -881,6 +882,7 @@ class StrategyPipeline:
         first_ordinal_by_hash = {
             str(row.candidate_hash): int(row.first_ordinal) for row in previous.itertuples(index=False)
         }
+        incumbent_candidate = None
 
         def cycle_work(
             count: int,
@@ -893,6 +895,7 @@ class StrategyPipeline:
                 search_space,
                 count=count + skip,
                 seed=options.seed + cycle_generation - 1,
+                incumbent=incumbent_candidate,
             )[skip:]
             work: list[CandidateWork] = []
             local_ordinals: dict[int, int] = {}
@@ -986,6 +989,13 @@ class StrategyPipeline:
                 finish_run=not options.continuous,
             )
             evaluated_total += outcome.evaluated_attempts
+            if outcome.best_candidate_hash is not None:
+                selected = next(
+                    (item for item in work if item.candidate_hash == outcome.best_candidate_hash),
+                    None,
+                )
+                if selected is not None and isinstance(selected.evaluation_payload, CandidateEvaluationPayload):
+                    incumbent_candidate = selected.evaluation_payload.candidate
             if outcome.state is not RunState.RUNNING:
                 break
             next_ordinal = work[-1].ordinal + 1
