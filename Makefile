@@ -59,14 +59,14 @@ verify-research-fixtures: research-ci
 	git diff --exit-code -- data/research/ci
 
 verify-swift-fixture-parity: sync-macos-snapshot
-	$(VENV)/bin/python scripts/verify_snapshot_fixture_parity.py macos/Nowcaster/Sources/NowcasterApp/Resources/Fixtures/nowcaster-snapshot.json
+	$(VENV)/bin/python scripts/verify_snapshot_fixture_parity.py --python-research data/research/ci/nowcaster-snapshot.json --swift-fixture macos/Nowcaster/Sources/NowcasterApp/Resources/Fixtures/nowcaster-snapshot.json
 
 secret-scan:
 	$(VENV)/bin/python scripts/scan_tracked_secrets.py
 
 sync-macos-snapshot:
 	$(VENV)/bin/python -m src.cli export-app-snapshot --output data/app/nowcaster-snapshot.json
-	$(VENV)/bin/python scripts/synchronize_snapshot_fixture.py --base data/app/nowcaster-snapshot.json --research macos/Nowcaster/Sources/NowcasterApp/Resources/Fixtures/nowcaster-snapshot.json --output macos/Nowcaster/Sources/NowcasterApp/Resources/Fixtures/nowcaster-snapshot.json
+	$(VENV)/bin/python scripts/synchronize_snapshot_fixture.py --base data/app/nowcaster-snapshot.json --research data/research/ci/nowcaster-snapshot.json --output macos/Nowcaster/Sources/NowcasterApp/Resources/Fixtures/nowcaster-snapshot.json
 
 clean-generated:
 	rm -f data/nowcaster.duckdb data/test.duckdb data/app/nowcaster-snapshot.json reports/latest_research_report.md

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from types import MappingProxyType
@@ -264,6 +264,7 @@ class StrategyEvaluation:
     current_strength: float = 0.0
     current_probability: float = 0.5
     calibration_status: str = "calibrated"
+    economic_evidence_status: str = "unavailable"
     current_volatility: float = 1.0
     expected_edge: float = 0.0
     expected_cost: float = 0.0
@@ -280,6 +281,8 @@ class StrategyEvaluation:
     def __post_init__(self) -> None:
         if self.calibration_status not in {"calibrated", "unavailable"}:
             raise ValueError("calibration status must be calibrated or unavailable")
+        if self.economic_evidence_status not in {"authenticated", "unavailable"}:
+            raise ValueError("economic evidence status must be authenticated or unavailable")
         object.__setattr__(self, "evidence_provenance", _deep_freeze(self.evidence_provenance))
 
 
@@ -294,6 +297,7 @@ class EvaluationRequest:
     dataset_hash: str
     symbol: str
     interval: BarInterval
+    cohort_id: str = ""
     config: ValidationConfig = field(default_factory=ValidationConfig)
 
 
@@ -315,6 +319,7 @@ class _SealedEvidence:
     trial_sharpes: tuple[float, ...]
     fold_stability: float
     calibration_error: float
+    robustness: RobustnessEvidence | None
     provenance: Mapping[str, Any]
 
 
@@ -325,6 +330,15 @@ class RobustnessEvidence:
     parameter_neighborhood_stable: bool
     parameter_neighbor_positive_fraction: float
     parameter_neighbor_median_ratio: float
+    discovered_at: datetime | None = None
+    evaluated_at: datetime | None = None
+    development_data_through: datetime | None = None
+    sealed_final_start: datetime | None = None
+    cohort_id: str = ""
+    dataset_hash: str = ""
+    validation_config_hash: str = ""
+    provenance: Mapping[str, Any] = field(default_factory=dict)
+    receipt_hash: str = ""
 
     def __post_init__(self) -> None:
         numeric = (
@@ -343,6 +357,89 @@ class RobustnessEvidence:
             raise ValueError("parameter neighbor median ratio cannot be negative")
         if type(self.parameter_neighborhood_stable) is not bool:
             raise ValueError("parameter stability must be a boolean")
+        object.__setattr__(self, "provenance", _deep_freeze(self.provenance))
+        if self.receipt_hash:
+            for name in ("discovered_at", "evaluated_at", "development_data_through", "sealed_final_start"):
+                _evidence_timestamp(getattr(self, name), f"robustness {name}")
+            if not self.cohort_id.strip() or not self.dataset_hash.strip() or not self.validation_config_hash.strip():
+                raise ValueError("robustness receipt context is incomplete")
+            if self.receipt_hash != canonical_hash(self._receipt_payload()):
+                raise ValueError("robustness receipt hash does not authenticate its evidence")
+
+    def _receipt_payload(self) -> dict[str, Any]:
+        return {
+            "schema_version": 1,
+            "metrics": {
+                "median_walk_forward_net_edge": self.median_walk_forward_net_edge,
+                "pbo_probability": self.pbo_probability,
+                "parameter_neighborhood_stable": self.parameter_neighborhood_stable,
+                "parameter_neighbor_positive_fraction": self.parameter_neighbor_positive_fraction,
+                "parameter_neighbor_median_ratio": self.parameter_neighbor_median_ratio,
+            },
+            "discovered_at": self.discovered_at,
+            "evaluated_at": self.evaluated_at,
+            "development_data_through": self.development_data_through,
+            "sealed_final_start": self.sealed_final_start,
+            "cohort_id": self.cohort_id,
+            "dataset_hash": self.dataset_hash,
+            "validation_config_hash": self.validation_config_hash,
+            "provenance": self.provenance,
+        }
+
+    @classmethod
+    def seal(
+        cls,
+        *,
+        median_walk_forward_net_edge: float,
+        pbo_probability: float,
+        parameter_neighborhood_stable: bool,
+        parameter_neighbor_positive_fraction: float,
+        parameter_neighbor_median_ratio: float,
+        discovered_at: datetime,
+        evaluated_at: datetime,
+        development_data_through: datetime,
+        sealed_final_start: datetime,
+        cohort_id: str,
+        dataset_hash: str,
+        validation_config_hash: str,
+        fold_evidence: Sequence[FoldEvidence],
+    ) -> RobustnessEvidence:
+        fold_rows = _robustness_fold_rows(fold_evidence)
+        provenance = {
+            "source": "admissible_development_folds_v1",
+            "fold_count": len(fold_rows),
+            "fold_evidence_hash": canonical_hash(fold_rows),
+        }
+        unsealed = cls(
+            median_walk_forward_net_edge,
+            pbo_probability,
+            parameter_neighborhood_stable,
+            parameter_neighbor_positive_fraction,
+            parameter_neighbor_median_ratio,
+            discovered_at,
+            evaluated_at,
+            development_data_through,
+            sealed_final_start,
+            cohort_id,
+            dataset_hash,
+            validation_config_hash,
+            provenance,
+        )
+        return replace(unsealed, receipt_hash=canonical_hash(unsealed._receipt_payload()))
+
+
+def _robustness_fold_rows(folds: Sequence[FoldEvidence]) -> tuple[dict[str, Any], ...]:
+    return tuple(
+        {
+            "fold": int(item.fold),
+            "validation_start": item.validation_start,
+            "validation_end": item.validation_end,
+            "evaluated_at": item.evaluated_at,
+            "sharpe": float(item.sharpe),
+            "calibration_error": float(item.calibration_error),
+        }
+        for item in sorted(folds, key=lambda item: int(item.fold))
+    )
 
 
 def _evidence_timestamp(value: object, label: str) -> datetime:
@@ -417,6 +514,9 @@ def _seal_development_evidence(
     expected_folds: Sequence[OuterFold],
     *,
     as_of: datetime,
+    dataset_hash: str,
+    cohort_id: str,
+    validation_config_hash: str,
 ) -> _SealedEvidence:
     if evidence.trial_sharpes or evidence.fold_stability is not None:
         raise ValueError("unsealed aggregate evidence is forbidden; provide timestamped trial and fold evidence")
@@ -501,6 +601,35 @@ def _seal_development_evidence(
     calibration = (
         float(round(sum(row["calibration_error"] for row in fold_rows) / len(fold_rows), 15)) if fold_rows else 1.0
     )
+    robustness = evidence.robustness
+    if robustness is not None:
+        if not robustness.receipt_hash:
+            raise ValueError("robustness diagnostics lack a sealed receipt")
+        if (
+            robustness.dataset_hash != dataset_hash
+            or robustness.cohort_id != cohort_id
+            or robustness.validation_config_hash != validation_config_hash
+        ):
+            raise ValueError("robustness receipt context does not match the evaluation cohort")
+        if robustness.sealed_final_start != boundary.final_start.to_pydatetime():
+            raise ValueError("robustness receipt final boundary does not match the sealed evaluation")
+        if (
+            robustness.discovered_at is None
+            or robustness.evaluated_at is None
+            or robustness.development_data_through is None
+            or not robustness.discovered_at <= robustness.evaluated_at < boundary.final_start.to_pydatetime()
+            or robustness.development_data_through >= boundary.final_start.to_pydatetime()
+        ):
+            raise ValueError("robustness receipt crosses the sealed final boundary")
+        expected_development_through = max(row["evaluated_at"] for row in fold_rows)
+        if robustness.development_data_through != expected_development_through:
+            raise ValueError("robustness receipt development boundary does not match admissible folds")
+        expected_fold_hash = canonical_hash(fold_rows)
+        if (
+            robustness.provenance.get("fold_count") != len(fold_rows)
+            or robustness.provenance.get("fold_evidence_hash") != expected_fold_hash
+        ):
+            raise ValueError("robustness receipt fold provenance is malformed or mismatched")
     trial_sharpes = tuple(float(row["sharpe"]) for row in trial_rows)
     provenance = _deep_freeze(
         {
@@ -513,7 +642,7 @@ def _seal_development_evidence(
             "folds": tuple(fold_rows),
         }
     )
-    return _SealedEvidence(trial_sharpes, fold_stability, calibration, provenance)
+    return _SealedEvidence(trial_sharpes, fold_stability, calibration, robustness, provenance)
 
 
 def _timestamps(values: Sequence[object] | pd.Series, *, name: str) -> pd.Series:
@@ -790,7 +919,16 @@ def _fit_development_decision_calibration(
         "outcomes_through": pd.to_datetime(joined["outcome_available_at"], utc=True).max().to_pydatetime(),
         "successes": int(favorable.sum()),
         "decision_rows_hash": canonical_hash(
-            joined[["decision_timestamp", "signal", "strength", "net_return"]].to_dict("records")
+            joined[
+                [
+                    "decision_timestamp",
+                    "cost_decision_timestamp",
+                    "signal",
+                    "strength",
+                    "net_return",
+                    "cost_return",
+                ]
+            ].to_dict("records")
         ),
     }
     return "calibrated", probability, expected_edge, expected_cost, uncertainty, receipt
@@ -863,6 +1001,9 @@ def evaluate_registry(request: EvaluationRequest) -> tuple[StrategyEvaluation, .
                 chronology,
                 expected_folds,
                 as_of=request.as_of,
+                dataset_hash=request.dataset_hash,
+                cohort_id=request.cohort_id,
+                validation_config_hash=validation_policy_hash(request.config),
             )
         except ValueError as error:
             evaluations.append(
@@ -878,8 +1019,20 @@ def evaluate_registry(request: EvaluationRequest) -> tuple[StrategyEvaluation, .
             continue
 
         curve = evidence.backtest.equity_curve
-        required_curve_columns = {"timestamp", "decision_timestamp", "outcome_available_at", "net_return"}
+        required_curve_columns = {
+            "timestamp",
+            "decision_timestamp",
+            "cost_decision_timestamp",
+            "outcome_available_at",
+            "net_return",
+            "cost_return",
+        }
         if missing_curve_columns := required_curve_columns - set(curve.columns):
+            reason = (
+                f"economic cost evidence is missing fields: {sorted(missing_curve_columns)}"
+                if missing_curve_columns & {"cost_return", "cost_decision_timestamp"}
+                else f"backtest curve lacks causal outcome mapping: {sorted(missing_curve_columns)}"
+            )
             evaluations.append(
                 _placeholder_evaluation(
                     request,
@@ -887,7 +1040,7 @@ def evaluate_registry(request: EvaluationRequest) -> tuple[StrategyEvaluation, .
                     spec.deterministic_version,
                     spec.family,
                     EvaluationStatus.FAILED,
-                    f"backtest curve lacks causal outcome mapping: {sorted(missing_curve_columns)}",
+                    reason,
                 )
             )
             continue
@@ -911,6 +1064,30 @@ def evaluate_registry(request: EvaluationRequest) -> tuple[StrategyEvaluation, .
             evidence.backtest.metrics,
         )
         mapped_curve = mapped_backtest.equity_curve
+        cost_timestamps = pd.to_datetime(
+            mapped_curve["cost_decision_timestamp"],
+            utc=True,
+            errors="coerce",
+        )
+        costs = pd.to_numeric(mapped_curve["cost_return"], errors="coerce")
+        mapped_decisions = pd.to_datetime(mapped_curve["decision_timestamp"], utc=True, errors="coerce")
+        if (
+            cost_timestamps.isna().any()
+            or not cost_timestamps.equals(mapped_decisions)
+            or costs.isna().any()
+            or not costs.map(math.isfinite).all()
+        ):
+            evaluations.append(
+                _placeholder_evaluation(
+                    request,
+                    spec.strategy_id,
+                    spec.deterministic_version,
+                    spec.family,
+                    EvaluationStatus.FAILED,
+                    "economic cost evidence is missing, non-finite, or decision-misaligned",
+                )
+            )
+            continue
         timestamps = _timestamp_values(mapped_curve["timestamp"], name="backtest timestamp")
         if timestamps.max() > requested_as_of:
             evaluations.append(
@@ -1015,19 +1192,19 @@ def evaluate_registry(request: EvaluationRequest) -> tuple[StrategyEvaluation, .
             "dsr_probability": dsr,
             "trial_sharpes": sealed_evidence.trial_sharpes,
             "causal_audit_passed": evidence.causal_audit_passed,
-            "robustness_available": evidence.robustness is not None,
+            "robustness_available": sealed_evidence.robustness is not None,
             "median_walk_forward_net_edge": (
-                evidence.robustness.median_walk_forward_net_edge if evidence.robustness else None
+                sealed_evidence.robustness.median_walk_forward_net_edge if sealed_evidence.robustness else None
             ),
-            "pbo_probability": evidence.robustness.pbo_probability if evidence.robustness else None,
+            "pbo_probability": sealed_evidence.robustness.pbo_probability if sealed_evidence.robustness else None,
             "parameter_neighborhood_stable": (
-                evidence.robustness.parameter_neighborhood_stable if evidence.robustness else None
+                sealed_evidence.robustness.parameter_neighborhood_stable if sealed_evidence.robustness else None
             ),
             "parameter_neighbor_positive_fraction": (
-                evidence.robustness.parameter_neighbor_positive_fraction if evidence.robustness else None
+                sealed_evidence.robustness.parameter_neighbor_positive_fraction if sealed_evidence.robustness else None
             ),
             "parameter_neighbor_median_ratio": (
-                evidence.robustness.parameter_neighbor_median_ratio if evidence.robustness else None
+                sealed_evidence.robustness.parameter_neighbor_median_ratio if sealed_evidence.robustness else None
             ),
         }
         reasons = promotion_reasons(promotion_inputs, request.config)
@@ -1113,10 +1290,11 @@ def evaluate_registry(request: EvaluationRequest) -> tuple[StrategyEvaluation, .
                 current_strength=strength,
                 current_probability=current_probability,
                 calibration_status=calibration_status,
+                economic_evidence_status="authenticated",
                 expected_edge=expected_edge,
                 expected_cost=expected_cost,
                 uncertainty=uncertainty,
-                robustness=evidence.robustness,
+                robustness=sealed_evidence.robustness,
                 decision_timestamp=decision_timestamp,
                 data_through=data_through,
                 dataset_hash=request.dataset_hash,

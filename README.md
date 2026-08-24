@@ -145,7 +145,7 @@ make research-ci         # Rebuild the network-free intraday research fixture
 make research-live CACHE_DIR=/external/path # Exhaustive official Binance history
 make research-live-probe CACHE_DIR=/external/path # Bounded official-provider coverage probe
 make report              # Write a measured research note
-make sync-macos-snapshot # Refresh the app's checked-in first-launch data
+make sync-macos-snapshot # Merge authoritative CI research into the app's first-launch data
 make macos-test          # Run Swift model and app tests
 make macos-app           # Assemble build/Nowcaster.app
 make macos-ui-test       # Launch the app and verify a real native window

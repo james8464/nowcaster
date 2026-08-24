@@ -22,6 +22,7 @@ from src.strategies.validation import (
     TrialEvidence,
     ValidationConfig,
     evaluate_registry,
+    validation_policy_hash,
 )
 
 VALIDATION_CONFIG = ValidationConfig(
@@ -102,6 +103,24 @@ def _evaluations() -> tuple:
             strategy_id=registered.spec.strategy_id,
             symbol="AAA",
         )
+        folds = (
+            FoldEvidence(
+                0,
+                datetime(2026, 8, 21, 14, tzinfo=UTC),
+                datetime(2026, 8, 21, 15, tzinfo=UTC),
+                datetime(2026, 8, 21, 16, tzinfo=UTC),
+                0.8,
+                0.1,
+            ),
+            FoldEvidence(
+                1,
+                datetime(2026, 8, 21, 16, tzinfo=UTC),
+                datetime(2026, 8, 21, 17, tzinfo=UTC),
+                datetime(2026, 8, 21, 18, tzinfo=UTC),
+                0.6,
+                0.2,
+            ),
+        )
         runs[registered.spec.strategy_id] = StrategyRunEvidence(
             backtest=backtest,
             signals=signals,
@@ -114,25 +133,22 @@ def _evaluations() -> tuple:
                 )
                 for trial, sharpe in enumerate((0.1, 0.2, 0.3, 0.4), start=1)
             ),
-            fold_evidence=(
-                FoldEvidence(
-                    0,
-                    datetime(2026, 8, 21, 14, tzinfo=UTC),
-                    datetime(2026, 8, 21, 15, tzinfo=UTC),
-                    datetime(2026, 8, 21, 16, tzinfo=UTC),
-                    0.8,
-                    0.1,
-                ),
-                FoldEvidence(
-                    1,
-                    datetime(2026, 8, 21, 16, tzinfo=UTC),
-                    datetime(2026, 8, 21, 17, tzinfo=UTC),
-                    datetime(2026, 8, 21, 18, tzinfo=UTC),
-                    0.6,
-                    0.2,
-                ),
+            fold_evidence=folds,
+            robustness=RobustnessEvidence.seal(
+                median_walk_forward_net_edge=0.005,
+                pbo_probability=0.25,
+                parameter_neighborhood_stable=True,
+                parameter_neighbor_positive_fraction=0.75,
+                parameter_neighbor_median_ratio=0.8,
+                discovered_at=datetime(2026, 8, 21, 18, 10, tzinfo=UTC),
+                evaluated_at=datetime(2026, 8, 21, 18, 30, tzinfo=UTC),
+                development_data_through=datetime(2026, 8, 21, 18, tzinfo=UTC),
+                sealed_final_start=datetime(2026, 8, 21, 19, tzinfo=UTC),
+                cohort_id="cohort-engine",
+                dataset_hash="d" * 64,
+                validation_config_hash=validation_policy_hash(VALIDATION_CONFIG),
+                fold_evidence=folds,
             ),
-            robustness=RobustnessEvidence(0.005, 0.25, True, 0.75, 0.8),
             expected_edge=0.02,
             expected_cost=0.001,
             uncertainty=0.001,
@@ -148,6 +164,7 @@ def _evaluations() -> tuple:
         dataset_hash="d" * 64,
         symbol="AAA",
         interval=BarInterval.ONE_HOUR,
+        cohort_id="cohort-engine",
         config=VALIDATION_CONFIG,
     )
     evaluations = evaluate_registry(request)

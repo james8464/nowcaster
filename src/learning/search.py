@@ -5,8 +5,8 @@ import math
 import random
 import statistics
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from typing import Literal
 
 import numpy as np
@@ -84,7 +84,13 @@ class RuleCandidate:
             _explicit_utc(self.evidence_through, "candidate evidence_through")
 
     @classmethod
-    def from_rule(cls, experiment: LearningExperiment, rule: RuleNode) -> RuleCandidate:
+    def from_rule(
+        cls,
+        experiment: LearningExperiment,
+        rule: RuleNode,
+        *,
+        discovered_at: datetime | None = None,
+    ) -> RuleCandidate:
         identity = canonical_hash({"grammar_version": 1, "rule": rule.canonical})
         run_version = canonical_hash(
             {"learning_run_id": experiment.learning_run_id, "started_at": experiment.started_at}
@@ -92,7 +98,7 @@ class RuleCandidate:
         return cls(
             rule=rule,
             version=f"1.0.0+{identity[:8]}.{run_version}",
-            discovered_at=experiment.started_at,
+            discovered_at=discovered_at or experiment.event_time(),
             evidence_through=experiment.development_data_through,
         )
 
@@ -131,6 +137,7 @@ class LearningExperiment:
     availability_column: str = "available_at"
     outcome_availability_column: str = "outcome_available_at"
     database: Database | None = field(default=None, compare=False, repr=False)
+    clock: Callable[[], datetime] = field(default=lambda: datetime.now(UTC), compare=False, repr=False)
 
     def __post_init__(self) -> None:
         for name in ("learning_run_id", "dataset_hash", "symbol"):
@@ -190,6 +197,7 @@ class LearningExperiment:
                     ),
                 ),
             )
+
         if any(not isinstance(rule, RuleNode) for rule in self.seed_rules):
             raise ValueError("seed rules must be typed RuleNode instances")
         ordered_seed_rules = tuple(sorted(self.seed_rules, key=lambda rule: (rule.semantic_hash, rule.render())))
@@ -199,6 +207,9 @@ class LearningExperiment:
             semantic_dedupe(ordered_seed_rules),
         )
 
+    def event_time(self) -> datetime:
+        return _explicit_utc(self.clock(), "learning event clock")
+
 
 @dataclass(frozen=True, slots=True)
 class LearningTrial:
@@ -206,6 +217,7 @@ class LearningTrial:
     trial_id: str
     candidate: RuleCandidate
     evaluated_at: datetime
+    received_at: datetime
     status: TrialStatus
     fold_metrics: tuple[FoldMetrics, ...] = ()
     fitness: float | None = None
@@ -646,6 +658,7 @@ def _trial_payload(
         "fitness": trial.fitness,
         "status": trial.status,
         "error_summary": trial.error_summary,
+        "candidate_discovered_at": _timestamp_text(trial.candidate.discovered_at),
         "evaluated_at": _timestamp_text(trial.evaluated_at),
         "learning_run_id": experiment.learning_run_id,
         "dataset_hash": experiment.dataset_hash,
@@ -655,7 +668,7 @@ def _trial_payload(
         "mode": StrategyMode.WALK_FORWARD_LEARNING.value,
         "source": _TRIAL_SOURCE,
         "source_version": _TRIAL_SOURCE_VERSION,
-        "created_at": _timestamp_text(trial.evaluated_at),
+        "created_at": _timestamp_text(trial.received_at),
     }
     payload["receipt_hash"] = canonical_hash(payload)
     return payload
@@ -738,7 +751,7 @@ def _persist_trial(
                 "error_summary": trial.error_summary,
                 "source": _TRIAL_SOURCE,
                 "source_version": _TRIAL_SOURCE_VERSION,
-                "created_at": trial.evaluated_at,
+                "created_at": trial.received_at,
             }
         ],
     )
@@ -828,7 +841,15 @@ def _resume_trials(experiment: LearningExperiment, development_digest: str) -> l
         if not 0 <= ordinal < experiment.evaluation_budget:
             raise ValueError("persisted learning trial ordinal is malformed")
         expected_rule = _next_rule(experiment, trials)
-        candidate = RuleCandidate.from_rule(experiment, expected_rule or initial[-1])
+        candidate_discovered_at = _explicit_utc(
+            pd.Timestamp(payload.get("candidate_discovered_at")).to_pydatetime(),
+            "candidate discovery",
+        )
+        candidate = RuleCandidate.from_rule(
+            experiment,
+            expected_rule or initial[-1],
+            discovered_at=candidate_discovered_at,
+        )
         if (
             payload.get("candidate_hash") != candidate.candidate_hash
             or payload.get("strategy_id") != candidate.strategy_id
@@ -880,17 +901,23 @@ def _resume_trials(experiment: LearningExperiment, development_digest: str) -> l
             raise ValueError("persisted invalid status conflicts with deterministic domain validation")
         if (expected_rule is None) != (status == "budget_stop"):
             raise ValueError("persisted budget-stop status conflicts with deterministic generation")
-        expected_evaluated_at = experiment.started_at + timedelta(microseconds=ordinal)
-        if payload.get("evaluated_at") != _timestamp_text(expected_evaluated_at) or payload.get(
-            "created_at"
-        ) != _timestamp_text(expected_evaluated_at):
-            raise ValueError("persisted trial evaluated_at is not deterministic")
+        evaluated_at = _explicit_utc(
+            pd.Timestamp(payload.get("evaluated_at")).to_pydatetime(),
+            "trial evaluation",
+        )
+        received_at = _explicit_utc(
+            pd.Timestamp(payload.get("created_at")).to_pydatetime(),
+            "trial receipt",
+        )
+        if not candidate_discovered_at <= evaluated_at <= received_at:
+            raise ValueError("persisted trial event chronology is malformed")
         trials.append(
             LearningTrial(
                 ordinal=ordinal,
                 trial_id=expected_trial_id,
                 candidate=candidate,
-                evaluated_at=expected_evaluated_at,
+                evaluated_at=evaluated_at,
+                received_at=received_at,
                 status=status,  # type: ignore[arg-type]
                 fold_metrics=metrics,
                 fitness=fitness,
@@ -905,9 +932,7 @@ def _persist_discovery(
     candidate: RuleCandidate,
     trials: Sequence[LearningTrial],
     development_digest: str,
-) -> None:
-    if experiment.database is None:
-        return
+) -> RuleCandidate:
     rule_id = canonical_hash(
         {
             "learning_run_id": experiment.learning_run_id,
@@ -915,10 +940,18 @@ def _persist_discovery(
             "rule_version": candidate.version,
         }
     )
-    if experiment.database.scalar(
-        "select count(*) from discovered_rules where rule_id = :rule_id", {"rule_id": rule_id}
-    ):
-        return
+    if experiment.database is not None:
+        existing = experiment.database.frame(
+            "select discovered_at from discovered_rules where rule_id = :rule_id",
+            {"rule_id": rule_id},
+        )
+        if not existing.empty:
+            discovered_at = pd.Timestamp(existing.iloc[0]["discovered_at"]).to_pydatetime()
+            return replace(candidate, discovered_at=discovered_at)
+    discovered = replace(candidate, discovered_at=experiment.event_time())
+    received_at = experiment.event_time()
+    if experiment.database is None:
+        return discovered
     best = next(trial for trial in trials if trial.candidate == candidate and trial.fitness is not None)
     experiment.database.insert(
         "discovered_rules",
@@ -931,7 +964,7 @@ def _persist_discovery(
                 "dataset_hash": experiment.dataset_hash,
                 "symbol": experiment.symbol,
                 "interval": experiment.interval.value,
-                "discovered_at": candidate.discovered_at,
+                "discovered_at": discovered.discovered_at,
                 "state": "shadow",
                 "rule": {
                     "schema_version": 1,
@@ -950,10 +983,11 @@ def _persist_discovery(
                 },
                 "source": _TRIAL_SOURCE,
                 "source_version": _TRIAL_SOURCE_VERSION,
-                "created_at": candidate.discovered_at,
+                "created_at": received_at,
             }
         ],
     )
+    return discovered
 
 
 def discover_rules(experiment: LearningExperiment, development_bars: pd.DataFrame) -> LearningResult:
@@ -967,7 +1001,6 @@ def discover_rules(experiment: LearningExperiment, development_bars: pd.DataFram
     successful = [trial.candidate for trial in trials if trial.status == "succeeded"]
     for ordinal in range(len(trials), experiment.evaluation_budget):
         rule = _next_rule(experiment, trials)
-        evaluated_at = experiment.started_at + timedelta(microseconds=ordinal)
         candidate = RuleCandidate.from_rule(experiment, rule or rules[-1])
         trial_id = canonical_hash(
             {
@@ -977,11 +1010,14 @@ def discover_rules(experiment: LearningExperiment, development_bars: pd.DataFram
             }
         )
         if rule is None:
+            evaluated_at = experiment.event_time()
+            received_at = experiment.event_time()
             trial = LearningTrial(
                 ordinal,
                 trial_id,
                 candidate,
                 evaluated_at,
+                received_at,
                 "budget_stop",
                 error_summary="bounded semantic candidate space exhausted",
             )
@@ -991,11 +1027,14 @@ def discover_rules(experiment: LearningExperiment, development_bars: pd.DataFram
         try:
             _validate_rule_domain(experiment, candidate.rule)
         except ValueError as error:
+            evaluated_at = experiment.event_time()
+            received_at = experiment.event_time()
             trial = LearningTrial(
                 ordinal,
                 trial_id,
                 candidate,
                 evaluated_at,
+                received_at,
                 "invalid",
                 error_summary=f"{type(error).__name__}: {error}",
             )
@@ -1017,22 +1056,28 @@ def discover_rules(experiment: LearningExperiment, development_bars: pd.DataFram
                 fold_metrics.append(metrics)
             fitness = calculate_fitness(candidate, fold_metrics, experiment.penalties)
         except Exception as error:  # each deterministic query must survive into the append-only ledger
+            evaluated_at = experiment.event_time()
+            received_at = experiment.event_time()
             trial = LearningTrial(
                 ordinal,
                 trial_id,
                 candidate,
                 evaluated_at,
+                received_at,
                 "failed",
                 error_summary=f"{type(error).__name__}: {error}",
             )
             trials.append(trial)
             _persist_trial(experiment, trial, development_digest)
             continue
+        evaluated_at = experiment.event_time()
+        received_at = experiment.event_time()
         trial = LearningTrial(
             ordinal,
             trial_id,
             candidate,
             evaluated_at,
+            received_at,
             "succeeded",
             tuple(fold_metrics),
             fitness,
@@ -1044,15 +1089,16 @@ def discover_rules(experiment: LearningExperiment, development_bars: pd.DataFram
         (trial for trial in trials if trial.fitness is not None),
         key=lambda trial: (-float(trial.fitness), trial.candidate.candidate_hash),
     )
+    best_candidate = ranked[0].candidate if ranked else None
+    if best_candidate is not None:
+        best_candidate = _persist_discovery(experiment, best_candidate, trials, development_digest)
     result = LearningResult(
         learning_run_id=experiment.learning_run_id,
         trials=tuple(trials),
         candidates=tuple(successful),
-        best_candidate=ranked[0].candidate if ranked else None,
+        best_candidate=best_candidate,
         stopped_reason="evaluation_budget_exhausted",
     )
-    if result.best_candidate is not None:
-        _persist_discovery(experiment, result.best_candidate, result.trials, development_digest)
     return result
 
 

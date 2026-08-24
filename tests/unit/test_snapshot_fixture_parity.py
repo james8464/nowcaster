@@ -1,4 +1,7 @@
 import importlib.util
+import json
+import sys
+from copy import deepcopy
 from pathlib import Path
 
 
@@ -103,3 +106,42 @@ def test_snapshot_sync_preserves_demo_sections_and_replaces_research_sections() 
         assert merged[section] == research[section]
     assert merged["ensemble_components"] == research["ensemble_components"][:10]
     assert base["strategies"] == []
+
+
+def test_python_research_semantic_mutation_breaks_swift_parity(tmp_path, monkeypatch) -> None:
+    synchronizer = _load_synchronizer()
+    base = {
+        "schema_version": 2,
+        "metadata": {"data_mode": "demo"},
+        "strategies": [],
+        "ensemble_components": [],
+        "dataset_coverage": [],
+        "learning_runs": [],
+        "causal_audits": [],
+    }
+    python_research = {
+        **base,
+        "strategies": [{"strategy_id": "causal", "promotion_state": "rejected"}],
+        "ensemble_components": [{"strategy_id": "causal"}],
+        "dataset_coverage": [{"dataset_hash": "d" * 64}],
+        "learning_runs": [{"learning_run_id": "bounded"}],
+        "causal_audits": [{"audit_id": "audit", "passed": True}],
+    }
+    swift = synchronizer.merge_research_sections(base, python_research)
+    python_path = tmp_path / "python.json"
+    swift_path = tmp_path / "swift.json"
+    python_path.write_text(json.dumps(python_research), encoding="utf-8")
+    swift_path.write_text(json.dumps(swift), encoding="utf-8")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["verify", "--python-research", str(python_path), "--swift-fixture", str(swift_path)],
+    )
+
+    assert verifier.main() == 0
+
+    changed_python = deepcopy(python_research)
+    changed_python["strategies"][0]["promotion_state"] = "promoted"
+    python_path.write_text(json.dumps(changed_python), encoding="utf-8")
+
+    assert verifier.main() == 1

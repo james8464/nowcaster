@@ -6,10 +6,18 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import subprocess
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
+
+RESEARCH_SECTIONS = (
+    "strategies",
+    "ensemble_components",
+    "dataset_coverage",
+    "learning_runs",
+    "causal_audits",
+)
+MAX_NATIVE_ENSEMBLE_COMPONENTS = 10
 
 
 def semantic_snapshot_hash(payload: dict[str, Any]) -> str:
@@ -36,31 +44,30 @@ def semantic_snapshot_hash(payload: dict[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _staged_payload(path: Path) -> dict[str, Any]:
-    root = Path(
-        subprocess.check_output(
-            ["git", "rev-parse", "--show-toplevel"],
-            cwd=path.parent,
-            text=True,
-        ).strip()
-    )
-    relative = path.resolve().relative_to(root.resolve()).as_posix()
-    encoded = subprocess.check_output(["git", "show", f":{relative}"], cwd=root)
-    return json.loads(encoded)
+def research_semantic_hash(payload: dict[str, Any]) -> str:
+    projection: dict[str, Any] = {"schema_version": payload.get("schema_version")}
+    for section in RESEARCH_SECTIONS:
+        if section not in payload:
+            raise ValueError(f"snapshot is missing research section: {section}")
+        projection[section] = deepcopy(payload[section])
+    projection["ensemble_components"] = projection["ensemble_components"][:MAX_NATIVE_ENSEMBLE_COMPONENTS]
+    encoded = json.dumps(projection, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("fixture", type=Path)
+    parser.add_argument("--python-research", type=Path, required=True)
+    parser.add_argument("--swift-fixture", type=Path, required=True)
     args = parser.parse_args()
-    generated = json.loads(args.fixture.read_text(encoding="utf-8"))
-    staged = _staged_payload(args.fixture)
-    generated_hash = semantic_snapshot_hash(generated)
-    staged_hash = semantic_snapshot_hash(staged)
-    if generated_hash != staged_hash:
-        print(f"Swift snapshot semantic drift: staged={staged_hash} generated={generated_hash}")
+    generated = json.loads(args.python_research.read_text(encoding="utf-8"))
+    swift = json.loads(args.swift_fixture.read_text(encoding="utf-8"))
+    generated_hash = research_semantic_hash(generated)
+    swift_hash = research_semantic_hash(swift)
+    if generated_hash != swift_hash:
+        print(f"Swift snapshot research drift: python={generated_hash} swift={swift_hash}")
         return 1
-    print(f"Swift snapshot semantic parity: {generated_hash}")
+    print(f"Python/Swift research semantic parity: {generated_hash}")
     return 0
 
 

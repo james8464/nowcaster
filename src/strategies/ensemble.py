@@ -1670,6 +1670,8 @@ def combine_current_signals(
     reasons: list[str] = []
     if any(evaluation.calibration_status != "calibrated" for evaluation, _, _ in active):
         reasons.append("calibrated_decision_capability_unavailable")
+    if any(evaluation.economic_evidence_status != "authenticated" for evaluation, _, _ in active):
+        reasons.append("economic_cost_evidence_unavailable")
     if breadth < config.minimum_breadth:
         reasons.append("minimum_breadth")
     if direction == 0 or vote_margin < config.minimum_vote_margin:

@@ -23,6 +23,7 @@ from src.strategies.validation import (
     make_outer_folds,
     run_frozen_protocol,
     select_final_boundary,
+    validation_policy_hash,
 )
 
 
@@ -62,6 +63,7 @@ def _backtest(final_returns: tuple[float, float] = (0.03, -0.01)) -> IntradayBac
         {
             "timestamp": timestamps,
             "decision_timestamp": timestamps,
+            "cost_decision_timestamp": timestamps,
             "outcome_available_at": timestamps + pd.Timedelta(hours=2),
             "net_return": returns,
             "gross_return": returns,
@@ -94,6 +96,27 @@ def test_final_segment_uses_decision_to_outcome_mapping_at_the_boundary() -> Non
     assert evaluation.final_sharpe == pytest.approx(22.44994432064365)
 
 
+@pytest.mark.parametrize("defect", ["missing", "null", "nan", "misaligned"])
+def test_economic_cost_evidence_fails_closed_when_missing_or_malformed(defect: str) -> None:
+    registry = _registry("costed")
+    base = _backtest()
+    curve = base.equity_curve.copy()
+    if defect == "missing":
+        curve = curve.drop(columns="cost_return")
+    elif defect == "null":
+        curve.loc[2, "cost_return"] = None
+    elif defect == "nan":
+        curve.loc[2, "cost_return"] = float("nan")
+    else:
+        curve.loc[2, "cost_decision_timestamp"] += pd.Timedelta(hours=1)
+    malformed = IntradayBacktestResult(curve, base.trade_ledger, base.rejection_ledger, base.metrics)
+
+    evaluation = evaluate_registry(_evaluation_request(registry, {"costed": _timestamped_evidence(malformed)}))[0]
+
+    assert evaluation.status is EvaluationStatus.FAILED
+    assert "cost evidence" in evaluation.status_reason
+
+
 def _signals() -> pd.DataFrame:
     timestamps = _timeline(10)["decision_timestamp"]
     return pd.DataFrame(
@@ -107,7 +130,7 @@ def _signals() -> pd.DataFrame:
 
 
 def _timestamped_evidence(backtest: IntradayBacktestResult | None = None) -> StrategyRunEvidence:
-    return StrategyRunEvidence(
+    evidence = StrategyRunEvidence(
         backtest=backtest or _backtest(),
         signals=_signals(),
         trial_evidence=(
@@ -126,16 +149,38 @@ def _timestamped_evidence(backtest: IntradayBacktestResult | None = None) -> Str
                 0.1,
             ),
         ),
-        robustness=RobustnessEvidence(
-            median_walk_forward_net_edge=0.005,
-            pbo_probability=0.25,
-            parameter_neighborhood_stable=True,
-            parameter_neighbor_positive_fraction=0.75,
-            parameter_neighbor_median_ratio=0.8,
-        ),
+        robustness=None,
         expected_edge=0.02,
         expected_cost=0.001,
         uncertainty=0.001,
+    )
+    return replace(evidence, robustness=_robustness(evidence.fold_evidence))
+
+
+def _robustness(
+    folds: tuple[FoldEvidence, ...],
+    *,
+    median_edge: float = 0.005,
+    pbo: float = 0.25,
+    stable: bool = True,
+    positive_fraction: float = 0.75,
+    median_ratio: float = 0.8,
+    evaluated_at: datetime = datetime(2026, 8, 21, 16, tzinfo=UTC),
+) -> RobustnessEvidence:
+    return RobustnessEvidence.seal(
+        median_walk_forward_net_edge=median_edge,
+        pbo_probability=pbo,
+        parameter_neighborhood_stable=stable,
+        parameter_neighbor_positive_fraction=positive_fraction,
+        parameter_neighbor_median_ratio=median_ratio,
+        discovered_at=datetime(2026, 8, 21, 15, 30, tzinfo=UTC),
+        evaluated_at=evaluated_at,
+        development_data_through=datetime(2026, 8, 21, 15, tzinfo=UTC),
+        sealed_final_start=datetime(2026, 8, 21, 17, tzinfo=UTC),
+        cohort_id="cohort-test",
+        dataset_hash="d" * 64,
+        validation_config_hash=validation_policy_hash(_evaluation_request(_registry("x"), {}).config),
+        fold_evidence=folds,
     )
 
 
@@ -153,12 +198,12 @@ def test_promotion_robustness_gates_fail_closed_and_accept_exact_pbo_boundary() 
             {
                 "robust": replace(
                     _timestamped_evidence(),
-                    robustness=RobustnessEvidence(
-                        median_walk_forward_net_edge=0.001,
-                        pbo_probability=0.5,
-                        parameter_neighborhood_stable=True,
-                        parameter_neighbor_positive_fraction=0.5,
-                        parameter_neighbor_median_ratio=0.5,
+                    robustness=_robustness(
+                        _timestamped_evidence().fold_evidence,
+                        median_edge=0.001,
+                        pbo=0.5,
+                        positive_fraction=0.5,
+                        median_ratio=0.5,
                     ),
                 )
             },
@@ -170,12 +215,13 @@ def test_promotion_robustness_gates_fail_closed_and_accept_exact_pbo_boundary() 
             {
                 "robust": replace(
                     _timestamped_evidence(),
-                    robustness=RobustnessEvidence(
-                        median_walk_forward_net_edge=0.0,
-                        pbo_probability=0.500001,
-                        parameter_neighborhood_stable=False,
-                        parameter_neighbor_positive_fraction=0.49,
-                        parameter_neighbor_median_ratio=0.49,
+                    robustness=_robustness(
+                        _timestamped_evidence().fold_evidence,
+                        median_edge=0.0,
+                        pbo=0.500001,
+                        stable=False,
+                        positive_fraction=0.49,
+                        median_ratio=0.49,
                     ),
                 )
             },
@@ -187,6 +233,67 @@ def test_promotion_robustness_gates_fail_closed_and_accept_exact_pbo_boundary() 
     assert "median walk-forward net edge is not positive" in negative.promotion.reasons
     assert "CSCV/PBO gate failed" in negative.promotion.reasons
     assert "parameter-neighborhood stability failed" in negative.promotion.reasons
+
+
+def test_robustness_receipt_seals_exact_fold_context_and_rejects_post_hoc_or_tamper() -> None:
+    evidence = _timestamped_evidence()
+    config = _evaluation_request(_registry("robust"), {"robust": evidence}).config
+    receipt = RobustnessEvidence.seal(
+        median_walk_forward_net_edge=0.005,
+        pbo_probability=0.25,
+        parameter_neighborhood_stable=True,
+        parameter_neighbor_positive_fraction=0.75,
+        parameter_neighbor_median_ratio=0.8,
+        discovered_at=datetime(2026, 8, 21, 15, 30, tzinfo=UTC),
+        evaluated_at=datetime(2026, 8, 21, 16, tzinfo=UTC),
+        development_data_through=datetime(2026, 8, 21, 15, tzinfo=UTC),
+        sealed_final_start=datetime(2026, 8, 21, 17, tzinfo=UTC),
+        cohort_id="cohort-test",
+        dataset_hash="d" * 64,
+        validation_config_hash=validation_policy_hash(config),
+        fold_evidence=evidence.fold_evidence,
+    )
+    positive = evaluate_registry(
+        replace(
+            _evaluation_request(_registry("robust"), {"robust": replace(evidence, robustness=receipt)}),
+            cohort_id="cohort-test",
+        )
+    )[0]
+
+    assert "robustness diagnostics are unavailable" not in positive.promotion.reasons
+    with pytest.raises(ValueError, match="receipt"):
+        replace(receipt, pbo_probability=0.1)
+
+    for evaluated_at in (
+        datetime(2026, 8, 21, 17, tzinfo=UTC),
+        datetime(2026, 8, 21, 18, tzinfo=UTC),
+    ):
+        post_hoc = RobustnessEvidence.seal(
+            median_walk_forward_net_edge=0.005,
+            pbo_probability=0.25,
+            parameter_neighborhood_stable=True,
+            parameter_neighbor_positive_fraction=0.75,
+            parameter_neighbor_median_ratio=0.8,
+            discovered_at=datetime(2026, 8, 21, 15, 30, tzinfo=UTC),
+            evaluated_at=evaluated_at,
+            development_data_through=datetime(2026, 8, 21, 15, tzinfo=UTC),
+            sealed_final_start=datetime(2026, 8, 21, 17, tzinfo=UTC),
+            cohort_id="cohort-test",
+            dataset_hash="d" * 64,
+            validation_config_hash=validation_policy_hash(config),
+            fold_evidence=evidence.fold_evidence,
+        )
+        rejected = evaluate_registry(
+            replace(
+                _evaluation_request(
+                    _registry("robust"),
+                    {"robust": replace(evidence, robustness=post_hoc)},
+                ),
+                cohort_id="cohort-test",
+            )
+        )[0]
+        assert rejected.status is EvaluationStatus.FAILED
+        assert "sealed final boundary" in rejected.status_reason
 
 
 def test_fold_fitted_decision_calibration_uses_only_development_outcomes() -> None:
@@ -271,6 +378,7 @@ def _evaluation_request(registry: StrategyRegistry, runs: dict[str, StrategyRunE
         dataset_hash="d" * 64,
         symbol="AAA",
         interval=BarInterval.ONE_HOUR,
+        cohort_id="cohort-test",
         config=ValidationConfig(
             final_test_fraction=0.2,
             minimum_train_observations=4,

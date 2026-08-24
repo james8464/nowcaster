@@ -490,6 +490,7 @@ class StrategyPipeline:
                     snapshot.query,
                     snapshot.manifest,
                     snapshot.as_of,
+                    cohort_id,
                     signal_bars=snapshot.signal_bars,
                     bars=snapshot.causal_bars,
                 )
@@ -1270,6 +1271,7 @@ class StrategyPipeline:
         query: BarQuery,
         manifest: DatasetManifest,
         as_of: datetime,
+        cohort_id: str,
         *,
         signal_bars: pd.DataFrame,
         bars: pd.DataFrame,
@@ -1332,6 +1334,7 @@ class StrategyPipeline:
                 dataset_hash=manifest.dataset_hash,
                 symbol=scope.symbol,
                 interval=scope.interval,
+                cohort_id=cohort_id,
                 config=self.validation_config,
             )
         )
@@ -2050,6 +2053,7 @@ class StrategyPipeline:
             sealed_final_start=final_start,
             seed=options.seed,
             evaluation_budget=options.evaluation_budget,
+            clock=self.clock,
             inner_folds=inner_folds,
             indicators=("rsi", "volume_zscore"),
             thresholds=(-1.0, 0.0, 1.0, 30.0, 50.0, 70.0),

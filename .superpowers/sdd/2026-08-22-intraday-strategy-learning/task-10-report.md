@@ -79,3 +79,63 @@ Final deterministic research identities:
 3. Calibration requires at least five development observations and both outcome classes. Sparse or one-sided evidence is explicitly unavailable, so the ensemble abstains.
 4. The native fixture intentionally retains a bounded scenario set for UI behavior and security limits; deterministic CI research remains the authoritative complete software fixture.
 5. Backtests, fitted calibration, and forward promotion controls reduce leakage and overfitting risk but cannot guarantee future profit. Live execution, market impact, borrow availability, regime change, and provider corrections remain material.
+
+## Exceptional Final Fix Wave 2
+
+### Outcome
+
+The user-authorized four-finding wave is implemented and green. Learning and robustness timestamps now represent injected-clock event boundaries rather than invented ordering time; robustness and economic-cost evidence fail closed unless authenticated; and the bundled Swift research is derived from the authoritative generated Python CI snapshot rather than from itself. The controller's two new `progress.md` ledger entries were preserved.
+
+### Root causes and fixes
+
+1. **Synthetic learning event time.** Candidate discovery reused the run start and trial evaluation/receipt time was `started_at + ordinal microseconds`. That made post-hoc work appear older than a sealed final boundary. `LearningExperiment` now owns an injected event clock. Candidate discovery, trial evaluation, persistence receipt, selected-rule discovery, and selected-rule receipt each call it at their real event boundary. Persisted trials carry authenticated candidate discovery, evaluation, and receipt times. Resumption restores those times and sorts by the explicit ordinal; equal-resolution real timestamps do not affect ordering. Promotion's existing strict post-discovery observation/outcome filter and outer-block consumption tests were retained.
+2. **Unreceipted robustness aggregates.** PBO, median net edge, fold calibration, and parameter-neighborhood diagnostics could reach promotion without a boundary/context receipt. `RobustnessEvidence.seal` now hashes the metrics, discovery/evaluation times, development-data-through and sealed-final-start boundaries, cohort, dataset, validation-policy hash, exact fold count, and canonical fold evidence hash. Evaluation accepts it only when it exactly matches admitted development folds and was evaluated before the final boundary. Missing, unsealed, tampered, wrong-cohort, post-hoc, or boundary-equal evidence fails closed.
+3. **Economic cost defaulted to zero.** Missing/null `cost_return` was coerced into an optimistic zero-cost calibration. Every mapped outcome now requires finite `cost_return` plus an exactly aligned `cost_decision_timestamp`. The calibrated receipt hash includes both. Failed or unavailable cost evidence produces `economic_evidence_status=unavailable`, and the ensemble explicitly abstains with `economic_cost_evidence_unavailable`; valid modeled-cost evidence remains actionable only when the existing edge/uncertainty gates clear.
+4. **Self-referential fixture parity.** The synchronizer previously read the bundled Swift fixture as its own research source, so Python research drift was invisible. `make sync-macos-snapshot` now consumes `data/research/ci/nowcaster-snapshot.json`. The verifier projects the five schema-v2 research sections from the authoritative Python artifact and bundled Swift fixture, applies only the documented native component cap, and compares a deterministic semantic hash. A real CLI regression writes two files, proves the deterministic positive case, mutates Python promotion semantics, and observes a nonzero parity result. Native tests were decoupled from obsolete handcrafted sample values while retaining explicit signed-context presentation scenarios.
+
+### Strict TDD evidence
+
+Production changes followed reproduce/hypothesize/RED/minimal-GREEN cycles:
+
+- Learning RED: the advancing-clock regression failed with `TypeError: LearningExperiment.__init__() got an unexpected keyword argument 'clock'`; persisted evaluation times were still derived from ordinal offsets. GREEN: `.venv/bin/pytest -q tests/unit/test_learning_search.py tests/integration/test_learning_mode.py tests/integration/test_strategy_cli.py -k 'learn or promotion or forward or post_hoc'` — **50 passed, 36 deselected**.
+- Robustness RED: `AttributeError: type object 'RobustnessEvidence' has no attribute 'seal'`. GREEN: the positive receipt, post-hoc, tamper, and exact-boundary regression passed; the broader validation/ensemble/engine/backtest suite passed **108 tests**.
+- Economic-cost RED: missing, null, NaN, and decision-misaligned costs all returned `evaluated` rather than `failed`. GREEN: the malformed-cost matrix plus mapped intraday outcome suite passed **22 tests**; ensemble actionable, cost-buffer abstention, and unavailable-cost abstention paths also passed in the 108-test focused suite.
+- Parity RED: `AttributeError: module 'verify_snapshot_fixture_parity' has no attribute 'research_semantic_hash'`. GREEN: `.venv/bin/pytest -q tests/unit/test_snapshot_fixture_parity.py` — **3 passed**, including positive CLI parity followed by a mutated authoritative Python research failure.
+- Native fixture RED after the first authoritative merge: **22 issues** exposed stale handcrafted research-value assumptions. GREEN: scenario-specific values moved into an explicit mutated test fixture, while bundled assertions consume authoritative generated evidence; the complete native suite passed.
+
+No production assertion or evidence gate was weakened to turn RED into GREEN.
+
+### Final verification
+
+- `.venv/bin/pytest -q` — **502 passed in 306.30s**.
+- `.venv/bin/ruff format --check .` — **181 files already formatted**.
+- `.venv/bin/ruff check .` — **All checks passed**.
+- `git diff --check` — passed.
+- `make verify-research-fixtures` — schema-v2 artifact validation and deterministic research byte-drift check passed after staging the regenerated authoritative artifacts.
+- `make verify-swift-fixture-parity` — Python/Swift research semantic parity passed: `8a1c214792defa8975b5e6f8c19e2c0d221a59e258c9bb3307ad2451407728af`.
+- `swift test --package-path macos/Nowcaster` — **53 Swift Testing tests plus 1 XCTest passed (54 total)**.
+- `swift build -c release --package-path macos/Nowcaster` — production build completed.
+- `.venv/bin/python scripts/scan_tracked_secrets.py` — `Tracked-file and reachable-history secret scan passed`.
+- No live network fetch ran. Generated DuckDB files and provider caches remain ignored/outside Git.
+
+Final deterministic research identities:
+
+- code hash: `d975fa6a491bb2d703b619aaa2580dc82e2cb79e6b3408801cfda1626e53589f`
+- aggregate dataset hash: `a62830917a55b973413e43658ba45a1713a4db8df311e6fc48219755aaf585c3`
+- semantic research snapshot: `82576bf13f6a868bd2084ea86054ea93e3d6c713e96e106d2bcba8be28c6040e`
+- authoritative CI snapshot file: `d88ae7f46410f7d9533cfabe20e41aafab1dd8a8dc799a43460454719cff41c7`
+
+### Files changed in wave 2
+
+- Event chronology: `src/learning/search.py`, `src/strategies/pipeline.py`, `tests/unit/test_learning_search.py`.
+- Robustness/economics: `src/strategies/validation.py`, `src/strategies/ensemble.py`, `src/backtest/intraday.py`, `tests/unit/test_strategy_validation.py`, `tests/unit/test_strategy_ensemble.py`, `tests/integration/test_strategy_engine.py`.
+- Authoritative native parity: `Makefile`, `README.md`, `scripts/verify_snapshot_fixture_parity.py`, `tests/unit/test_snapshot_fixture_parity.py`, generated `data/research/ci/*`, the Swift fixture, and `StrategyLabTests.swift`.
+- Evidence ledger/report: `progress.md`, `task-10-report.md`.
+
+### Honest limitations
+
+1. Equal timestamps remain possible when the injected clock has coarse resolution; ordering is therefore the explicit ordinal/sequence, never synthetic time.
+2. The real provider pipeline still lacks sufficient authenticated CSCV/PBO and parameter-neighborhood receipts for promotion. This is represented as unavailable and rejects promotion; the sealed positive contract is exercised with exact fold-backed evidence in tests.
+3. Modeled cost is not a promise of realized slippage. Missing or malformed modeled cost now abstains, but borrow, market impact, latency, and regime changes remain outside historical certainty.
+4. The native app intentionally embeds at most ten ensemble components to respect its bounded decoder contract, but every embedded research section/component is now an exact projection of the authoritative Python artifact and cannot silently diverge.
+5. Backtests and causal receipts reduce leakage and audit risk; they do not guarantee profitable day trading.

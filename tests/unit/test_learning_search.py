@@ -72,11 +72,54 @@ def _experiment(**changes: object) -> LearningExperiment:
     return LearningExperiment(**values)
 
 
+class _AdvancingClock:
+    def __init__(self, start: datetime, step: timedelta = timedelta(seconds=1)) -> None:
+        self.current = start
+        self.step = step
+        self.calls: list[datetime] = []
+
+    def __call__(self) -> datetime:
+        value = self.current
+        self.calls.append(value)
+        self.current += self.step
+        return value
+
+
+def test_learning_uses_actual_clock_at_each_discovery_evaluation_and_receipt_boundary() -> None:
+    clock = _AdvancingClock(datetime(2026, 8, 24, 12, tzinfo=UTC))
+
+    result = discover_rules(_experiment(clock=clock, evaluation_budget=2), _bars())
+
+    assert len(clock.calls) == 8
+    assert [trial.ordinal for trial in result.trials] == [0, 1]
+    assert all(trial.candidate.discovered_at < trial.evaluated_at < trial.received_at for trial in result.trials)
+    assert result.best_candidate is not None
+    assert result.best_candidate.discovered_at > max(trial.received_at for trial in result.trials)
+
+
+def test_ordinal_order_is_stable_when_real_clock_resolution_is_equal() -> None:
+    event_time = datetime(2026, 8, 24, 12, tzinfo=UTC)
+
+    result = discover_rules(
+        _experiment(clock=lambda: event_time, evaluation_budget=3),
+        _bars(),
+    )
+
+    assert [trial.ordinal for trial in result.trials] == [0, 1, 2]
+    assert {trial.evaluated_at for trial in result.trials} == {event_time}
+    assert {trial.received_at for trial in result.trials} == {event_time}
+
+
 def test_fixed_seed_is_deterministic_across_input_and_configuration_order() -> None:
-    first = discover_rules(_experiment(), _bars())
+    fixed_event_time = datetime(2026, 8, 24, 12, tzinfo=UTC)
+    first = discover_rules(_experiment(clock=lambda: fixed_event_time), _bars())
     shuffled = _bars().sample(frac=1, random_state=7).reset_index(drop=True)
     second = discover_rules(
-        _experiment(indicators=("volume", "rsi"), thresholds=(100.0, 70.0, 50.0, 30.0)),
+        _experiment(
+            indicators=("volume", "rsi"),
+            thresholds=(100.0, 70.0, 50.0, 30.0),
+            clock=lambda: fixed_event_time,
+        ),
         shuffled,
     )
 
@@ -88,17 +131,21 @@ def test_fixed_seed_is_deterministic_across_input_and_configuration_order() -> N
 
 def test_post_hoc_learning_uses_receipt_time_without_moving_the_development_boundary() -> None:
     receipt_time = datetime(2026, 8, 24, 12, tzinfo=UTC)
+    clock = _AdvancingClock(receipt_time)
     experiment = _experiment(
         started_at=receipt_time,
         as_of=datetime(2026, 8, 20, 22, tzinfo=UTC),
         development_data_through=datetime(2026, 8, 20, 22, tzinfo=UTC),
+        clock=clock,
     )
 
     result = discover_rules(experiment, _bars())
 
-    assert result.trials[0].evaluated_at == receipt_time
+    assert result.trials[0].candidate.discovered_at == receipt_time
+    assert result.trials[0].evaluated_at == receipt_time + timedelta(seconds=1)
+    assert result.trials[0].received_at == receipt_time + timedelta(seconds=2)
     assert result.best_candidate is not None
-    assert result.best_candidate.discovered_at == receipt_time
+    assert result.best_candidate.discovered_at > result.trials[-1].received_at
     assert result.best_candidate.evidence_through == datetime(2026, 8, 20, 22, tzinfo=UTC)
 
 

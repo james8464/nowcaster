@@ -28,6 +28,12 @@ private func strategyLabFixtureWithDuplicateContext() throws -> NowcasterSnapsho
     )
     var strategies = try #require(root["strategies"] as? [[String: Any]])
     var duplicate = try #require(strategies.first)
+    let originalDatasetHash = try #require(duplicate["dataset_hash"] as? String)
+    let originalStrategyID = try #require(duplicate["strategy_id"] as? String)
+    let originalVersion = try #require(duplicate["version"] as? String)
+    let originalSymbol = try #require(duplicate["symbol"] as? String)
+    let originalInterval = try #require(duplicate["interval"] as? String)
+    let originalMode = try #require(duplicate["mode"] as? String)
     duplicate["dataset_hash"] = String(repeating: "e", count: 64)
     duplicate["mode"] = "frozen"
     duplicate["cohort_id"] = "cohort-frozen-e"
@@ -38,7 +44,16 @@ private func strategyLabFixtureWithDuplicateContext() throws -> NowcasterSnapsho
     root["strategies"] = strategies
 
     var components = try #require(root["ensemble_components"] as? [[String: Any]])
-    var component = try #require(components.first)
+    let componentIndex = try #require(components.firstIndex {
+        $0["strategy_id"] as? String == originalStrategyID
+            && $0["version"] as? String == originalVersion
+            && $0["dataset_hash"] as? String == originalDatasetHash
+            && $0["symbol"] as? String == originalSymbol
+            && $0["interval"] as? String == originalInterval
+            && $0["mode"] as? String == originalMode
+    })
+    components[componentIndex]["contribution"] = 0.18
+    var component = components[componentIndex]
     component["dataset_hash"] = String(repeating: "e", count: 64)
     component["mode"] = "frozen"
     component["cohort_id"] = "cohort-frozen-e"
@@ -48,7 +63,11 @@ private func strategyLabFixtureWithDuplicateContext() throws -> NowcasterSnapsho
     root["ensemble_components"] = components
 
     var coverage = try #require(root["dataset_coverage"] as? [[String: Any]])
-    var contextCoverage = try #require(coverage.first)
+    var contextCoverage = try #require(coverage.first {
+        $0["dataset_hash"] as? String == originalDatasetHash
+            && $0["symbol"] as? String == originalSymbol
+            && $0["interval"] as? String == originalInterval
+    })
     contextCoverage["dataset_hash"] = String(repeating: "e", count: 64)
     contextCoverage["provider"] = "csv"
     contextCoverage["feed"] = "local"
@@ -56,7 +75,14 @@ private func strategyLabFixtureWithDuplicateContext() throws -> NowcasterSnapsho
     root["dataset_coverage"] = coverage
 
     var audits = try #require(root["causal_audits"] as? [[String: Any]])
-    var audit = try #require(audits.first)
+    var audit = try #require(audits.first {
+        $0["strategy_id"] as? String == originalStrategyID
+            && $0["version"] as? String == originalVersion
+            && $0["dataset_hash"] as? String == originalDatasetHash
+            && $0["symbol"] as? String == originalSymbol
+            && $0["interval"] as? String == originalInterval
+            && $0["mode"] as? String == originalMode
+    })
     audit["audit_id"] = "audit-frozen-e"
     audit["dataset_hash"] = String(repeating: "e", count: 64)
     audit["mode"] = "frozen"
@@ -80,11 +106,16 @@ private func strategyLabFixtureWithDuplicateContext() throws -> NowcasterSnapsho
 @Test @MainActor func strategySelectionSupportsPluralEvaluationAndOneInspector() throws {
     let snapshot = try strategyLabFixture()
     let model = AppModel(snapshot: snapshot)
-    let ids = Set(snapshot.strategies.map(\.id))
+    let first = try #require(snapshot.strategies.first)
+    let ids = Set(snapshot.strategies.filter {
+        $0.datasetHash == first.datasetHash && $0.symbol == first.symbol
+            && $0.interval == first.interval && $0.mode == first.mode
+            && $0.cohortId == first.cohortId
+    }.map(\.id))
 
     #expect(model.selectedStrategyIDs.count == 1)
     model.selectStrategies(ids)
-    #expect(model.selectedStrategies.map(\.id) == snapshot.strategies.map(\.id))
+    #expect(model.selectedStrategies.map(\.id) == snapshot.strategies.filter { ids.contains($0.id) }.map(\.id))
     #expect(model.selectedStrategy?.id == snapshot.strategies.first?.id)
     #expect(model.selectedResearchContext != nil)
     #expect(model.strategySelectionIssue == nil)
@@ -94,13 +125,18 @@ private func strategyLabFixtureWithDuplicateContext() throws -> NowcasterSnapsho
 @Test @MainActor func duplicateStrategyContextsHaveStableIDsAndExactEvidenceJoins() throws {
     let snapshot = try strategyLabFixtureWithDuplicateContext()
     let lab = StrategyLabPresentation(snapshot: snapshot)
-    let duplicateRows = lab.strategies.filter { $0.strategy.strategyId == "rsi_reversal" }
+    let original = try #require(snapshot.strategies.first)
+    let duplicateRows = lab.strategies.filter {
+        $0.strategy.strategyId == original.strategyId
+            && ($0.strategy.datasetHash == original.datasetHash
+                || $0.strategy.datasetHash == String(repeating: "e", count: 64))
+    }
     #expect(duplicateRows.count == 2)
     #expect(Set(duplicateRows.map(\.id)).count == duplicateRows.count)
 
     let paper = try #require(duplicateRows.first { $0.strategy.mode == "paper" })
     #expect(paper.component?.contribution == 0.18)
-    #expect(paper.coverage?.provider == "binance")
+    #expect(paper.coverage?.provider == "csv")
     #expect(paper.audit?.passed == true)
 
     let frozen = try #require(duplicateRows.first { $0.strategy.mode == "frozen" })
@@ -115,10 +151,10 @@ private func strategyLabFixtureWithDuplicateContext() throws -> NowcasterSnapsho
 }
 
 @Test func signedContributionProducesExplicitResearchPostureText() throws {
-    let snapshot = try strategyLabFixture()
+    let snapshot = try strategyLabFixtureWithDuplicateContext()
     let lab = StrategyLabPresentation(snapshot: snapshot)
     let long = try #require(lab.strategies.first { $0.component?.contribution == 0.18 })
-    let short = try #require(lab.strategies.first { $0.component?.contribution == -0.06 })
+    let short = try #require(lab.strategies.first { ($0.component?.contribution ?? 0) < 0 })
 
     #expect(long.posture == .longResearch)
     #expect(long.postureTitle == "Long research")
@@ -138,17 +174,18 @@ private func strategyLabFixtureWithDuplicateContext() throws -> NowcasterSnapsho
     let snapshot = try strategyLabFixture()
     let row = try #require(StrategyLabPresentation(snapshot: snapshot).strategies.first)
 
-    #expect(row.weightTitle == "35.0%")
-    #expect(row.progressTitle == "100%")
-    #expect(row.developmentSharpe == "1.25")
-    #expect(row.finalSharpe == "0.48")
-    #expect(row.promotionTitle == "Research Only")
+    #expect(row.weightTitle == row.strategy.weight.formatted(.percent.precision(.fractionLength(1))))
+    #expect(row.progressTitle == row.strategy.progress.formatted(.percent.precision(.fractionLength(0))))
+    #expect(row.developmentSharpe == ResearchFormatting.metric(row.strategy.developmentMetrics["sharpe"] ?? nil))
+    #expect(row.finalSharpe == ResearchFormatting.metric(row.strategy.finalTestMetrics["sharpe"] ?? nil))
+    #expect(row.promotionTitle == "Rejected")
     #expect(row.noRepaintTitle == "No-repaint audit passed")
     #expect(row.evidenceGateTitle.contains("Causal audit passed"))
     #expect(row.warnings.contains("Historical evidence is not live proof"))
     #expect(row.uncertaintyDisclosure.localizedCaseInsensitiveContains("profit is not promised"))
-    #expect(row.coverageTitle.contains("binance/spot"))
-    #expect(row.coverageTitle.contains("24/7"))
+    let coverage = try #require(row.coverage)
+    #expect(row.coverageTitle.contains("\(coverage.provider)/\(coverage.feed)"))
+    #expect(row.coverageTitle.contains("\(coverage.calendarId) \(coverage.calendarVersion)"))
 }
 
 @Test func failedAndUnauditedStatesUseTextNotColorAlone() throws {
@@ -160,7 +197,7 @@ private func strategyLabFixtureWithDuplicateContext() throws -> NowcasterSnapsho
     #expect(failed.causalAuditTitle == "Causal audit passed")
     #expect(failed.coverageTitle == "Coverage provenance unavailable")
     #expect(failed.statusAccessibilityLabel.contains("No-repaint audit passed"))
-    #expect(failed.statusAccessibilityLabel.contains("Research Only"))
+    #expect(failed.statusAccessibilityLabel.contains(failed.promotionTitle))
 
     let failedData = Data(
         """
@@ -203,15 +240,15 @@ private func strategyLabFixtureWithDuplicateContext() throws -> NowcasterSnapsho
     let run = try #require(try strategyLabFixture().learningRuns.first)
     let presentation = LearningRunPresentation(run: run)
 
-    #expect(presentation.progressValue == 0.6)
-    #expect(presentation.progressTitle == "12 of 20 candidates")
-    #expect(presentation.generationTitle == "Generation 3")
-    #expect(presentation.bestRule.contains("Prior-bar RSI"))
-    #expect(presentation.complexityTitle == "Complexity 5")
+    #expect(presentation.progressValue == run.progress)
+    #expect(presentation.progressTitle == "\(run.evaluatedCandidates) of \(run.evaluationBudget) candidates")
+    #expect(presentation.generationTitle == "Generation \(run.generation)")
+    #expect(presentation.bestRule == run.bestRule)
+    #expect(presentation.complexityTitle == "Complexity \(run.bestRuleDetail?.complexity ?? 0)")
     #expect(presentation.boundaryTitle.contains("Final boundary"))
-    #expect(presentation.noRepaintTitle == "No-repaint audit passed")
+    #expect(presentation.noRepaintTitle == "No-repaint audit unavailable")
     #expect(presentation.promotionTitle == "Shadow")
-    #expect(presentation.accessibilityLabel.contains("12 of 20 candidates"))
+    #expect(presentation.accessibilityLabel.contains(presentation.progressTitle))
 }
 
 @Test func strategyLabAccessibilityContractsAreStableAndDescriptive() {

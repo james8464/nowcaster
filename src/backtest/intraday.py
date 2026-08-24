@@ -552,6 +552,7 @@ def run_intraday_backtest(
             {
                 "timestamp": pd.Timestamp(current["close_timestamp"].max()),
                 "decision_timestamp": prior_decision_timestamp,
+                "cost_decision_timestamp": prior_decision_timestamp,
                 "outcome_available_at": pd.Timestamp(current["available_at"].max()),
                 "cash": cash,
                 "equity": equity,

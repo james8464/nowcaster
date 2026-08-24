@@ -202,6 +202,7 @@ def _evaluation(
         current_signal=signal,
         current_strength=strength,
         current_probability=0.75 if signal > 0 else 0.25 if signal < 0 else 0.5,
+        economic_evidence_status="authenticated",
         expected_edge=edge,
         expected_cost=cost,
         uncertainty=uncertainty,
@@ -1527,6 +1528,23 @@ def test_current_decision_explicitly_abstains_when_fold_fitted_calibration_is_un
     assert decision.signal == 0
     assert decision.status == "abstain"
     assert "calibrated_decision_capability_unavailable" in decision.reasons
+
+
+def test_current_decision_explicitly_abstains_when_cost_evidence_is_unavailable() -> None:
+    evaluations = tuple(
+        replace(_evaluation(name, family), economic_evidence_status="unavailable")
+        for name, family in (
+            ("a", StrategyFamily.TREND),
+            ("b", StrategyFamily.MEAN_REVERSION),
+        )
+    )
+    config = EnsembleConfig(minimum_breadth=2, maximum_strategy_weight=1, maximum_family_weight=1)
+    weights = compute_evidence_weights(evaluations, as_of=AS_OF, config=config)
+
+    decision = combine_current_signals(evaluations, weights, as_of=AS_OF, config=config)
+
+    assert decision.signal == 0
+    assert "economic_cost_evidence_unavailable" in decision.reasons
 
 
 def test_current_decision_rejects_component_data_from_after_the_as_of_boundary() -> None:
