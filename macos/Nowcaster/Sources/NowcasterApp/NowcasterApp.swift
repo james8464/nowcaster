@@ -16,6 +16,11 @@ struct NowcasterWindowPresentation: Sendable {
             defaultHeight = 900
         }
     }
+
+    @MainActor func apply(to window: NSWindow) {
+        window.setContentSize(NSSize(width: defaultWidth, height: defaultHeight))
+        window.center()
+    }
 }
 
 @main
@@ -64,7 +69,7 @@ struct NowcasterApp: App {
                 }
                 .keyboardShortcut("b", modifiers: [.command, .shift])
                 Button("Export Snapshot") {
-                    Task { await model.run(.exportSnapshot, configuration: settings.configuration) }
+                    Task { await model.run(.exportSnapshot(databaseURL: nil), configuration: settings.configuration) }
                 }
                 .keyboardShortcut("e", modifiers: [.command, .shift])
             }

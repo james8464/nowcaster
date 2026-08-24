@@ -56,14 +56,22 @@ struct RootView: View {
                 let arguments = ProcessInfo.processInfo.arguments
                 model.applyScreenshotState(arguments: arguments)
                 let presentation = NowcasterWindowPresentation(arguments: arguments)
-                NSApplication.shared.keyWindow?.setContentSize(
-                    NSSize(width: presentation.defaultWidth, height: presentation.defaultHeight)
-                )
-                NSApplication.shared.keyWindow?.center()
+                await applyScreenshotPresentation(presentation)
             }
         }
         .onChange(of: model.destination) { _, destination in storedDestination = destination.rawValue }
         .onReceive(NotificationCenter.default.publisher(for: .focusGlobalSearch)) { _ in searchIsFocused = true }
+    }
+
+    @MainActor private func applyScreenshotPresentation(_ presentation: NowcasterWindowPresentation) async {
+        for _ in 0 ..< 100 {
+            if let window = NSApplication.shared.keyWindow
+                ?? NSApplication.shared.windows.first(where: { $0.isVisible }) {
+                presentation.apply(to: window)
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
     }
 
     @ViewBuilder private var bannerAwareNavigationLayout: some View {
@@ -262,7 +270,9 @@ struct RootView: View {
             Menu {
                 Button("Rebuild all research") { Task { await model.run(.rebuildAll, configuration: settings.configuration) } }
                 Button("Run full backtest") { Task { await model.run(.fullBacktest, configuration: settings.configuration) } }
-                Button("Export snapshot") { Task { await model.run(.exportSnapshot, configuration: settings.configuration) } }
+                Button("Export snapshot") {
+                    Task { await model.run(.exportSnapshot(databaseURL: nil), configuration: settings.configuration) }
+                }
             } label: {
                 Label("Research actions", systemImage: "ellipsis.circle")
             }

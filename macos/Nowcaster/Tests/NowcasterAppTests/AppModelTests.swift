@@ -109,6 +109,37 @@ private struct StructuredFailureRunner: EngineRunning {
     }
 }
 
+private final class ExportFailureRunner: EngineRunning, @unchecked Sendable {
+    private let lock = NSLock()
+    private var jobs: [EngineJob] = []
+
+    func run(
+        _ job: EngineJob,
+        configuration _: EngineConfiguration
+    ) -> AsyncThrowingStream<EngineProgressEvent, Error> {
+        lock.withLock { jobs.append(job) }
+        return AsyncThrowingStream { continuation in
+            if case .exportSnapshot = job {
+                continuation.yield(
+                    EngineProgressEvent(
+                        event: "error",
+                        stage: "export",
+                        progress: 1,
+                        message: "Scoped snapshot export could not open the originating database"
+                    )
+                )
+                continuation.finish(
+                    throwing: EngineRunnerError.nonzeroExit(1, diagnostics: "generic export exit")
+                )
+            } else {
+                continuation.finish()
+            }
+        }
+    }
+
+    var recordedJobs: [EngineJob] { lock.withLock { jobs } }
+}
+
 @Test @MainActor func globalSearchFindsSymbolsAndSelectsMarket() throws {
     let model = AppModel(snapshot: try fixtureSnapshot())
     model.searchText = "ETH"
@@ -166,9 +197,41 @@ private struct StructuredFailureRunner: EngineRunning {
     } else {
         Issue.record("Expected strategy evaluation before export")
     }
-    #expect(jobs.last == .exportSnapshot)
+    #expect(jobs.last == .exportSnapshot(databaseURL: context.asset.databaseURL))
     #expect(model.snapshot?.metadata.gitCommit == "after-export")
     #expect(model.lastJobOutcome.isSuccess)
+}
+
+@Test @MainActor func successfulLearningExportsFromItsConfiguredAssetDatabase() async throws {
+    let temporaryRoot = FileManager.default.temporaryDirectory
+        .appending(path: "NowcasterLearnExport-\(UUID().uuidString)", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+    let snapshotURL = temporaryRoot.appending(path: "learn-custom.json")
+    let runner = ControlledEngineRunner(exportData: try fixtureData(gitCommit: "learn-export"))
+    let model = AppModel(snapshot: try fixtureSnapshot(), runner: runner)
+    let context = try #require(model.selectedResearchContext)
+    let configuration = EngineConfiguration(
+        projectRoot: temporaryRoot,
+        pythonExecutable: URL(fileURLWithPath: "/usr/bin/python3"),
+        snapshotURL: snapshotURL,
+        mode: .demo,
+        strategyIDs: [try #require(context.strategyIDs.first)],
+        strategyAsset: context.asset
+    )
+    let task = Task {
+        await model.run(
+            .learn(assetID: context.asset.symbol, interval: context.asset.interval.rawValue, budget: 20),
+            configuration: configuration
+        )
+    }
+
+    await runner.waitForPrimary()
+    runner.finishPrimary()
+    await task.value
+
+    #expect(runner.recordedJobs.last == .exportSnapshot(databaseURL: context.asset.databaseURL))
+    #expect(model.snapshot?.metadata.gitCommit == "learn-export")
 }
 
 @Test @MainActor func structuredTask7FailureOutranksGenericNonzeroExitAndPersists() async throws {
@@ -203,7 +266,7 @@ private struct StructuredFailureRunner: EngineRunning {
     let missing = "/tmp/nowcaster-missing-\(UUID().uuidString)"
     let model = AppModel(snapshot: try fixtureSnapshot())
     await model.run(
-        .exportSnapshot,
+        .exportSnapshot(databaseURL: nil),
         configuration: EngineConfiguration(
             projectRoot: URL(fileURLWithPath: missing),
             pythonExecutable: URL(fileURLWithPath: "/usr/bin/python3"),
@@ -212,6 +275,51 @@ private struct StructuredFailureRunner: EngineRunning {
         )
     )
     #expect(model.lastJobOutcome.failureMessage?.contains("Project root is unavailable") == true)
+}
+
+@Test @MainActor func rebuildAndFullBacktestExportThenReloadTheConfiguredSnapshotPath() async throws {
+    let temporaryRoot = FileManager.default.temporaryDirectory
+        .appending(path: "NowcasterRefresh-\(UUID().uuidString)", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+    for primaryJob in [EngineJob.rebuildAll, .fullBacktest] {
+        let customSnapshotURL = temporaryRoot.appending(path: "\(primaryJob.stageName)-custom.json")
+        let runner = ControlledEngineRunner(exportData: try fixtureData(gitCommit: primaryJob.stageName))
+        let model = AppModel(snapshot: try fixtureSnapshot(), runner: runner)
+        await model.run(
+            primaryJob,
+            configuration: EngineConfiguration(
+                projectRoot: temporaryRoot,
+                pythonExecutable: URL(fileURLWithPath: "/usr/bin/python3"),
+                snapshotURL: customSnapshotURL,
+                mode: .demo
+            )
+        )
+
+        #expect(runner.recordedJobs == [primaryJob, .exportSnapshot(databaseURL: nil)])
+        #expect(model.snapshot?.metadata.gitCommit == primaryJob.stageName)
+        #expect(model.lastJobOutcome.isSuccess)
+    }
+}
+
+@Test @MainActor func structuredExportFailurePersistsAfterSuccessfulRebuild() async throws {
+    let runner = ExportFailureRunner()
+    let model = AppModel(snapshot: try fixtureSnapshot(), runner: runner)
+    let configuration = EngineConfiguration(
+        projectRoot: URL(fileURLWithPath: "/tmp"),
+        pythonExecutable: URL(fileURLWithPath: "/usr/bin/python3"),
+        snapshotURL: URL(fileURLWithPath: "/tmp/custom-refresh.json"),
+        mode: .demo
+    )
+
+    await model.run(.rebuildAll, configuration: configuration)
+
+    #expect(runner.recordedJobs == [.rebuildAll, .exportSnapshot(databaseURL: nil)])
+    #expect(
+        model.lastJobOutcome.failureMessage
+            == "Scoped snapshot export could not open the originating database"
+    )
 }
 
 @Test @MainActor func cachedSnapshotGetsAccessibleRefreshBannerAfterIncompatibleReload() async throws {

@@ -11,7 +11,9 @@ struct PipelineRunsView: View {
                 Button("Rebuild all") { Task { await model.run(.rebuildAll, configuration: settings.configuration) } }
                     .buttonStyle(.borderedProminent)
                 Button("Backtest") { Task { await model.run(.fullBacktest, configuration: settings.configuration) } }
-                Button("Export snapshot") { Task { await model.run(.exportSnapshot, configuration: settings.configuration) } }
+                Button("Export snapshot") {
+                    Task { await model.run(.exportSnapshot(databaseURL: nil), configuration: settings.configuration) }
+                }
                 Spacer()
                 if model.isRunningJob {
                     ProgressView().controlSize(.small)

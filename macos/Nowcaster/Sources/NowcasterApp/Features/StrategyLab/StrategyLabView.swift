@@ -351,7 +351,7 @@ struct StrategyLabView: View {
 
     private func exportButton(compact: Bool) -> some View {
         Button {
-            Task { await model.run(.exportSnapshot, configuration: settings.configuration) }
+            Task { await model.run(.exportSnapshot(databaseURL: nil), configuration: settings.configuration) }
         } label: {
             actionLabel("Export", systemImage: "square.and.arrow.down", compact: compact)
         }

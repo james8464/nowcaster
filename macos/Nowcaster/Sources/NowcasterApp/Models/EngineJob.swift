@@ -118,7 +118,7 @@ enum EngineJob: Sendable, Equatable {
     case fullBacktest
     case evaluateStrategies(strategyIDs: [String], mode: StrategyRunMode, asset: StrategyAssetContext)
     case learn(assetID: String, interval: String, budget: Int)
-    case exportSnapshot
+    case exportSnapshot(databaseURL: String?)
 
     var title: String {
         switch self {
@@ -140,10 +140,16 @@ enum EngineJob: Sendable, Equatable {
         }
     }
 
-    var exportsSnapshotAfterSuccess: Bool {
+    func followUpExport(configuration: EngineConfiguration) -> EngineJob? {
         switch self {
-        case .evaluateStrategies, .learn: true
-        default: false
+        case .rebuildAll, .fullBacktest:
+            .exportSnapshot(databaseURL: nil)
+        case let .evaluateStrategies(_, _, asset):
+            .exportSnapshot(databaseURL: asset.databaseURL)
+        case .learn:
+            .exportSnapshot(databaseURL: configuration.strategyAsset?.databaseURL)
+        case .exportSnapshot:
+            nil
         }
     }
 
@@ -185,8 +191,12 @@ enum EngineJob: Sendable, Equatable {
             }
             command += strategyArguments(asset: asset, mode: .walkForwardLearning)
             command += ["--evaluation-budget", String(budget)]
-        case .exportSnapshot:
-            command = ["strategy", "export", "--output", configuration.snapshotURL.path]
+        case let .exportSnapshot(databaseURL):
+            command = ["strategy", "export"]
+            if let databaseURL {
+                command += ["--database-url", databaseURL]
+            }
+            command += ["--output", configuration.snapshotURL.path]
         }
         command += ["--project-root", configuration.projectRoot.path]
         return EngineInvocation(

@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 
@@ -233,6 +234,21 @@ private func strategyLabFixtureWithDuplicateContext() throws -> NowcasterSnapsho
     #expect(narrow.defaultHeight == 700)
     #expect(narrow.minimumWidth == 820)
     #expect(narrow.defaultWidth < wide.defaultWidth)
+}
+
+@Test @MainActor func screenshotPresentationResizesAnExplicitRestoredWindow() {
+    let window = NSWindow(
+        contentRect: NSRect(x: 0, y: 0, width: 1_440, height: 900),
+        styleMask: [.titled, .resizable],
+        backing: .buffered,
+        defer: false
+    )
+    let narrow = NowcasterWindowPresentation(arguments: ["--ui-narrow"])
+
+    narrow.apply(to: window)
+
+    #expect(abs(window.contentLayoutRect.width - 900) <= 1)
+    #expect(abs(window.contentLayoutRect.height - 700) <= 1)
 }
 
 @Test func narrowNavigationAndBudgetControlsReserveReadableSpace() {

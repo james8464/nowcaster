@@ -87,10 +87,13 @@ private let learningConfiguration = EngineConfiguration(
         ]
     )
 
-    let export = try EngineJob.exportSnapshot.invocation(configuration: fixtureConfiguration)
+    let databaseLiteral = "duckdb:////tmp/Nowcaster Project/export;literal.duckdb"
+    let export = try EngineJob.exportSnapshot(databaseURL: databaseLiteral)
+        .invocation(configuration: fixtureConfiguration)
     #expect(
         export.arguments == [
             "-m", "src.cli", "strategy", "export",
+            "--database-url", databaseLiteral,
             "--output", "/tmp/Nowcaster Project/data/app/nowcaster-snapshot.json",
             "--project-root", "/tmp/Nowcaster Project",
         ]
@@ -220,7 +223,7 @@ private let learningConfiguration = EngineConfiguration(
 
     var progressInstant: ContinuousClock.Instant?
     var completedInstant: ContinuousClock.Instant?
-    for try await event in EngineRunner().run(.exportSnapshot, configuration: configuration) {
+    for try await event in EngineRunner().run(.exportSnapshot(databaseURL: nil), configuration: configuration) {
         if event.event == "progress" {
             progressInstant = .now
         } else if event.event == "job_completed" {
@@ -285,7 +288,7 @@ private actor LaunchGate {
     let gate = LaunchGate()
     let runner = EngineRunner(beforeLaunch: { await gate.wait() })
     let consumer = Task {
-        for try await _ in runner.run(.exportSnapshot, configuration: configuration) {}
+        for try await _ in runner.run(.exportSnapshot(databaseURL: nil), configuration: configuration) {}
     }
 
     await gate.waitUntilEntered()

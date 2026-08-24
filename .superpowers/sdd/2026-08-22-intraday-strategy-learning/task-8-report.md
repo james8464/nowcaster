@@ -135,3 +135,46 @@ Early stream cancellation now persists a termination request, retains/cancels th
 - `build/task8-fix1-stale-captures-final/strategyLab-light-narrow.png` and `strategyLab-dark-narrow.png`: banner title/message/action fit without clipping and all three columns start below it.
 
 Final assessment remains HIG-aligned, not Apple-certified. No broker action was introduced. `cohort_id` remains nullable only for legacy snapshot compatibility; newly built v2 strategy/ensemble outputs populate it when cohort evidence exists. Audit rows do not invent cohort identity because the Task 7 audit store has no cohort column; they match exactly through dataset/strategy/version/symbol/interval/mode.
+
+## Review fix round 2/5 addendum
+
+### Outcome
+
+All three re-review findings are resolved while preserving the progress ledger. The typed export job now accepts an optional database URL and emits Task 7's literal argument sequence `strategy export [--database-url VALUE] --output PATH`; there is still no shell interpolation or arbitrary command construction. Evaluation follows with an export against the originating `StrategyAssetContext.databaseURL`, while learning uses the database URL from its validated configured asset context. The literal-value test includes spaces and a semicolon.
+
+Snapshot regeneration policy is explicit. Evaluation and learning export from their scoped research database. Rebuild and full backtest have no originating strategy context, so they export from Task 7's configured/default database, always target `EngineConfiguration.snapshotURL`, then reload that exact URL. Direct export is terminal and does not recursively export. Tests exercise a custom snapshot path for both rebuild and full backtest, verify the primary/export job sequence and reloaded commit, and prove a structured export error remains preferred over the generic nonzero exit.
+
+Screenshot presentation now waits for the actual restored/new native window before applying its explicit content size. The capture harness terminates prior instances, launches a new instance, polls the owning process's window until three stable samples match the requested logical dimensions within three points, validates PNG pixel dimensions at the display backing scale, rejects byte-identical wide/narrow output, and cleans up even on failure. This prevents a restored narrow window from being mislabeled as wide (or vice versa).
+
+### TDD checkpoints
+
+- RED export/refresh: the focused Swift slice failed to compile because `.exportSnapshot` had no database context and the new auto-export sequence/custom-path expectations could not be expressed.
+- RED presentation: `screenshotPresentationResizesAnExplicitRestoredWindow` failed to compile before the explicit-window sizing API existed.
+- RED capture truth: the hardened harness rejected a nominal narrow capture with `expected 900x700; got 1440x900`, proving the previous key-window timing could silently retain restored dimensions. The earlier stale light-wide artifact was 1800x1400 and byte-identical to stale light-narrow rather than the required 2880x1800.
+- GREEN: `swift test --filter 'learningAndExportArgumentsMatchTheTask7CLI|successfulStrategyJobStreamsProgressThenExportsAndReloads|successfulLearningExportsFromItsConfiguredAssetDatabase|rebuildAndFullBacktestExportThenReloadTheConfiguredSnapshotPath|structuredExportFailurePersistsAfterSuccessfulRebuild'` — **5 passed**.
+- GREEN: `swift test --filter 'screenshotPresentationResizesAnExplicitRestoredWindow|screenshotWindowContractCreatesDistinctUsableWideAndNarrowLayouts'` — **2 passed**.
+
+### Final verification
+
+- `cd macos/Nowcaster && swift test` — **1 XCTest + 52 Swift Testing tests passed (53 total)** in the fresh final rerun. An immediately preceding full run had one load-sensitive failure in the existing incremental-process timing threshold; that test passed in isolation and in the complete final rerun.
+- `cd macos/Nowcaster && swift build -c release` — **passed**.
+- `.venv/bin/pytest -q` — **464 passed in 221.33s**.
+- `scripts/build_macos_app.sh` — **passed**; the release app was rebuilt and signed at `build/Nowcaster.app`.
+- `xcrun swift scripts/capture_macos_app.swift build/Nowcaster.app build/task8-fix2-smoke --verify-only` — **Nowcaster UI smoke test passed** with the asserted narrow window size.
+- `xcrun swift scripts/capture_macos_app.swift build/Nowcaster.app build/task8-fix2-captures-final --strategy-lab-only` — **4 normal screenshots captured** with validated dimensions and nonidentity.
+- The same capture with `build/task8-fix2-stale-captures-final --stale-banner` — **4 stale screenshots captured** with validated dimensions and nonidentity.
+- `git diff --check` — **passed** before the report update and is rerun immediately before commit.
+
+### Capture truth and visual QA
+
+- Normal light/dark wide: `build/task8-fix2-captures-final/strategyLab-light.png` and `strategyLab-dark.png`, each **2880x1800**.
+- Normal light/dark narrow: the corresponding `-narrow.png` files, each **1800x1400**.
+- Stale light/dark wide: `build/task8-fix2-stale-captures-final/strategyLab-light.png` and `strategyLab-dark.png`, each **2880x1800**.
+- Stale light/dark narrow: the corresponding `-narrow.png` files, each **1800x1400**.
+- All eight SHA-256 values are distinct. In particular, stale light-wide is `61973308...` and stale light-narrow is `e7561e55...`; they are neither dimensionally nor byte identical.
+
+The actual final PNGs were inspected at original detail. Normal and stale states are fully loaded. In stale wide light/dark, the banner remains a separate full-width row and does not obscure the center action toolbar or the `Rsi Reversal` inspector title. In all narrow states, Monitor/Research/System headers, Budget `20`, progress, and evidence labels are complete. Light/dark hierarchy and semantic contrast are readable, with no new overlap or clipping observed. This remains a HIG-aligned visual assessment, not Apple certification.
+
+### Remaining concern
+
+The existing subprocess incremental-timing assertion is sensitive to machine load because it compares a 500 ms scheduling threshold. Its isolated rerun and complete final run passed, and this round did not alter the stream implementation; the first full-run miss is recorded rather than hidden.

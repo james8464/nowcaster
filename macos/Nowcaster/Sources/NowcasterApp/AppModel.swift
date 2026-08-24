@@ -209,8 +209,8 @@ final class AppModel {
         defer { isRunningJob = false }
         do {
             try await consume(job, configuration: configuration)
-            if job.exportsSnapshotAfterSuccess {
-                try await consume(.exportSnapshot, configuration: configuration)
+            if let exportJob = job.followUpExport(configuration: configuration) {
+                try await consume(exportJob, configuration: configuration)
             }
             await loadSnapshot(url: configuration.snapshotURL)
             switch loadState {

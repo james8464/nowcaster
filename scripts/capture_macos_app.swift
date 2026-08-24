@@ -3,6 +3,7 @@
 import AppKit
 import CoreGraphics
 import Foundation
+import ImageIO
 
 let arguments = CommandLine.arguments
 guard arguments.count >= 3 else {
@@ -24,6 +25,7 @@ struct Capture {
     let narrow: Bool
 
     var name: String { "\(destination)-\(appearance)\(narrow ? "-narrow" : "")" }
+    var expectedSize: CGSize { narrow ? CGSize(width: 900, height: 700) : CGSize(width: 1_440, height: 900) }
 }
 
 let destinations = ["today", "markets", "earnings", "signals", "backtests", "strategyLab", "modelLab", "dataQuality", "pipelineRuns"]
@@ -38,15 +40,29 @@ captures.append(Capture(destination: "strategyLab", appearance: "dark", narrow: 
 if strategyLabOnly { captures = captures.filter { $0.destination == "strategyLab" } }
 if verifyOnly { captures = [Capture(destination: "strategyLab", appearance: "light", narrow: true)] }
 
-func terminateExisting() {
-    for app in NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier) {
-        app.terminate()
+func terminateExisting() throws {
+    let deadline = Date().addingTimeInterval(6)
+    var forced = false
+    while true {
+        let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier)
+            .filter { !$0.isTerminated }
+        if running.isEmpty { return }
+        for app in running {
+            if forced { app.forceTerminate() } else { app.terminate() }
+        }
+        guard Date() < deadline else {
+            throw CocoaError(
+                .fileWriteUnknown,
+                userInfo: [NSLocalizedDescriptionKey: "Existing Nowcaster instance did not terminate"]
+            )
+        }
+        if deadline.timeIntervalSinceNow < 3 { forced = true }
+        Thread.sleep(forTimeInterval: 0.1)
     }
-    Thread.sleep(forTimeInterval: 0.7)
 }
 
 func launch(_ capture: Capture) throws -> NSRunningApplication {
-    terminateExisting()
+    try terminateExisting()
     let configuration = NSWorkspace.OpenConfiguration()
     configuration.activates = true
     configuration.createsNewApplicationInstance = true
@@ -66,41 +82,115 @@ func launch(_ capture: Capture) throws -> NSRunningApplication {
     guard let result else { throw CocoaError(.fileReadUnknown) }
     let application = try result.get()
     application.activate(options: [.activateAllWindows])
-    Thread.sleep(forTimeInterval: 4.0)
     return application
 }
 
-func largestWindowID(for processIdentifier: pid_t) -> CGWindowID? {
+struct WindowCaptureTarget {
+    let id: CGWindowID
+    let bounds: CGRect
+}
+
+func largestWindow(for processIdentifier: pid_t) -> WindowCaptureTarget? {
     guard let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
         as? [[String: Any]] else { return nil }
     return windows
         .filter { ($0[kCGWindowOwnerPID as String] as? pid_t) == processIdentifier }
         .filter { ($0[kCGWindowLayer as String] as? Int) == 0 }
-        .compactMap { window -> (CGWindowID, Double)? in
+        .compactMap { window -> WindowCaptureTarget? in
             guard let id = window[kCGWindowNumber as String] as? CGWindowID,
                   let bounds = window[kCGWindowBounds as String] as? [String: CGFloat] else { return nil }
-            return (id, (bounds["Width"] ?? 0) * (bounds["Height"] ?? 0))
+            return WindowCaptureTarget(
+                id: id,
+                bounds: CGRect(
+                    x: bounds["X"] ?? 0,
+                    y: bounds["Y"] ?? 0,
+                    width: bounds["Width"] ?? 0,
+                    height: bounds["Height"] ?? 0
+                )
+            )
         }
-        .max(by: { $0.1 < $1.1 })?.0
+        .max(by: { $0.bounds.width * $0.bounds.height < $1.bounds.width * $1.bounds.height })
 }
 
+func expectedWindow(for application: NSRunningApplication, capture: Capture) throws -> WindowCaptureTarget {
+    let deadline = Date().addingTimeInterval(15)
+    let tolerance: CGFloat = 3
+    var stableSamples = 0
+    var lastBounds: CGRect?
+    while Date() < deadline, !application.isTerminated {
+        if let target = largestWindow(for: application.processIdentifier) {
+            lastBounds = target.bounds
+            let matches = abs(target.bounds.width - capture.expectedSize.width) <= tolerance
+                && abs(target.bounds.height - capture.expectedSize.height) <= tolerance
+            stableSamples = matches ? stableSamples + 1 : 0
+            if stableSamples >= 3 {
+                return target
+            }
+        }
+        Thread.sleep(forTimeInterval: 0.1)
+    }
+    let actual = lastBounds.map { "\(Int($0.width))x\(Int($0.height))" } ?? "unavailable"
+    throw CocoaError(
+        .fileReadUnknown,
+        userInfo: [
+            NSLocalizedDescriptionKey:
+                "\(capture.name) expected \(Int(capture.expectedSize.width))x\(Int(capture.expectedSize.height)); got \(actual)",
+        ]
+    )
+}
+
+func validatePNG(_ url: URL, capture: Capture) throws {
+    guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+          let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+          let width = properties[kCGImagePropertyPixelWidth] as? Int,
+          let height = properties[kCGImagePropertyPixelHeight] as? Int
+    else { throw CocoaError(.fileReadCorruptFile) }
+    let scale = NSScreen.main?.backingScaleFactor ?? 1
+    let expectedWidth = Int((capture.expectedSize.width * scale).rounded())
+    let expectedHeight = Int((capture.expectedSize.height * scale).rounded())
+    guard abs(width - expectedWidth) <= 4, abs(height - expectedHeight) <= 4 else {
+        throw CocoaError(
+            .fileReadCorruptFile,
+            userInfo: [
+                NSLocalizedDescriptionKey:
+                    "\(capture.name) PNG expected \(expectedWidth)x\(expectedHeight); got \(width)x\(height)",
+            ]
+        )
+    }
+    print("\(url.path) [\(width)x\(height)]")
+}
+
+defer { try? terminateExisting() }
 for capture in captures {
     let application = try launch(capture)
-    guard let windowID = largestWindowID(for: application.processIdentifier) else {
-        throw CocoaError(.fileReadUnknown, userInfo: [NSLocalizedDescriptionKey: "No Nowcaster window for \(capture.name)"])
-    }
+    let target = try expectedWindow(for: application, capture: capture)
+    Thread.sleep(forTimeInterval: 3)
     if !verifyOnly {
         let output = outputDirectory.appendingPathComponent("\(capture.name).png")
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-        process.arguments = ["-x", "-o", "-l", "\(windowID)", output.path]
+        process.arguments = ["-x", "-o", "-l", "\(target.id)", output.path]
         try process.run()
         process.waitUntilExit()
         guard process.terminationStatus == 0, FileManager.default.fileExists(atPath: output.path) else {
             throw CocoaError(.fileWriteUnknown)
         }
-        print(output.path)
+        try validatePNG(output, capture: capture)
     }
 }
-terminateExisting()
+if !verifyOnly {
+    for appearance in ["light", "dark"] {
+        let wide = outputDirectory.appendingPathComponent("strategyLab-\(appearance).png")
+        let narrow = outputDirectory.appendingPathComponent("strategyLab-\(appearance)-narrow.png")
+        if FileManager.default.fileExists(atPath: wide.path), FileManager.default.fileExists(atPath: narrow.path) {
+            guard try Data(contentsOf: wide) != Data(contentsOf: narrow) else {
+                throw CocoaError(
+                    .fileReadCorruptFile,
+                    userInfo: [NSLocalizedDescriptionKey: "Wide and narrow \(appearance) captures are identical"]
+                )
+            }
+        }
+    }
+}
+try terminateExisting()
 print(verifyOnly ? "Nowcaster UI smoke test passed" : "Captured \(captures.count) Nowcaster screenshots")
