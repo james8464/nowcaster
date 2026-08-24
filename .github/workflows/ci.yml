@@ -31,6 +31,12 @@ jobs:
           .venv/bin/ruff check .
       - name: Python tests with coverage
         run: .venv/bin/pytest --cov=src --cov-report=term-missing -q
+      - name: Tracked-file secret scan
+        run: make secret-scan
+      - name: Snapshot v2, deterministic research, and fixture drift
+        run: make verify-research-fixtures
+      - name: Generated research-artifact cleanliness
+        run: git diff --exit-code -- data/research/ci
       - name: Clean deterministic demo
         run: |
           make clean-generated
@@ -49,6 +55,8 @@ jobs:
         run: swift --version
       - name: Swift tests
         run: swift test --package-path macos/Nowcaster
+      - name: Swift release build
+        run: swift build -c release --package-path macos/Nowcaster
       - name: Assemble and verify app
         run: |
           make macos-app

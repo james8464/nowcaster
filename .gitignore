@@ -7,6 +7,9 @@ data/raw/
 data/cache/
 data/processed/
 data/app/*.json
+data/research/live/*
+!data/research/live/research-summary.json
+!data/research/live/strategy-research.md
 logs/
 reports/*.md
 !reports/.gitkeep

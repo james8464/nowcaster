@@ -155,8 +155,7 @@ def test_every_candidate_query_is_ledgered_and_failed_trials_are_retained() -> N
     assert result.trial_count == len(result.trials) == 8
     assert calls >= result.trial_count
     assert any(
-        trial.status == "failed" and "intentional evaluator failure" in trial.error_summary
-        for trial in result.trials
+        trial.status == "failed" and "intentional evaluator failure" in trial.error_summary for trial in result.trials
     )
     assert [trial.ordinal for trial in result.trials] == list(range(8))
     assert len({trial.trial_id for trial in result.trials}) == 8
@@ -272,9 +271,7 @@ def test_malformed_inner_chronology_fails_before_any_candidate_query() -> None:
     ("seed_rule", "error"),
     [
         (
-            RuleNode.compare(
-                "gt", RuleNode.indicator("future_label", lag=1), RuleNode.number(50)
-            ),
+            RuleNode.compare("gt", RuleNode.indicator("future_label", lag=1), RuleNode.number(50)),
             "declared indicator",
         ),
         (
@@ -303,9 +300,7 @@ def test_seed_terminals_cannot_escape_declared_domains(seed_rule: RuleNode, erro
         calls += 1
         return FoldMetrics(1.0, -0.1, 0.2)
 
-    result = discover_rules(
-        _experiment(evaluator=evaluator, evaluation_budget=1, seed_rules=(seed_rule,)), _bars()
-    )
+    result = discover_rules(_experiment(evaluator=evaluator, evaluation_budget=1, seed_rules=(seed_rule,)), _bars())
 
     assert calls == 0
     assert result.trials[0].status == "invalid"
@@ -429,9 +424,7 @@ def test_default_fitness_uses_versioned_task4_execution_and_cost_assumptions() -
     spread = fitness(ExecutionAssumptions(costs=CostAssumptions(half_spread_bps=4)))
     funding = fitness(ExecutionAssumptions(costs=CostAssumptions(funding_bps_per_period=5)))
     short_baseline = fitness(ExecutionAssumptions(), short_rule)
-    borrow = fitness(
-        ExecutionAssumptions(costs=CostAssumptions(borrow_bps_per_period=5)), short_rule
-    )
+    borrow = fitness(ExecutionAssumptions(costs=CostAssumptions(borrow_bps_per_period=5)), short_rule)
     costly = CostAssumptions(
         taker_fee_bps=3,
         half_spread_bps=4,

@@ -765,12 +765,8 @@ def test_fixed_share_updates_only_resolved_outcomes_and_conserves_mass() -> None
         pd.DataFrame(
             {
                 "strategy_id": ["alpha", "beta", "gamma", "alpha", "beta", "gamma"],
-                "decision_timestamp": pd.to_datetime(
-                    ["2026-08-22 10:00Z"] * 3 + ["2026-08-22 11:00Z"] * 3
-                ),
-                "outcome_available_at": pd.to_datetime(
-                    ["2026-08-22 11:00Z"] * 3 + ["2026-08-22 13:00Z"] * 3
-                ),
+                "decision_timestamp": pd.to_datetime(["2026-08-22 10:00Z"] * 3 + ["2026-08-22 11:00Z"] * 3),
+                "outcome_available_at": pd.to_datetime(["2026-08-22 11:00Z"] * 3 + ["2026-08-22 13:00Z"] * 3),
                 "signal": [1, 1, 1, 1, 1, 1],
                 "realized_return": [0.02, -0.02, 0.0, -1.0, 1.0, 1.0],
                 "cost": [0.001] * 6,
@@ -822,12 +818,8 @@ def test_adahedge_learning_rate_adapts_to_accumulated_mixability_gap() -> None:
         pd.DataFrame(
             {
                 "strategy_id": ["alpha", "beta", "gamma"] * 2,
-                "decision_timestamp": pd.to_datetime(
-                    ["2026-08-22 09:00Z"] * 3 + ["2026-08-22 10:00Z"] * 3
-                ),
-                "outcome_available_at": pd.to_datetime(
-                    ["2026-08-22 10:00Z"] * 3 + ["2026-08-22 11:00Z"] * 3
-                ),
+                "decision_timestamp": pd.to_datetime(["2026-08-22 09:00Z"] * 3 + ["2026-08-22 10:00Z"] * 3),
+                "outcome_available_at": pd.to_datetime(["2026-08-22 10:00Z"] * 3 + ["2026-08-22 11:00Z"] * 3),
                 "signal": [1] * 6,
                 "realized_return": [1.0, -1.0, 0.0, -1.0, 1.0, 0.0],
                 "cost": [0.0] * 6,
@@ -869,12 +861,8 @@ def test_adahedge_state_makes_batch_and_incremental_updates_equivalent() -> None
         pd.DataFrame(
             {
                 "strategy_id": ["alpha", "beta", "gamma"] * 2,
-                "decision_timestamp": pd.to_datetime(
-                    ["2026-08-22 09:00Z"] * 3 + ["2026-08-22 10:00Z"] * 3
-                ),
-                "outcome_available_at": pd.to_datetime(
-                    ["2026-08-22 10:00Z"] * 3 + ["2026-08-22 11:00Z"] * 3
-                ),
+                "decision_timestamp": pd.to_datetime(["2026-08-22 09:00Z"] * 3 + ["2026-08-22 10:00Z"] * 3),
+                "outcome_available_at": pd.to_datetime(["2026-08-22 10:00Z"] * 3 + ["2026-08-22 11:00Z"] * 3),
                 "signal": [1] * 6,
                 "realized_return": [1.0, -1.0, 0.0, -1.0, 1.0, 0.0],
                 "cost": [0.0] * 6,
@@ -1540,9 +1528,7 @@ def test_current_decision_rejects_frozen_future_online_history_before_mode_branc
         _evaluation("beta", StrategyFamily.MEAN_REVERSION),
         _evaluation("gamma", StrategyFamily.SESSION),
     )
-    frozen_evaluations = tuple(
-        _with_mode(evaluation, StrategyMode.FROZEN) for evaluation in paper_evaluations
-    )
+    frozen_evaluations = tuple(_with_mode(evaluation, StrategyMode.FROZEN) for evaluation in paper_evaluations)
     config = EnsembleConfig(maximum_strategy_weight=0.8, maximum_family_weight=0.8)
     paper = _with_future_online_history(
         compute_evidence_weights(paper_evaluations, as_of=AS_OF, config=config),

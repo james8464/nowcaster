@@ -108,14 +108,11 @@ def test_plain_language_rendering_is_stable_and_interpretable() -> None:
             RuleNode.indicator("ema_fast", lag=1),
             RuleNode.indicator("ema_slow", lag=1),
         ),
-        RuleNode.negate(
-            RuleNode.compare("lt", RuleNode.indicator("rsi", lag=2), RuleNode.number(30))
-        ),
+        RuleNode.negate(RuleNode.compare("lt", RuleNode.indicator("rsi", lag=2), RuleNode.number(30))),
     )
 
     assert rule.render() == (
-        "(ema_fast lagged 1 bar crosses below ema_slow lagged 1 bar) OR "
-        "NOT (rsi lagged 2 bars is less than 30)"
+        "(ema_fast lagged 1 bar crosses below ema_slow lagged 1 bar) OR NOT (rsi lagged 2 bars is less than 30)"
     )
 
 

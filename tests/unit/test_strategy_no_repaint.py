@@ -86,9 +86,7 @@ def test_prefix_audit_catches_an_intentionally_future_dependent_generator():
     spec = next(spec for spec in _configured_specs() if spec.strategy_id == "donchian_breakout")
     bars = _bars("PRIMARY", np.array([100.0, 99.0, 98.0, 120.0]))
 
-    def future_dependent(
-        candidate: StrategySpec, frame: pd.DataFrame, context: StrategyContext
-    ) -> pd.DataFrame:
+    def future_dependent(candidate: StrategySpec, frame: pd.DataFrame, context: StrategyContext) -> pd.DataFrame:
         result = generate_signals(candidate, frame, context)
         result["signal"] = 1 if frame.iloc[-1]["close"] > frame.iloc[0]["close"] else -1
         return result
@@ -115,12 +113,8 @@ def test_every_registered_strategy_is_unchanged_when_future_bars_are_appended(sp
     closes = 100 + positions * 0.05 + np.sin(positions / 5) * 2
     extended = _bars("PRIMARY", closes)
     extended.loc[cutoff:, "close"] += np.linspace(0, 40, count - cutoff)
-    extended.loc[cutoff:, "high"] = np.maximum(
-        extended.loc[cutoff:, "high"], extended.loc[cutoff:, "close"] + 0.5
-    )
-    extended.loc[cutoff:, "low"] = np.minimum(
-        extended.loc[cutoff:, "low"], extended.loc[cutoff:, "close"] - 0.5
-    )
+    extended.loc[cutoff:, "high"] = np.maximum(extended.loc[cutoff:, "high"], extended.loc[cutoff:, "close"] + 0.5)
+    extended.loc[cutoff:, "low"] = np.minimum(extended.loc[cutoff:, "low"], extended.loc[cutoff:, "close"] - 0.5)
     before_context, after_context = _contexts(extended, cutoff)
 
     audit = audit_prefix_invariance(

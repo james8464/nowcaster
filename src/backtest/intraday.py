@@ -98,9 +98,10 @@ def _validated_signals(
     result["strategy_id"] = result["strategy_id"].astype(str)
     result["symbol"] = result["symbol"].astype(str).str.upper()
     if "decision_hash" in result:
-        if result["decision_hash"].isna().any() or not result["decision_hash"].map(
-            lambda value: isinstance(value, str) and bool(value.strip())
-        ).all():
+        if (
+            result["decision_hash"].isna().any()
+            or not result["decision_hash"].map(lambda value: isinstance(value, str) and bool(value.strip())).all()
+        ):
             raise ValueError("decision_hash values must be non-empty strings")
         result["decision_hash"] = result["decision_hash"].str.strip()
     for column in ("decision_timestamp", "data_through"):
@@ -450,9 +451,7 @@ def run_intraday_backtest(
             active_strategy_ids = sorted(
                 strategy for (strategy, item_symbol), value in states.items() if item_symbol == symbol and value
             )
-            all_strategy_ids = sorted(
-                strategy for strategy, item_symbol in states if item_symbol == symbol
-            )
+            all_strategy_ids = sorted(strategy for strategy, item_symbol in states if item_symbol == symbol)
             strategy_ids = active_strategy_ids or all_strategy_ids
             strategy_id = strategy_ids[0] if len(strategy_ids) == 1 else "netted:" + "+".join(strategy_ids)
             current_sources = tuple(

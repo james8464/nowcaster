@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated
 
@@ -12,6 +13,7 @@ from src.config.settings import Settings
 from src.database.engine import Database
 from src.demo import DEMO_STAGES, demo_pipeline, live_pipeline, run_demo
 from src.reporting.research_report import generate_research_report
+from src.research import run_full_strategy_research
 from src.strategies.pipeline import (
     BarProviderName,
     EvaluationOptions,
@@ -345,6 +347,55 @@ def strategy_export(
         return pipeline.export(ExportOptions(snapshot_path=snapshot_path, report_path=report_path), emit)
 
     _run_strategy_stage("export", execute)
+
+
+@strategy_app.command("research")
+def strategy_research(
+    project_root: Annotated[Path, typer.Option(exists=True, file_okay=False)] = DEFAULT_PROJECT_ROOT,
+    database_url: Annotated[str | None, typer.Option()] = None,
+    profile: Annotated[str, typer.Option(help="Network-free 'ci' or provider-backed 'live'.")] = "ci",
+    output_dir: Annotated[Path, typer.Option(file_okay=False)] = Path("reports/strategy-research"),
+    cache_dir: Annotated[Path | None, typer.Option(file_okay=False)] = None,
+    cutoff: Annotated[str | None, typer.Option(help="Fixed UTC live cutoff, for example 2026-08-24T00:00:00Z.")] = None,
+    max_chunks_per_scope: Annotated[
+        int | None,
+        typer.Option(help="Diagnostic live limit; incomplete history remains unavailable."),
+    ] = None,
+) -> None:
+    """Publish reproducible full-history manifests and compact strategy research."""
+    if profile not in {"ci", "live"}:
+        raise typer.BadParameter("profile must be 'ci' or 'live'")
+    settings = _load_settings(project_root, database_url, "test" if profile == "ci" else "live")
+    destination = output_dir if output_dir.is_absolute() else project_root / output_dir
+    selected_cutoff = None
+    if cutoff is not None:
+        try:
+            selected_cutoff = datetime.fromisoformat(cutoff.replace("Z", "+00:00"))
+        except ValueError as error:
+            raise typer.BadParameter("cutoff must be an ISO-8601 UTC timestamp") from error
+        if selected_cutoff.tzinfo is None or selected_cutoff.utcoffset() != timedelta(0):
+            raise typer.BadParameter("cutoff must be an explicit UTC timestamp")
+        selected_cutoff = selected_cutoff.astimezone(UTC).replace(tzinfo=UTC)
+    summary = run_full_strategy_research(
+        settings,
+        database_url=database_url or settings.database_url,
+        output_dir=destination,
+        profile=profile,
+        cache_dir=cache_dir,
+        cutoff=selected_cutoff,
+        max_chunks_per_scope=max_chunks_per_scope,
+    )
+    typer.echo(
+        json.dumps(
+            {
+                "event": "strategy_research_complete",
+                "profile": profile,
+                "status": summary.get("attempt_status", "completed"),
+                "output_dir": str(destination.resolve()),
+            },
+            sort_keys=True,
+        )
+    )
 
 
 @app.command("run-all")

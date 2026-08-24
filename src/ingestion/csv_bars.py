@@ -49,9 +49,7 @@ class CSVBarProvider:
                         interval=request.interval,
                         open_timestamp=open_timestamp,
                         close_timestamp=open_timestamp + INTERVAL_DURATION[request.interval],
-                        available_at=require_utc(
-                            datetime.fromisoformat(raw["available_at"].replace("Z", "+00:00"))
-                        ),
+                        available_at=require_utc(datetime.fromisoformat(raw["available_at"].replace("Z", "+00:00"))),
                         revision=int(raw["revision"]),
                         finalized=True,
                         open=float(raw["open"]),

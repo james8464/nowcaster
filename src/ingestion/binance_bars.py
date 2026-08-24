@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import time
 from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
@@ -52,25 +54,31 @@ class BinanceBarProvider:
         bars: list[MarketBar] = []
 
         while cursor_ms < end_ms:
-            response = request_with_retries(
-                self.client,
-                "GET",
-                f"{self.base_url}/api/v3/klines",
-                params={
-                    "symbol": request.symbol,
-                    "interval": request.interval.value,
-                    "startTime": cursor_ms,
-                    "endTime": end_ms - 1,
-                    "limit": min(request.page_size, 1_000),
-                },
-                max_attempts=self.max_attempts,
-                sleep=self.sleep,
-            )
+            limit = min(request.page_size, 1_000)
+            cached = self._cached_payload(request, cursor_ms, end_ms, limit)
+            if cached is None:
+                response = request_with_retries(
+                    self.client,
+                    "GET",
+                    f"{self.base_url}/api/v3/klines",
+                    params={
+                        "symbol": request.symbol,
+                        "interval": request.interval.value,
+                        "startTime": cursor_ms,
+                        "endTime": end_ms - 1,
+                        "limit": limit,
+                    },
+                    max_attempts=self.max_attempts,
+                    sleep=self.sleep,
+                )
+                content = response.content
+                self._cache_payload(request, cursor_ms, end_ms, limit, content)
+            else:
+                content = cached
             retrieved_at = require_utc(self.clock())
-            payload = response.json()
+            payload = json.loads(content)
             if not isinstance(payload, list):
                 raise ValueError("Binance kline response must be a list")
-            self._cache_payload(request, cursor_ms, response.content)
             if not payload:
                 break
             last_open_ms = cursor_ms - interval_ms
@@ -108,16 +116,39 @@ class BinanceBarProvider:
                     )
                 )
             next_cursor = last_open_ms + interval_ms
-            if len(payload) < min(request.page_size, 1_000) or next_cursor <= cursor_ms:
+            if len(payload) < limit or next_cursor <= cursor_ms:
                 break
             cursor_ms = next_cursor
         return deduplicate_bars(bars)
 
-    def _cache_payload(self, request: BarRequest, cursor_ms: int, payload: bytes) -> None:
+    def _cache_paths(self, request: BarRequest, cursor_ms: int, end_ms: int, limit: int) -> tuple[Path, Path] | None:
         if self.cache_dir is None:
+            return None
+        name = f"{cursor_ms}-{end_ms}-{limit}"
+        parent = self.cache_dir / "binance" / "spot" / request.symbol / request.interval.value
+        return parent / f"{name}.json", parent / f"{name}.sha256"
+
+    def _cached_payload(self, request: BarRequest, cursor_ms: int, end_ms: int, limit: int) -> bytes | None:
+        paths = self._cache_paths(request, cursor_ms, end_ms, limit)
+        if paths is None:
+            return None
+        payload_path, checksum_path = paths
+        if not payload_path.exists() or not checksum_path.exists():
+            return None
+        payload = payload_path.read_bytes()
+        expected = checksum_path.read_text(encoding="ascii").strip()
+        observed = hashlib.sha256(payload).hexdigest()
+        if expected != observed:
+            raise ValueError(f"cached Binance payload checksum mismatch: {payload_path}")
+        return payload
+
+    def _cache_payload(self, request: BarRequest, cursor_ms: int, end_ms: int, limit: int, payload: bytes) -> None:
+        paths = self._cache_paths(request, cursor_ms, end_ms, limit)
+        if paths is None:
             return
-        digest = canonical_hash([request.symbol, request.interval, cursor_ms, payload.hex()])
-        atomic_write_bytes(self.cache_dir / "binance" / f"{digest}.json", payload)
+        payload_path, checksum_path = paths
+        atomic_write_bytes(payload_path, payload)
+        atomic_write_bytes(checksum_path, (hashlib.sha256(payload).hexdigest() + "\n").encode("ascii"))
 
 
 __all__ = ["BinanceBarProvider"]

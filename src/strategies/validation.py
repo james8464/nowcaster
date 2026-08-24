@@ -70,8 +70,10 @@ def promotion_reasons(inputs: Mapping[str, Any], config: ValidationConfig) -> tu
     if development_sharpe is None or not math.isfinite(float(development_sharpe)) or float(development_sharpe) <= 0:
         reasons.append("development Sharpe is not positive")
     maximum_drawdown = inputs["maximum_drawdown"]
-    if maximum_drawdown is None or not math.isfinite(float(maximum_drawdown)) or abs(float(maximum_drawdown)) > float(
-        config.maximum_drawdown
+    if (
+        maximum_drawdown is None
+        or not math.isfinite(float(maximum_drawdown))
+        or abs(float(maximum_drawdown)) > float(config.maximum_drawdown)
     ):
         reasons.append("development drawdown exceeds the gate")
     fold_stability = inputs["fold_stability"]
@@ -382,9 +384,7 @@ def _seal_development_evidence(
 
     fold_stability = float(sum(row["sharpe"] > 0 for row in fold_rows) / len(fold_rows)) if fold_rows else 0.0
     calibration = (
-        float(round(sum(row["calibration_error"] for row in fold_rows) / len(fold_rows), 15))
-        if fold_rows
-        else 1.0
+        float(round(sum(row["calibration_error"] for row in fold_rows) / len(fold_rows), 15)) if fold_rows else 1.0
     )
     trial_sharpes = tuple(float(row["sharpe"]) for row in trial_rows)
     provenance = _deep_freeze(
@@ -593,9 +593,12 @@ def _latest_signal(
     if eligible.empty:
         return 0, 0.0, None, None
     row = eligible.iloc[-1]
-    return int(row["signal"]), float(row["strength"]), row["decision_timestamp"].to_pydatetime(), row[
-        "data_through"
-    ].to_pydatetime()
+    return (
+        int(row["signal"]),
+        float(row["strength"]),
+        row["decision_timestamp"].to_pydatetime(),
+        row["data_through"].to_pydatetime(),
+    )
 
 
 def _placeholder_evaluation(
@@ -735,9 +738,7 @@ def evaluate_registry(request: EvaluationRequest) -> tuple[StrategyEvaluation, .
         development = _segment_metrics(
             evidence.backtest, development_mask, periods_per_year=request.config.periods_per_year
         )
-        final = _segment_metrics(
-            evidence.backtest, ~development_mask, periods_per_year=request.config.periods_per_year
-        )
+        final = _segment_metrics(evidence.backtest, ~development_mask, periods_per_year=request.config.periods_per_year)
         development_returns = pd.to_numeric(curve.loc[development_mask, "net_return"], errors="coerce").dropna()
         downside = development_returns.loc[development_returns < 0]
         downside_risk = float(np.sqrt(np.mean(np.square(downside)))) if len(downside) else 0.0

@@ -152,8 +152,7 @@ class BarRepository:
         if not expected and len(present) >= 2:
             observed = sorted(timestamp.to_pydatetime() for timestamp in present)
             expected = tuple(
-                cursor.to_pydatetime()
-                for cursor in pd.date_range(observed[0], observed[-1], freq=duration, tz="UTC")
+                cursor.to_pydatetime() for cursor in pd.date_range(observed[0], observed[-1], freq=duration, tz="UTC")
             )
         gaps: list[DatasetGap] = []
         gap_start: datetime | None = None

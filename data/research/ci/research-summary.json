@@ -1,0 +1,525 @@
+{
+  "attempts": [
+    {
+      "evaluation_status": "completed",
+      "ingest_status": "completed",
+      "interval": "5m",
+      "reason": "evaluation completed",
+      "strategies": [
+        "ema_adx_trend",
+        "macd_histogram_trend",
+        "vwap_trend_continuation",
+        "rsi_reversal",
+        "connors_rsi",
+        "bollinger_reversion",
+        "vwap_zscore_reversion",
+        "stochastic_reversal",
+        "extreme_return_reversal",
+        "bollinger_keltner_squeeze",
+        "volume_spike_breakout"
+      ],
+      "symbol": "BTCUSDT"
+    },
+    {
+      "evaluation_status": "completed",
+      "ingest_status": "completed",
+      "interval": "15m",
+      "reason": "evaluation completed",
+      "strategies": [
+        "ema_adx_trend",
+        "macd_histogram_trend",
+        "donchian_breakout",
+        "supertrend",
+        "vwap_trend_continuation",
+        "rsi_reversal",
+        "connors_rsi",
+        "bollinger_reversion",
+        "vwap_zscore_reversion",
+        "stochastic_reversal",
+        "extreme_return_reversal",
+        "bollinger_keltner_squeeze",
+        "volume_spike_breakout",
+        "volatility_scaled_trend",
+        "bitcoin_active_session_momentum"
+      ],
+      "symbol": "BTCUSDT"
+    },
+    {
+      "evaluation_status": "completed",
+      "ingest_status": "completed",
+      "interval": "1h",
+      "reason": "evaluation completed",
+      "strategies": [
+        "ema_adx_trend",
+        "macd_histogram_trend",
+        "donchian_breakout",
+        "supertrend",
+        "rsi_reversal",
+        "bollinger_reversion",
+        "extreme_return_reversal",
+        "bollinger_keltner_squeeze",
+        "volatility_scaled_trend",
+        "bitcoin_active_session_momentum"
+      ],
+      "symbol": "BTCUSDT"
+    },
+    {
+      "interval": "4h",
+      "reason": "no strategy meets this asset/session/universe context",
+      "status": "unavailable",
+      "symbol": "BTCUSDT"
+    }
+  ],
+  "code_hash": "a0eefafbde08445ba5ceb9432f41a8a018c79707c49a293add3eb5bdb0b5cb09",
+  "config_hash": "bdd5db762ac98ad464c552409781a71a944928083061cdc6979240e5bec324cc",
+  "cutoff": "2026-08-20T00:00:00Z",
+  "data_quality": {
+    "coverage_gap_count": 0,
+    "downstream_risk": "Gaps, stale bars, revisions, invalid OHLCV, or time-travel would bias folds, fills, costs, weights, and promotion; any failed check makes the affected scope unavailable.",
+    "duplicate_logical_bars": 0,
+    "finalization_and_cutoff_valid": true,
+    "freshness_cutoff": "2026-08-20T00:00:00Z",
+    "intended_grain": "one finalized provider/feed/symbol/interval/open_timestamp/revision record",
+    "intervals": [
+      "5m",
+      "15m",
+      "1h",
+      "4h"
+    ],
+    "latest_close": "2026-08-20T00:00:00Z",
+    "leakage_checks_passed": true,
+    "ohlcv_invalid_rows": 0,
+    "prefix_audits": 36,
+    "return_distribution": {
+      "count": 327,
+      "maximum": 0.002486616597159097,
+      "mean": 0.0007822084613925625,
+      "minimum": -0.0008981494199395978,
+      "robust_outlier_count": 0,
+      "standard_deviation": 0.0011596091263340587
+    },
+    "revision_rows": 0,
+    "rows": 330,
+    "sample_sufficiency": {
+      "BTCUSDT/15m": 110,
+      "BTCUSDT/1h": 110,
+      "BTCUSDT/5m": 110
+    },
+    "utc_normalized": true,
+    "volume_distribution": {
+      "maximum": 261.9962463378906,
+      "median": 181.38927459716797,
+      "minimum": 100.31495666503906
+    }
+  },
+  "dataset_hash": "f3b7a8131155c59abe7b7c6e03b66af5252e0304f8649f12aa5fa32978b1e34c",
+  "datasets": [
+    {
+      "dataset_hash": "a181ff4ebd49f71f82a53a58958d9ac35bd8ffd87ff4668dc0cdb5608836bd3a",
+      "end": "2026-08-20T00:00:00Z",
+      "interval": "5m",
+      "row_count": 110,
+      "start": "2026-08-19T14:50:00Z",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "dataset_hash": "feacc5a06d949a06aaa54bf42681f742bec9fd0b49bd909d19d77540e29922c0",
+      "end": "2026-08-20T00:00:00Z",
+      "interval": "15m",
+      "row_count": 110,
+      "start": "2026-08-18T20:30:00Z",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "dataset_hash": "3decd648081f64631fae73e640a3859c775963e88d73a1296de60fe5a1107247",
+      "end": "2026-08-20T00:00:00Z",
+      "interval": "1h",
+      "row_count": 110,
+      "start": "2026-08-15T10:00:00Z",
+      "symbol": "BTCUSDT"
+    }
+  ],
+  "ensemble_components": [],
+  "ensemble_policy": {
+    "equal_weight_shrinkage": 0.5,
+    "maximum_family_weight": 0.5,
+    "maximum_strategy_weight": 0.25,
+    "nonnegative": true
+  },
+  "fixture_manifest_hash": "ef896c03b6aeda8852c84ecd3a997802a61610ad2e33c7a2c4d7ee0e5e618297",
+  "learning_benchmark": {
+    "evaluated_candidates": 2,
+    "reason": "observed 2 trial ledger rows",
+    "status": "completed"
+  },
+  "limitations": [
+    "Deterministic demo bars test the pipeline; they are not live evidence.",
+    "Binance spot pairs are USDT quoted and venue-specific, not composite USD prices.",
+    "Backtests can overfit and materially understate live costs and operational failures."
+  ],
+  "profile": "ci",
+  "provider_mapping": {
+    "BTC-USD": "BTCUSDT",
+    "ETH-USD": "ETHUSDT"
+  },
+  "schema_version": 1,
+  "semantic_snapshot_hash": "e9f0e33867b833d6d769272e7ba9ce1a9bf511133d8294323fa7942a672af18d",
+  "snapshot_counts": {
+    "causal_audits": 36,
+    "ensemble_components": 10,
+    "learning_runs": 1,
+    "strategies": 36
+  },
+  "source": "deterministic generated fixture; never substituted for live provider history",
+  "strategy_catalog": [
+    {
+      "family": "trend",
+      "scopes": [
+        {
+          "interval": "15m",
+          "reason": "evaluation completed",
+          "status": "evaluated",
+          "symbol": "BTCUSDT"
+        },
+        {
+          "interval": "1h",
+          "reason": "evaluation completed",
+          "status": "evaluated",
+          "symbol": "BTCUSDT"
+        },
+        {
+          "interval": "5m",
+          "reason": "evaluation completed",
+          "status": "evaluated",
+          "symbol": "BTCUSDT"
+        }
+      ],
+      "status": "evaluated",
+      "strategy_id": "ema_adx_trend"
+    },
+    {
+      "family": "trend",
+      "scopes": [
+        {
+          "interval": "15m",
+          "reason": "evaluation completed",
+          "status": "evaluated",
+          "symbol": "BTCUSDT"
+        },
+        {
+          "interval": "1h",
+          "reason": "evaluation completed",
+          "status": "evaluated",
+          "symbol": "BTCUSDT"
+        },
+        {
+          "interval": "5m",
+          "reason": "evaluation completed",
+          "status": "evaluated",
+          "symbol": "BTCUSDT"
+        }
+      ],
+      "status": "evaluated",
+      "strategy_id": "macd_histogram_trend"
+    },
+    {
+      "family": "trend",
+      "scopes": [
+        {
+          "interval": "15m",
+          "reason": "evaluation completed",
+          "status": "evaluated",
+          "symbol": "BTCUSDT"
+        },
+        {
+          "interval": "1h",
+          "reason": "evaluation completed",
+          "status": "evaluated",
+          "symbol": "BTCUSDT"
+        }
+      ],
+      "status": "evaluated",
+      "strategy_id": "donchian_breakout"
+    },
+    {
+      "family": "trend",
+      "scopes": [
+        {
+          "interval": "15m",
+          "reason": "evaluation completed",
+          "status": "evaluated",
+          "symbol": "BTCUSDT"
+        },
+        {
+          "interval": "1h",
+          "reason": "evaluation completed",
+          "status": "evaluated",
+          "symbol": "BTCUSDT"
+        }
+      ],
+      "status": "evaluated",
+      "strategy_id": "supertrend"
+    },
+    {
+      "family": "trend",
+      "scopes": [
+        {
+          "interval": "15m",
+          "reason": "evaluation completed",
+          "status": "evaluated",
+          "symbol": "BTCUSDT"
+        },
+        {
+          "interval": "5m",
+          "reason": "evaluation completed",
+          "status": "evaluated",
+          "symbol": "BTCUSDT"
+        }
+      ],
+      "status": "evaluated",
+      "strategy_id": "vwap_trend_continuation"
+    },
+    {
+      "family": "mean_reversion",
+      "scopes": [
+        {
+          "interval": "15m",
+          "reason": "evaluation completed",
+          "status": "evaluated",
+          "symbol": "BTCUSDT"
+        },
+        {
+          "interval": "1h",
+          "reason": "evaluation completed",
+          "status": "evaluated",
+          "symbol": "BTCUSDT"
+        },
+        {
+          "interval": "5m",
+          "reason": "evaluation completed",
+          "status": "evaluated",
+          "symbol": "BTCUSDT"
+        }
+      ],
+      "status": "evaluated",
+      "strategy_id": "rsi_reversal"
+    },
+    {
+      "family": "mean_reversion",
+      "scopes": [
+        {
+          "interval": "15m",
+          "reason": "evaluation completed",
+          "status": "evaluated",
+          "symbol": "BTCUSDT"
+        },
+        {
+          "interval": "5m",
+          "reason": "evaluation completed",
+          "status": "evaluated",
+          "symbol": "BTCUSDT"
+        }
+      ],
+      "status": "evaluated",
+      "strategy_id": "connors_rsi"
+    },
+    {
+      "family": "mean_reversion",
+      "scopes": [
+        {
+          "interval": "15m",
+          "reason": "evaluation completed",
+          "status": "evaluated",
+          "symbol": "BTCUSDT"
+        },
+        {
+          "interval": "1h",
+          "reason": "evaluation completed",
+          "status": "evaluated",
+          "symbol": "BTCUSDT"
+        },
+        {
+          "interval": "5m",
+          "reason": "evaluation completed",
+          "status": "evaluated",
+          "symbol": "BTCUSDT"
+        }
+      ],
+      "status": "evaluated",
+      "strategy_id": "bollinger_reversion"
+    },
+    {
+      "family": "mean_reversion",
+      "scopes": [
+        {
+          "interval": "15m",
+          "reason": "evaluation completed",
+          "status": "evaluated",
+          "symbol": "BTCUSDT"
+        },
+        {
+          "interval": "5m",
+          "reason": "evaluation completed",
+          "status": "evaluated",
+          "symbol": "BTCUSDT"
+        }
+      ],
+      "status": "evaluated",
+      "strategy_id": "vwap_zscore_reversion"
+    },
+    {
+      "family": "mean_reversion",
+      "scopes": [
+        {
+          "interval": "15m",
+          "reason": "evaluation completed",
+          "status": "evaluated",
+          "symbol": "BTCUSDT"
+        },
+        {
+          "interval": "5m",
+          "reason": "evaluation completed",
+          "status": "evaluated",
+          "symbol": "BTCUSDT"
+        }
+      ],
+      "status": "evaluated",
+      "strategy_id": "stochastic_reversal"
+    },
+    {
+      "family": "mean_reversion",
+      "scopes": [
+        {
+          "interval": "15m",
+          "reason": "evaluation completed",
+          "status": "evaluated",
+          "symbol": "BTCUSDT"
+        },
+        {
+          "interval": "1h",
+          "reason": "evaluation completed",
+          "status": "evaluated",
+          "symbol": "BTCUSDT"
+        },
+        {
+          "interval": "5m",
+          "reason": "evaluation completed",
+          "status": "evaluated",
+          "symbol": "BTCUSDT"
+        }
+      ],
+      "status": "evaluated",
+      "strategy_id": "extreme_return_reversal"
+    },
+    {
+      "family": "volatility_volume",
+      "scopes": [
+        {
+          "interval": "15m",
+          "reason": "evaluation completed",
+          "status": "evaluated",
+          "symbol": "BTCUSDT"
+        },
+        {
+          "interval": "1h",
+          "reason": "evaluation completed",
+          "status": "evaluated",
+          "symbol": "BTCUSDT"
+        },
+        {
+          "interval": "5m",
+          "reason": "evaluation completed",
+          "status": "evaluated",
+          "symbol": "BTCUSDT"
+        }
+      ],
+      "status": "evaluated",
+      "strategy_id": "bollinger_keltner_squeeze"
+    },
+    {
+      "family": "volatility_volume",
+      "scopes": [
+        {
+          "interval": "15m",
+          "reason": "evaluation completed",
+          "status": "evaluated",
+          "symbol": "BTCUSDT"
+        },
+        {
+          "interval": "5m",
+          "reason": "evaluation completed",
+          "status": "evaluated",
+          "symbol": "BTCUSDT"
+        }
+      ],
+      "status": "evaluated",
+      "strategy_id": "volume_spike_breakout"
+    },
+    {
+      "family": "volatility_volume",
+      "scopes": [
+        {
+          "interval": "15m",
+          "reason": "evaluation completed",
+          "status": "evaluated",
+          "symbol": "BTCUSDT"
+        },
+        {
+          "interval": "1h",
+          "reason": "evaluation completed",
+          "status": "evaluated",
+          "symbol": "BTCUSDT"
+        }
+      ],
+      "status": "evaluated",
+      "strategy_id": "volatility_scaled_trend"
+    },
+    {
+      "family": "session",
+      "reason": "requires an equity/ETF instrument and exchange-session calendar; configured research assets are crypto",
+      "scopes": [],
+      "status": "unavailable",
+      "strategy_id": "opening_range_breakout"
+    },
+    {
+      "family": "session",
+      "reason": "requires an equity/ETF instrument and exchange-session calendar; configured research assets are crypto",
+      "scopes": [],
+      "status": "unavailable",
+      "strategy_id": "etf_last_half_hour_momentum"
+    },
+    {
+      "family": "session",
+      "scopes": [
+        {
+          "interval": "15m",
+          "reason": "evaluation completed",
+          "status": "evaluated",
+          "symbol": "BTCUSDT"
+        },
+        {
+          "interval": "1h",
+          "reason": "evaluation completed",
+          "status": "evaluated",
+          "symbol": "BTCUSDT"
+        }
+      ],
+      "status": "evaluated",
+      "strategy_id": "bitcoin_active_session_momentum"
+    },
+    {
+      "family": "relative_value",
+      "reason": "requires authenticated point-in-time paired-bar context; the scalar full-history runner does not splice peers",
+      "scopes": [],
+      "status": "unavailable",
+      "strategy_id": "rolling_cointegration_pairs"
+    },
+    {
+      "family": "relative_value",
+      "reason": "requires at least 5 point-in-time liquid crypto assets; only 2 are configured",
+      "scopes": [],
+      "status": "unavailable",
+      "strategy_id": "crypto_cross_sectional_momentum"
+    }
+  ]
+}

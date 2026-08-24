@@ -88,18 +88,10 @@ def _timestamped_evidence(backtest: IntradayBacktestResult | None = None) -> Str
         backtest=backtest or _backtest(),
         signals=_signals(),
         trial_evidence=(
-            TrialEvidence(
-                "trial-1", 0.1, datetime(2026, 8, 21, 14, tzinfo=UTC), datetime(2026, 8, 21, 15, tzinfo=UTC)
-            ),
-            TrialEvidence(
-                "trial-2", 0.2, datetime(2026, 8, 21, 14, tzinfo=UTC), datetime(2026, 8, 21, 15, tzinfo=UTC)
-            ),
-            TrialEvidence(
-                "trial-3", 0.3, datetime(2026, 8, 21, 15, tzinfo=UTC), datetime(2026, 8, 21, 16, tzinfo=UTC)
-            ),
-            TrialEvidence(
-                "trial-4", 0.4, datetime(2026, 8, 21, 15, tzinfo=UTC), datetime(2026, 8, 21, 16, tzinfo=UTC)
-            ),
+            TrialEvidence("trial-1", 0.1, datetime(2026, 8, 21, 14, tzinfo=UTC), datetime(2026, 8, 21, 15, tzinfo=UTC)),
+            TrialEvidence("trial-2", 0.2, datetime(2026, 8, 21, 14, tzinfo=UTC), datetime(2026, 8, 21, 15, tzinfo=UTC)),
+            TrialEvidence("trial-3", 0.3, datetime(2026, 8, 21, 15, tzinfo=UTC), datetime(2026, 8, 21, 16, tzinfo=UTC)),
+            TrialEvidence("trial-4", 0.4, datetime(2026, 8, 21, 15, tzinfo=UTC), datetime(2026, 8, 21, 16, tzinfo=UTC)),
         ),
         fold_evidence=(
             FoldEvidence(

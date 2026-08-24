@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
 import warnings
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
 
+from src.config.settings import Settings, StrategiesConfig
 from src.strategies.registry import StrategyRegistry
 from src.strategies.types import BarInterval, StrategyFamily, StrategyMode, StrategySpec, canonical_hash
-from src.config.settings import Settings, StrategiesConfig
 
 
 def _generator(*_args: object, **_kwargs: object) -> int:

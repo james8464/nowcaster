@@ -131,6 +131,59 @@ def test_binance_receipt_timestamp_is_after_each_paginated_response() -> None:
     assert [bar.retrieved_at.minute for bar in bars if bar.retrieved_at is not None] == [20, 20, 25]
 
 
+def test_binance_verified_external_cache_resumes_without_network(tmp_path: Path) -> None:
+    payload = _json_fixture("binance_klines.json")
+    request = BarRequest(
+        symbol="BTCUSDT",
+        interval=BarInterval.FIVE_MINUTES,
+        start=datetime(2026, 8, 22, 10, 0, tzinfo=UTC),
+        end=datetime(2026, 8, 22, 10, 10, tzinfo=UTC),
+    )
+
+    def clock() -> datetime:
+        return datetime(2026, 8, 22, 10, 7, tzinfo=UTC)
+
+    first = BinanceBarProvider(
+        httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(200, json=payload))),
+        cache_dir=tmp_path,
+        clock=clock,
+    )
+    expected = list(first.fetch(request))
+
+    def unexpected_request(_: httpx.Request) -> httpx.Response:
+        raise AssertionError("verified cache should satisfy the identical page request")
+
+    resumed = BinanceBarProvider(
+        httpx.Client(transport=httpx.MockTransport(unexpected_request)),
+        cache_dir=tmp_path,
+        clock=clock,
+    )
+
+    assert list(resumed.fetch(request)) == expected
+    assert len(list(tmp_path.rglob("*.json"))) == 1
+    assert len(list(tmp_path.rglob("*.sha256"))) == 1
+
+
+def test_binance_external_cache_rejects_checksum_mismatch(tmp_path: Path) -> None:
+    payload = _json_fixture("binance_klines.json")
+    request = BarRequest(
+        symbol="BTCUSDT",
+        interval=BarInterval.FIVE_MINUTES,
+        start=datetime(2026, 8, 22, 10, 0, tzinfo=UTC),
+        end=datetime(2026, 8, 22, 10, 10, tzinfo=UTC),
+    )
+    provider = BinanceBarProvider(
+        httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(200, json=payload))),
+        cache_dir=tmp_path,
+        clock=lambda: datetime(2026, 8, 22, 10, 7, tzinfo=UTC),
+    )
+    list(provider.fetch(request))
+    next(tmp_path.rglob("*.json")).write_text("[]", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="checksum mismatch"):
+        list(provider.fetch(request))
+
+
 def test_xnys_calendar_matches_alpaca_buckets_dst_early_close_and_daily_labels() -> None:
     normal_dst = XNYS_CALENDAR.expected_opens(
         datetime(2026, 3, 9, tzinfo=UTC),

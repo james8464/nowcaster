@@ -85,9 +85,7 @@ def _parameter(parameters: Mapping[str, ParameterValue], name: str, cast: Callab
 def _ema_adx(bars: pd.DataFrame, parameters: Mapping[str, ParameterValue], _: StrategyContext) -> _RuleResult:
     fast = ema(bars["close"], _parameter(parameters, "fast_period", int))
     slow = ema(bars["close"], _parameter(parameters, "slow_period", int))
-    trend_strength = adx(
-        bars["high"], bars["low"], bars["close"], _parameter(parameters, "adx_period", int)
-    )
+    trend_strength = adx(bars["high"], bars["low"], bars["close"], _parameter(parameters, "adx_period", int))
     threshold = _parameter(parameters, "adx_threshold", float)
     active = trend_strength >= threshold
     signal = _direction(active & (fast > slow), active & (fast < slow))
@@ -95,9 +93,7 @@ def _ema_adx(bars: pd.DataFrame, parameters: Mapping[str, ParameterValue], _: St
     return _RuleResult(signal, (trend_strength / 100).clip(0, 1), valid=valid)
 
 
-def _macd_histogram(
-    bars: pd.DataFrame, parameters: Mapping[str, ParameterValue], _: StrategyContext
-) -> _RuleResult:
+def _macd_histogram(bars: pd.DataFrame, parameters: Mapping[str, ParameterValue], _: StrategyContext) -> _RuleResult:
     _, _, histogram = macd(
         bars["close"],
         _parameter(parameters, "fast_period", int),
@@ -147,9 +143,7 @@ def _supertrend(bars: pd.DataFrame, parameters: Mapping[str, ParameterValue], _:
 
 def _vwap_trend(bars: pd.DataFrame, parameters: Mapping[str, ParameterValue], context: StrategyContext) -> _RuleResult:
     timestamps = _bar_timestamps(bars, "open_timestamp")
-    vwap = session_vwap(
-        bars["high"], bars["low"], bars["close"], bars["volume"], timestamps, context.session
-    )
+    vwap = session_vwap(bars["high"], bars["low"], bars["close"], bars["volume"], timestamps, context.session)
     slope_bars = _parameter(parameters, "slope_bars", int)
     slope = vwap.diff(slope_bars)
     signal = _direction((bars["close"] > vwap) & (slope > 0), (bars["close"] < vwap) & (slope < 0))
@@ -211,9 +205,7 @@ def _bollinger_reversion(
 
 def _vwap_zscore(bars: pd.DataFrame, parameters: Mapping[str, ParameterValue], context: StrategyContext) -> _RuleResult:
     timestamps = _bar_timestamps(bars, "open_timestamp")
-    vwap = session_vwap(
-        bars["high"], bars["low"], bars["close"], bars["volume"], timestamps, context.session
-    )
+    vwap = session_vwap(bars["high"], bars["low"], bars["close"], bars["volume"], timestamps, context.session)
     score = rolling_zscore(bars["close"] - vwap, _parameter(parameters, "lookback", int))
     entry = _parameter(parameters, "entry_zscore", float)
     valid = score.notna() & vwap.notna() & context.session.in_session(timestamps)
@@ -275,9 +267,7 @@ def _squeeze(bars: pd.DataFrame, parameters: Mapping[str, ParameterValue], _: St
     return _RuleResult(signal, strength.clip(0, 1), valid=valid)
 
 
-def _volume_breakout(
-    bars: pd.DataFrame, parameters: Mapping[str, ParameterValue], _: StrategyContext
-) -> _RuleResult:
+def _volume_breakout(bars: pd.DataFrame, parameters: Mapping[str, ParameterValue], _: StrategyContext) -> _RuleResult:
     lookback = _parameter(parameters, "volume_lookback", int)
     multiple = _parameter(parameters, "volume_multiple", float)
     relative = relative_volume(bars["volume"], lookback)
@@ -292,10 +282,15 @@ def _volatility_scaled_trend(
     bars: pd.DataFrame, parameters: Mapping[str, ParameterValue], _: StrategyContext
 ) -> _RuleResult:
     trend = bars["close"].pct_change(_parameter(parameters, "trend_lookback", int))
-    volatility = bars["close"].pct_change().rolling(
-        _parameter(parameters, "volatility_lookback", int),
-        min_periods=_parameter(parameters, "volatility_lookback", int),
-    ).std(ddof=0)
+    volatility = (
+        bars["close"]
+        .pct_change()
+        .rolling(
+            _parameter(parameters, "volatility_lookback", int),
+            min_periods=_parameter(parameters, "volatility_lookback", int),
+        )
+        .std(ddof=0)
+    )
     scaled = trend / volatility.replace(0, np.nan)
     return _RuleResult(
         _direction(scaled > 0, scaled < 0),
@@ -317,11 +312,7 @@ def _opening_range(
     active = after_range & (relative > 1)
     signal = _direction(active & (bars["close"] > range_high), active & (bars["close"] < range_low))
     valid = (
-        context.session.in_session(timestamps)
-        & after_range
-        & relative.notna()
-        & range_high.notna()
-        & range_low.notna()
+        context.session.in_session(timestamps) & after_range & relative.notna() & range_high.notna() & range_low.notna()
     )
     return _RuleResult(signal, relative.clip(0, 1), valid=valid)
 
@@ -361,9 +352,7 @@ def _pairs(bars: pd.DataFrame, parameters: Mapping[str, ParameterValue], context
         )
         return _RuleResult(_empty_signal(bars), reason=reason, valid=pd.Series(False, index=bars.index))
     peer = aligned_peer_close(bars, context.paired_bars)
-    score = rolling_cointegration_zscore(
-        bars["close"].astype(float), peer, _parameter(parameters, "lookback", int)
-    )
+    score = rolling_cointegration_zscore(bars["close"].astype(float), peer, _parameter(parameters, "lookback", int))
     entry = _parameter(parameters, "entry_zscore", float)
     return _RuleResult(
         _direction(score <= -entry, score >= entry),
@@ -384,9 +373,7 @@ def _cross_sectional(
             index=bars.index,
             dtype="object",
         )
-        return _RuleResult(
-            _empty_signal(bars), reason=reasons, valid=pd.Series(False, index=bars.index)
-        )
+        return _RuleResult(_empty_signal(bars), reason=reasons, valid=pd.Series(False, index=bars.index))
     eligible_symbols = set(
         context.universe_membership.loc[
             context.universe_membership["member"] & context.universe_membership["liquid"],
@@ -394,9 +381,7 @@ def _cross_sectional(
         ].astype(str)
     )
     universe = {
-        member: member_bars
-        for member, member_bars in context.universe_bars.items()
-        if member in eligible_symbols
+        member: member_bars for member, member_bars in context.universe_bars.items() if member in eligible_symbols
     }
     if symbol not in eligible_symbols:
         reasons = pd.Series(
@@ -404,9 +389,7 @@ def _cross_sectional(
             index=bars.index,
             dtype="object",
         )
-        return _RuleResult(
-            _empty_signal(bars), reason=reasons, valid=pd.Series(False, index=bars.index)
-        )
+        return _RuleResult(_empty_signal(bars), reason=reasons, valid=pd.Series(False, index=bars.index))
     universe.setdefault(symbol, bars)
     main_times = pd.to_datetime(bars[_timestamp_name(bars)], utc=True)
     returns_by_symbol: dict[str, pd.Series] = {}
@@ -429,9 +412,7 @@ def _cross_sectional(
         }
         count = len(observations)
         if count < minimum or symbol not in observations:
-            reasons.iloc[position] = (
-                f"abstain: cross-sectional universe has {count} of {minimum} required instruments"
-            )
+            reasons.iloc[position] = f"abstain: cross-sectional universe has {count} of {minimum} required instruments"
             continue
         ranked = pd.Series(observations).rank(method="average", pct=True)
         valid.iloc[position] = True
@@ -502,9 +483,7 @@ def _validate_revision_ledger(bars: pd.DataFrame, *, label: str = "primary") -> 
     }
     missing = required - set(bars.columns)
     if missing:
-        raise ValueError(
-            f"{label} bars must be a revision ledger; missing columns: {', '.join(sorted(missing))}"
-        )
+        raise ValueError(f"{label} bars must be a revision ledger; missing columns: {', '.join(sorted(missing))}")
     ledger = bars.reset_index(drop=True).copy()
     for column in ("open_timestamp", "close_timestamp", "available_at"):
         ledger[column] = pd.to_datetime(ledger[column], utc=True)
@@ -779,9 +758,7 @@ STRATEGY_METADATA: Mapping[str, StrategyMetadata] = MappingProxyType(
 )
 
 
-def generate_signals(
-    spec: StrategySpec, bars: pd.DataFrame, context: StrategyContext
-) -> StrategySignalFrame:
+def generate_signals(spec: StrategySpec, bars: pd.DataFrame, context: StrategyContext) -> StrategySignalFrame:
     try:
         generator = STRATEGY_GENERATORS[spec.strategy_id]
     except KeyError as error:

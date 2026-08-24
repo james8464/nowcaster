@@ -405,11 +405,7 @@ def run_execution(
         str(symbol).upper(): _ordered_sources(sources)
         for symbol, sources in (initial_position_provenance or {}).items()
     }
-    if any(
-        source.symbol != symbol
-        for symbol, sources in position_provenance.items()
-        for source in sources
-    ):
+    if any(source.symbol != symbol for symbol, sources in position_provenance.items() for source in sources):
         raise ValueError("initial position provenance symbols must match their positions")
     if set(position_provenance) - set(positions):
         raise ValueError("initial position provenance requires a matching position")

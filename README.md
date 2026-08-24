@@ -59,18 +59,18 @@ Company filings come from SEC data. Public-attention features come from Wikimedi
 
 This is one of the most important safeguards. A model studying 2022 must not accidentally see a figure published in 2023. Nowcaster records when an input became available and shifts market features so future information cannot leak backward.
 
-### 3. Produce separate stock and crypto research
+### 3. Produce separate earnings and intraday-strategy research
 
 Stocks and cryptocurrencies behave differently, so they use separate research paths:
 
 - The stock models estimate company revenue before an earnings event and compare it with a simple historical expectation.
-- The crypto models study lagged price, trend, volatility, and market-regime information.
+- The intraday library evaluates 19 configured trend, mean-reversion, volatility/volume, session, and relative-value rules at `5m`, `15m`, `1h`, or `4h` where their requirements are met.
 
 The bundled stock expectation is a seasonal historical proxy. It is **not Wall Street consensus**.
 
 ### 4. Backtest the rules
 
-Nowcaster walks forward through time instead of randomly mixing old and new observations. It reserves the final 20% of crypto history as an isolated test period and models a one-bar execution delay, trading costs, slippage, short-borrow costs, exposure limits, and volatility targeting.
+Nowcaster walks forward through time instead of randomly mixing old and new observations. It chooses the final 20% of chronology before filtering, keeps that period out of training/calibration/weight learning, and executes a bar's signal no earlier than the next actionable bar. Intraday simulations include fees, half-spread, slippage, latency, participation limits, funding/borrow policy, exposure limits, and adverse stop-before-target ordering when both prices occur inside one bar.
 
 The tests also look for unstable subperiods, excessive drawdowns, sensitivity to higher costs, and results that may simply be statistical luck. A backtest is still only a simulation; it cannot recreate liquidity, exchange failures, taxes, capacity, or human behaviour perfectly.
 
@@ -108,7 +108,7 @@ In plain language:
 - Ether's development result and sample size were too weak, even though its smaller final period was positive.
 - The stock event study is also research only. Its small three-company demo did not establish a dependable edge.
 
-No bundled strategy is considered ready for real-money decisions. Historical patterns can be overfit and can stop working.
+No bundled strategy is considered ready for real-money decisions. The newer intraday CI fixture validates deterministic software behavior and is not market-performance evidence. Historical patterns can be overfit and can stop working.
 
 ## Install and run
 
@@ -141,6 +141,8 @@ The demo is deterministic and needs no API keys. `make demo` builds the local Du
 make lint                # Check Python formatting and common mistakes
 make test                # Run the Python test suite
 make demo                # Rebuild the bundled research demo
+make research-ci         # Rebuild the network-free intraday research fixture
+make research-live-probe CACHE_DIR=/external/path # Bounded official-provider coverage probe
 make report              # Write a measured research note
 make sync-macos-snapshot # Refresh the app's checked-in first-launch data
 make macos-test          # Run Swift model and app tests
@@ -156,14 +158,15 @@ make release-archive     # Build the app ZIP and SHA-256 checksum
 macos/Nowcaster/    native SwiftUI app and Swift tests
 src/                data ingestion, models, backtests, and snapshot export
 config/             market universe, features, and model settings
-data/demo/          frozen public source snapshots and checksum manifests
+data/demo/          frozen public snapshots and deterministic fixture manifests
+data/research/      compact reproducible research summaries; never bulk bars
 docs/               architecture, methodology, privacy, and native screenshots
 tests/              Python unit, integration, leakage, and pipeline tests
 scripts/            native app build and visual-verification tools
 .github/workflows/  continuous integration and macOS release packaging
 ```
 
-For deeper technical detail, see the [architecture](docs/architecture.md), [methodology](docs/methodology.md), [backtest protocol](docs/backtest_protocol.md), [data dictionary](docs/data_dictionary.md), [macOS guide](docs/macos_app.md), [privacy policy](docs/privacy.md), and [verification record](docs/native_verification.md).
+For deeper technical detail, see the [strategy methodology](docs/strategy-methodology.md), [provider guide](docs/data-providers.md), [research results](docs/research-results.md), [architecture](docs/architecture.md), [earnings/daily methodology](docs/methodology.md), [backtest protocol](docs/backtest_protocol.md), [data dictionary](docs/data_dictionary.md), [macOS guide](docs/macos_app.md), [privacy policy](docs/privacy.md), and [verification record](docs/native_verification.md).
 
 ## Data, privacy, and limitations
 
@@ -171,6 +174,8 @@ For deeper technical detail, see the [architecture](docs/architecture.md), [meth
 - Public data can be missing, revised, delayed, or wrong.
 - Yahoo chart data comes from an unofficial endpoint with no service guarantee.
 - Users are responsible for data-provider terms and production data licences.
+- `BTC-USD` and `ETH-USD` map to Binance `BTCUSDT` and `ETHUSDT` for provider research. These are venue-specific USDT spot pairs, not composite USD prices.
+- Raw credentials and bulk/licensed bars stay outside Git. Only fixture descriptors, checksummed manifests, and compact results are committed.
 - The app does not collect personal information, connect to a broker, or store brokerage credentials.
 - Short selling, leverage, crypto trading, and derivatives can lose more money or move faster than a beginner expects.
 

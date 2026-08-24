@@ -85,14 +85,21 @@ def test_experiment_resume_is_idempotent_and_uses_the_persisted_ledger(tmp_path)
     assert first.trials == second.trials
     assert calls_after_first == 12
     assert calls == calls_after_first
-    assert database.scalar(
-        "select count(*) from learning_trials where learning_run_id = :run_id",
-        {"run_id": experiment.learning_run_id},
-    ) == first.trial_count == 6
-    assert database.scalar(
-        "select count(*) from discovered_rules where learning_run_id = :run_id",
-        {"run_id": experiment.learning_run_id},
-    ) == 1
+    assert (
+        database.scalar(
+            "select count(*) from learning_trials where learning_run_id = :run_id",
+            {"run_id": experiment.learning_run_id},
+        )
+        == first.trial_count
+        == 6
+    )
+    assert (
+        database.scalar(
+            "select count(*) from discovered_rules where learning_run_id = :run_id",
+            {"run_id": experiment.learning_run_id},
+        )
+        == 1
+    )
 
 
 def test_evaluator_failures_are_append_only_ledger_rows_and_count_as_trials(tmp_path) -> None:
@@ -111,10 +118,13 @@ def test_evaluator_failures_are_append_only_ledger_rows_and_count_as_trials(tmp_
     assert result.trial_count == len(persisted) == 3
     assert persisted["status"].tolist() == ["failed"] * 3
     assert persisted["error_summary"].str.contains("cost engine unavailable").all()
-    assert database.scalar(
-        "select count(*) from discovered_rules where learning_run_id = :run_id",
-        {"run_id": result.learning_run_id},
-    ) == 0
+    assert (
+        database.scalar(
+            "select count(*) from discovered_rules where learning_run_id = :run_id",
+            {"run_id": result.learning_run_id},
+        )
+        == 0
+    )
 
 
 def test_invalid_candidate_query_is_persisted_and_cannot_bypass_grammar_caps(tmp_path) -> None:
@@ -144,10 +154,13 @@ def test_invalid_candidate_query_is_persisted_and_cannot_bypass_grammar_caps(tmp
     assert result.trials[0].status == "invalid"
     assert "depth" in result.trials[0].error_summary
     assert calls == 0
-    assert database.scalar(
-        "select count(*) from learning_trials where status = 'invalid' and learning_run_id = :run_id",
-        {"run_id": result.learning_run_id},
-    ) == 1
+    assert (
+        database.scalar(
+            "select count(*) from learning_trials where status = 'invalid' and learning_run_id = :run_id",
+            {"run_id": result.learning_run_id},
+        )
+        == 1
+    )
 
 
 def test_candidate_space_exhaustion_fills_fixed_budget_with_budget_stop_rows(tmp_path) -> None:
@@ -175,10 +188,13 @@ def test_candidate_space_exhaustion_fills_fixed_budget_with_budget_stop_rows(tmp
         "budget_stop",
         "budget_stop",
     ]
-    assert database.scalar(
-        "select count(*) from learning_trials where learning_run_id = :run_id",
-        {"run_id": result.learning_run_id},
-    ) == 5
+    assert (
+        database.scalar(
+            "select count(*) from learning_trials where learning_run_id = :run_id",
+            {"run_id": result.learning_run_id},
+        )
+        == 5
+    )
 
 
 def test_resume_authenticates_the_complete_search_contract(tmp_path) -> None:
@@ -202,9 +218,7 @@ def test_resume_authenticates_the_complete_search_contract(tmp_path) -> None:
 
     changed_costs = replace(
         experiment,
-        execution_assumptions=ExecutionAssumptions(
-            costs=CostAssumptions(half_spread_bps=5)
-        ),
+        execution_assumptions=ExecutionAssumptions(costs=CostAssumptions(half_spread_bps=5)),
     )
     with pytest.raises(ValueError, match="search contract"):
         discover_rules(changed_costs, _bars())

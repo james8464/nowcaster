@@ -6,7 +6,6 @@ from sqlalchemy.exc import IntegrityError
 
 from src.database.engine import Database
 
-
 TIMESTAMPED_NATURAL_KEYS = {
     "market_bars": ("provider", "feed", "symbol", "interval", "open_timestamp", "revision", "available_at"),
     "strategy_runs": ("dataset_hash", "strategy_id", "strategy_version", "symbol", "interval", "mode", "run_timestamp"),
@@ -61,8 +60,7 @@ def _assert_timestamped_strategy_schema(database: Database) -> None:
         assert set(expected_key) <= columns
         assert any("timestamp" in column or column.endswith("_at") for column in columns)
         constraints = database.frame(
-            "SELECT constraint_type, constraint_column_names "
-            "FROM duckdb_constraints() WHERE table_name = :table_name",
+            "SELECT constraint_type, constraint_column_names FROM duckdb_constraints() WHERE table_name = :table_name",
             {"table_name": table_name},
         )
         unique_keys = [

@@ -1,0 +1,9 @@
+{
+  "bar_count_per_scope": 110,
+  "cutoff": "2026-08-20T00:00:00Z",
+  "generator": "intraday-strategy-research-v1",
+  "intervals": ["5m", "15m", "1h", "4h"],
+  "network_required": false,
+  "symbols": ["BTCUSDT", "ETHUSDT"],
+  "warning": "Generated deterministic CI bars validate software behavior only and are never live research evidence."
+}

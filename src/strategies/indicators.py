@@ -224,12 +224,8 @@ def build_indicators(bars: pd.DataFrame, session: SessionCalendar) -> IndicatorF
     result["atr_14"] = atr(result["high"], result["low"], result["close"], 14)
     result["adx_14"] = adx(result["high"], result["low"], result["close"], 14)
     result["macd"], result["macd_signal"], result["macd_histogram"] = macd(result["close"])
-    result["stochastic_k"], result["stochastic_d"] = stochastic(
-        result["high"], result["low"], result["close"]
-    )
-    result["bollinger_middle"], result["bollinger_upper"], result["bollinger_lower"] = bollinger_bands(
-        result["close"]
-    )
+    result["stochastic_k"], result["stochastic_d"] = stochastic(result["high"], result["low"], result["close"])
+    result["bollinger_middle"], result["bollinger_upper"], result["bollinger_lower"] = bollinger_bands(result["close"])
     result["keltner_middle"], result["keltner_upper"], result["keltner_lower"] = keltner_channels(
         result["high"], result["low"], result["close"]
     )

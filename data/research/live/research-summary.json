@@ -1,0 +1,665 @@
+{
+  "alpaca": {
+    "key_present": false,
+    "reason": "Alpaca credentials are absent; set APCA_API_KEY_ID and APCA_API_SECRET_KEY locally, never in Git",
+    "secret_present": false,
+    "status": "unavailable"
+  },
+  "attempt_status": "unavailable",
+  "attempted_coverage": [
+    {
+      "attempted_end": "2017-09-16T04:00:00Z",
+      "attempted_start": "2017-08-17T04:00:00Z",
+      "configured_symbol": "BTC-USD",
+      "interval": "5m",
+      "provider_symbol": "BTCUSDT",
+      "reason": "data unavailable: 83 requested bars remain missing",
+      "status": "unavailable"
+    },
+    {
+      "attempted_end": "2026-08-24T00:00:00Z",
+      "attempted_start": "2017-09-16T04:00:00Z",
+      "configured_symbol": "BTC-USD",
+      "interval": "5m",
+      "provider_symbol": "BTCUSDT",
+      "reason": "diagnostic chunk limit reached; remaining live history was not downloaded and no research result was inferred",
+      "status": "unavailable"
+    },
+    {
+      "attempted_end": "2017-09-16T04:00:00Z",
+      "attempted_start": "2017-08-17T04:00:00Z",
+      "configured_symbol": "BTC-USD",
+      "interval": "15m",
+      "provider_symbol": "BTCUSDT",
+      "reason": "data unavailable: 27 requested bars remain missing",
+      "status": "unavailable"
+    },
+    {
+      "attempted_end": "2026-08-24T00:00:00Z",
+      "attempted_start": "2017-09-16T04:00:00Z",
+      "configured_symbol": "BTC-USD",
+      "interval": "15m",
+      "provider_symbol": "BTCUSDT",
+      "reason": "diagnostic chunk limit reached; remaining live history was not downloaded and no research result was inferred",
+      "status": "unavailable"
+    },
+    {
+      "attempted_end": "2017-09-16T04:00:00Z",
+      "attempted_start": "2017-08-17T04:00:00Z",
+      "configured_symbol": "BTC-USD",
+      "interval": "1h",
+      "provider_symbol": "BTCUSDT",
+      "reason": "data unavailable: 6 requested bars remain missing",
+      "status": "unavailable"
+    },
+    {
+      "attempted_end": "2026-08-24T00:00:00Z",
+      "attempted_start": "2017-09-16T04:00:00Z",
+      "configured_symbol": "BTC-USD",
+      "interval": "1h",
+      "provider_symbol": "BTCUSDT",
+      "reason": "diagnostic chunk limit reached; remaining live history was not downloaded and no research result was inferred",
+      "status": "unavailable"
+    },
+    {
+      "attempted_end": "2017-09-16T04:00:00Z",
+      "attempted_start": "2017-08-17T04:00:00Z",
+      "configured_symbol": "BTC-USD",
+      "interval": "4h",
+      "provider_symbol": "BTCUSDT",
+      "reason": "appended 180 immutable revisions",
+      "status": "completed"
+    },
+    {
+      "attempted_end": "2026-08-24T00:00:00Z",
+      "attempted_start": "2017-09-16T04:00:00Z",
+      "configured_symbol": "BTC-USD",
+      "interval": "4h",
+      "provider_symbol": "BTCUSDT",
+      "reason": "diagnostic chunk limit reached; remaining live history was not downloaded and no research result was inferred",
+      "status": "unavailable"
+    },
+    {
+      "attempted_end": "2017-09-16T04:00:00Z",
+      "attempted_start": "2017-08-17T04:00:00Z",
+      "configured_symbol": "ETH-USD",
+      "interval": "5m",
+      "provider_symbol": "ETHUSDT",
+      "reason": "data unavailable: 83 requested bars remain missing",
+      "status": "unavailable"
+    },
+    {
+      "attempted_end": "2026-08-24T00:00:00Z",
+      "attempted_start": "2017-09-16T04:00:00Z",
+      "configured_symbol": "ETH-USD",
+      "interval": "5m",
+      "provider_symbol": "ETHUSDT",
+      "reason": "diagnostic chunk limit reached; remaining live history was not downloaded and no research result was inferred",
+      "status": "unavailable"
+    },
+    {
+      "attempted_end": "2017-09-16T04:00:00Z",
+      "attempted_start": "2017-08-17T04:00:00Z",
+      "configured_symbol": "ETH-USD",
+      "interval": "15m",
+      "provider_symbol": "ETHUSDT",
+      "reason": "data unavailable: 27 requested bars remain missing",
+      "status": "unavailable"
+    },
+    {
+      "attempted_end": "2026-08-24T00:00:00Z",
+      "attempted_start": "2017-09-16T04:00:00Z",
+      "configured_symbol": "ETH-USD",
+      "interval": "15m",
+      "provider_symbol": "ETHUSDT",
+      "reason": "diagnostic chunk limit reached; remaining live history was not downloaded and no research result was inferred",
+      "status": "unavailable"
+    },
+    {
+      "attempted_end": "2017-09-16T04:00:00Z",
+      "attempted_start": "2017-08-17T04:00:00Z",
+      "configured_symbol": "ETH-USD",
+      "interval": "1h",
+      "provider_symbol": "ETHUSDT",
+      "reason": "data unavailable: 6 requested bars remain missing",
+      "status": "unavailable"
+    },
+    {
+      "attempted_end": "2026-08-24T00:00:00Z",
+      "attempted_start": "2017-09-16T04:00:00Z",
+      "configured_symbol": "ETH-USD",
+      "interval": "1h",
+      "provider_symbol": "ETHUSDT",
+      "reason": "diagnostic chunk limit reached; remaining live history was not downloaded and no research result was inferred",
+      "status": "unavailable"
+    },
+    {
+      "attempted_end": "2017-09-16T04:00:00Z",
+      "attempted_start": "2017-08-17T04:00:00Z",
+      "configured_symbol": "ETH-USD",
+      "interval": "4h",
+      "provider_symbol": "ETHUSDT",
+      "reason": "appended 180 immutable revisions",
+      "status": "completed"
+    },
+    {
+      "attempted_end": "2026-08-24T00:00:00Z",
+      "attempted_start": "2017-09-16T04:00:00Z",
+      "configured_symbol": "ETH-USD",
+      "interval": "4h",
+      "provider_symbol": "ETHUSDT",
+      "reason": "diagnostic chunk limit reached; remaining live history was not downloaded and no research result was inferred",
+      "status": "unavailable"
+    }
+  ],
+  "cache_manifest": {
+    "file_count": 36,
+    "files": [
+      {
+        "bytes": 159946,
+        "checksum_verified": true,
+        "path": "binance/spot/BTCUSDT/15m/1502942400000-1505534400000-1000.json",
+        "sha256": "f2e7a1c314ec58d36edb2a710bbf2d22c7b96b2b742bd7d542b99bd745a6f335"
+      },
+      {
+        "bytes": 160441,
+        "checksum_verified": true,
+        "path": "binance/spot/BTCUSDT/15m/1503842400000-1505534400000-1000.json",
+        "sha256": "7ccf533de3487417abcfc82e971d2b09aa91647a058796bdf2d1f1b9e7e7c5bd"
+      },
+      {
+        "bytes": 137178,
+        "checksum_verified": true,
+        "path": "binance/spot/BTCUSDT/15m/1504766700000-1505534400000-1000.json",
+        "sha256": "a1d65af08e3d825a562779da6fe08d1fa3ece5d38d09af780c5c146ec11f2754"
+      },
+      {
+        "bytes": 159,
+        "checksum_verified": true,
+        "path": "binance/spot/BTCUSDT/15m/earliest-through-20260824T000000Z.json",
+        "sha256": "becfd26b6bef7c376f23ff97c943cafe000fae4ecf4385c6bd259cb5ef454bfb"
+      },
+      {
+        "bytes": 116989,
+        "checksum_verified": true,
+        "path": "binance/spot/BTCUSDT/1h/1502942400000-1505534400000-1000.json",
+        "sha256": "e6e31b1539ef0b87f532d6d19ce0fcda61a59a4ed6ebf833844ea161c0758aea"
+      },
+      {
+        "bytes": 167,
+        "checksum_verified": true,
+        "path": "binance/spot/BTCUSDT/1h/earliest-through-20260824T000000Z.json",
+        "sha256": "bfd66bbba56d05a1126ded82fc4615742d9dcae6bcbe5d5e03809d8a2df3f959"
+      },
+      {
+        "bytes": 30022,
+        "checksum_verified": true,
+        "path": "binance/spot/BTCUSDT/4h/1502942400000-1505534400000-1000.json",
+        "sha256": "2abb020c626dfd422cf8ecfc1ec577db981d3e0f16fe580dfb0a9d7f4f4a62b6"
+      },
+      {
+        "bytes": 167,
+        "checksum_verified": true,
+        "path": "binance/spot/BTCUSDT/4h/earliest-through-20260824T000000Z.json",
+        "sha256": "9753b1420fae867e411ef47b9aa8d2e5cb2e201004eef906acef93d228c5efcc"
+      },
+      {
+        "bytes": 157621,
+        "checksum_verified": true,
+        "path": "binance/spot/BTCUSDT/5m/1502942400000-1505534400000-1000.json",
+        "sha256": "7db0770797fc54c28c0ea35d490c7ec440d6207522e386dfec4a118b95f1a837"
+      },
+      {
+        "bytes": 158830,
+        "checksum_verified": true,
+        "path": "binance/spot/BTCUSDT/5m/1503242400000-1505534400000-1000.json",
+        "sha256": "23ee70761839b79fbb58ef429f193306316e7794eef63a8139dc58c393b60885"
+      },
+      {
+        "bytes": 156888,
+        "checksum_verified": true,
+        "path": "binance/spot/BTCUSDT/5m/1503542400000-1505534400000-1000.json",
+        "sha256": "02d5d95241701ad6db11c9a60d448ce6dc30683405f0db4956ced2aa0d2e5f2d"
+      },
+      {
+        "bytes": 157407,
+        "checksum_verified": true,
+        "path": "binance/spot/BTCUSDT/5m/1503842400000-1505534400000-1000.json",
+        "sha256": "4d9cd014ed3b36eeafe1ec2af54a15e25ffe75dfe5c87e326fbae6fbba240fec"
+      },
+      {
+        "bytes": 157734,
+        "checksum_verified": true,
+        "path": "binance/spot/BTCUSDT/5m/1504142400000-1505534400000-1000.json",
+        "sha256": "137632abdf23f5cf97310a011a152263d67b48bd8bc0a2473545656f9f37220e"
+      },
+      {
+        "bytes": 159168,
+        "checksum_verified": true,
+        "path": "binance/spot/BTCUSDT/5m/1504442400000-1505534400000-1000.json",
+        "sha256": "bcab0518f809740a49e3964ae9a7d9b29ca50153c959de407e600531424db17e"
+      },
+      {
+        "bytes": 157969,
+        "checksum_verified": true,
+        "path": "binance/spot/BTCUSDT/5m/1504767300000-1505534400000-1000.json",
+        "sha256": "9713e2774962787d0963d17c61ad4adf30d9664d0f9f52f585bea034ccb0d966"
+      },
+      {
+        "bytes": 157962,
+        "checksum_verified": true,
+        "path": "binance/spot/BTCUSDT/5m/1505067300000-1505534400000-1000.json",
+        "sha256": "d84c14d673d95a86977e7dca1b11c77f0c15dacfc4bf9be5a6356306095dc127"
+      },
+      {
+        "bytes": 89093,
+        "checksum_verified": true,
+        "path": "binance/spot/BTCUSDT/5m/1505367300000-1505534400000-1000.json",
+        "sha256": "716383fc2f6c3aa1842b64cf69d0c297cb319175307f9d9fddcbfb4388000a76"
+      },
+      {
+        "bytes": 159,
+        "checksum_verified": true,
+        "path": "binance/spot/BTCUSDT/5m/earliest-through-20260824T000000Z.json",
+        "sha256": "f8e06acba0dc7ee958f186086c373c1f576aa2bddc7921d79902fde05b3017ae"
+      },
+      {
+        "bytes": 157230,
+        "checksum_verified": true,
+        "path": "binance/spot/ETHUSDT/15m/1502942400000-1505534400000-1000.json",
+        "sha256": "703da872958ddb4626d0a67e16840b881e86e48c548ed225e51bc86684d13ff4"
+      },
+      {
+        "bytes": 157211,
+        "checksum_verified": true,
+        "path": "binance/spot/ETHUSDT/15m/1503842400000-1505534400000-1000.json",
+        "sha256": "494aeba118c38f4f971969142483ae78f072aa3a8f8a44a43771bea9731f2317"
+      },
+      {
+        "bytes": 133807,
+        "checksum_verified": true,
+        "path": "binance/spot/ETHUSDT/15m/1504766700000-1505534400000-1000.json",
+        "sha256": "10730117cda5e370bcc9831198d2ae58060b99079efcbdec93abef6def2155a8"
+      },
+      {
+        "bytes": 156,
+        "checksum_verified": true,
+        "path": "binance/spot/ETHUSDT/15m/earliest-through-20260824T000000Z.json",
+        "sha256": "880091a96a3b121dd8aa292505a5215401207adcb3550cfb446c56dbd51d52ad"
+      },
+      {
+        "bytes": 114870,
+        "checksum_verified": true,
+        "path": "binance/spot/ETHUSDT/1h/1502942400000-1505534400000-1000.json",
+        "sha256": "c87d9275ce4826da5d3d63f7956e0c1f78a267ca616086fc6532cda27e20bcf1"
+      },
+      {
+        "bytes": 162,
+        "checksum_verified": true,
+        "path": "binance/spot/ETHUSDT/1h/earliest-through-20260824T000000Z.json",
+        "sha256": "be5729a4df59141efd33890be25832c4d2579546ecbc63ecdca2b1ff14fab7b4"
+      },
+      {
+        "bytes": 29542,
+        "checksum_verified": true,
+        "path": "binance/spot/ETHUSDT/4h/1502942400000-1505534400000-1000.json",
+        "sha256": "4a42c3abafb25a88c054bb6559bcb06f70be3412baa70440d7f6f803ce52e37d"
+      },
+      {
+        "bytes": 167,
+        "checksum_verified": true,
+        "path": "binance/spot/ETHUSDT/4h/earliest-through-20260824T000000Z.json",
+        "sha256": "a17f031a570fbba5c8be5786697f803ed6fc9bc160699d0e67ebef1c30b7e621"
+      },
+      {
+        "bytes": 154134,
+        "checksum_verified": true,
+        "path": "binance/spot/ETHUSDT/5m/1502942400000-1505534400000-1000.json",
+        "sha256": "55e6e3cec0d7c7b50001f728930eadfd07eb2788ac43a16120f2cbc793d9b33a"
+      },
+      {
+        "bytes": 155202,
+        "checksum_verified": true,
+        "path": "binance/spot/ETHUSDT/5m/1503242400000-1505534400000-1000.json",
+        "sha256": "619a316874b1d669e4b0831a0857f9fc7a20676fe425682b08878985432e1912"
+      },
+      {
+        "bytes": 154617,
+        "checksum_verified": true,
+        "path": "binance/spot/ETHUSDT/5m/1503542400000-1505534400000-1000.json",
+        "sha256": "f8d4f4ffb545a0e2e1129f85e48a3ad9456c9098442682b31a6e8dd9fb8af4c7"
+      },
+      {
+        "bytes": 153303,
+        "checksum_verified": true,
+        "path": "binance/spot/ETHUSDT/5m/1503842400000-1505534400000-1000.json",
+        "sha256": "c13226a45aa314baf1ac398f25a2843d901258bb41450bbf4f446b367fe8302d"
+      },
+      {
+        "bytes": 154816,
+        "checksum_verified": true,
+        "path": "binance/spot/ETHUSDT/5m/1504142400000-1505534400000-1000.json",
+        "sha256": "2bf27c63f37c1c96efc7fef0e8eca81d6a82e8b313cadca708c78046ec36b8ac"
+      },
+      {
+        "bytes": 154535,
+        "checksum_verified": true,
+        "path": "binance/spot/ETHUSDT/5m/1504442400000-1505534400000-1000.json",
+        "sha256": "3804436e62bee1ba2e70133f10acc80f93c189e14655ef660d9fee5f854269c6"
+      },
+      {
+        "bytes": 152888,
+        "checksum_verified": true,
+        "path": "binance/spot/ETHUSDT/5m/1504767300000-1505534400000-1000.json",
+        "sha256": "113025c14ca2524e00eb7e2cfedb0c111633d1da419cbed78a96ab31ab01a5a9"
+      },
+      {
+        "bytes": 153080,
+        "checksum_verified": true,
+        "path": "binance/spot/ETHUSDT/5m/1505067300000-1505534400000-1000.json",
+        "sha256": "a15a3592c343aefef6f39cd941c76fef6692327c45d0fab16fbb63f7fb07404a"
+      },
+      {
+        "bytes": 86980,
+        "checksum_verified": true,
+        "path": "binance/spot/ETHUSDT/5m/1505367300000-1505534400000-1000.json",
+        "sha256": "9cb5d9d7ea97c639bb98754fb5a236ade9bea65eb374c99eb600eec8e517100a"
+      },
+      {
+        "bytes": 156,
+        "checksum_verified": true,
+        "path": "binance/spot/ETHUSDT/5m/earliest-through-20260824T000000Z.json",
+        "sha256": "66563130c574bc5eeb7811389987f8966b4c13659e106998b0848e42db4e0164"
+      }
+    ],
+    "location": "external_to_repository",
+    "manifest_hash": "a9402b24e12f1c0507c459bc3f21f3135910fa691edb376532fe9ea5721e95b7"
+  },
+  "code_hash": "a0eefafbde08445ba5ceb9432f41a8a018c79707c49a293add3eb5bdb0b5cb09",
+  "config_hash": "2775d97ed7934398ce2086d2c5f71e760263d2121c635328470c30565cfeada0",
+  "cutoff": "2026-08-24T00:00:00Z",
+  "data_quality": {
+    "coverage_gap_count": 6,
+    "downstream_risk": "Gaps, stale bars, revisions, invalid OHLCV, or time-travel would bias folds, fills, costs, weights, and promotion; any failed check makes the affected scope unavailable.",
+    "duplicate_logical_bars": 0,
+    "finalization_and_cutoff_valid": true,
+    "freshness_cutoff": "2026-08-24T00:00:00Z",
+    "intended_grain": "one finalized provider/feed/symbol/interval/open_timestamp/revision record",
+    "intervals": [
+      "5m",
+      "15m",
+      "1h",
+      "4h"
+    ],
+    "latest_close": "2017-09-16T04:00:00Z",
+    "leakage_checks_passed": false,
+    "ohlcv_invalid_rows": 0,
+    "prefix_audits": 0,
+    "return_distribution": {
+      "count": 24600,
+      "maximum": 0.31613809908626433,
+      "mean": 2.4863067231195445e-06,
+      "minimum": -0.17488742922952316,
+      "robust_outlier_count": 356,
+      "standard_deviation": 0.009935164887754392
+    },
+    "revision_rows": 0,
+    "rows": 24608,
+    "sample_sufficiency": {
+      "BTCUSDT/15m": 2853,
+      "BTCUSDT/1h": 714,
+      "BTCUSDT/4h": 180,
+      "BTCUSDT/5m": 8557,
+      "ETHUSDT/15m": 2853,
+      "ETHUSDT/1h": 714,
+      "ETHUSDT/4h": 180,
+      "ETHUSDT/5m": 8557
+    },
+    "utc_normalized": true,
+    "volume_distribution": {
+      "maximum": 4298.8798828125,
+      "median": 6.273374080657959,
+      "minimum": 0.0
+    }
+  },
+  "dataset_hash": "a72666c903bc5456b73ab97c376fb807968d1ac4f5471bc12c9994c56d18da24",
+  "datasets": [
+    {
+      "configured_symbol": "BTC-USD",
+      "dataset_hash": "89d326ca11f75b647129d154a4755a0cae0ce1756e15bd31e8c034c7c0188e9b",
+      "earliest_probe_sha256": "f8e06acba0dc7ee958f186086c373c1f576aa2bddc7921d79902fde05b3017ae",
+      "end": "2017-09-16T04:00:00Z",
+      "interval": "5m",
+      "provider_symbol": "BTCUSDT",
+      "quote_asset": "USDT",
+      "start": "2017-08-17T04:00:00Z"
+    },
+    {
+      "configured_symbol": "BTC-USD",
+      "dataset_hash": "bdf7d8bfb1fec47ba5645566056475d842b493bcd699908d0f0c629ab58034cf",
+      "earliest_probe_sha256": "becfd26b6bef7c376f23ff97c943cafe000fae4ecf4385c6bd259cb5ef454bfb",
+      "end": "2017-09-16T04:00:00Z",
+      "interval": "15m",
+      "provider_symbol": "BTCUSDT",
+      "quote_asset": "USDT",
+      "start": "2017-08-17T04:00:00Z"
+    },
+    {
+      "configured_symbol": "BTC-USD",
+      "dataset_hash": "0edcfca1c93fdeb23136d12de0cc369fae0c2b075622839487dcd5933fb67efa",
+      "earliest_probe_sha256": "bfd66bbba56d05a1126ded82fc4615742d9dcae6bcbe5d5e03809d8a2df3f959",
+      "end": "2017-09-16T04:00:00Z",
+      "interval": "1h",
+      "provider_symbol": "BTCUSDT",
+      "quote_asset": "USDT",
+      "start": "2017-08-17T04:00:00Z"
+    },
+    {
+      "configured_symbol": "BTC-USD",
+      "dataset_hash": "5ea22655c424481286cc97648b2265016583812d69be805ad582e4e165f1d1e3",
+      "earliest_probe_sha256": "9753b1420fae867e411ef47b9aa8d2e5cb2e201004eef906acef93d228c5efcc",
+      "end": "2017-09-16T04:00:00Z",
+      "interval": "4h",
+      "provider_symbol": "BTCUSDT",
+      "quote_asset": "USDT",
+      "start": "2017-08-17T04:00:00Z"
+    },
+    {
+      "configured_symbol": "ETH-USD",
+      "dataset_hash": "1c033d5be7a30d91f9b58dac1ead7620e11f5439c1deafe9f2811b0d619912fe",
+      "earliest_probe_sha256": "66563130c574bc5eeb7811389987f8966b4c13659e106998b0848e42db4e0164",
+      "end": "2017-09-16T04:00:00Z",
+      "interval": "5m",
+      "provider_symbol": "ETHUSDT",
+      "quote_asset": "USDT",
+      "start": "2017-08-17T04:00:00Z"
+    },
+    {
+      "configured_symbol": "ETH-USD",
+      "dataset_hash": "e110f174592013ba9408707f3c46f4027fab16d096fb4cc407de523006b5bc20",
+      "earliest_probe_sha256": "880091a96a3b121dd8aa292505a5215401207adcb3550cfb446c56dbd51d52ad",
+      "end": "2017-09-16T04:00:00Z",
+      "interval": "15m",
+      "provider_symbol": "ETHUSDT",
+      "quote_asset": "USDT",
+      "start": "2017-08-17T04:00:00Z"
+    },
+    {
+      "configured_symbol": "ETH-USD",
+      "dataset_hash": "8d11e56bb5539fd26048dade2e9a6280cd647100803fa9b9606c293290640c5d",
+      "earliest_probe_sha256": "be5729a4df59141efd33890be25832c4d2579546ecbc63ecdca2b1ff14fab7b4",
+      "end": "2017-09-16T04:00:00Z",
+      "interval": "1h",
+      "provider_symbol": "ETHUSDT",
+      "quote_asset": "USDT",
+      "start": "2017-08-17T04:00:00Z"
+    },
+    {
+      "configured_symbol": "ETH-USD",
+      "dataset_hash": "8e170542fc166bba12763c497908519d7164df225cae7623070728fa938b4e4a",
+      "earliest_probe_sha256": "a17f031a570fbba5c8be5786697f803ed6fc9bc160699d0e67ebef1c30b7e621",
+      "end": "2017-09-16T04:00:00Z",
+      "interval": "4h",
+      "provider_symbol": "ETHUSDT",
+      "quote_asset": "USDT",
+      "start": "2017-08-17T04:00:00Z"
+    }
+  ],
+  "ensemble_components": [],
+  "learning_benchmark": {
+    "evaluated_candidates": 0,
+    "reason": "no complete BTCUSDT 5m provider scope was available",
+    "status": "unavailable"
+  },
+  "profile": "live",
+  "provider_mapping": {
+    "BTC-USD": "BTCUSDT",
+    "ETH-USD": "ETHUSDT"
+  },
+  "quote_disclosure": "BTCUSDT and ETHUSDT are Binance venue-specific USDT spot pairs, not composite USD data",
+  "schema_version": 1,
+  "semantic_snapshot_hash": "a3945aea2f3937b527bc09cdfccdc121137e28848bd8b2e1c80f1584a2790c76",
+  "snapshot_counts": {
+    "causal_audits": 0,
+    "ensemble_components": 0,
+    "learning_runs": 0,
+    "strategies": 0
+  },
+  "source": "official Binance spot REST API with external checksummed resumable page cache",
+  "strategy_catalog": [
+    {
+      "family": "trend",
+      "reason": "data unavailable: 83 requested bars remain missing",
+      "scopes": [],
+      "status": "unavailable",
+      "strategy_id": "ema_adx_trend"
+    },
+    {
+      "family": "trend",
+      "reason": "data unavailable: 83 requested bars remain missing",
+      "scopes": [],
+      "status": "unavailable",
+      "strategy_id": "macd_histogram_trend"
+    },
+    {
+      "family": "trend",
+      "reason": "data unavailable: 83 requested bars remain missing",
+      "scopes": [],
+      "status": "unavailable",
+      "strategy_id": "donchian_breakout"
+    },
+    {
+      "family": "trend",
+      "reason": "data unavailable: 83 requested bars remain missing",
+      "scopes": [],
+      "status": "unavailable",
+      "strategy_id": "supertrend"
+    },
+    {
+      "family": "trend",
+      "reason": "data unavailable: 83 requested bars remain missing",
+      "scopes": [],
+      "status": "unavailable",
+      "strategy_id": "vwap_trend_continuation"
+    },
+    {
+      "family": "mean_reversion",
+      "reason": "data unavailable: 83 requested bars remain missing",
+      "scopes": [],
+      "status": "unavailable",
+      "strategy_id": "rsi_reversal"
+    },
+    {
+      "family": "mean_reversion",
+      "reason": "data unavailable: 83 requested bars remain missing",
+      "scopes": [],
+      "status": "unavailable",
+      "strategy_id": "connors_rsi"
+    },
+    {
+      "family": "mean_reversion",
+      "reason": "data unavailable: 83 requested bars remain missing",
+      "scopes": [],
+      "status": "unavailable",
+      "strategy_id": "bollinger_reversion"
+    },
+    {
+      "family": "mean_reversion",
+      "reason": "data unavailable: 83 requested bars remain missing",
+      "scopes": [],
+      "status": "unavailable",
+      "strategy_id": "vwap_zscore_reversion"
+    },
+    {
+      "family": "mean_reversion",
+      "reason": "data unavailable: 83 requested bars remain missing",
+      "scopes": [],
+      "status": "unavailable",
+      "strategy_id": "stochastic_reversal"
+    },
+    {
+      "family": "mean_reversion",
+      "reason": "data unavailable: 83 requested bars remain missing",
+      "scopes": [],
+      "status": "unavailable",
+      "strategy_id": "extreme_return_reversal"
+    },
+    {
+      "family": "volatility_volume",
+      "reason": "data unavailable: 83 requested bars remain missing",
+      "scopes": [],
+      "status": "unavailable",
+      "strategy_id": "bollinger_keltner_squeeze"
+    },
+    {
+      "family": "volatility_volume",
+      "reason": "data unavailable: 83 requested bars remain missing",
+      "scopes": [],
+      "status": "unavailable",
+      "strategy_id": "volume_spike_breakout"
+    },
+    {
+      "family": "volatility_volume",
+      "reason": "data unavailable: 83 requested bars remain missing",
+      "scopes": [],
+      "status": "unavailable",
+      "strategy_id": "volatility_scaled_trend"
+    },
+    {
+      "family": "session",
+      "reason": "requires an equity/ETF instrument and exchange-session calendar; configured research assets are crypto",
+      "scopes": [],
+      "status": "unavailable",
+      "strategy_id": "opening_range_breakout"
+    },
+    {
+      "family": "session",
+      "reason": "requires an equity/ETF instrument and exchange-session calendar; configured research assets are crypto",
+      "scopes": [],
+      "status": "unavailable",
+      "strategy_id": "etf_last_half_hour_momentum"
+    },
+    {
+      "family": "session",
+      "reason": "data unavailable: 83 requested bars remain missing",
+      "scopes": [],
+      "status": "unavailable",
+      "strategy_id": "bitcoin_active_session_momentum"
+    },
+    {
+      "family": "relative_value",
+      "reason": "requires authenticated point-in-time paired-bar context; the scalar full-history runner does not splice peers",
+      "scopes": [],
+      "status": "unavailable",
+      "strategy_id": "rolling_cointegration_pairs"
+    },
+    {
+      "family": "relative_value",
+      "reason": "requires at least 5 point-in-time liquid crypto assets; only 2 are configured",
+      "scopes": [],
+      "status": "unavailable",
+      "strategy_id": "crypto_cross_sectional_momentum"
+    }
+  ],
+  "unavailable_reason": "data unavailable: 83 requested bars remain missing"
+}

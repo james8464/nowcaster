@@ -188,9 +188,9 @@ def test_current_unlabeled_inference_is_deterministic_traceable_and_persists_res
     as_of = evaluations[0].decision_timestamp
     assert as_of is not None
     outcomes = _outcomes(as_of, evaluations)
-    assert not (outcomes["decision_timestamp"] == as_of).loc[
-        outcomes["outcome_available_at"] <= pd.Timestamp(as_of)
-    ].any()
+    assert (
+        not (outcomes["decision_timestamp"] == as_of).loc[outcomes["outcome_available_at"] <= pd.Timestamp(as_of)].any()
+    )
     database = Database.from_url(f"duckdb:///{tmp_path / 'ensemble.duckdb'}")
     database.initialize()
     config = EnsembleConfig(
@@ -243,9 +243,7 @@ def test_current_unlabeled_inference_is_deterministic_traceable_and_persists_res
     assert not execution.trade_ledger.empty
     assert execution.trade_ledger["decision_timestamp"].eq(pd.Timestamp(first.as_of)).all()
     assert set(execution.trade_ledger["side"]) == {"buy"}
-    assert execution.trade_ledger["source_decision_hashes"].map(
-        lambda hashes: hashes == (first.decision_hash,)
-    ).all()
+    assert execution.trade_ledger["source_decision_hashes"].map(lambda hashes: hashes == (first.decision_hash,)).all()
     assert execution.trade_ledger["decision_hash"].notna().all()
 
 

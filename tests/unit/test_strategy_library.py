@@ -215,9 +215,7 @@ CASES = [
         ),
         _bars(list(np.exp([1, 3, 5, 9])), frequency="1h", symbol="PRIMARY"),
         [0, 0, 0, -1],
-        StrategyContext(
-            paired_bars=_bars(list(np.exp([0, 1, 2, 3])), frequency="1h", symbol="PEER")
-        ),
+        StrategyContext(paired_bars=_bars(list(np.exp([0, 1, 2, 3])), frequency="1h", symbol="PEER")),
     ),
     StrategyCase(
         _spec(
@@ -421,16 +419,12 @@ def test_pair_residuals_use_the_varying_peer_and_change_the_strategy_decision():
     first = generate_signals(
         spec,
         primary,
-        StrategyContext(
-            paired_bars=_bars(list(np.exp(first_peer_log)), frequency="1h", symbol="PEER")
-        ),
+        StrategyContext(paired_bars=_bars(list(np.exp(first_peer_log)), frequency="1h", symbol="PEER")),
     )
     second = generate_signals(
         spec,
         primary,
-        StrategyContext(
-            paired_bars=_bars(list(np.exp(second_peer_log)), frequency="1h", symbol="PEER")
-        ),
+        StrategyContext(paired_bars=_bars(list(np.exp(second_peer_log)), frequency="1h", symbol="PEER")),
     )
 
     assert first_score.iloc[:3].isna().all()

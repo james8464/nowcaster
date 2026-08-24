@@ -5,7 +5,7 @@ import math
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import ExitStack
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
@@ -350,6 +350,7 @@ class StrategyPipeline:
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         validation_config: ValidationConfig = DEFAULT_VALIDATION_CONFIG,
         ensemble_config: EnsembleConfig = DEFAULT_ENSEMBLE_CONFIG,
+        execution_assumptions: ExecutionAssumptions | None = None,
     ):
         self.database = database
         self.database.initialize()
@@ -359,6 +360,7 @@ class StrategyPipeline:
         self.clock = clock
         self.validation_config = validation_config
         self.ensemble_config = ensemble_config
+        self.execution_assumptions = execution_assumptions or ExecutionAssumptions()
         self.bars = BarRepository(database)
 
     def ingest(self, options: IngestOptions, emit: EventSink | None = None) -> StageOutcome:
@@ -1111,6 +1113,7 @@ class StrategyPipeline:
                 )
             ],
             "ensemble_policy": _ensemble_config_record(self.ensemble_config),
+            "execution_policy": _execution_assumptions_record(self.execution_assumptions),
             "validation_policy": _validation_config_record(self.validation_config),
             "validation_policy_hash": validation_policy_hash(self.validation_config),
         }
@@ -1292,7 +1295,7 @@ class StrategyPipeline:
             backtest = run_intraday_backtest(
                 bars,
                 signals,
-                ExecutionAssumptions(lot_size=0.000001),
+                replace(self.execution_assumptions, lot_size=0.000001),
                 RiskLimits(initial_cash=100_000, periods_per_year=periods),
                 strategy_id=item.spec.strategy_id,
                 symbol=scope.symbol,
@@ -1560,6 +1563,8 @@ class StrategyPipeline:
             "cohort_decision_hash": batch.ensemble_decision.decision_hash,
             "cohort_effective_at": cohort_effective_at.isoformat(),
             "ensemble_policy_hash": canonical_hash(cohort["ensemble_policy"]),
+            "execution_policy": cohort["execution_policy"],
+            "execution_policy_hash": canonical_hash(cohort["execution_policy"]),
             "validation_policy_hash": cohort["validation_policy_hash"],
             "coverage_manifest": cohort["coverage_manifest"],
         }
@@ -2031,7 +2036,7 @@ class StrategyPipeline:
             indicators=("rsi", "volume_zscore"),
             thresholds=(-1.0, 0.0, 1.0, 30.0, 50.0, 70.0),
             database=self.database,
-            execution_assumptions=ExecutionAssumptions(lot_size=0.000001),
+            execution_assumptions=replace(self.execution_assumptions, lot_size=0.000001),
             risk_limits=RiskLimits(
                 initial_cash=100_000,
                 periods_per_year=_periods_per_year(options.scope.interval),
@@ -2200,6 +2205,18 @@ def _validation_config_record(config: ValidationConfig) -> dict[str, Any]:
         "minimum_development_observations": config.minimum_development_observations,
         "maximum_drawdown": config.maximum_drawdown,
         "minimum_dsr_probability": config.minimum_dsr_probability,
+    }
+
+
+def _execution_assumptions_record(assumptions: ExecutionAssumptions) -> dict[str, Any]:
+    return {
+        "costs": asdict(assumptions.costs),
+        "latency_seconds": assumptions.latency.total_seconds(),
+        "tick_size": assumptions.tick_size,
+        "lot_size": assumptions.lot_size,
+        "participation_rate": assumptions.participation_rate,
+        "short_borrow_available": assumptions.short_borrow_available,
+        "flatten_at_session_end": assumptions.flatten_at_session_end,
     }
 
 
