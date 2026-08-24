@@ -142,6 +142,7 @@ make lint                # Check Python formatting and common mistakes
 make test                # Run the Python test suite
 make demo                # Rebuild the bundled research demo
 make research-ci         # Rebuild the network-free intraday research fixture
+make research-live CACHE_DIR=/external/path # Exhaustive official Binance history
 make research-live-probe CACHE_DIR=/external/path # Bounded official-provider coverage probe
 make report              # Write a measured research note
 make sync-macos-snapshot # Refresh the app's checked-in first-launch data

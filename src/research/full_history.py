@@ -17,6 +17,7 @@ from src.backtest.costs import CostAssumptions
 from src.backtest.execution import ExecutionAssumptions
 from src.config.settings import Settings
 from src.database.engine import Database
+from src.database.schema import TABLES
 from src.ingestion.bars import (
     INTERVAL_DURATION,
     BarProvider,
@@ -33,6 +34,7 @@ from src.strategies.pipeline import (
     EvaluationOptions,
     IngestOptions,
     LearningOptions,
+    StageOutcome,
     StrategyPipeline,
     StrategyScope,
 )
@@ -142,6 +144,53 @@ def _pipeline(
         ensemble_config=ensemble,
         execution_assumptions=_execution_assumptions(),
     ).bind_settings(settings)
+
+
+def _ensure_clean_research_database(database: Database) -> None:
+    contaminated = [
+        table_name
+        for table_name in sorted(TABLES)
+        if table_name != "schema_versions" and int(database.scalar(f"select count(*) from {table_name}") or 0) > 0
+    ]
+    if contaminated:
+        raise ValueError(
+            "research requires a clean isolated database; existing rows found in: " + ", ".join(contaminated)
+        )
+
+
+def _evaluate_with_failure_isolation(pipeline: StrategyPipeline, scope: StrategyScope) -> StageOutcome:
+    try:
+        return pipeline.evaluate(EvaluationOptions(scope=scope))
+    except Exception as cohort_error:
+        successful: list[StageOutcome] = []
+        failures: list[str] = []
+        for strategy_id in scope.strategy_ids:
+            isolated_scope = scope.model_copy(update={"strategy_ids": (strategy_id,)})
+            try:
+                outcome = pipeline.evaluate(EvaluationOptions(scope=isolated_scope))
+            except Exception as error:
+                failures.append(f"{strategy_id}: {type(error).__name__}: {str(error)[:300]}")
+                continue
+            if outcome.status in {"completed", "reused"}:
+                successful.append(outcome)
+            else:
+                failures.append(f"{strategy_id}: {outcome.message}")
+        message = (
+            f"isolated {len(successful)} successful strategies after cohort failure; "
+            f"failures={failures or [str(cohort_error)[:300]]}"
+        )
+        if successful:
+            return StageOutcome("completed", message, dataset_hash=successful[0].dataset_hash)
+        return StageOutcome("unavailable", message)
+
+
+def _ensemble_policy(config: EnsembleConfig) -> dict[str, Any]:
+    return {
+        "equal_weight_shrinkage": config.equal_weight_shrinkage,
+        "maximum_family_weight": config.maximum_family_weight,
+        "maximum_strategy_weight": config.maximum_strategy_weight,
+        "nonnegative": True,
+    }
 
 
 def _enabled_intervals(settings: Settings) -> tuple[BarInterval, ...]:
@@ -403,7 +452,7 @@ def _ci_run(settings: Settings, database: Database, output_dir: Path) -> dict[st
             scope = _scope(strategy_ids, BarProviderName.CSV, "ci-fixture", provider_symbol, interval)
             start = cutoff - duration * CI_BAR_COUNT
             ingest = pipeline.ingest(IngestOptions(scope=scope, start=start, end=cutoff))
-            evaluation = pipeline.evaluate(EvaluationOptions(scope=scope)) if ingest.status != "unavailable" else ingest
+            evaluation = _evaluate_with_failure_isolation(pipeline, scope) if ingest.status != "unavailable" else ingest
             attempts.append(
                 {
                     "symbol": provider_symbol,
@@ -482,12 +531,7 @@ def _ci_run(settings: Settings, database: Database, output_dir: Path) -> dict[st
         "code_hash": _source_hash(settings.project_root),
         "semantic_snapshot_hash": semantic_hash,
         "strategy_catalog": _strategy_catalog(settings, database),
-        "ensemble_policy": {
-            "equal_weight_shrinkage": 0.5,
-            "maximum_family_weight": 0.5,
-            "maximum_strategy_weight": 0.25,
-            "nonnegative": True,
-        },
+        "ensemble_policy": _ensemble_policy(pipeline.ensemble_config),
         "ensemble_components": positive_components,
         "learning_benchmark": learning_record,
         "attempts": attempts,
@@ -766,7 +810,7 @@ def _live_run(
                     chunk_count += 1
                 if complete and strategy_ids:
                     evaluation_scope = scope.model_copy(update={"strategy_ids": strategy_ids})
-                    evaluation = pipeline.evaluate(EvaluationOptions(scope=evaluation_scope))
+                    evaluation = _evaluate_with_failure_isolation(pipeline, evaluation_scope)
                     attempts.append(
                         {
                             "configured_symbol": configured_symbol,
@@ -870,6 +914,7 @@ def _live_run(
         "semantic_snapshot_hash": semantic_hash,
         "strategy_catalog": catalog,
         "ensemble_components": positive_components,
+        "ensemble_policy": _ensemble_policy(pipeline.ensemble_config),
         "learning_benchmark": learning_record,
         "alpaca": _alpaca_probe(),
         "data_quality": quality,
@@ -901,6 +946,7 @@ def run_full_strategy_research(
     output_dir.mkdir(parents=True, exist_ok=True)
     database = Database.from_url(database_url)
     database.initialize()
+    _ensure_clean_research_database(database)
     if profile == "ci":
         if max_chunks_per_scope is not None:
             raise ValueError("max_chunks_per_scope applies only to the live profile")

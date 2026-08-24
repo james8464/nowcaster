@@ -365,8 +365,9 @@ def strategy_research(
     """Publish reproducible full-history manifests and compact strategy research."""
     if profile not in {"ci", "live"}:
         raise typer.BadParameter("profile must be 'ci' or 'live'")
-    settings = _load_settings(project_root, database_url, "test" if profile == "ci" else "live")
     destination = output_dir if output_dir.is_absolute() else project_root / output_dir
+    selected_database_url = database_url or f"duckdb:///{(destination / 'research.duckdb').resolve()}"
+    settings = _load_settings(project_root, selected_database_url, "test" if profile == "ci" else "live")
     selected_cutoff = None
     if cutoff is not None:
         try:
@@ -378,7 +379,7 @@ def strategy_research(
         selected_cutoff = selected_cutoff.astimezone(UTC).replace(tzinfo=UTC)
     summary = run_full_strategy_research(
         settings,
-        database_url=database_url or settings.database_url,
+        database_url=selected_database_url,
         output_dir=destination,
         profile=profile,
         cache_dir=cache_dir,

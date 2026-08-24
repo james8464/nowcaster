@@ -188,3 +188,148 @@ Before staging, only the Task 9 product files and the explicitly documented Ruff
 3. Alpaca equity research is unavailable until the user supplies a usable local credential pair and confirms feed entitlement; no credential value was inspected or stored.
 4. No provider-backed strategy or learning result was produced because full coverage gates did not pass. The CI fixture is only software evidence.
 5. The pre-existing daily-crypto path remains because it has live callers. A future removal needs a separately scoped migration, snapshot equivalence tests, and deletion only after those callers disappear.
+
+---
+
+# Fix round 1/5 — exhaustive and sealed full-history research
+
+## Status
+
+Complete. The research command now fails closed on any pre-existing product row and defaults to a fresh output-local database when `--database-url` is omitted. Strategy failures are isolated and ledgered without aborting other candidates. Static and learning backtests use the exact injected execution assumptions that are persisted and hashed. The tracked-file scanner detects Alpaca/Binance credential assignments without echoing values. The official Binance run was unbounded and exhausted both configured mappings across all four configured intervals through the fixed cutoff; exact provider gaps kept all live evidence unavailable.
+
+## Files changed / deleted
+
+- `src/research/full_history.py`: clean-database guard, per-strategy failure isolation, and ensemble policy derived from the bound `EnsembleConfig`.
+- `src/cli.py`: default research database is `research.duckdb` inside the selected output directory.
+- `src/strategies/pipeline.py`: static and learning backtests use the injected execution assumptions without replacing `lot_size`.
+- `scripts/scan_tracked_secrets.py`: provider-name assignment detection, placeholder safety, and non-echoing findings.
+- `tests/integration/test_full_strategy_research.py`: deliberate strategy failure, mixed/pre-populated and post-cutoff contamination, default isolation, exhaustive cache replay, exact gaps, and deterministic rerun coverage.
+- `tests/integration/test_strategy_cli.py`: injected and default effective lot-size/provenance/hash coverage for static and learning paths.
+- `tests/unit/test_secret_scan.py`: realistic fake Alpaca/Binance assignments, non-echoing output, placeholders, environment references, presence metadata, and false-positive safety.
+- `Makefile`, `README.md`, `docs/data-providers.md`, `docs/research-results.md`: exhaustive target/command, isolation contract, actual coverage/quality results, cautious interpretation, and reproducibility identifiers.
+- `data/research/ci/*`, `data/research/live/research-summary.json`, `data/research/live/strategy-research.md`: regenerated compact artifacts from final code. Bulk databases, raw pages, checksum sidecars, credentials, and the ignored live native snapshot remain outside Git.
+- This report: appended fix-round audit evidence.
+- Deleted: none. The SDD plan was not edited.
+
+## Failing-test evidence
+
+The selected red command was:
+
+```text
+.venv/bin/pytest -v tests/integration/test_full_strategy_research.py::test_ci_research_ledgers_a_real_strategy_failure_and_excludes_it_from_ensemble tests/integration/test_full_strategy_research.py::test_research_fails_closed_on_prepopulated_or_post_cutoff_database tests/integration/test_full_strategy_research.py::test_live_research_defaults_to_fresh_database_inside_output_directory tests/integration/test_full_strategy_research.py::test_live_research_exhaustively_replays_earliest_to_cutoff_with_exact_gap_accounting tests/integration/test_strategy_cli.py::test_injected_lot_size_is_effective_and_matches_persisted_policy_hash tests/integration/test_strategy_cli.py::test_default_pipeline_uses_and_records_default_lot_size_without_override tests/unit/test_secret_scan.py
+```
+
+After correcting only the test module import, collection found nine cases and ended `8 failed, 1 passed in 30.42s`. The exhaustive seeded-cache test was the sole pass because the earlier implementation already traversed an unbounded cache. Failures demonstrated that: a generator exception aborted the entire command; a contaminated/post-cutoff database published successfully; the default command did not create an output-local database (`1 failed in 3.43s` when isolated); an injected `lot_size=1000000` was persisted but execution silently used `0.000001`; the default learning path likewise used `0.000001` instead of the recorded `1.0`; and all three provider-secret tests failed because `scan_text` did not exist.
+
+The identical final selected command ended `9 passed in 34.44s`.
+
+## Implementation decisions
+
+- A research database is an immutable run boundary, not shared application state. After schema initialization, every product table other than `schema_versions` must be empty. This is stronger and easier to audit than pervasive query filters and prevents prior provider/CI rows, rows beyond cutoff, strategy runs, learning trials, or snapshot records from entering current evidence. The CLI's no-option path resolves the database inside its output directory; rerunning against a non-empty directory fails closed.
+- Cohort evaluation is attempted once. If one candidate raises, each requested strategy is then evaluated independently. Successful candidates retain evaluated evidence; the actual failing candidate retains a failed ledger row/reason and is excluded from positive ensemble weight. No exception is converted into success.
+- The effective `ExecutionAssumptions` object is passed unchanged to both static and learning backtests. Provenance and canonical hashes therefore describe actual execution, including custom/default `lot_size`.
+- Published ensemble shrinkage/caps are read from the actual bound configuration and remain nonnegative.
+- Secret findings contain only path, line, and provider/secret category. The scanner never includes the matched value. Empty values, booleans, explicit placeholders, environment references, presence booleans, and unassigned provider-shaped identifiers remain safe.
+- Live completeness is evaluated per configured symbol/interval. Missing expected bars remain explicit gaps. No live scope, strategy, learning candidate, or ensemble component is evaluated unless its full coverage and contextual requirements pass.
+
+## Exact exhaustive live attempt and coverage
+
+The network population used the official Binance spot REST endpoint, a fixed cutoff, no chunk cap, an isolated external DuckDB, and a durable external cache:
+
+```text
+.venv/bin/python -m src.cli strategy research --profile live --database-url duckdb:////Users/james/Library/Caches/Nowcaster/research/full-history-20260824.duckdb --output-dir data/research/live --cache-dir /Users/james/Library/Caches/Nowcaster/binance-spot-20260824 --cutoff 2026-08-24T00:00:00Z
+```
+
+It exited 0 with the explicit event status `unavailable`. Every observed HTTP request returned 200. The run attempted 880 sorted 30-day chunks: 110 for each combination of BTCUSDT/ETHUSDT and 5m/15m/1h/4h, from `2017-08-17T04:00:00Z` through `2026-08-24T00:00:00Z`. Final exact scope evidence:
+
+| Scope | Rows | Missing bars | Gap segments |
+|---|---:|---:|---:|
+| BTCUSDT 5m | 946,909 | 1,715 | 34 |
+| BTCUSDT 15m | 315,643 | 565 | 33 |
+| BTCUSDT 1h | 78,924 | 128 | 28 |
+| BTCUSDT 4h | 19,747 | 16 | 8 |
+| ETHUSDT 5m | 946,909 | 1,715 | 34 |
+| ETHUSDT 15m | 315,643 | 565 | 33 |
+| ETHUSDT 1h | 78,924 | 128 | 28 |
+| ETHUSDT 4h | 19,747 | 16 | 8 |
+
+The 3,084 raw provider JSON payloads and matching checksum sidecars occupy about 463 MB under `/Users/james/Library/Caches/Nowcaster/binance-spot-20260824`; the initial external working DuckDB is about 1.1 GB. They are outside the repository and untracked. Post-format runs A and B used fresh external databases and the same checksummed cache without network access; both emitted byte-identical compact summaries (hash below). No live data was replaced with the deterministic fixture.
+
+Alpaca credential presence remained `key_present=false`, `secret_present=false`; no value was read, logged, or serialized. Equity/session research remains unavailable with beginner setup documented.
+
+## Data-quality profile and findings
+
+- Intended grain: one finalized provider/feed/symbol/interval/open timestamp/revision record.
+- Coverage: 2,722,446 bars observed; 4,848 expected bars missing across 206 distinct gap segments; all eight scopes reached the fixed cutoff but failed exact completeness.
+- Uniqueness and validity: zero duplicate logical bars and zero invalid OHLCV rows.
+- UTC/finalization/freshness: UTC normalized, finalized, latest close exactly `2026-08-24T00:00:00Z`, and zero rows beyond the cutoff.
+- Revisions: zero revision rows observed; every cached payload checksum verified.
+- Distributions/outliers: 2,722,438 return observations, mean `0.000016247050839311624`, standard deviation `0.004220466118547772`, minimum `-0.2207848269163416`, maximum `0.31613809908626433`, and 64,358 robust outliers. Volume minimum `0.0`, median `502.55091857910156`, maximum `1531897.375`.
+- Leakage/time travel: no evaluation was admitted on incomplete provider scopes, so prefix audits/provider backtests were not manufactured. The deterministic profile retains explicit prefix-invariance/final-test checks.
+- Sample sufficiency: row counts exceed warm-up requirements, but sample count does not override coverage integrity. Full-scope gates correctly dominate.
+- Downstream risk: missing bars can distort indicators, fold boundaries, fills, costs, trial comparisons, and weights; outliers can dominate risk metrics; duplicates/revisions/invalid OHLCV would bias evidence if admitted. Accordingly, all 19 live strategies and the learning benchmark are unavailable with zero positive ensemble components.
+
+## Deterministic final hashes
+
+| Artifact / identity | Hash |
+|---|---|
+| Code | `0abf50fb81420fe08f93c9e341a49bfbeb8308172c4e6febc4b46e317eda4d9f` |
+| Live config | `2775d97ed7934398ce2086d2c5f71e760263d2121c635328470c30565cfeada0` |
+| Live aggregate dataset | `4fad454ba2f3695fe135d828dc741a862f482a5bacdcae54999f60604385c09e` |
+| Live semantic snapshot | `2760cd93f0fb09f8259f3762167b1cc415cb8b96d7425e9f7fdb94528a710b63` |
+| External cache manifest, 3,084 verified pages | `30228b87de6e2687064fcf9ad63842c2cc89f0fca087f7b4cdc6ea5749e570ff` |
+| Final live summary, runs A and B | `d996b87a08f1f15aa9a1256e5c8b866ed52193eea7e0f3c17af1f65f70bd3df6` |
+| CI config | `bdd5db762ac98ad464c552409781a71a944928083061cdc6979240e5bec324cc` |
+| CI aggregate dataset | `f3b7a8131155c59abe7b7c6e03b66af5252e0304f8649f12aa5fa32978b1e34c` |
+| CI semantic snapshot | `e9f0e33867b833d6d769272e7ba9ce1a9bf511133d8294323fa7942a672af18d` |
+| CI summary file | `2f6527305108615df5df3205cb66426e01a8c1b81b34d7160688e4ae4ace559f` |
+| CI snapshot file | `f73ebad40e812d2de82a41f530ba910f2e844fe526e5b6c4c952ca8cf4cbfaf8` |
+
+## Documentation and sources
+
+The primary-source set from the original report remains unchanged: official Binance spot/API and public archive repositories; official Alpaca Historical Stock Data documentation; the original DSR, PBO, time-series momentum, and pairs-trading papers; and SEC Investor.gov risk disclosure. Updated docs use these sources only for provider behavior, hypothesis/validation foundations, and risk. No citation is described as proof of profitability, and no backtest is described as live evidence.
+
+## Final verification commands
+
+- Focused red command above: `8 failed, 1 passed in 30.42s` after test-only import correction.
+- Same focused command after implementation/formatting: `9 passed in 34.44s`.
+- `.venv/bin/ruff format scripts/scan_tracked_secrets.py src/cli.py src/research/full_history.py src/strategies/pipeline.py tests/integration/test_full_strategy_research.py tests/integration/test_strategy_cli.py tests/unit/test_secret_scan.py`: `2 files reformatted, 5 files left unchanged`.
+- `.venv/bin/ruff check --fix ...same focused files...`: initially identified one test closure binding (`B023`); after binding the interval duration as a default argument, final focused and repository-wide checks passed.
+- `.venv/bin/ruff format --check . && .venv/bin/ruff check . && git diff --check`: `178 files already formatted`, `All checks passed`, diff check exit 0 before long replay.
+- `.venv/bin/pytest -q tests/unit/test_bar_ingestion.py`: `16 passed in 0.23s`.
+- `.venv/bin/pytest -q`: `477 passed in 369.16s (0:06:09)`.
+- `swift test --package-path macos/Nowcaster && swift build -c release --package-path macos/Nowcaster`: 1 XCTest passed, all 52 Swift Testing cases passed, and the production build completed; exit 0.
+- `make research-ci`: completed with status `completed`; a separate fresh-database invocation (`build/research-ci-fix-round-rerun.duckdb`) produced byte-identical summary SHA-256 `2f6527305108615df5df3205cb66426e01a8c1b81b34d7160688e4ae4ace559f` and snapshot SHA-256 `f73ebad40e812d2de82a41f530ba910f2e844fe526e5b6c4c952ca8cf4cbfaf8`; both `cmp` checks exited 0.
+- Initial unbounded official live command above: exit 0, explicit status `unavailable`; all 880 chunks attempted through cutoff and the external cache populated.
+- Final cache-only live runs A/B used fresh external databases `full-history-20260824-final-a.duckdb` and `full-history-20260824-final-b.duckdb`: both exited 0 with explicit status `unavailable`; summary and Markdown `cmp` checks exited 0; asserted 880 attempts, 3,084 verified pages, 2,722,446 rows, and 206 gap segments.
+- `make verify-research-fixtures`: CI regeneration completed, `AppSnapshot` schema version 2 assertion passed, and `git diff --exit-code -- data/research/ci` exited 0.
+- `make secret-scan`: `Tracked-file secret scan passed` after all intended files, including the new secret-scan tests, were staged.
+- `! git diff --cached --name-only | rg '(\.duckdb|\.wal|__pycache__|binance-spot|/nowcaster-snapshot\.json$)'`: exit 0; no forbidden bulk/generated path was staged.
+- `! git diff --cached | rg 'AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{30,}|sk-[A-Za-z0-9_-]{24,}|BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY'`: exit 0; no matched raw secret pattern in the staged diff.
+- Final `git diff --cached --check`, `git diff --check`, and plan-only diff checks: exit 0 with no output.
+
+## Git status
+
+Immediately before this final report edit, `git status --short` showed exactly 15 modified Task 9 paths plus the newly added `tests/unit/test_secret_scan.py`, all staged (first-column status only), and `git diff --name-only` returned no unstaged path. The cached path list exactly matched the 16 files in “Files changed / deleted” above. After staging this final report edit, the same condition was rechecked before commit.
+
+No `__pycache__`, raw cache page, checksum sidecar, DuckDB/WAL, credential, or ignored live native snapshot is staged. `docs/superpowers/plans/2026-08-22-intraday-strategy-learning.md` has no diff.
+
+## Self-review
+
+- Confirmed the strict clean guard runs before ingest/evaluation/publication and detects every populated product table, including a bar after cutoff.
+- Confirmed no-option live CLI uses an output-local database; explicit databases remain supported but must be clean.
+- Confirmed actual strategy-generator failure is ledgered and excluded while good candidates complete.
+- Confirmed static/learning execution receives injected and default lot sizes identical to persisted/hash provenance.
+- Confirmed all 880 live chunks are present in deterministic sorted coverage through the fixed cutoff; no `max_chunks_per_scope` diagnostic reason exists.
+- Confirmed all cache files verify, all bulk assets remain outside Git, and final live summary reruns are byte-identical.
+- Confirmed published ensemble policy comes from the actual configuration, all retained weights are nonnegative, and unavailable/failed evidence has no positive weight.
+- Confirmed the scanner flags provider assignments without exposing values and avoids covered placeholder/name false positives.
+- Confirmed snapshot schema v2/native Swift compatibility and committed deterministic fixture drift through final verification.
+- Confirmed documentation distinguishes Binance USDT venue pairs from composite USD, calls gaps unavailable, and makes no profit/live-evidence claim.
+
+## Concerns
+
+1. The exhaustive official dataset contains genuine expected-timestamp gaps on every scope; therefore no provider-backed strategy or learning result is publishable under the strict completeness gate. This is an evidence result, not a software/provider-download failure.
+2. The 463 MB raw cache and multi-GB collection of initial/replay databases are deliberately external. Reproducibility beyond their compact checksums requires retaining that external cache or redownloading the official pages.
+3. Alpaca equity/session evidence remains unavailable until a usable local credential pair and feed entitlement are supplied; credentials must stay out of Git/logs.
+4. The live manifest is compact relative to raw bars but is approximately 1.3 MB because it retains exact metadata/checksums for 3,084 provider pages.

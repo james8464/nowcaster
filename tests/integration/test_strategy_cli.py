@@ -16,6 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from typer.testing import CliRunner
 
 from src.app_snapshot.models import AppSnapshot
+from src.backtest.execution import ExecutionAssumptions
 from src.cli import app
 from src.config.settings import Settings
 from src.database.engine import Database
@@ -33,6 +34,7 @@ from src.strategies.pipeline import (
     IngestOptions,
     LearningOptions,
     StageOutcome,
+    StrategyPipeline,
     StrategyScope,
     create_strategy_pipeline,
 )
@@ -196,6 +198,22 @@ def _ingest_options(scope: StrategyScope, count: int = 80, *, force: bool = Fals
     )
 
 
+def _captured_learning_experiment(pipeline: StrategyPipeline, scope: StrategyScope):
+    registered = pipeline._registered(scope)
+    query, manifest, _coverage, unavailable = pipeline._authenticated_coverage(scope)
+    assert query is not None and manifest is not None, unavailable
+    as_of = pipeline._query_as_of(query)
+    bars = pipeline.bars.causal_bars_as_of(query, as_of).copy(deep=True)
+    experiment, _development = pipeline._learning_experiment(
+        LearningOptions(scope=scope, evaluation_budget=1),
+        registered,
+        manifest,
+        bars,
+        pipeline._raw_final_boundary(bars),
+    )
+    return experiment
+
+
 def test_strategy_cli_is_nested_without_removing_legacy_earnings_commands() -> None:
     root_help = RUNNER.invoke(app, ["--help"])
     strategy_help = RUNNER.invoke(app, ["strategy", "--help"])
@@ -205,6 +223,49 @@ def test_strategy_cli_is_nested_without_removing_legacy_earnings_commands() -> N
         name for name in root_help.output.split() if name
     }
     assert {"ingest", "evaluate", "learn", "export"} <= {name for name in strategy_help.output.split() if name}
+
+
+def test_injected_lot_size_is_effective_and_matches_persisted_policy_hash(project_root, tmp_path) -> None:
+    _configure_strategy(project_root)
+    bars = tmp_path / "effective-lot-bars.csv"
+    _write_bars(bars, 80)
+    database_url = f"duckdb:///{tmp_path / 'effective-lot.duckdb'}"
+    configured, database = _csv_pipeline(project_root, database_url, bars)
+    assumptions = ExecutionAssumptions(lot_size=1_000_000)
+    pipeline = StrategyPipeline(
+        database,
+        configured.registry,
+        configured.providers,
+        provider_unavailable=configured.provider_unavailable,
+        validation_config=configured.validation_config,
+        ensemble_config=configured.ensemble_config,
+        execution_assumptions=assumptions,
+    ).bind_settings(_settings(project_root, database_url))
+    scope = _scope("rsi_reversal")
+
+    assert pipeline.ingest(_ingest_options(scope)).status == "completed"
+    assert pipeline.evaluate(EvaluationOptions(scope=scope)).status == "completed"
+    metrics = database.frame("select metrics from strategy_runs where status = 'evaluated'").iloc[0]["metrics"]
+
+    assert metrics["execution_policy"]["lot_size"] == 1_000_000
+    assert metrics["execution_policy_hash"] == canonical_hash(metrics["execution_policy"])
+    assert database.scalar("select count(*) from strategy_executions") == 0
+    assert _captured_learning_experiment(pipeline, scope).execution_assumptions == assumptions
+
+
+def test_default_pipeline_uses_and_records_default_lot_size_without_override(project_root, tmp_path) -> None:
+    _configure_strategy(project_root)
+    bars = tmp_path / "default-lot-bars.csv"
+    _write_bars(bars, 80)
+    database_url = f"duckdb:///{tmp_path / 'default-lot.duckdb'}"
+    pipeline, _database = _csv_pipeline(project_root, database_url, bars)
+    scope = _scope("rsi_reversal")
+
+    assert pipeline.ingest(_ingest_options(scope)).status == "completed"
+    experiment = _captured_learning_experiment(pipeline, scope)
+
+    assert pipeline.execution_assumptions.lot_size == 1.0
+    assert experiment.execution_assumptions.lot_size == 1.0
 
 
 def test_strategy_cli_rejects_unsafe_registry_mode_and_provider_strings(project_root, tmp_path) -> None:

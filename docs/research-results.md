@@ -2,7 +2,7 @@
 
 ## Interpretation first
 
-These artifacts demonstrate a research process. They do not promise profit, and backtests are not live evidence. The deterministic CI profile is software-test data. The provider probe is incomplete and therefore unavailable for strategy inference.
+These artifacts demonstrate a research process. They do not promise profit, and backtests are not live evidence. The deterministic CI profile is software-test data. The exhaustive provider attempt remains unavailable for strategy inference because exact coverage gates found exchange-history gaps.
 
 ## Deterministic CI profile
 
@@ -25,35 +25,44 @@ Reproducibility identifiers for the committed run:
 
 | Identifier | SHA-256 / canonical hash |
 |---|---|
-| Code | `a0eefafbde08445ba5ceb9432f41a8a018c79707c49a293add3eb5bdb0b5cb09` |
+| Code | `0abf50fb81420fe08f93c9e341a49bfbeb8308172c4e6febc4b46e317eda4d9f` |
 | CI configuration | `bdd5db762ac98ad464c552409781a71a944928083061cdc6979240e5bec324cc` |
 | CI aggregate dataset | `f3b7a8131155c59abe7b7c6e03b66af5252e0304f8649f12aa5fa32978b1e34c` |
 | CI semantic snapshot | `e9f0e33867b833d6d769272e7ba9ce1a9bf511133d8294323fa7942a672af18d` |
-| CI summary file | `33d351ed195ee5f901d60be5543fbc266553812c5d0924653ba1e6d099e35b92` |
+| CI summary file | `2f6527305108615df5df3205cb66426e01a8c1b81b34d7160688e4ae4ace559f` |
 | CI snapshot file | `f73ebad40e812d2de82a41f530ba910f2e844fe526e5b6c4c952ca8cf4cbfaf8` |
 
-## Official Binance attempt on 24 August 2026 UTC
+## Exhaustive official Binance attempt on 24 August 2026 UTC
 
-Task 9 performed a real diagnostic request against the official Binance spot REST API with cutoff `2026-08-24T00:00:00Z`, using an external SHA-256 cache. The diagnostic cap was one 30-day chunk per scalar-compatible symbol/interval. This was intentionally not an exhaustive research run.
+Task 9 ran the unbounded official Binance spot REST profile from the earliest provider boundary through the fixed cutoff `2026-08-24T00:00:00Z`. It attempted all 880 deterministic 30-day chunks: 110 chunks for each of BTCUSDT/ETHUSDT at every configured `5m`, `15m`, `1h`, and `4h` interval. There was no diagnostic chunk cap. Every request completed successfully and all 3,084 raw JSON pages were written outside Git with adjacent SHA-256 checksums; the final replay verified the cache without network access.
 
-| Provider pair | Interval | Attempted provider coverage | Rows stored | Missing expected bars | Result |
-|---|---:|---|---:|---:|---|
-| BTCUSDT | 5m | 2017-08-17 04:00Z to 2017-09-16 04:00Z | 8,557 | 83 | Unavailable |
-| BTCUSDT | 15m | same range | 2,853 | 27 | Unavailable |
-| BTCUSDT | 1h | same range | 714 | 6 | Unavailable |
-| ETHUSDT | 5m | same range | 8,557 | 83 | Unavailable |
-| ETHUSDT | 15m | same range | 2,853 | 27 | Unavailable |
-| ETHUSDT | 1h | same range | 714 | 6 | Unavailable |
-| BTCUSDT | 4h | same range | 180 | 0 | Data chunk complete; strategy unavailable |
-| ETHUSDT | 4h | same range | 180 | 0 | Data chunk complete; strategy unavailable |
+| Provider pair | Interval | Attempted UTC coverage | Chunks | Rows stored | Missing expected bars | Gap segments | Result |
+|---|---:|---|---:|---:|---:|---:|---|
+| BTCUSDT | 5m | 2017-08-17 04:00 to 2026-08-24 00:00 | 110 | 946,909 | 1,715 | 34 | Unavailable: coverage gaps |
+| BTCUSDT | 15m | same range | 110 | 315,643 | 565 | 33 | Unavailable: coverage gaps |
+| BTCUSDT | 1h | same range | 110 | 78,924 | 128 | 28 | Unavailable: coverage gaps |
+| BTCUSDT | 4h | same range | 110 | 19,747 | 16 | 8 | Unavailable: coverage gaps and unmet five-asset context |
+| ETHUSDT | 5m | same range | 110 | 946,909 | 1,715 | 34 | Unavailable: coverage gaps |
+| ETHUSDT | 15m | same range | 110 | 315,643 | 565 | 33 | Unavailable: coverage gaps |
+| ETHUSDT | 1h | same range | 110 | 78,924 | 128 | 28 | Unavailable: coverage gaps |
+| ETHUSDT | 4h | same range | 110 | 19,747 | 16 | 8 | Unavailable: coverage gaps and unmet five-asset context |
 
-The probe stored 24,608 bars in its external/local working database, observed no duplicate logical bars, no invalid OHLCV rows, and no revisions. It found exchange-history gaps in the 5m, 15m, and 1h chunks. The 4h chunks were complete, but the only enabled 4h rule needs a five-asset point-in-time universe, so no strategy result was manufactured from two assets. Every interval stopped before its remaining range because of the declared diagnostic cap. Therefore the probe ran no provider-backed strategy evaluation or learning benchmark. Missing data was not replaced with CI data.
+The isolated working database stored 2,722,446 finalized bars. It found 4,848 missing expected bars across 206 distinct gap segments, zero duplicate logical bars, zero invalid OHLCV rows, and zero revisions; timestamps were UTC-normalized, finalized, and no later than the cutoff. The return diagnostic covered 2,722,438 observations and flagged 64,358 robust outliers for downstream caution. Because no symbol/interval passed exact full-coverage gates, all 19 strategies and the learning benchmark remained explicitly unavailable and received no ensemble weight. Missing data was never replaced with CI data. The 4h cross-sectional rule would remain unavailable even with complete scalar histories because two configured assets cannot satisfy its five-asset point-in-time universe.
 
 `BTC-USD`/`ETH-USD` in app configuration were mapped truthfully to Binance `BTCUSDT`/`ETHUSDT`. Results would describe that venue's USDT-quoted spot market, not composite USD.
 
-The exact attempt and cache-page checksums are kept in the compact live manifest generated during Task 9. The 3.9 MB bulk raw page cache and 12 MB working DuckDBs remained outside Git.
+The exact attempt and page checksums are kept in the compact live manifest generated during Task 9. The 463 MB raw page cache and 1.1 GB working DuckDB remained outside Git.
 
-The live aggregate dataset hash is `a72666c903bc5456b73ab97c376fb807968d1ac4f5471bc12c9994c56d18da24`; configuration hash is `2775d97ed7934398ce2086d2c5f71e760263d2121c635328470c30565cfeada0`; semantic snapshot hash is `a3945aea2f3937b527bc09cdfccdc121137e28848bd8b2e1c80f1584a2790c76`; external cache-manifest hash is `a9402b24e12f1c0507c459bc3f21f3135910fa691edb376532fe9ea5721e95b7` across 36 raw/checksum-paired JSON payloads; and the two fresh-database live summary files both had SHA-256 `4b3652cde32f0dd3367ec96033041a507102b67f0c8de5f5c34beafd2faf36ec`.
+The final reproducibility identifiers are updated from the post-format cache-only reruns below:
+
+| Identifier | SHA-256 / canonical hash |
+|---|---|
+| Code | `0abf50fb81420fe08f93c9e341a49bfbeb8308172c4e6febc4b46e317eda4d9f` |
+| Live configuration | `2775d97ed7934398ce2086d2c5f71e760263d2121c635328470c30565cfeada0` |
+| Live aggregate dataset | `4fad454ba2f3695fe135d828dc741a862f482a5bacdcae54999f60604385c09e` |
+| Semantic snapshot | `2760cd93f0fb09f8259f3762167b1cc415cb8b96d7425e9f7fdb94528a710b63` |
+| External cache manifest (3,084 pages) | `30228b87de6e2687064fcf9ad63842c2cc89f0fca087f7b4cdc6ea5749e570ff` |
+| Live summary file, both final reruns | `d996b87a08f1f15aa9a1256e5c8b866ed52193eea7e0f3c17af1f65f70bd3df6` |
 
 ## Alpaca status
 

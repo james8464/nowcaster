@@ -5,7 +5,7 @@ import math
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import ExitStack
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
@@ -1295,7 +1295,7 @@ class StrategyPipeline:
             backtest = run_intraday_backtest(
                 bars,
                 signals,
-                replace(self.execution_assumptions, lot_size=0.000001),
+                self.execution_assumptions,
                 RiskLimits(initial_cash=100_000, periods_per_year=periods),
                 strategy_id=item.spec.strategy_id,
                 symbol=scope.symbol,
@@ -2036,7 +2036,7 @@ class StrategyPipeline:
             indicators=("rsi", "volume_zscore"),
             thresholds=(-1.0, 0.0, 1.0, 30.0, 50.0, 70.0),
             database=self.database,
-            execution_assumptions=replace(self.execution_assumptions, lot_size=0.000001),
+            execution_assumptions=self.execution_assumptions,
             risk_limits=RiskLimits(
                 initial_cash=100_000,
                 periods_per_year=_periods_per_year(options.scope.interval),

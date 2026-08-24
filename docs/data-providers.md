@@ -29,6 +29,8 @@ Run the exhaustive provider profile with an external cache and an explicit cutof
 
 The default live command has no chunk cap. `--max-chunks-per-scope` is diagnostic only: using it guarantees an incomplete/unavailable result and records the unattempted range. Never present a diagnostic probe as a full-history backtest.
 
+When `--database-url` is omitted, the command creates `research.duckdb` inside the selected output directory. Research databases must be fresh: any pre-existing product row causes the run to fail closed before ingest, evaluation, or snapshot publication. This prevents provider failure, prior CI rows, or bars after the selected cutoff from contaminating a current run. Keep provider-backed output directories and databases outside Git; a second invocation should use a new output directory (or remove only the disposable prior research directory intentionally).
+
 ## Alpaca equities
 
 The adapter uses Alpaca's official [Historical Stock Data API](https://docs.alpaca.markets/docs/historical-stock-data-1) and keeps feed identity (`iex` or `sip`) in the dataset key. Feeds are never spliced. The Task 9 environment had no usable key/secret pair, so equity intraday history is unavailable and no stock strategy result was inferred.

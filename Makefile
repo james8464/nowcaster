@@ -2,7 +2,7 @@ PYTHON ?= python3
 VENV ?= .venv
 PIP_INDEX ?= https://pypi.org/simple
 
-.PHONY: setup test lint init-db fetch features train backtest report demo research-ci research-live-probe verify-research-fixtures secret-scan clean-generated sync-macos-snapshot macos-build macos-test macos-app macos-open macos-ui-test macos-screenshots release-archive
+.PHONY: setup test lint init-db fetch features train backtest report demo research-ci research-live research-live-probe verify-research-fixtures secret-scan clean-generated sync-macos-snapshot macos-build macos-test macos-app macos-open macos-ui-test macos-screenshots release-archive
 setup:
 	uv venv --python 3.13 $(VENV)
 	uv pip install --python $(VENV)/bin/python --index-url $(PIP_INDEX) -e '.[dev]'
@@ -41,6 +41,12 @@ research-ci:
 	mkdir -p build data/research/ci
 	rm -f build/research-ci.duckdb build/research-ci.duckdb.wal
 	$(VENV)/bin/python -m src.cli strategy research --profile ci --database-url duckdb:///build/research-ci.duckdb --output-dir data/research/ci
+
+research-live:
+	test -n "$(CACHE_DIR)"
+	mkdir -p build/research-live
+	rm -f build/research-live/research.duckdb build/research-live/research.duckdb.wal
+	$(VENV)/bin/python -m src.cli strategy research --profile live --output-dir build/research-live --cache-dir "$(CACHE_DIR)" --cutoff 2026-08-24T00:00:00Z
 
 research-live-probe:
 	test -n "$(CACHE_DIR)"
