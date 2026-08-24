@@ -11,7 +11,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from src.database.schema import NATURAL_KEYS, TABLES, metadata, schema_versions
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 class Database:
@@ -29,6 +29,22 @@ class Database:
     def initialize(self) -> None:
         metadata.create_all(self.engine)
         with self.engine.begin() as connection:
+            columns = {column["name"] for column in inspect(connection).get_columns("market_bars")}
+            migrations = {
+                "source_available_at": "TIMESTAMP WITH TIME ZONE",
+                "observed_at": "TIMESTAMP WITH TIME ZONE",
+                "vintage_fidelity": "VARCHAR",
+            }
+            for name, sql_type in migrations.items():
+                if name not in columns:
+                    connection.execute(text(f"ALTER TABLE market_bars ADD COLUMN {name} {sql_type}"))
+            connection.execute(
+                text("UPDATE market_bars SET source_available_at = available_at WHERE source_available_at IS NULL")
+            )
+            connection.execute(text("UPDATE market_bars SET observed_at = created_at WHERE observed_at IS NULL"))
+            connection.execute(
+                text("UPDATE market_bars SET vintage_fidelity = 'unknown_legacy' WHERE vintage_fidelity IS NULL")
+            )
             applied = connection.execute(
                 select(schema_versions.c.version).where(schema_versions.c.version == SCHEMA_VERSION)
             ).scalar_one_or_none()

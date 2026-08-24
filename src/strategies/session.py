@@ -6,6 +6,8 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
+from src.strategies.calendars import XNYS_CALENDAR
+
 
 @dataclass(frozen=True, slots=True)
 class SessionCalendar:
@@ -15,6 +17,7 @@ class SessionCalendar:
     open_time: time = time(0, 0)
     close_time: time = time(0, 0)
     continuous: bool = True
+    calendar_id: str = "24x7"
 
     @classmethod
     def continuous_utc(cls) -> SessionCalendar:
@@ -27,24 +30,22 @@ class SessionCalendar:
             open_time=time(9, 30),
             close_time=time(16, 0),
             continuous=False,
+            calendar_id="XNYS",
         )
 
     def session_labels(self, timestamps: pd.Series) -> pd.Series:
         local = self._local(timestamps)
         if self.continuous:
             return pd.Series(local.dt.date, index=timestamps.index, dtype="object")
-        session_open = local.dt.normalize() + pd.Timedelta(
-            hours=self.open_time.hour,
-            minutes=self.open_time.minute,
-        )
-        return session_open.dt.tz_convert("UTC").where(self.in_session(timestamps))
+        bounds = self._bounds(timestamps)
+        return bounds["open"].where(self.in_session(timestamps))
 
     def in_session(self, timestamps: pd.Series) -> pd.Series:
         if self.continuous:
             return pd.Series(True, index=timestamps.index, dtype=bool)
-        elapsed = self._minutes_from_open(timestamps)
-        remaining = self._minutes_to_close(timestamps)
-        return elapsed.ge(0) & remaining.gt(0)
+        utc = pd.to_datetime(timestamps, utc=True)
+        bounds = self._bounds(timestamps)
+        return bounds["open"].notna() & utc.ge(bounds["open"]) & utc.lt(bounds["close"])
 
     def opening_range(self, timestamps: pd.Series, minutes: int) -> pd.Series:
         if minutes <= 0:
@@ -73,16 +74,29 @@ class SessionCalendar:
         return utc.dt.tz_convert(ZoneInfo(self.timezone))
 
     def _minutes_from_open(self, timestamps: pd.Series) -> pd.Series:
+        if not self.continuous and self.calendar_id == "XNYS":
+            utc = pd.to_datetime(timestamps, utc=True)
+            return (utc - self._bounds(timestamps)["open"]).dt.total_seconds() / 60
         local = self._local(timestamps)
         minute = local.dt.hour * 60 + local.dt.minute
         opening = self.open_time.hour * 60 + self.open_time.minute
         return minute - opening
 
     def _minutes_to_close(self, timestamps: pd.Series) -> pd.Series:
+        if not self.continuous and self.calendar_id == "XNYS":
+            utc = pd.to_datetime(timestamps, utc=True)
+            return (self._bounds(timestamps)["close"] - utc).dt.total_seconds() / 60
         local = self._local(timestamps)
         minute = local.dt.hour * 60 + local.dt.minute
         closing = self.close_time.hour * 60 + self.close_time.minute
         return closing - minute
+
+    def _bounds(self, timestamps: pd.Series) -> pd.DataFrame:
+        values: list[tuple[pd.Timestamp | None, pd.Timestamp | None]] = []
+        for value in pd.to_datetime(timestamps, utc=True):
+            session = XNYS_CALENDAR.session_bounds(value.to_pydatetime())
+            values.append((pd.Timestamp(session[0]), pd.Timestamp(session[1])) if session is not None else (None, None))
+        return pd.DataFrame(values, columns=["open", "close"], index=timestamps.index)
 
 
 __all__ = ["SessionCalendar"]

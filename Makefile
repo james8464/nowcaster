@@ -2,7 +2,7 @@ PYTHON ?= python3
 VENV ?= .venv
 PIP_INDEX ?= https://pypi.org/simple
 
-.PHONY: setup test lint init-db fetch features train backtest report demo research-ci research-live research-live-probe verify-research-fixtures secret-scan clean-generated sync-macos-snapshot macos-build macos-test macos-app macos-open macos-ui-test macos-screenshots release-archive
+.PHONY: setup test lint init-db fetch features train backtest report demo research-ci research-live research-live-probe verify-research-fixtures verify-swift-fixture-parity secret-scan clean-generated sync-macos-snapshot macos-build macos-test macos-app macos-open macos-ui-test macos-screenshots release-archive
 setup:
 	uv venv --python 3.13 $(VENV)
 	uv pip install --python $(VENV)/bin/python --index-url $(PIP_INDEX) -e '.[dev]'
@@ -58,11 +58,15 @@ verify-research-fixtures: research-ci
 	$(VENV)/bin/python -c 'from pathlib import Path; from src.app_snapshot.models import AppSnapshot; snapshot = AppSnapshot.model_validate_json(Path("data/research/ci/nowcaster-snapshot.json").read_text()); assert snapshot.schema_version == 2'
 	git diff --exit-code -- data/research/ci
 
+verify-swift-fixture-parity: sync-macos-snapshot
+	$(VENV)/bin/python scripts/verify_snapshot_fixture_parity.py macos/Nowcaster/Sources/NowcasterApp/Resources/Fixtures/nowcaster-snapshot.json
+
 secret-scan:
 	$(VENV)/bin/python scripts/scan_tracked_secrets.py
 
 sync-macos-snapshot:
-	$(VENV)/bin/python -m src.cli export-app-snapshot --output macos/Nowcaster/Sources/NowcasterApp/Resources/Fixtures/nowcaster-snapshot.json
+	$(VENV)/bin/python -m src.cli export-app-snapshot --output data/app/nowcaster-snapshot.json
+	$(VENV)/bin/python scripts/synchronize_snapshot_fixture.py --base data/app/nowcaster-snapshot.json --research macos/Nowcaster/Sources/NowcasterApp/Resources/Fixtures/nowcaster-snapshot.json --output macos/Nowcaster/Sources/NowcasterApp/Resources/Fixtures/nowcaster-snapshot.json
 
 clean-generated:
 	rm -f data/nowcaster.duckdb data/test.duckdb data/app/nowcaster-snapshot.json reports/latest_research_report.md

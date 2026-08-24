@@ -302,14 +302,16 @@ def test_discovered_rules_are_immutable_run_versioned_shadow_candidates(tmp_path
 
 def _forward(candidate: RuleCandidate, **changes: object) -> ForwardEvidence:
     assert candidate.evidence_through is not None
+    discovery = candidate.discovered_at or candidate.evidence_through
+    forward_start = max(candidate.evidence_through, discovery) + timedelta(hours=1)
     values: dict[str, object] = {
         "candidate_hash": candidate.candidate_hash,
         "candidate_version": candidate.version,
-        "period_start": candidate.evidence_through + timedelta(hours=1),
-        "period_end": candidate.evidence_through + timedelta(hours=2),
-        "evaluated_at": candidate.evidence_through + timedelta(hours=3),
+        "period_start": forward_start,
+        "period_end": forward_start + timedelta(hours=1),
+        "evaluated_at": forward_start + timedelta(hours=2),
         "causal_audit_passed": True,
-        "causal_audited_at": candidate.evidence_through + timedelta(hours=2, minutes=30),
+        "causal_audited_at": forward_start + timedelta(hours=1, minutes=30),
         "validation": PromotionDecision(True, ()),
         "outer_block_inspected": True,
         "outer_block_consumed": False,
@@ -332,6 +334,27 @@ def test_promotion_requires_a_new_forward_period_normal_gates_and_causal_audit(t
     assert promote_candidate(candidate, stale).promoted is False
     assert promote_candidate(candidate, failed_audit).promoted is False
     assert promote_candidate(candidate, failed_gates).reasons == ("drawdown gate failed",)
+    assert promote_candidate(candidate, _forward(candidate)).promoted is True
+
+
+def test_promotion_rejects_outcomes_that_predate_actual_candidate_discovery() -> None:
+    candidate = RuleCandidate(
+        rule=RuleNode.compare("gt", RuleNode.indicator("rsi", lag=1), RuleNode.number(50)),
+        discovered_at=datetime(2026, 8, 24, 12, tzinfo=UTC),
+        evidence_through=datetime(2026, 8, 20, 22, tzinfo=UTC),
+    )
+    post_development_but_pre_discovery = _forward(
+        candidate,
+        period_start=datetime(2026, 8, 21, tzinfo=UTC),
+        period_end=datetime(2026, 8, 21, 1, tzinfo=UTC),
+        causal_audited_at=datetime(2026, 8, 24, 12, 30, tzinfo=UTC),
+        evaluated_at=datetime(2026, 8, 24, 13, tzinfo=UTC),
+    )
+
+    decision = promote_candidate(candidate, post_development_but_pre_discovery)
+
+    assert decision.promoted is False
+    assert "candidate discovery" in " ".join(decision.reasons)
     assert promote_candidate(candidate, _forward(candidate)).promoted is True
 
 

@@ -123,7 +123,7 @@ def test_session_vwap_resets_at_each_causal_session_boundary():
             [
                 "2026-08-21T13:30:00Z",
                 "2026-08-21T13:35:00Z",
-                "2026-08-22T13:30:00Z",
+                "2026-08-24T13:30:00Z",
             ],
             utc=True,
         )
@@ -144,8 +144,8 @@ def test_equity_session_vwap_excludes_extended_hours_and_anchors_at_regular_open
                 "2026-08-21T13:30:00Z",
                 "2026-08-21T13:35:00Z",
                 "2026-08-21T20:30:00Z",
-                "2026-08-22T12:00:00Z",
-                "2026-08-22T13:30:00Z",
+                "2026-08-24T12:00:00Z",
+                "2026-08-24T13:30:00Z",
             ],
             utc=True,
         )

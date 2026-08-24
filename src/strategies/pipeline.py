@@ -50,6 +50,7 @@ from src.strategies.validation import (
     TrialEvidence,
     ValidationConfig,
     WalkForwardFold,
+    calculate_fold_calibration_error,
     evaluate_registry,
     make_outer_folds,
     select_final_boundary,
@@ -836,6 +837,13 @@ class StrategyPipeline:
         if query is None:
             return None, None, None, "requested coverage is unavailable; no finalized bars are stored"
         aggregate = self.bars.manifest(query)
+        if not aggregate.strict_revision_as_of:
+            return (
+                None,
+                None,
+                None,
+                "strict revision-as-of evidence is unavailable for backfilled provider history",
+            )
         aggregate_missing = sum(gap.missing_bars for gap in aggregate.gaps)
         if aggregate_missing:
             return None, None, None, f"local compatible history is incomplete: {aggregate_missing} bars unavailable"
@@ -1279,8 +1287,9 @@ class StrategyPipeline:
         periods = _periods_per_year(scope.interval)
         raw_components: list[tuple[RegisteredStrategy, pd.DataFrame, Any, dict[str, Any]]] = []
         runs: dict[str, StrategyRunEvidence] = {}
+        strategy_context = StrategyContext.for_market(scope.provider.value, scope.feed)
         for item in registered:
-            signals = item.generator(item.spec, signal_bars, StrategyContext())
+            signals = item.generator(item.spec, signal_bars, strategy_context)
             signals = self._signal_decision_hashes(scope, manifest, item, signals)
             prefix_size = max(item.spec.warmup_bars, int(len(bars) * 0.8))
             prefix_size = min(prefix_size, len(bars) - 1)
@@ -1288,8 +1297,8 @@ class StrategyPipeline:
                 item.spec,
                 signal_bars.iloc[:prefix_size].copy(),
                 signal_bars.copy(),
-                StrategyContext(),
-                StrategyContext(),
+                strategy_context,
+                strategy_context,
                 generator=item.generator,
             )
             backtest = run_intraday_backtest(
@@ -1301,7 +1310,7 @@ class StrategyPipeline:
                 symbol=scope.symbol,
             )
             fold_evidence = tuple(
-                self._fold_evidence(index, fold, chronology, backtest.equity_curve, periods)
+                self._fold_evidence(index, fold, chronology, signals, backtest.equity_curve, periods)
                 for index, fold in enumerate(folds)
             )
             runs[item.spec.strategy_id] = StrategyRunEvidence(
@@ -1470,15 +1479,23 @@ class StrategyPipeline:
         index: int,
         fold: Any,
         chronology: pd.Series,
+        signals: pd.DataFrame,
         curve: pd.DataFrame,
         periods: int,
     ) -> FoldEvidence:
         start = chronology.iloc[fold.validation_index[0]].to_pydatetime()
         end = chronology.iloc[fold.validation_index[-1]].to_pydatetime()
-        returns = pd.to_numeric(curve.iloc[list(fold.validation_index)]["net_return"], errors="coerce").dropna()
+        decisions = pd.to_datetime(curve["decision_timestamp"], utc=True, errors="coerce")
+        expected_decisions = chronology.iloc[list(fold.validation_index)]
+        selected = curve.loc[decisions.isin(expected_decisions)]
+        if len(selected) != len(expected_decisions):
+            raise ValueError("walk-forward decisions do not map one-to-one to outcome rows")
+        returns = pd.to_numeric(selected["net_return"], errors="coerce").dropna()
         deviation = float(returns.std(ddof=1)) if len(returns) > 1 else 0.0
         sharpe = float(returns.mean() / deviation * math.sqrt(periods)) if deviation > 0 else 0.0
-        return FoldEvidence(index, start, end, end, sharpe, 0.5)
+        evaluated_at = pd.to_datetime(selected["outcome_available_at"], utc=True).max().to_pydatetime()
+        calibration_error = calculate_fold_calibration_error(signals, selected, expected_decisions)
+        return FoldEvidence(index, start, end, evaluated_at, sharpe, calibration_error)
 
     def _trial_evidence(
         self, manifest: DatasetManifest, scope: StrategyScope, final_start: pd.Timestamp
@@ -2027,8 +2044,9 @@ class StrategyPipeline:
             dataset_hash=manifest.dataset_hash,
             symbol=options.scope.symbol,
             interval=options.scope.interval,
-            started_at=as_of - timedelta(seconds=1),
+            started_at=self._run_timestamp(),
             as_of=as_of,
+            development_data_through=as_of,
             sealed_final_start=final_start,
             seed=options.seed,
             evaluation_budget=options.evaluation_budget,

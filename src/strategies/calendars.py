@@ -129,6 +129,11 @@ class XNYSCalendar(ExpectedBarCalendar):
             return bucket_close
         return min(bucket_close, closed)
 
+    def session_bounds(self, timestamp: datetime) -> tuple[datetime, datetime] | None:
+        """Return the authenticated XNYS session containing ``timestamp``'s local date."""
+
+        return self._session(timestamp.astimezone(self.timezone).date())
+
     def _session(self, session_date: date) -> tuple[datetime, datetime] | None:
         if session_date.weekday() >= 5 or session_date in self._holidays(session_date):
             return None

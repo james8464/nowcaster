@@ -90,6 +90,20 @@ def test_portfolio_enters_next_bar_and_produces_literal_equity_and_trade_ledgers
     assert result.equity_curve.iloc[-1]["cash"] == 1_050
     assert result.equity_curve.iloc[-1]["equity"] == 1_050
     assert result.metrics.cumulative_return == pytest.approx(0.05)
+    assert result.equity_curve[["decision_timestamp", "outcome_available_at"]].iloc[1:].to_dict("records") == [
+        {
+            "decision_timestamp": pd.Timestamp("2026-08-21 10:01", tz="UTC"),
+            "outcome_available_at": pd.Timestamp("2026-08-21 10:02", tz="UTC"),
+        },
+        {
+            "decision_timestamp": pd.Timestamp("2026-08-21 10:02", tz="UTC"),
+            "outcome_available_at": pd.Timestamp("2026-08-21 10:03", tz="UTC"),
+        },
+        {
+            "decision_timestamp": pd.Timestamp("2026-08-21 10:03", tz="UTC"),
+            "outcome_available_at": pd.Timestamp("2026-08-21 10:04", tz="UTC"),
+        },
+    ]
 
     repeated = run_intraday_backtest(_bars(), signals, ExecutionAssumptions(), risk)
     pd.testing.assert_frame_equal(result.trade_ledger, repeated.trade_ledger)

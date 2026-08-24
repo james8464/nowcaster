@@ -43,6 +43,8 @@ class DatasetManifest(BaseModel):
     payload_hashes: tuple[str, ...]
     calendar_id: str
     calendar_version: str
+    vintage_fidelity: str
+    strict_revision_as_of: bool
 
     @field_validator("requested_start", "requested_end", "coverage_start", "coverage_end")
     @classmethod
@@ -125,12 +127,20 @@ class BarRepository:
             drop=True
         )
 
-    def causal_bars_as_of(self, request: BarQuery, decision_timestamp: datetime) -> pd.DataFrame:
+    def causal_bars_as_of(
+        self,
+        request: BarQuery,
+        decision_timestamp: datetime,
+        *,
+        require_strict_vintage: bool = False,
+    ) -> pd.DataFrame:
         """Resolve the first observable version of each execution bar without repainting history."""
 
         ledger = self.revision_ledger_as_of(request, decision_timestamp)
         if ledger.empty:
             return ledger
+        if require_strict_vintage and not ledger["vintage_fidelity"].eq("authenticated_immutable").all():
+            raise ValueError("strict revision-as-of evidence is unavailable for backfilled provider bars")
         return (
             ledger.sort_values(["open_timestamp", "available_at", "revision"], kind="stable")
             .drop_duplicates(["provider", "feed", "symbol", "interval", "open_timestamp"], keep="first")
@@ -193,6 +203,9 @@ class BarRepository:
                 "open_timestamp": self._iso(row.open_timestamp),
                 "close_timestamp": self._iso(row.close_timestamp),
                 "available_at": self._iso(row.available_at),
+                "source_available_at": self._iso(row.source_available_at),
+                "observed_at": self._iso(row.observed_at),
+                "vintage_fidelity": row.vintage_fidelity,
                 "payload_hash": row.payload_hash,
             }
             for row in frame.itertuples(index=False)
@@ -213,6 +226,9 @@ class BarRepository:
             }
         )
         coverage_start, coverage_end = self.coverage(request)
+        vintage_values = tuple(sorted({str(value) for value in frame.get("vintage_fidelity", [])}))
+        strict_revision_as_of = vintage_values == ("authenticated_immutable",)
+        vintage_fidelity = vintage_values[0] if len(vintage_values) == 1 else "mixed_or_unavailable"
         return DatasetManifest(
             dataset_hash=dataset_hash,
             provider=request.provider,
@@ -228,6 +244,8 @@ class BarRepository:
             payload_hashes=tuple(str(value) for value in frame.get("payload_hash", [])),
             calendar_id=calendar.calendar_id,
             calendar_version=calendar.version,
+            vintage_fidelity=vintage_fidelity,
+            strict_revision_as_of=strict_revision_as_of,
         )
 
     def _matching_frame(self, request: BarQuery) -> pd.DataFrame:
@@ -244,7 +262,14 @@ class BarRepository:
                 "end": request.end,
             },
         )
-        for column in ("open_timestamp", "close_timestamp", "available_at", "created_at"):
+        for column in (
+            "open_timestamp",
+            "close_timestamp",
+            "available_at",
+            "source_available_at",
+            "observed_at",
+            "created_at",
+        ):
             if column in frame:
                 frame[column] = pd.to_datetime(frame[column], utc=True)
         return frame
@@ -271,6 +296,9 @@ class BarRepository:
             "open_timestamp": bar.open_timestamp,
             "close_timestamp": bar.close_timestamp,
             "available_at": bar.available_at,
+            "source_available_at": bar.source_available_at,
+            "observed_at": bar.observed_at,
+            "vintage_fidelity": bar.vintage_fidelity,
             "revision": bar.revision,
             "finalized": bar.finalized,
             "open": bar.open,

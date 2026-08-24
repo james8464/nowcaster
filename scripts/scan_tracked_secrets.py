@@ -43,6 +43,55 @@ def scan_text(relative: Path, text: str) -> list[str]:
     return findings
 
 
+def scan_git_history(root: Path) -> list[str]:
+    """Scan every unique blob reachable from any ref without printing blob contents."""
+
+    listed = subprocess.run(
+        ["git", "rev-list", "--objects", "--all"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    paths: dict[str, Path] = {}
+    for line in listed.stdout.splitlines():
+        object_id, separator, name = line.partition(" ")
+        if separator and name:
+            paths.setdefault(object_id, Path(name))
+    if not paths:
+        return []
+    batch = subprocess.run(
+        ["git", "cat-file", "--batch"],
+        cwd=root,
+        check=True,
+        input=("\n".join(paths) + "\n").encode(),
+        capture_output=True,
+    ).stdout
+    findings: list[str] = []
+    cursor = 0
+    while cursor < len(batch):
+        newline = batch.find(b"\n", cursor)
+        if newline < 0:
+            break
+        header = batch[cursor:newline].decode("ascii", errors="replace").split()
+        cursor = newline + 1
+        if len(header) != 3 or not header[2].isdigit():
+            continue
+        object_id, object_type, size_text = header
+        size = int(size_text)
+        payload = batch[cursor : cursor + size]
+        cursor += size + 1
+        if object_type != "blob" or object_id not in paths:
+            continue
+        try:
+            text = payload.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        label = Path(f"history-{object_id[:12]}") / paths[object_id]
+        findings.extend(scan_text(label, text))
+    return findings
+
+
 def main() -> int:
     root = Path(__file__).resolve().parents[1]
     result = subprocess.run(["git", "ls-files", "-z"], cwd=root, check=True, capture_output=True)
@@ -57,10 +106,11 @@ def main() -> int:
         except (UnicodeDecodeError, OSError):
             continue
         findings.extend(scan_text(relative, text))
+    findings.extend(scan_git_history(root))
     if findings:
         print("\n".join(findings))
         return 1
-    print("Tracked-file secret scan passed")
+    print("Tracked-file and reachable-history secret scan passed")
     return 0
 
 

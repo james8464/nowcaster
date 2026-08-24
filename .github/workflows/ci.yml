@@ -41,7 +41,7 @@ jobs:
         run: |
           make clean-generated
           make demo
-          make sync-macos-snapshot
+          make verify-swift-fixture-parity
           test -s data/app/nowcaster-snapshot.json
 
   native-macos:

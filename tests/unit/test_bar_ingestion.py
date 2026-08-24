@@ -48,9 +48,34 @@ def test_binance_normalizes_utc_rejects_open_bar_and_hashes_complete_payload():
     assert bar.symbol == "BTCUSDT"
     assert bar.open_timestamp == datetime(2026, 8, 22, 10, 0, tzinfo=UTC)
     assert bar.close_timestamp == datetime(2026, 8, 22, 10, 5, tzinfo=UTC)
-    assert bar.available_at == datetime(2026, 8, 22, 10, 5, tzinfo=UTC)
+    assert bar.available_at == datetime(2026, 8, 22, 10, 7, tzinfo=UTC)
     assert bar.trade_count == 321
     assert bar.payload_hash == "5ecaf0e14ec23613558771976a2b3832bb3b16cd7afb7ed807334f27ec0371ec"
+
+
+def test_rest_backfill_records_receipt_provenance_instead_of_claiming_historical_vintage() -> None:
+    payload = _json_fixture("binance_klines.json")
+    retrieved_at = datetime(2026, 8, 22, 10, 7, tzinfo=UTC)
+    provider = BinanceBarProvider(
+        httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(200, json=payload))),
+        clock=lambda: retrieved_at,
+    )
+
+    bar = list(
+        provider.fetch(
+            BarRequest(
+                symbol="BTCUSDT",
+                interval=BarInterval.FIVE_MINUTES,
+                start=datetime(2026, 8, 22, 10, tzinfo=UTC),
+                end=datetime(2026, 8, 22, 10, 10, tzinfo=UTC),
+            )
+        )
+    )[0]
+
+    assert bar.source_available_at == datetime(2026, 8, 22, 10, 5, tzinfo=UTC)
+    assert bar.observed_at == retrieved_at
+    assert bar.available_at == retrieved_at
+    assert bar.vintage_fidelity == "backfilled_rest_no_revision_history"
 
 
 def test_binance_rejects_non_spot_provider_feed_configuration():
@@ -277,7 +302,9 @@ def test_alpaca_daily_bar_uses_session_close_instead_of_a_fixed_day(monkeypatch)
 
     assert len(bars) == 1
     assert bars[0].open_timestamp == datetime(2026, 11, 27, 5, tzinfo=UTC)
-    assert bars[0].close_timestamp == bars[0].available_at == datetime(2026, 11, 27, 18, tzinfo=UTC)
+    assert bars[0].close_timestamp == datetime(2026, 11, 27, 18, tzinfo=UTC)
+    assert bars[0].source_available_at == datetime(2026, 11, 27, 18, tzinfo=UTC)
+    assert bars[0].available_at == datetime(2026, 11, 27, 18, 1, tzinfo=UTC)
 
 
 def test_alpaca_preserves_feed_pages_exclusive_end_and_deduplicates_page_boundary(monkeypatch):
@@ -316,7 +343,7 @@ def test_alpaca_preserves_feed_pages_exclusive_end_and_deduplicates_page_boundar
 
     assert tokens == [None, "page-2"]
     assert [bar.open_timestamp.minute for bar in bars] == [0, 5, 10]
-    assert [bar.available_at.minute for bar in bars] == [5, 10, 15]
+    assert [bar.available_at.minute for bar in bars] == [30, 30, 30]
     assert {bar.feed for bar in bars} == {"iex"}
     assert bars[0].payload_hash == "de38fb0c9934106f57db3dca6ceb9a1ebe622a857e2e3df13658a6b075ee7d9f"
 

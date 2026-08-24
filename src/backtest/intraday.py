@@ -395,6 +395,7 @@ def run_intraday_backtest(
     rejection_rows: list[dict[str, object]] = []
     curve_rows: list[dict[str, object]] = []
     order_sequence = 0
+    prior_decision_timestamp: pd.Timestamp | None = None
 
     grouped = list(ordered_bars.groupby("open_timestamp", sort=True))
     for timestamp, group in grouped:
@@ -550,6 +551,8 @@ def run_intraday_backtest(
         curve_rows.append(
             {
                 "timestamp": pd.Timestamp(current["close_timestamp"].max()),
+                "decision_timestamp": prior_decision_timestamp,
+                "outcome_available_at": pd.Timestamp(current["available_at"].max()),
                 "cash": cash,
                 "equity": equity,
                 "net_return": net_return,
@@ -565,6 +568,7 @@ def run_intraday_backtest(
         )
         returns.append(net_return)
         prior_equity = equity
+        prior_decision_timestamp = pd.Timestamp(current["close_timestamp"].max())
 
     for index, signal in decisions.iterrows():
         if index not in consumed:

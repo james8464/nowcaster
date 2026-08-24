@@ -37,6 +37,14 @@ class StrategyContext:
     universe_bars: Mapping[str, pd.DataFrame] = field(default_factory=lambda: MappingProxyType({}))
     universe_membership: pd.DataFrame | None = None
 
+    @classmethod
+    def for_market(cls, provider: str, feed: str) -> StrategyContext:
+        del feed
+        session = (
+            SessionCalendar.equity_us() if provider.strip().lower() == "alpaca" else SessionCalendar.continuous_utc()
+        )
+        return cls(session=session)
+
 
 @dataclass(frozen=True, slots=True)
 class _RuleResult:

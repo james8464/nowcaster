@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 protocol EngineRunning: Sendable {
     func run(
@@ -87,6 +88,7 @@ private final class RunningProcess: @unchecked Sendable {
     private var process: Process?
     private var worker: Task<Void, Never>?
     private var terminationRequested = false
+    private let terminationGrace: Duration = .milliseconds(250)
 
     func setWorker(_ worker: Task<Void, Never>) {
         let cancel = lock.withLock {
@@ -117,7 +119,7 @@ private final class RunningProcess: @unchecked Sendable {
             throw error
         }
         if terminationRequested || Task.isCancelled {
-            if process.isRunning { process.terminate() }
+            requestTermination(process)
             throw CancellationError()
         }
     }
@@ -128,7 +130,20 @@ private final class RunningProcess: @unchecked Sendable {
             return (worker, process)
         }
         active.0?.cancel()
-        if let process = active.1, process.isRunning { process.terminate() }
+        if let process = active.1 { requestTermination(process) }
+    }
+
+    private func requestTermination(_ process: Process) {
+        guard process.isRunning else { return }
+        process.terminate()
+        let pid = process.processIdentifier
+        let grace = terminationGrace
+        Task.detached(priority: .utility) {
+            try? await Task.sleep(for: grace)
+            if process.isRunning {
+                _ = Darwin.kill(pid, SIGKILL)
+            }
+        }
     }
 }
 

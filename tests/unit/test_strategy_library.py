@@ -78,6 +78,33 @@ def _membership(symbols: list[str], *, available_at: str = "2026-08-20T00:00:00Z
     )
 
 
+def test_xnys_strategy_session_honors_holidays_and_early_closes() -> None:
+    calendar = SessionCalendar.equity_us()
+    timestamps = pd.Series(
+        pd.to_datetime(
+            [
+                "2026-11-27T17:45:00Z",  # 12:45 ET, early-close final window
+                "2026-11-27T20:45:00Z",  # after the 13:00 ET close
+                "2026-12-25T15:00:00Z",  # Christmas holiday
+            ],
+            utc=True,
+        )
+    )
+
+    assert calendar.in_session(timestamps).tolist() == [True, False, False]
+    assert calendar.last_window(timestamps, 30).tolist() == [True, False, False]
+
+
+def test_strategy_context_selects_market_calendar_from_provider_identity() -> None:
+    equities = StrategyContext.for_market("alpaca", "iex")
+    crypto = StrategyContext.for_market("binance", "spot")
+
+    assert equities.session.continuous is False
+    assert equities.session.calendar_id == "XNYS"
+    assert crypto.session.continuous is True
+    assert crypto.session.calendar_id == "24x7"
+
+
 def _configured_spec(strategy_id: str) -> StrategySpec:
     path = Path(__file__).parents[2] / "config" / "strategies.yaml"
     return next(

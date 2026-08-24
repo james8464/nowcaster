@@ -18,7 +18,13 @@ from src.strategies.ensemble import combine_current_signals as _combine_current_
 from src.strategies.ensemble import compute_evidence_weights as _compute_evidence_weights
 from src.strategies.ensemble import fixed_share_update as _fixed_share_update
 from src.strategies.types import BarInterval, StrategyFamily, StrategyMode, canonical_hash
-from src.strategies.validation import EvaluationStatus, PromotionDecision, StrategyEvaluation, ValidationConfig
+from src.strategies.validation import (
+    EvaluationStatus,
+    PromotionDecision,
+    RobustnessEvidence,
+    StrategyEvaluation,
+    ValidationConfig,
+)
 
 AS_OF = datetime(2026, 8, 22, 12, tzinfo=UTC)
 TEST_VALIDATION_CONFIG = ValidationConfig(
@@ -151,6 +157,12 @@ def _evaluation(
         "dsr_probability": 0.9,
         "trial_sharpes": trial_sharpes,
         "causal_audit_passed": causal,
+        "robustness_available": True,
+        "median_walk_forward_net_edge": 0.005,
+        "pbo_probability": 0.25,
+        "parameter_neighborhood_stable": True,
+        "parameter_neighbor_positive_fraction": 0.75,
+        "parameter_neighbor_median_ratio": 0.8,
     }
     promotion_record = {"promoted": promotion.promoted, "reasons": promotion.reasons}
     sealed_provenance = {
@@ -186,6 +198,7 @@ def _evaluation(
         dsr_probability=0.9,
         trial_sharpes=trial_sharpes,
         causal_audit_passed=causal,
+        robustness=RobustnessEvidence(0.005, 0.25, True, 0.75, 0.8),
         current_signal=signal,
         current_strength=strength,
         current_probability=0.75 if signal > 0 else 0.25 if signal < 0 else 0.5,
@@ -240,6 +253,9 @@ def _with_root_snapshot(evaluation: StrategyEvaluation) -> StrategyEvaluation:
         "minimum_development_observations": 5,
         "maximum_drawdown": 0.5,
         "minimum_dsr_probability": 0.5,
+        "maximum_pbo_probability": 0.5,
+        "minimum_parameter_neighbor_positive_fraction": 0.5,
+        "minimum_parameter_neighbor_median_ratio": 0.5,
     }
     snapshot = {
         "schema_version": 2,
@@ -1488,6 +1504,29 @@ def test_current_decision_requires_a_calibrated_probability_and_emits_long_after
     assert decision.probability == pytest.approx(0.75)
     assert decision.expected_net_edge > 0
     assert len(decision.decision_hash) == 64
+
+
+def test_current_decision_explicitly_abstains_when_fold_fitted_calibration_is_unavailable() -> None:
+    evaluations = tuple(
+        replace(_evaluation(name, family), calibration_status="unavailable")
+        for name, family in (
+            ("a", StrategyFamily.TREND),
+            ("b", StrategyFamily.MEAN_REVERSION),
+            ("c", StrategyFamily.SESSION),
+        )
+    )
+    config = EnsembleConfig(
+        minimum_breadth=2,
+        maximum_strategy_weight=0.6,
+        maximum_family_weight=0.7,
+    )
+    weights = compute_evidence_weights(evaluations, as_of=AS_OF, config=config)
+
+    decision = combine_current_signals(evaluations, weights, as_of=AS_OF, config=config)
+
+    assert decision.signal == 0
+    assert decision.status == "abstain"
+    assert "calibrated_decision_capability_unavailable" in decision.reasons
 
 
 def test_current_decision_rejects_component_data_from_after_the_as_of_boundary() -> None:

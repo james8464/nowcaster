@@ -341,6 +341,12 @@ _PROMOTION_INPUT_FIELDS = {
     "dsr_probability",
     "trial_sharpes",
     "causal_audit_passed",
+    "robustness_available",
+    "median_walk_forward_net_edge",
+    "pbo_probability",
+    "parameter_neighborhood_stable",
+    "parameter_neighbor_positive_fraction",
+    "parameter_neighbor_median_ratio",
 }
 
 
@@ -405,6 +411,9 @@ def _root_validation_snapshot_is_auditable(
         "minimum_development_observations": config.minimum_development_observations,
         "maximum_drawdown": float(config.maximum_drawdown),
         "minimum_dsr_probability": float(config.minimum_dsr_probability),
+        "maximum_pbo_probability": float(config.maximum_pbo_probability),
+        "minimum_parameter_neighbor_positive_fraction": float(config.minimum_parameter_neighbor_positive_fraction),
+        "minimum_parameter_neighbor_median_ratio": float(config.minimum_parameter_neighbor_median_ratio),
     }
     if canonical_hash(config_record) != canonical_hash(expected_config):
         return False
@@ -581,6 +590,20 @@ def _sealed_evidence_is_auditable(
             "dsr_probability": evaluation.dsr_probability,
             "trial_sharpes": evaluation.trial_sharpes,
             "causal_audit_passed": evaluation.causal_audit_passed,
+            "robustness_available": evaluation.robustness is not None,
+            "median_walk_forward_net_edge": (
+                evaluation.robustness.median_walk_forward_net_edge if evaluation.robustness else None
+            ),
+            "pbo_probability": evaluation.robustness.pbo_probability if evaluation.robustness else None,
+            "parameter_neighborhood_stable": (
+                evaluation.robustness.parameter_neighborhood_stable if evaluation.robustness else None
+            ),
+            "parameter_neighbor_positive_fraction": (
+                evaluation.robustness.parameter_neighbor_positive_fraction if evaluation.robustness else None
+            ),
+            "parameter_neighbor_median_ratio": (
+                evaluation.robustness.parameter_neighbor_median_ratio if evaluation.robustness else None
+            ),
         }
         promotion_decision = {
             "promoted": evaluation.promotion.promoted,
@@ -1645,6 +1668,8 @@ def combine_current_signals(
     )
     net_edge = gross_edge - estimated_cost - uncertainty
     reasons: list[str] = []
+    if any(evaluation.calibration_status != "calibrated" for evaluation, _, _ in active):
+        reasons.append("calibrated_decision_capability_unavailable")
     if breadth < config.minimum_breadth:
         reasons.append("minimum_breadth")
     if direction == 0 or vote_margin < config.minimum_vote_margin:
@@ -1667,6 +1692,7 @@ def combine_current_signals(
             "current_signal": evaluation.current_signal,
             "current_strength": evaluation.current_strength,
             "current_probability": evaluation.current_probability,
+            "calibration_status": evaluation.calibration_status,
             "current_volatility": evaluation.current_volatility,
             "expected_edge": evaluation.expected_edge,
             "expected_cost": evaluation.expected_cost,

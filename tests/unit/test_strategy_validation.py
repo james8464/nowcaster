@@ -14,9 +14,11 @@ from src.strategies.validation import (
     EvaluationRequest,
     EvaluationStatus,
     FoldEvidence,
+    RobustnessEvidence,
     StrategyRunEvidence,
     TrialEvidence,
     ValidationConfig,
+    calculate_fold_calibration_error,
     evaluate_registry,
     make_outer_folds,
     run_frozen_protocol,
@@ -59,6 +61,8 @@ def _backtest(final_returns: tuple[float, float] = (0.03, -0.01)) -> IntradayBac
     curve = pd.DataFrame(
         {
             "timestamp": timestamps,
+            "decision_timestamp": timestamps,
+            "outcome_available_at": timestamps + pd.Timedelta(hours=2),
             "net_return": returns,
             "gross_return": returns,
             "cost_return": 0.0,
@@ -69,6 +73,25 @@ def _backtest(final_returns: tuple[float, float] = (0.03, -0.01)) -> IntradayBac
     trades = pd.DataFrame({"execution_timestamp": [timestamps.iloc[1]], "side": ["buy"]})
     metrics = calculate_backtest_metrics(curve, trades, periods_per_year=252)
     return IntradayBacktestResult(curve, trades, pd.DataFrame(), metrics)
+
+
+def test_final_segment_uses_decision_to_outcome_mapping_at_the_boundary() -> None:
+    registry = _registry("mapped")
+    backtest = _backtest(final_returns=(0.03, 0.01))
+    curve = backtest.equity_curve.copy()
+    curve["timestamp"] = pd.to_datetime(curve["timestamp"], utc=True) + pd.Timedelta(hours=1)
+    curve.loc[7, "net_return"] = -0.9
+    curve.loc[7, "gross_return"] = -0.9
+    mapped = IntradayBacktestResult(
+        curve,
+        backtest.trade_ledger,
+        backtest.rejection_ledger,
+        calculate_backtest_metrics(curve, backtest.trade_ledger, periods_per_year=252),
+    )
+
+    evaluation = evaluate_registry(_evaluation_request(registry, {"mapped": _timestamped_evidence(mapped)}))[0]
+
+    assert evaluation.final_sharpe == pytest.approx(22.44994432064365)
 
 
 def _signals() -> pd.DataFrame:
@@ -102,19 +125,139 @@ def _timestamped_evidence(backtest: IntradayBacktestResult | None = None) -> Str
                 0.8,
                 0.1,
             ),
-            FoldEvidence(
-                1,
-                datetime(2026, 8, 21, 15, tzinfo=UTC),
-                datetime(2026, 8, 21, 16, tzinfo=UTC),
-                datetime(2026, 8, 21, 16, tzinfo=UTC),
-                0.6,
-                0.2,
-            ),
+        ),
+        robustness=RobustnessEvidence(
+            median_walk_forward_net_edge=0.005,
+            pbo_probability=0.25,
+            parameter_neighborhood_stable=True,
+            parameter_neighbor_positive_fraction=0.75,
+            parameter_neighbor_median_ratio=0.8,
         ),
         expected_edge=0.02,
         expected_cost=0.001,
         uncertainty=0.001,
     )
+
+
+def test_promotion_robustness_gates_fail_closed_and_accept_exact_pbo_boundary() -> None:
+    registry = _registry("robust")
+    missing = evaluate_registry(
+        _evaluation_request(
+            registry,
+            {"robust": replace(_timestamped_evidence(), robustness=None)},
+        )
+    )[0]
+    boundary = evaluate_registry(
+        _evaluation_request(
+            registry,
+            {
+                "robust": replace(
+                    _timestamped_evidence(),
+                    robustness=RobustnessEvidence(
+                        median_walk_forward_net_edge=0.001,
+                        pbo_probability=0.5,
+                        parameter_neighborhood_stable=True,
+                        parameter_neighbor_positive_fraction=0.5,
+                        parameter_neighbor_median_ratio=0.5,
+                    ),
+                )
+            },
+        )
+    )[0]
+    negative = evaluate_registry(
+        _evaluation_request(
+            registry,
+            {
+                "robust": replace(
+                    _timestamped_evidence(),
+                    robustness=RobustnessEvidence(
+                        median_walk_forward_net_edge=0.0,
+                        pbo_probability=0.500001,
+                        parameter_neighborhood_stable=False,
+                        parameter_neighbor_positive_fraction=0.49,
+                        parameter_neighbor_median_ratio=0.49,
+                    ),
+                )
+            },
+        )
+    )[0]
+
+    assert "robustness diagnostics are unavailable" in missing.promotion.reasons
+    assert not any("PBO" in reason or "median walk-forward" in reason for reason in boundary.promotion.reasons)
+    assert "median walk-forward net edge is not positive" in negative.promotion.reasons
+    assert "CSCV/PBO gate failed" in negative.promotion.reasons
+    assert "parameter-neighborhood stability failed" in negative.promotion.reasons
+
+
+def test_fold_fitted_decision_calibration_uses_only_development_outcomes() -> None:
+    registry = _registry("calibrated")
+    base = _backtest(final_returns=(0.8, -0.8))
+    signals = _signals().copy()
+    signals.loc[1::2, "signal"] = -1
+    signals.loc[3, "signal"] = 1
+    evidence = replace(_timestamped_evidence(base), signals=signals)
+    first = evaluate_registry(_evaluation_request(registry, {"calibrated": evidence}))[0]
+    changed_curve = base.equity_curve.copy()
+    changed_curve.loc[8:, ["net_return", "gross_return"]] *= -100
+    changed = IntradayBacktestResult(
+        changed_curve,
+        base.trade_ledger,
+        base.rejection_ledger,
+        calculate_backtest_metrics(changed_curve, base.trade_ledger, periods_per_year=252),
+    )
+    second = evaluate_registry(_evaluation_request(registry, {"calibrated": replace(evidence, backtest=changed)}))[0]
+
+    assert first.calibration_status == "calibrated"
+    assert first.current_probability == pytest.approx(0.25)
+    assert first.expected_edge == pytest.approx(0.04 / 6)
+    assert first.current_probability == second.current_probability
+    assert first.expected_edge == second.expected_edge
+    assert first.expected_cost == second.expected_cost
+    assert first.uncertainty == second.uncertainty
+
+
+def test_fold_calibration_is_scored_at_mapped_outcome_rows() -> None:
+    decisions = pd.to_datetime(["2026-08-21T10:00:00Z", "2026-08-21T11:00:00Z"], utc=True)
+    signals = pd.DataFrame(
+        {
+            "decision_timestamp": decisions,
+            "signal": [1, -1],
+            "strength": [0.8, 0.6],
+        }
+    )
+    outcomes = pd.DataFrame(
+        {
+            "decision_timestamp": decisions,
+            "outcome_available_at": decisions + pd.Timedelta(hours=1),
+            "net_return": [0.01, -0.02],
+        }
+    )
+
+    error = calculate_fold_calibration_error(signals, outcomes, decisions)
+
+    assert error == pytest.approx(0.025)
+
+
+def test_fold_calibration_causally_carries_sparse_transition_signals() -> None:
+    decisions = pd.date_range("2026-08-21T10:00:00Z", periods=3, freq="h")
+    signals = pd.DataFrame(
+        {
+            "decision_timestamp": [decisions[0]],
+            "signal": [1],
+            "strength": [0.8],
+        }
+    )
+    outcomes = pd.DataFrame(
+        {
+            "decision_timestamp": decisions,
+            "outcome_available_at": decisions + pd.Timedelta(hours=1),
+            "net_return": [0.01, -0.01, 0.02],
+        }
+    )
+
+    error = calculate_fold_calibration_error(signals, outcomes, decisions)
+
+    assert error == pytest.approx((0.01 + 0.81 + 0.01) / 3)
 
 
 def _evaluation_request(registry: StrategyRegistry, runs: dict[str, StrategyRunEvidence]) -> EvaluationRequest:
@@ -180,7 +323,7 @@ def test_outer_folds_are_chronological_and_purge_labels_through_the_full_embargo
 
     folds = make_outer_folds(data, boundary=boundary, config=config)
 
-    assert [fold.validation_index for fold in folds] == [(4, 5), (6, 7), (8,)]
+    assert [fold.validation_index for fold in folds] == [(4, 5), (6,)]
     for fold in folds:
         training = data.iloc[list(fold.train_index)]
         validation = data.iloc[list(fold.validation_index)]
@@ -213,7 +356,7 @@ def test_each_later_outer_fold_contains_only_development_inner_folds() -> None:
 
     folds = make_outer_folds(data, boundary=boundary, config=config)
 
-    assert [len(fold.inner_folds) for fold in folds] == [0, 1, 2]
+    assert [len(fold.inner_folds) for fold in folds] == [0, 1]
     for outer in folds:
         outer_start = data.iloc[list(outer.validation_index)]["decision_timestamp"].min()
         for inner in outer.inner_folds:
@@ -341,7 +484,7 @@ def test_timestamped_development_evidence_is_invariant_to_final_outcome_mutation
     assert original.status is EvaluationStatus.EVALUATED
     assert original.promotion == changed.promotion
     assert original.development_sharpe == changed.development_sharpe
-    assert original.calibration_error == changed.calibration_error == 0.15
+    assert original.calibration_error == changed.calibration_error == 0.1
     assert original.fold_stability == changed.fold_stability == 1
     assert original.trial_sharpes == changed.trial_sharpes == (0.1, 0.2, 0.3, 0.4)
     assert original.evidence_provenance == changed.evidence_provenance

@@ -177,3 +177,26 @@ def test_atomic_cache_write_replaces_complete_payload_without_leaving_temporary_
 
     assert target.read_bytes() == b'{"page":2}'
     assert list(target.parent.glob("*.tmp")) == []
+
+
+def test_strict_revision_as_of_fails_closed_for_rest_backfills(repository) -> None:
+    backfilled = _bar(0, available_minute=6, close=100.5, payload_hash="a" * 64).model_copy(
+        update={
+            "source_available_at": datetime(2026, 8, 22, 10, 5, tzinfo=UTC),
+            "observed_at": datetime(2026, 8, 22, 10, 30, tzinfo=UTC),
+            "available_at": datetime(2026, 8, 22, 10, 30, tzinfo=UTC),
+            "vintage_fidelity": "backfilled_rest_no_revision_history",
+        }
+    )
+    repository.append([backfilled])
+
+    manifest = repository.manifest(_query())
+
+    assert manifest.strict_revision_as_of is False
+    assert manifest.vintage_fidelity == "backfilled_rest_no_revision_history"
+    with pytest.raises(ValueError, match="revision-as-of.*unavailable"):
+        repository.causal_bars_as_of(
+            _query(),
+            datetime(2026, 8, 22, 10, 35, tzinfo=UTC),
+            require_strict_vintage=True,
+        )

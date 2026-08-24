@@ -70,7 +70,7 @@
       "symbol": "BTCUSDT"
     }
   ],
-  "code_hash": "0f79745cf6f9393908820f758032864fe468ca1179e72e173a2daaa62092e6e8",
+  "code_hash": "3b3878bee3b5a8410b47e8f0228d954825e270bda01bc6715af0e14724252a66",
   "config_hash": "bdd5db762ac98ad464c552409781a71a944928083061cdc6979240e5bec324cc",
   "cutoff": "2026-08-20T00:00:00Z",
   "data_quality": {
@@ -112,10 +112,10 @@
       "minimum": 100.31495666503906
     }
   },
-  "dataset_hash": "f3b7a8131155c59abe7b7c6e03b66af5252e0304f8649f12aa5fa32978b1e34c",
+  "dataset_hash": "a62830917a55b973413e43658ba45a1713a4db8df311e6fc48219755aaf585c3",
   "datasets": [
     {
-      "dataset_hash": "a181ff4ebd49f71f82a53a58958d9ac35bd8ffd87ff4668dc0cdb5608836bd3a",
+      "dataset_hash": "977298a46f0f3db8229fab66a97ce3b1285bbafc00c45deb292c6dffd896c453",
       "end": "2026-08-20T00:00:00Z",
       "interval": "5m",
       "row_count": 110,
@@ -123,7 +123,7 @@
       "symbol": "BTCUSDT"
     },
     {
-      "dataset_hash": "feacc5a06d949a06aaa54bf42681f742bec9fd0b49bd909d19d77540e29922c0",
+      "dataset_hash": "019a74ccb3946b96546c4e123438ee0d976f830f1d8eeb4fbeef8f4134fb25c6",
       "end": "2026-08-20T00:00:00Z",
       "interval": "15m",
       "row_count": 110,
@@ -131,7 +131,7 @@
       "symbol": "BTCUSDT"
     },
     {
-      "dataset_hash": "3decd648081f64631fae73e640a3859c775963e88d73a1296de60fe5a1107247",
+      "dataset_hash": "d4d08ddb2910924d41096f636ab51c029c57025d6551db05970e8d5f7fed3f8c",
       "end": "2026-08-20T00:00:00Z",
       "interval": "1h",
       "row_count": 110,
@@ -163,10 +163,10 @@
     "ETH-USD": "ETHUSDT"
   },
   "schema_version": 1,
-  "semantic_snapshot_hash": "e9f0e33867b833d6d769272e7ba9ce1a9bf511133d8294323fa7942a672af18d",
+  "semantic_snapshot_hash": "0776f21ebe1e7b24c3998fd29dea3173deafbec66df7409e3cf583fdafa56aef",
   "snapshot_counts": {
     "causal_audits": 36,
-    "ensemble_components": 10,
+    "ensemble_components": 15,
     "learning_runs": 1,
     "strategies": 36
   },

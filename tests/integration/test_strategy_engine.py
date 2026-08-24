@@ -17,6 +17,7 @@ from src.strategies.types import BarInterval, StrategyFamily, StrategyMode, Stra
 from src.strategies.validation import (
     EvaluationRequest,
     FoldEvidence,
+    RobustnessEvidence,
     StrategyRunEvidence,
     TrialEvidence,
     ValidationConfig,
@@ -108,8 +109,8 @@ def _evaluations() -> tuple:
                 TrialEvidence(
                     f"trial-{trial}",
                     sharpe + offset * 0.01,
+                    datetime(2026, 8, 21, 17, tzinfo=UTC),
                     datetime(2026, 8, 21, 18, tzinfo=UTC),
-                    datetime(2026, 8, 21, 19, tzinfo=UTC),
                 )
                 for trial, sharpe in enumerate((0.1, 0.2, 0.3, 0.4), start=1)
             ),
@@ -130,15 +131,8 @@ def _evaluations() -> tuple:
                     0.6,
                     0.2,
                 ),
-                FoldEvidence(
-                    2,
-                    datetime(2026, 8, 21, 18, tzinfo=UTC),
-                    datetime(2026, 8, 21, 19, tzinfo=UTC),
-                    datetime(2026, 8, 21, 19, tzinfo=UTC),
-                    0.7,
-                    0.15,
-                ),
             ),
+            robustness=RobustnessEvidence(0.005, 0.25, True, 0.75, 0.8),
             expected_edge=0.02,
             expected_cost=0.001,
             uncertainty=0.001,
@@ -147,8 +141,8 @@ def _evaluations() -> tuple:
     request = EvaluationRequest(
         registry=registry,
         runs=runs,
-        chronology=bars["close_timestamp"],
-        outcome_availability=bars["available_at"],
+        chronology=bars["close_timestamp"].iloc[:-1].reset_index(drop=True),
+        outcome_availability=bars["available_at"].iloc[1:].reset_index(drop=True),
         as_of=as_of,
         mode=StrategyMode.PAPER,
         dataset_hash="d" * 64,
@@ -198,6 +192,7 @@ def test_current_unlabeled_inference_is_deterministic_traceable_and_persists_res
         maximum_strategy_weight=0.5,
         maximum_family_weight=0.6,
         minimum_breadth=2,
+        minimum_probability=0.5,
     )
 
     first = generate_current_decision(

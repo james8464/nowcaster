@@ -582,7 +582,7 @@ def test_revision_between_authentication_and_engine_never_mixes_dataset_hash_and
     assert persisted_signal_count == engine_ledger_sizes[-1]
 
 
-def test_live_adapter_history_keeps_per_bar_causal_decisions_and_evaluates(project_root, tmp_path) -> None:
+def test_live_adapter_backfill_is_unavailable_for_strict_revision_as_of_evaluation(project_root, tmp_path) -> None:
     _configure_strategy(project_root)
     start = datetime(2026, 8, 20, tzinfo=UTC)
     count = 80
@@ -632,9 +632,11 @@ def test_live_adapter_history_keeps_per_bar_causal_decisions_and_evaluates(proje
     evaluated = pipeline.evaluate(EvaluationOptions(scope=scope))
     signals = database.frame("select decision_timestamp from strategy_signals order by decision_timestamp")
 
-    assert ingested.status == evaluated.status == "completed"
-    assert len(signals) == signals["decision_timestamp"].nunique() == count
-    assert database.scalar("select count(*) from strategy_runs where status = 'evaluated'") == 1
+    assert ingested.status == "completed"
+    assert evaluated.status == "unavailable"
+    assert "revision-as-of" in evaluated.message
+    assert signals.empty
+    assert database.scalar("select count(*) from strategy_runs where status = 'evaluated'") == 0
 
 
 def test_corrected_refetch_preserves_signal_prefix_and_adds_receipt_decision(project_root, tmp_path) -> None:
@@ -1716,7 +1718,7 @@ def test_strategy_learning_uses_observed_bounded_trial_ledger_and_jsonl_progress
     assert Database.from_url(database_url).scalar("select count(*) from learning_trials") == 2
 
 
-def test_learning_and_evaluation_share_raw_sealed_boundary_and_adaptive_trials(project_root, tmp_path) -> None:
+def test_post_hoc_learning_trials_are_not_admitted_to_the_historical_sealed_boundary(project_root, tmp_path) -> None:
     _configure_strategy(project_root)
     bars = tmp_path / "boundary-bars.csv"
     _write_bars(bars, 100)
@@ -1765,10 +1767,8 @@ def test_learning_and_evaluation_share_raw_sealed_boundary_and_adaptive_trials(p
     assert ingested.exit_code == learned.exit_code == evaluated.exit_code == exported.exit_code == 0
     assert {payload["sealed_final_start"] for payload in trial_payloads} == {expected_boundary}
     assert metrics["final_boundary"] == expected_boundary
-    assert metrics["trial_count"] == sum(
-        payload["status"] == "succeeded" and bool(payload["fold_metrics"]) for payload in trial_payloads
-    )
-    assert metrics["trial_count"] > 0
+    assert metrics["trial_count"] == 0
+    assert all(pd.Timestamp(payload["evaluated_at"]) > pd.Timestamp(expected_boundary) for payload in trial_payloads)
     assert snapshot.learning_runs[0].final_boundary.isoformat() == expected_boundary
     assert isinstance(snapshot.learning_runs[0].best_rule, str)
 

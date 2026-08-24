@@ -82,12 +82,6 @@ class RuleCandidate:
             _explicit_utc(self.discovered_at, "candidate discovered_at")
         if self.evidence_through is not None:
             _explicit_utc(self.evidence_through, "candidate evidence_through")
-        if (
-            self.discovered_at is not None
-            and self.evidence_through is not None
-            and self.evidence_through < self.discovered_at
-        ):
-            raise ValueError("candidate evidence cannot precede discovery")
 
     @classmethod
     def from_rule(cls, experiment: LearningExperiment, rule: RuleNode) -> RuleCandidate:
@@ -99,7 +93,7 @@ class RuleCandidate:
             rule=rule,
             version=f"1.0.0+{identity[:8]}.{run_version}",
             discovered_at=experiment.started_at,
-            evidence_through=experiment.as_of,
+            evidence_through=experiment.development_data_through,
         )
 
 
@@ -120,6 +114,7 @@ class LearningExperiment:
     inner_folds: tuple[WalkForwardFold, ...]
     indicators: tuple[str, ...]
     thresholds: tuple[float, ...]
+    development_data_through: datetime | None = None
     evaluator: Evaluator | None = None
     evaluator_version: str = "1"
     evaluator_cost_contract: str = "net-cost-aware-fold-metrics-v1"
@@ -146,8 +141,13 @@ class LearningExperiment:
         object.__setattr__(self, "interval", BarInterval(self.interval))
         for name in ("started_at", "as_of", "sealed_final_start"):
             _explicit_utc(getattr(self, name), f"experiment {name}")
-        if not self.started_at <= self.as_of < self.sealed_final_start:
-            raise ValueError("learning timestamps must precede the sealed final boundary")
+        development_data_through = self.development_data_through or self.as_of
+        _explicit_utc(development_data_through, "experiment development_data_through")
+        if development_data_through != self.as_of:
+            raise ValueError("as_of must equal the authenticated development data boundary")
+        if development_data_through >= self.sealed_final_start:
+            raise ValueError("development data must precede the sealed final boundary")
+        object.__setattr__(self, "development_data_through", development_data_through)
         if isinstance(self.seed, bool) or not isinstance(self.seed, int):
             raise ValueError("learning seed must be an integer")
         if self.evaluation_budget <= 0:
@@ -281,6 +281,7 @@ def _development_frame(experiment: LearningExperiment, bars: pd.DataFrame) -> pd
             "symbol",
             "open_timestamp",
             "close_timestamp",
+            "available_at",
             "open",
             "high",
             "low",
@@ -516,6 +517,7 @@ def _default_evaluator(
             "symbol",
             "open_timestamp",
             "close_timestamp",
+            "available_at",
             "open",
             "high",
             "low",
@@ -676,6 +678,7 @@ def _experiment_hash(experiment: LearningExperiment) -> str:
                 "interval": experiment.interval.value,
                 "started_at": experiment.started_at,
                 "as_of": experiment.as_of,
+                "development_data_through": experiment.development_data_through,
                 "sealed_final_start": experiment.sealed_final_start,
             },
             "search": {
@@ -937,7 +940,7 @@ def _persist_discovery(
                     "plain_language": candidate.rule.render(),
                 },
                 "evidence": {
-                    "development_evidence_through": experiment.as_of.isoformat(),
+                    "development_evidence_through": experiment.development_data_through.isoformat(),
                     "final_boundary": experiment.sealed_final_start.isoformat(),
                     "development_evidence_digest": development_digest,
                     "experiment_hash": _experiment_hash(experiment),
@@ -947,7 +950,7 @@ def _persist_discovery(
                 },
                 "source": _TRIAL_SOURCE,
                 "source_version": _TRIAL_SOURCE_VERSION,
-                "created_at": experiment.as_of,
+                "created_at": candidate.discovered_at,
             }
         ],
     )

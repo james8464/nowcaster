@@ -37,6 +37,9 @@ class ValidationConfig:
     minimum_development_observations: int = 5
     maximum_drawdown: float = 0.5
     minimum_dsr_probability: float = 0.5
+    maximum_pbo_probability: float = 0.5
+    minimum_parameter_neighbor_positive_fraction: float = 0.5
+    minimum_parameter_neighbor_median_ratio: float = 0.5
 
     def __post_init__(self) -> None:
         if not 0 < self.final_test_fraction < 1:
@@ -47,7 +50,14 @@ class ValidationConfig:
             raise ValueError("horizon, publication delay, and embargo cannot be negative")
         if self.periods_per_year <= 0 or self.minimum_trades < 0 or self.minimum_development_observations <= 0:
             raise ValueError("period and evidence counts must be valid")
-        if not 0 <= self.maximum_drawdown <= 1 or not 0 <= self.minimum_dsr_probability <= 1:
+        probabilities = (
+            self.maximum_drawdown,
+            self.minimum_dsr_probability,
+            self.maximum_pbo_probability,
+            self.minimum_parameter_neighbor_positive_fraction,
+            self.minimum_parameter_neighbor_median_ratio,
+        )
+        if any(not 0 <= value <= 1 for value in probabilities):
             raise ValueError("promotion probability and drawdown thresholds must be in [0, 1]")
 
     @property
@@ -88,6 +98,26 @@ def promotion_reasons(inputs: Mapping[str, Any], config: ValidationConfig) -> tu
         reasons.append("Deflated Sharpe probability failed")
     if inputs["causal_audit_passed"] is not True:
         reasons.append("causal audit failed")
+    if inputs.get("robustness_available") is not True:
+        reasons.append("robustness diagnostics are unavailable")
+    else:
+        median_edge = inputs.get("median_walk_forward_net_edge")
+        if median_edge is None or not math.isfinite(float(median_edge)) or float(median_edge) <= 0:
+            reasons.append("median walk-forward net edge is not positive")
+        pbo_probability = inputs.get("pbo_probability")
+        if (
+            pbo_probability is None
+            or not math.isfinite(float(pbo_probability))
+            or float(pbo_probability) > config.maximum_pbo_probability
+        ):
+            reasons.append("CSCV/PBO gate failed")
+        if (
+            inputs.get("parameter_neighborhood_stable") is not True
+            or float(inputs.get("parameter_neighbor_positive_fraction", -1))
+            < config.minimum_parameter_neighbor_positive_fraction
+            or float(inputs.get("parameter_neighbor_median_ratio", -1)) < config.minimum_parameter_neighbor_median_ratio
+        ):
+            reasons.append("parameter-neighborhood stability failed")
     return tuple(reasons)
 
 
@@ -147,6 +177,7 @@ class StrategyRunEvidence:
     signals: pd.DataFrame = field(default_factory=pd.DataFrame)
     trial_evidence: tuple[TrialEvidence, ...] = ()
     fold_evidence: tuple[FoldEvidence, ...] = ()
+    robustness: RobustnessEvidence | None = None
     # Legacy aggregate inputs remain constructor-compatible but are rejected by evaluate_registry.
     trial_sharpes: tuple[float, ...] = ()
     causal_audit_passed: bool = True
@@ -157,6 +188,56 @@ class StrategyRunEvidence:
     uncertainty: float = 0.0
     unavailable_reason: str | None = None
     error_summary: str | None = None
+
+
+def calculate_fold_calibration_error(
+    signals: pd.DataFrame,
+    outcomes: pd.DataFrame,
+    decision_timestamps: Sequence[pd.Timestamp | datetime],
+) -> float:
+    """Score directional confidence against causally mapped fold outcomes."""
+    required_signals = {"decision_timestamp", "signal", "strength"}
+    required_outcomes = {"decision_timestamp", "outcome_available_at", "net_return"}
+    if missing := required_signals - set(signals.columns):
+        raise ValueError(f"fold signals are missing columns: {sorted(missing)}")
+    if missing := required_outcomes - set(outcomes.columns):
+        raise ValueError(f"fold outcomes are missing columns: {sorted(missing)}")
+
+    expected = pd.DataFrame({"decision_timestamp": pd.to_datetime(list(decision_timestamps), utc=True)})
+    signal_rows = signals[["decision_timestamp", "signal", "strength"]].copy()
+    signal_rows["decision_timestamp"] = pd.to_datetime(signal_rows["decision_timestamp"], utc=True)
+    if signal_rows["decision_timestamp"].duplicated().any():
+        raise ValueError("fold signals contain duplicate decision timestamps")
+    signal_rows = signal_rows.sort_values("decision_timestamp", kind="stable")
+    outcome_rows = outcomes[["decision_timestamp", "outcome_available_at", "net_return"]].copy()
+    outcome_rows["decision_timestamp"] = pd.to_datetime(outcome_rows["decision_timestamp"], utc=True)
+    if outcome_rows["decision_timestamp"].duplicated().any():
+        raise ValueError("fold outcomes contain duplicate decision timestamps")
+    expected = expected.sort_values("decision_timestamp", kind="stable")
+    joined = pd.merge_asof(
+        expected,
+        signal_rows,
+        on="decision_timestamp",
+        direction="backward",
+        allow_exact_matches=True,
+    ).merge(
+        outcome_rows,
+        on="decision_timestamp",
+        how="left",
+        validate="one_to_one",
+    )
+    if joined[["outcome_available_at", "net_return"]].isna().any().any():
+        raise ValueError("fold decisions do not map one-to-one to outcome rows")
+    joined[["signal", "strength"]] = joined[["signal", "strength"]].fillna(0.0)
+
+    directions = pd.to_numeric(joined["signal"], errors="raise")
+    strengths = pd.to_numeric(joined["strength"], errors="raise")
+    returns = pd.to_numeric(joined["net_return"], errors="raise")
+    if not directions.isin((-1, 0, 1)).all() or not strengths.between(0, 1).all():
+        raise ValueError("fold signals contain invalid direction or strength")
+    probability = 0.5 + 0.5 * strengths.where(directions != 0, 0.0)
+    favorable = ((directions * returns) > 0).astype(float)
+    return float(np.mean(np.square(probability - favorable)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,10 +263,12 @@ class StrategyEvaluation:
     current_signal: int = 0
     current_strength: float = 0.0
     current_probability: float = 0.5
+    calibration_status: str = "calibrated"
     current_volatility: float = 1.0
     expected_edge: float = 0.0
     expected_cost: float = 0.0
     uncertainty: float = 0.0
+    robustness: RobustnessEvidence | None = None
     decision_timestamp: datetime | None = None
     data_through: datetime | None = None
     dataset_hash: str = ""
@@ -195,6 +278,8 @@ class StrategyEvaluation:
     evidence_provenance: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
 
     def __post_init__(self) -> None:
+        if self.calibration_status not in {"calibrated", "unavailable"}:
+            raise ValueError("calibration status must be calibrated or unavailable")
         object.__setattr__(self, "evidence_provenance", _deep_freeze(self.evidence_provenance))
 
 
@@ -231,6 +316,33 @@ class _SealedEvidence:
     fold_stability: float
     calibration_error: float
     provenance: Mapping[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class RobustnessEvidence:
+    median_walk_forward_net_edge: float
+    pbo_probability: float
+    parameter_neighborhood_stable: bool
+    parameter_neighbor_positive_fraction: float
+    parameter_neighbor_median_ratio: float
+
+    def __post_init__(self) -> None:
+        numeric = (
+            self.median_walk_forward_net_edge,
+            self.pbo_probability,
+            self.parameter_neighbor_positive_fraction,
+            self.parameter_neighbor_median_ratio,
+        )
+        if any(not math.isfinite(float(value)) for value in numeric):
+            raise ValueError("robustness evidence must be finite")
+        if not 0 <= self.pbo_probability <= 1:
+            raise ValueError("PBO probability must be in [0, 1]")
+        if not 0 <= self.parameter_neighbor_positive_fraction <= 1:
+            raise ValueError("parameter neighbor fraction must be in [0, 1]")
+        if self.parameter_neighbor_median_ratio < 0:
+            raise ValueError("parameter neighbor median ratio cannot be negative")
+        if type(self.parameter_neighborhood_stable) is not bool:
+            raise ValueError("parameter stability must be a boolean")
 
 
 def _evidence_timestamp(value: object, label: str) -> datetime:
@@ -286,6 +398,9 @@ def _config_record(config: ValidationConfig) -> dict[str, Any]:
         "minimum_development_observations": config.minimum_development_observations,
         "maximum_drawdown": float(config.maximum_drawdown),
         "minimum_dsr_probability": float(config.minimum_dsr_probability),
+        "maximum_pbo_probability": float(config.maximum_pbo_probability),
+        "minimum_parameter_neighbor_positive_fraction": float(config.minimum_parameter_neighbor_positive_fraction),
+        "minimum_parameter_neighbor_median_ratio": float(config.minimum_parameter_neighbor_median_ratio),
     }
 
 
@@ -444,7 +559,12 @@ def make_outer_folds(
     if (available < decisions).any():
         raise ValueError("outcomes must become available at or after their decisions")
     folds: list[OuterFold] = []
-    development_end = len(boundary.development_index)
+    eligible_development = tuple(
+        index for index in boundary.development_index if available.iloc[index] < boundary.final_start
+    )
+    development_end = len(eligible_development)
+    if eligible_development != tuple(range(development_end)):
+        raise ValueError("development outcome availability must form a chronological prefix")
     for validation_start in range(
         config.minimum_train_observations,
         development_end,
@@ -627,6 +747,55 @@ def _finite_or_none(value: float) -> float | None:
     return float(value) if math.isfinite(value) else None
 
 
+def _fit_development_decision_calibration(
+    evidence: StrategyRunEvidence,
+    mapped_curve: pd.DataFrame,
+    development_mask: pd.Series,
+    current_signal: int,
+) -> tuple[str, float, float, float, float, Mapping[str, Any]]:
+    signals = evidence.signals.copy()
+    required = {"decision_timestamp", "signal", "strength"}
+    if missing := required - set(signals.columns):
+        return "unavailable", 0.5, 0.0, 0.0, 0.0, {"reason": f"missing signal fields: {sorted(missing)}"}
+    signals["decision_timestamp"] = pd.to_datetime(signals["decision_timestamp"], utc=True)
+    outcomes = mapped_curve.loc[development_mask].copy()
+    outcomes["decision_timestamp"] = pd.to_datetime(outcomes["decision_timestamp"], utc=True)
+    joined = outcomes.merge(
+        signals[["decision_timestamp", "signal", "strength"]],
+        on="decision_timestamp",
+        how="inner",
+        validate="one_to_one",
+    )
+    joined["net_return"] = pd.to_numeric(joined["net_return"], errors="coerce")
+    joined["signal"] = pd.to_numeric(joined["signal"], errors="coerce")
+    joined = joined.loc[joined["signal"].isin((-1, 1)) & joined["net_return"].notna()].copy()
+    if len(joined) < 5:
+        return "unavailable", 0.5, 0.0, 0.0, 0.0, {"reason": "insufficient development calibration observations"}
+    signed_returns = joined["signal"] * joined["net_return"]
+    favorable = signed_returns > 0
+    if favorable.nunique() < 2:
+        return "unavailable", 0.5, 0.0, 0.0, 0.0, {"reason": "development outcomes contain one class"}
+    success_probability = float((int(favorable.sum()) + 1) / (len(favorable) + 2))
+    probability = success_probability if current_signal >= 0 else 1 - success_probability
+    expected_edge = max(float(signed_returns.mean()), 0.0)
+    expected_cost = (
+        float(pd.to_numeric(joined.get("cost_return", 0.0), errors="coerce").abs().fillna(0).mean())
+        if "cost_return" in joined
+        else 0.0
+    )
+    uncertainty = float(signed_returns.std(ddof=1) / math.sqrt(len(signed_returns)))
+    receipt = {
+        "method": "development_only_beta_binomial_v1",
+        "observations": len(joined),
+        "outcomes_through": pd.to_datetime(joined["outcome_available_at"], utc=True).max().to_pydatetime(),
+        "successes": int(favorable.sum()),
+        "decision_rows_hash": canonical_hash(
+            joined[["decision_timestamp", "signal", "strength", "net_return"]].to_dict("records")
+        ),
+    }
+    return "calibrated", probability, expected_edge, expected_cost, uncertainty, receipt
+
+
 def evaluate_registry(request: EvaluationRequest) -> tuple[StrategyEvaluation, ...]:
     if request.as_of.tzinfo is not UTC:
         raise ValueError("as_of must be an explicit UTC datetime")
@@ -709,7 +878,8 @@ def evaluate_registry(request: EvaluationRequest) -> tuple[StrategyEvaluation, .
             continue
 
         curve = evidence.backtest.equity_curve
-        if "timestamp" not in curve or "net_return" not in curve:
+        required_curve_columns = {"timestamp", "decision_timestamp", "outcome_available_at", "net_return"}
+        if missing_curve_columns := required_curve_columns - set(curve.columns):
             evaluations.append(
                 _placeholder_evaluation(
                     request,
@@ -717,11 +887,31 @@ def evaluate_registry(request: EvaluationRequest) -> tuple[StrategyEvaluation, .
                     spec.deterministic_version,
                     spec.family,
                     EvaluationStatus.FAILED,
-                    "backtest curve lacks timestamped net returns",
+                    f"backtest curve lacks causal outcome mapping: {sorted(missing_curve_columns)}",
                 )
             )
             continue
-        timestamps = _timestamp_values(curve["timestamp"], name="backtest timestamp")
+        mapped_mask = pd.to_datetime(curve["decision_timestamp"], utc=True, errors="coerce").notna()
+        if not mapped_mask.any():
+            evaluations.append(
+                _placeholder_evaluation(
+                    request,
+                    spec.strategy_id,
+                    spec.deterministic_version,
+                    spec.family,
+                    EvaluationStatus.FAILED,
+                    "backtest curve has no mapped decision outcomes",
+                )
+            )
+            continue
+        mapped_backtest = IntradayBacktestResult(
+            curve.loc[mapped_mask].copy(),
+            evidence.backtest.trade_ledger,
+            evidence.backtest.rejection_ledger,
+            evidence.backtest.metrics,
+        )
+        mapped_curve = mapped_backtest.equity_curve
+        timestamps = _timestamp_values(mapped_curve["timestamp"], name="backtest timestamp")
         if timestamps.max() > requested_as_of:
             evaluations.append(
                 _placeholder_evaluation(
@@ -734,16 +924,47 @@ def evaluate_registry(request: EvaluationRequest) -> tuple[StrategyEvaluation, .
                 )
             )
             continue
-        development_mask = timestamps < boundary.final_start
+        decision_timestamps = _timestamp_values(
+            mapped_curve["decision_timestamp"], name="backtest decision timestamp"
+        ).set_axis(mapped_curve.index)
+        outcome_timestamps = _timestamp_values(
+            mapped_curve["outcome_available_at"], name="backtest outcome availability"
+        ).set_axis(mapped_curve.index)
+        if (outcome_timestamps < decision_timestamps).any() or outcome_timestamps.max() > requested_as_of:
+            evaluations.append(
+                _placeholder_evaluation(
+                    request,
+                    spec.strategy_id,
+                    spec.deterministic_version,
+                    spec.family,
+                    EvaluationStatus.FAILED,
+                    "backtest outcome mapping violates requested chronology",
+                )
+            )
+            continue
+        if tuple(decision_timestamps) != tuple(chronology) or tuple(outcome_timestamps) != tuple(outcome_availability):
+            evaluations.append(
+                _placeholder_evaluation(
+                    request,
+                    spec.strategy_id,
+                    spec.deterministic_version,
+                    spec.family,
+                    EvaluationStatus.FAILED,
+                    "backtest outcomes do not match the sealed decision-to-outcome map",
+                )
+            )
+            continue
+        development_mask = (decision_timestamps < boundary.final_start) & (outcome_timestamps < boundary.final_start)
+        final_mask = decision_timestamps >= boundary.final_start
         development = _segment_metrics(
-            evidence.backtest, development_mask, periods_per_year=request.config.periods_per_year
+            mapped_backtest, development_mask, periods_per_year=request.config.periods_per_year
         )
-        final = _segment_metrics(evidence.backtest, ~development_mask, periods_per_year=request.config.periods_per_year)
-        development_returns = pd.to_numeric(curve.loc[development_mask, "net_return"], errors="coerce").dropna()
+        final = _segment_metrics(mapped_backtest, final_mask, periods_per_year=request.config.periods_per_year)
+        development_returns = pd.to_numeric(mapped_curve.loc[development_mask, "net_return"], errors="coerce").dropna()
         downside = development_returns.loc[development_returns < 0]
         downside_risk = float(np.sqrt(np.mean(np.square(downside)))) if len(downside) else 0.0
         try:
-            cost_survives = doubled_cost_survival(curve.loc[development_mask]).survives
+            cost_survives = doubled_cost_survival(mapped_curve.loc[development_mask]).survives
         except ValueError:
             cost_survives = False
         dsr: float | None = None
@@ -770,6 +991,14 @@ def evaluate_registry(request: EvaluationRequest) -> tuple[StrategyEvaluation, .
                 continue
         stability = sealed_evidence.fold_stability
         signal, strength, decision_timestamp, data_through = _latest_signal(evidence, request.as_of)
+        (
+            calibration_status,
+            current_probability,
+            expected_edge,
+            expected_cost,
+            uncertainty,
+            decision_calibration,
+        ) = _fit_development_decision_calibration(evidence, mapped_curve, development_mask, signal)
         development_sharpe = _finite_or_none(development.sharpe)
         development_maximum_drawdown = _finite_or_none(development.maximum_drawdown)
         final_sharpe = _finite_or_none(final.sharpe)
@@ -786,6 +1015,20 @@ def evaluate_registry(request: EvaluationRequest) -> tuple[StrategyEvaluation, .
             "dsr_probability": dsr,
             "trial_sharpes": sealed_evidence.trial_sharpes,
             "causal_audit_passed": evidence.causal_audit_passed,
+            "robustness_available": evidence.robustness is not None,
+            "median_walk_forward_net_edge": (
+                evidence.robustness.median_walk_forward_net_edge if evidence.robustness else None
+            ),
+            "pbo_probability": evidence.robustness.pbo_probability if evidence.robustness else None,
+            "parameter_neighborhood_stable": (
+                evidence.robustness.parameter_neighborhood_stable if evidence.robustness else None
+            ),
+            "parameter_neighbor_positive_fraction": (
+                evidence.robustness.parameter_neighbor_positive_fraction if evidence.robustness else None
+            ),
+            "parameter_neighbor_median_ratio": (
+                evidence.robustness.parameter_neighbor_median_ratio if evidence.robustness else None
+            ),
         }
         reasons = promotion_reasons(promotion_inputs, request.config)
         promotion = PromotionDecision(not reasons, reasons)
@@ -810,7 +1053,9 @@ def evaluate_registry(request: EvaluationRequest) -> tuple[StrategyEvaluation, .
             "development_index": boundary.development_index,
             "final_index": boundary.final_index,
         }
-        promotion_timestamps = [timestamp.to_pydatetime() for timestamp in timestamps.loc[development_mask]]
+        promotion_timestamps = [
+            pd.Timestamp(timestamp).to_pydatetime() for timestamp in mapped_curve.loc[development_mask, "timestamp"]
+        ]
         promotion_timestamps.extend(item["evaluated_at"] for item in sealed_evidence.provenance["trials"])
         promotion_timestamps.extend(item["evaluated_at"] for item in sealed_evidence.provenance["folds"])
         promotion_evidence_through = max(promotion_timestamps)
@@ -840,6 +1085,8 @@ def evaluate_registry(request: EvaluationRequest) -> tuple[StrategyEvaluation, .
                 "promotion_evidence_hash": canonical_hash(promotion_payload),
                 "validation_snapshot": validation_snapshot,
                 "validation_snapshot_hash": canonical_hash(validation_snapshot),
+                "decision_calibration": decision_calibration,
+                "decision_calibration_hash": canonical_hash(decision_calibration),
             }
         )
         evaluations.append(
@@ -864,10 +1111,12 @@ def evaluate_registry(request: EvaluationRequest) -> tuple[StrategyEvaluation, .
                 causal_audit_passed=evidence.causal_audit_passed,
                 current_signal=signal,
                 current_strength=strength,
-                current_probability=0.5 + signal * strength * 0.5,
-                expected_edge=evidence.expected_edge,
-                expected_cost=evidence.expected_cost,
-                uncertainty=evidence.uncertainty,
+                current_probability=current_probability,
+                calibration_status=calibration_status,
+                expected_edge=expected_edge,
+                expected_cost=expected_cost,
+                uncertainty=uncertainty,
+                robustness=evidence.robustness,
                 decision_timestamp=decision_timestamp,
                 data_through=data_through,
                 dataset_hash=request.dataset_hash,
@@ -889,6 +1138,7 @@ __all__ = [
     "FrozenProtocolResult",
     "OuterFold",
     "PromotionDecision",
+    "RobustnessEvidence",
     "StrategyEvaluation",
     "StrategyRunEvidence",
     "TrialEvidence",

@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import Darwin
 
 @testable import NowcasterApp
 
@@ -196,7 +197,7 @@ private let learningConfiguration = EngineConfiguration(
     #expect(decoder.finish().isEmpty)
 }
 
-@Test func runnerEmitsACompletedPartialJSONLineBeforeProcessExit() async throws {
+@Test func runnerOrdersACompletedPartialJSONLineBeforeJobCompletion() async throws {
     let temporaryRoot = FileManager.default.temporaryDirectory
         .appending(path: "NowcasterRunnerTests-(UUID().uuidString)", directoryHint: .isDirectory)
     let sourceRoot = temporaryRoot.appending(path: "src", directoryHint: .isDirectory)
@@ -221,19 +222,15 @@ private let learningConfiguration = EngineConfiguration(
         mode: .demo
     )
 
-    var progressInstant: ContinuousClock.Instant?
-    var completedInstant: ContinuousClock.Instant?
+    var events: [EngineProgressEvent] = []
     for try await event in EngineRunner().run(.exportSnapshot(databaseURL: nil), configuration: configuration) {
-        if event.event == "progress" {
-            progressInstant = .now
-        } else if event.event == "job_completed" {
-            completedInstant = .now
-        }
+        events.append(event)
     }
 
-    let progress = try #require(progressInstant)
-    let completed = try #require(completedInstant)
-    #expect(progress.duration(to: completed) > .milliseconds(500))
+    let progressIndex = try #require(events.firstIndex(where: { $0.event == "progress" }))
+    let completedIndex = try #require(events.firstIndex(where: { $0.event == "job_completed" }))
+    #expect(events[progressIndex].progress == 0.5)
+    #expect(progressIndex < completedIndex)
 }
 
 @Test func runnerSurfacesBoundedNonzeroExitDiagnostics() async throws {
@@ -297,4 +294,46 @@ private actor LaunchGate {
     _ = try? await consumer.value
     try await Task.sleep(for: .milliseconds(100))
     #expect(!FileManager.default.fileExists(atPath: marker.path))
+}
+
+@Test func cancellationEscalatesToKillForASignalResistantChild() async throws {
+    let temporaryRoot = FileManager.default.temporaryDirectory
+        .appending(path: "NowcasterKillEscalation-\(UUID().uuidString)", directoryHint: .isDirectory)
+    let sourceRoot = temporaryRoot.appending(path: "src", directoryHint: .isDirectory)
+    let pidFile = temporaryRoot.appending(path: "pid.txt")
+    try FileManager.default.createDirectory(at: sourceRoot, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+    try Data().write(to: sourceRoot.appending(path: "__init__.py"))
+    try Data(
+        """
+        import os, signal, time
+        from pathlib import Path
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        Path(r'\(pidFile.path)').write_text(str(os.getpid()))
+        while True: time.sleep(0.05)
+        """.utf8
+    ).write(to: sourceRoot.appending(path: "cli.py"))
+    let configuration = EngineConfiguration(
+        projectRoot: temporaryRoot,
+        pythonExecutable: URL(fileURLWithPath: "/usr/bin/python3"),
+        snapshotURL: temporaryRoot.appending(path: "snapshot.json"),
+        mode: .demo
+    )
+    let consumer = Task {
+        for try await _ in EngineRunner().run(.exportSnapshot(databaseURL: nil), configuration: configuration) {}
+    }
+    let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+    while !FileManager.default.fileExists(atPath: pidFile.path), ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(20))
+    }
+    let pid = try #require(Int32(String(contentsOf: pidFile, encoding: .utf8)))
+
+    consumer.cancel()
+    _ = try? await consumer.value
+    let exitDeadline = ContinuousClock.now.advanced(by: .seconds(2))
+    while Darwin.kill(pid, 0) == 0, ContinuousClock.now < exitDeadline {
+        try await Task.sleep(for: .milliseconds(20))
+    }
+
+    #expect(Darwin.kill(pid, 0) == -1)
 }

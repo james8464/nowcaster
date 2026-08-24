@@ -52,6 +52,10 @@ def promote_candidate(candidate: RuleCandidate, evidence: ForwardEvidence) -> Pr
         reasons.append("candidate development evidence boundary is unavailable")
     elif evidence.period_start <= candidate.evidence_through:
         reasons.append("promotion requires a genuinely new forward period")
+    if candidate.discovered_at is None:
+        reasons.append("candidate discovery receipt is unavailable")
+    elif evidence.period_start <= candidate.discovered_at:
+        reasons.append("promotion outcomes must be available after actual candidate discovery")
     if not evidence.outer_block_inspected:
         reasons.append("forward outer block has not been inspected")
     if evidence.outer_block_consumed:

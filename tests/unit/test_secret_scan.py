@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 from pathlib import Path
 
 
@@ -52,3 +53,24 @@ def test_provider_shaped_unassigned_identifiers_do_not_trigger_false_positive() 
     text = "strategy hash: " + "a" * 64 + "\nfixture id: PKTESTONLY123456789012345678\n"
 
     assert scanner.scan_text(Path("data/research-summary.json"), text) == []
+
+
+def test_history_scan_finds_a_secret_committed_then_deleted_without_echoing_it(tmp_path) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True)
+    secret_name = "BINANCE_" + "API_SECRET"
+    secret_value = "Q" * 64
+    path = tmp_path / "local.env"
+    path.write_text(f"{secret_name}={secret_value}\n", encoding="utf-8")
+    subprocess.run(["git", "add", "local.env"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-qm", "add"], cwd=tmp_path, check=True)
+    path.unlink()
+    subprocess.run(["git", "add", "-u"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-qm", "remove"], cwd=tmp_path, check=True)
+
+    findings = scanner.scan_git_history(tmp_path)
+    rendered = "\n".join(findings)
+
+    assert "possible Binance credential assignment" in rendered
+    assert secret_value not in rendered

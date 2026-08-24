@@ -86,6 +86,22 @@ def test_fixed_seed_is_deterministic_across_input_and_configuration_order() -> N
     assert first.best_candidate == second.best_candidate
 
 
+def test_post_hoc_learning_uses_receipt_time_without_moving_the_development_boundary() -> None:
+    receipt_time = datetime(2026, 8, 24, 12, tzinfo=UTC)
+    experiment = _experiment(
+        started_at=receipt_time,
+        as_of=datetime(2026, 8, 20, 22, tzinfo=UTC),
+        development_data_through=datetime(2026, 8, 20, 22, tzinfo=UTC),
+    )
+
+    result = discover_rules(experiment, _bars())
+
+    assert result.trials[0].evaluated_at == receipt_time
+    assert result.best_candidate is not None
+    assert result.best_candidate.discovered_at == receipt_time
+    assert result.best_candidate.evidence_through == datetime(2026, 8, 20, 22, tzinfo=UTC)
+
+
 def test_fixed_seed_candidate_sequence_is_stable_in_a_fresh_process() -> None:
     def evaluator(*_) -> FoldMetrics:
         return FoldMetrics(1.0, -0.1, 0.2)

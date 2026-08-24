@@ -135,3 +135,5 @@ Task 9: fix round 2/5 in progress (1 open; fix-round-1 commit cfcf948).
 Task 9: fix round 2/5 (1 addressed, 0 open; commits cfcf948..831204b).
 Task 9: complete (commits 383a3ee..831204b, review clean; 477 Python tests, 53 Swift tests, release build, schema drift, secret scan, exhaustive provider evidence and deterministic cache replay clean).
 Task 10: in progress (whole-product verification and publication).
+Task 10: whole-branch review found 1 critical, 6 important, and 2 minor issues: learning provenance can be retrodated across the sealed final boundary; fold/final returns are shifted one bar; equity-session strategies use a continuous UTC calendar; REST backfills overclaim original-vintage revision fidelity; required robustness diagnostics are not promotion gates; ensemble probability/economic gates are placeholders; CI does not assert Python-to-Swift fixture parity; cancellation lacks kill escalation; and the secret scanner ignores Git history.
+Task 10: final fix round 1/1 in progress (9 open; review head 25d6e15).

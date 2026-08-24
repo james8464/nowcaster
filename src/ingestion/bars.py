@@ -6,7 +6,7 @@ from collections.abc import Callable, Iterable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Protocol
+from typing import Literal, Protocol
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -109,6 +109,13 @@ class MarketBar(BaseModel):
     close_timestamp: datetime
     available_at: datetime
     retrieved_at: datetime | None = None
+    source_available_at: datetime | None = None
+    observed_at: datetime | None = None
+    vintage_fidelity: Literal[
+        "authenticated_immutable",
+        "backfilled_rest_no_revision_history",
+        "unknown_legacy",
+    ] = "authenticated_immutable"
     revision: int = Field(default=1, ge=1)
     finalized: bool = True
     open: float
@@ -136,7 +143,14 @@ class MarketBar(BaseModel):
             raise ValueError("symbol must not be empty")
         return value
 
-    @field_validator("open_timestamp", "close_timestamp", "available_at", "retrieved_at")
+    @field_validator(
+        "open_timestamp",
+        "close_timestamp",
+        "available_at",
+        "retrieved_at",
+        "source_available_at",
+        "observed_at",
+    )
     @classmethod
     def utc_timestamps(cls, value: datetime | None) -> datetime | None:
         return require_utc(value) if value is not None else None
@@ -149,6 +163,14 @@ class MarketBar(BaseModel):
             raise ValueError("a finalized bar cannot be available before its close timestamp")
         if self.retrieved_at is not None and self.retrieved_at < self.available_at:
             raise ValueError("bar retrieval cannot precede source availability")
+        source_available_at = self.source_available_at or self.close_timestamp
+        observed_at = self.observed_at or self.retrieved_at or self.available_at
+        object.__setattr__(self, "source_available_at", source_available_at)
+        object.__setattr__(self, "observed_at", observed_at)
+        if source_available_at < self.close_timestamp or observed_at < source_available_at:
+            raise ValueError("bar observation provenance is chronologically malformed")
+        if self.vintage_fidelity == "backfilled_rest_no_revision_history" and self.available_at < observed_at:
+            raise ValueError("REST backfills cannot be labeled available before retrieval")
         if self.high < max(self.open, self.close) or self.low > min(self.open, self.close) or self.high < self.low:
             raise ValueError("bar OHLC values are inconsistent")
         return self
