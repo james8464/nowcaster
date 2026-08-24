@@ -139,3 +139,40 @@ Final deterministic research identities:
 3. Modeled cost is not a promise of realized slippage. Missing or malformed modeled cost now abstains, but borrow, market impact, latency, and regime changes remain outside historical certainty.
 4. The native app intentionally embeds at most ten ensemble components to respect its bounded decoder contract, but every embedded research section/component is now an exact projection of the authoritative Python artifact and cannot silently diverge.
 5. Backtests and causal receipts reduce leakage and audit risk; they do not guarantee profitable day trading.
+
+## Exceptional Fixture-Parity Validation Micro-Fix
+
+### Root cause and correction
+
+The Python/Swift semantic verifier itself compared the correct authoritative sections, but the Make target declared `sync-macos-snapshot` as a prerequisite. CI therefore rewrote the checked-in Swift fixture from Python immediately before comparing it. A stale committed fixture silently healed and passed, and even an already matching fixture changed bytes because synchronization rewrote export formatting/receipt content.
+
+`verify-swift-fixture-parity` is now a prerequisite-free, read-only operation. It compares the checked-in Swift fixture directly with `data/research/ci/nowcaster-snapshot.json`. `sync-macos-snapshot` remains a separate explicit developer maintenance command, documented independently in the README. CI already invokes the verification target, so its existing path now fails on stale committed semantics without mutation.
+
+### TDD evidence
+
+The regression invokes the actual repository Make target from a controlled temporary workspace. A deterministic fake export executable permits the old synchronization prerequisite to run without network or production data. It exercises both matching and divergent Python/Swift inputs and hashes the Swift bytes around the target.
+
+- RED: `.venv/bin/pytest -q tests/unit/test_snapshot_fixture_parity.py::test_make_parity_target_is_read_only_for_matching_and_divergent_fixtures` failed because the matching Swift file was reformatted/rewritten before comparison (`assert swift_path.read_bytes() == matching_bytes` failed). Under the old prerequisite, the divergent fixture was likewise overwritten from Python and the target returned success.
+- Minimal GREEN: removed only the synchronization prerequisite from the verification target. The explicit sync recipe was retained unchanged.
+- Focused GREEN: the Make-facing regression — **1 passed in 0.41s**; `.venv/bin/pytest -q tests/unit/test_snapshot_fixture_parity.py` — **4 passed in 0.42s**; `make verify-swift-fixture-parity` — passed with hash `8a1c214792defa8975b5e6f8c19e2c0d221a59e258c9bb3307ad2451407728af`.
+
+### Final verification
+
+- `.venv/bin/pytest -q` — **503 passed in 298.80s**.
+- `.venv/bin/ruff format --check .` — **181 files already formatted**.
+- `.venv/bin/ruff check .` — **All checks passed**.
+- `swift test --package-path macos/Nowcaster` — **53 Swift Testing tests plus 1 XCTest passed (54 total)**.
+- `swift build -c release --package-path macos/Nowcaster` — production build completed.
+- `make verify-research-fixtures` — regenerated schema-v2 research and passed the staged byte-drift assertion.
+- `make verify-swift-fixture-parity` — read-only authoritative parity passed with hash `8a1c214792defa8975b5e6f8c19e2c0d221a59e258c9bb3307ad2451407728af`.
+- `.venv/bin/python scripts/scan_tracked_secrets.py` — current and reachable-history scan passed.
+- `git diff --check` and staged diff check — passed.
+- No live network fetch ran; raw caches and generated DuckDBs remain ignored/outside Git.
+
+The Makefile change updates the deterministic research code hash to `b05fd784633a4eebbd10110d9a44dd2645fdb0996c6a6faf6bfbf376c81aa6b1`; the semantic research snapshot remains `82576bf13f6a868bd2084ea86054ea93e3d6c713e96e106d2bcba8be28c6040e`.
+
+### Files and concerns
+
+- Changed: `Makefile`, `README.md`, `tests/unit/test_snapshot_fixture_parity.py`, deterministic research summary/report, controller `progress.md`, and this report.
+- The Swift fixture did not require regeneration because its authoritative research semantics already match. Explicit synchronization still updates volatile demo receipt bytes by design; verification never invokes it.
+- The parity gate covers schema version and the five native research sections, including the documented ten-component native projection. It intentionally does not claim byte identity for unrelated demo/export receipt sections.

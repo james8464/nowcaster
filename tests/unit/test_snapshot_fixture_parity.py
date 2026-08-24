@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import subprocess
 import sys
 from copy import deepcopy
 from pathlib import Path
@@ -15,6 +16,7 @@ def _load_verifier():
 
 
 verifier = _load_verifier()
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _load_synchronizer():
@@ -145,3 +147,77 @@ def test_python_research_semantic_mutation_breaks_swift_parity(tmp_path, monkeyp
     python_path.write_text(json.dumps(changed_python), encoding="utf-8")
 
     assert verifier.main() == 1
+
+
+def test_make_parity_target_is_read_only_for_matching_and_divergent_fixtures(tmp_path) -> None:
+    research = {
+        "schema_version": 2,
+        "strategies": [{"strategy_id": "causal", "promotion_state": "rejected"}],
+        "ensemble_components": [{"strategy_id": "causal"}],
+        "dataset_coverage": [{"dataset_hash": "d" * 64}],
+        "learning_runs": [{"learning_run_id": "bounded"}],
+        "causal_audits": [{"audit_id": "audit", "passed": True}],
+    }
+    python_path = tmp_path / "data/research/ci/nowcaster-snapshot.json"
+    swift_path = tmp_path / "macos/Nowcaster/Sources/NowcasterApp/Resources/Fixtures/nowcaster-snapshot.json"
+    verifier_path = tmp_path / "scripts/verify_snapshot_fixture_parity.py"
+    synchronizer_path = tmp_path / "scripts/synchronize_snapshot_fixture.py"
+    base_path = tmp_path / "base.json"
+    python_wrapper = tmp_path / "fake-venv/bin/python"
+    python_path.parent.mkdir(parents=True)
+    swift_path.parent.mkdir(parents=True)
+    verifier_path.parent.mkdir(parents=True)
+    python_wrapper.parent.mkdir(parents=True)
+    verifier_path.write_bytes((PROJECT_ROOT / "scripts/verify_snapshot_fixture_parity.py").read_bytes())
+    synchronizer_path.write_bytes((PROJECT_ROOT / "scripts/synchronize_snapshot_fixture.py").read_bytes())
+    python_path.write_text(json.dumps(research), encoding="utf-8")
+    swift_path.write_text(json.dumps(research), encoding="utf-8")
+    base_path.write_text(json.dumps(research), encoding="utf-8")
+    python_wrapper.write_text(
+        f"""#!{sys.executable}
+import os
+import shutil
+import sys
+from pathlib import Path
+
+arguments = sys.argv[1:]
+if arguments[:3] == ["-m", "src.cli", "export-app-snapshot"]:
+    output = Path(arguments[arguments.index("--output") + 1])
+    output.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile({str(base_path)!r}, output)
+    raise SystemExit(0)
+os.execv({sys.executable!r}, [{sys.executable!r}, *arguments])
+""",
+        encoding="utf-8",
+    )
+    python_wrapper.chmod(0o755)
+
+    def verify() -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                "make",
+                "--no-print-directory",
+                "-f",
+                str(PROJECT_ROOT / "Makefile"),
+                f"VENV={python_wrapper.parent.parent}",
+                "verify-swift-fixture-parity",
+            ],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    matching_bytes = swift_path.read_bytes()
+    matching = verify()
+    assert matching.returncode == 0, matching.stdout + matching.stderr
+    assert swift_path.read_bytes() == matching_bytes
+
+    divergent = deepcopy(research)
+    divergent["strategies"][0]["promotion_state"] = "promoted"
+    swift_path.write_text(json.dumps(divergent), encoding="utf-8")
+    divergent_bytes = swift_path.read_bytes()
+    result = verify()
+
+    assert result.returncode != 0
+    assert swift_path.read_bytes() == divergent_bytes

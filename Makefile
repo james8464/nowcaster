@@ -58,7 +58,7 @@ verify-research-fixtures: research-ci
 	$(VENV)/bin/python -c 'from pathlib import Path; from src.app_snapshot.models import AppSnapshot; snapshot = AppSnapshot.model_validate_json(Path("data/research/ci/nowcaster-snapshot.json").read_text()); assert snapshot.schema_version == 2'
 	git diff --exit-code -- data/research/ci
 
-verify-swift-fixture-parity: sync-macos-snapshot
+verify-swift-fixture-parity:
 	$(VENV)/bin/python scripts/verify_snapshot_fixture_parity.py --python-research data/research/ci/nowcaster-snapshot.json --swift-fixture macos/Nowcaster/Sources/NowcasterApp/Resources/Fixtures/nowcaster-snapshot.json
 
 secret-scan:
