@@ -51,6 +51,14 @@ jobs:
       DEVELOPER_DIR: /Applications/Xcode_16.2.app/Contents/Developer
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install engine dependencies
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --index-url https://pypi.org/simple -e '.[dev]'
       - name: Verify Swift toolchain
         run: swift --version
       - name: Swift tests
