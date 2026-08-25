@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
 
 from src.config.settings import Settings
 from src.database.engine import Database
+from src.strategies import pipeline as strategy_pipeline
 from src.strategies.pipeline import (
     BarProviderName,
     DeepResearchOptions,
@@ -133,10 +135,18 @@ def test_deep_research_uses_complete_provider_snapshot_and_persists_every_trial(
     assert database.scalar("select count(*) from broker_order_intents") == 0
 
 
-def test_continuous_deep_research_runs_checkpointed_generations_until_time_budget(project_root, tmp_path) -> None:
+def test_continuous_deep_research_runs_checkpointed_generations_until_time_budget(
+    project_root, tmp_path, monkeypatch
+) -> None:
     pipeline, database = _pipeline(project_root, tmp_path)
     start = datetime(2026, 8, 20, tzinfo=UTC)
     pipeline.ingest(IngestOptions(scope=_scope(), start=start, end=start + timedelta(minutes=500)))
+    monotonic_ticks = iter((0.0, 5.0, 7.0))
+    monkeypatch.setattr(
+        strategy_pipeline,
+        "time",
+        SimpleNamespace(monotonic=lambda: next(monotonic_ticks)),
+    )
 
     outcome = pipeline.deep_research(
         DeepResearchOptions(

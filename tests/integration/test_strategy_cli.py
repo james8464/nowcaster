@@ -215,14 +215,12 @@ def _captured_learning_experiment(pipeline: StrategyPipeline, scope: StrategySco
 
 
 def test_strategy_cli_is_nested_without_removing_legacy_earnings_commands() -> None:
-    root_help = RUNNER.invoke(app, ["--help"])
-    strategy_help = RUNNER.invoke(app, ["strategy", "--help"])
-
-    assert root_help.exit_code == strategy_help.exit_code == 0
-    assert {"demo", "fetch-fundamentals", "train", "backtest", "report", "export-app-snapshot"} <= {
-        name for name in root_help.output.split() if name
-    }
-    assert {"ingest", "evaluate", "learn", "export"} <= {name for name in strategy_help.output.split() if name}
+    for command in ("demo", "fetch-fundamentals", "train", "backtest", "report", "export-app-snapshot"):
+        result = RUNNER.invoke(app, [command, "--help"])
+        assert result.exit_code == 0, result.output
+    for command in ("ingest", "evaluate", "learn", "export"):
+        result = RUNNER.invoke(app, ["strategy", command, "--help"])
+        assert result.exit_code == 0, result.output
 
 
 def test_injected_lot_size_is_effective_and_matches_persisted_policy_hash(project_root, tmp_path) -> None:
