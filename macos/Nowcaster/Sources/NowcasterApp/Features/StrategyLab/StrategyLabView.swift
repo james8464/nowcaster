@@ -68,9 +68,9 @@ struct StrategyPresentation: Identifiable, Sendable {
     var promotionTitle: String { strategy.promotionState.researchTitle }
     var causalAuditTitle: String {
         switch audit?.passed ?? strategy.causalAuditPassed {
-        case true: "Causal audit passed"
-        case false: "Causal audit failed"
-        case nil: "Causal audit unavailable"
+        case .some(true): "Causal audit passed"
+        case .some(false): "Causal audit failed"
+        case .none: "Causal audit unavailable"
         }
     }
     var noRepaintTitle: String {

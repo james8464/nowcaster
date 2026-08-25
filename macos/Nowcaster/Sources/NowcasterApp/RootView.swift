@@ -75,6 +75,7 @@ struct RootView: View {
     }
 
     @ViewBuilder private var bannerAwareNavigationLayout: some View {
+        #if compiler(>=6.2)
         if #available(macOS 26.0, *), RootSnapshotStatusPresentation(state: model.loadState) != nil {
             navigationLayout
                 .scrollEdgeEffectHidden(true, for: .top)
@@ -82,6 +83,9 @@ struct RootView: View {
         } else {
             navigationLayout.navigationSplitViewStyle(.balanced)
         }
+        #else
+        navigationLayout.navigationSplitViewStyle(.balanced)
+        #endif
     }
 
     @ViewBuilder private var snapshotRefreshBanner: some View {
