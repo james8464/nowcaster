@@ -46,10 +46,14 @@ struct NowcasterApp: App {
     }
 
     var body: some Scene {
-        WindowGroup {
+        WindowGroup(id: "main") {
             RootView(model: model, settings: settings)
             .preferredColorScheme(forcedColorScheme)
             .frame(minWidth: windowPresentation.minimumWidth, minHeight: windowPresentation.minimumHeight)
+        }
+
+        MenuBarExtra("Nowcaster Live Monitor", systemImage: model.liveMonitor.status.symbol) {
+            LiveMonitorMenu(model: model)
         }
         .defaultSize(width: windowPresentation.defaultWidth, height: windowPresentation.defaultHeight)
         .commands {

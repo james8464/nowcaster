@@ -5,6 +5,7 @@ enum AppDestination: String, CaseIterable, Identifiable, Sendable {
     case markets
     case earnings
     case signals
+    case liveMonitor
     case backtests
     case strategyLab
     case modelLab
@@ -20,6 +21,7 @@ enum AppDestination: String, CaseIterable, Identifiable, Sendable {
         case .markets: "Markets"
         case .earnings: "Earnings"
         case .signals: "Signals"
+        case .liveMonitor: "Live Monitor"
         case .backtests: "Backtests"
         case .strategyLab: "Strategy Lab"
         case .modelLab: "Model Lab"
@@ -35,6 +37,7 @@ enum AppDestination: String, CaseIterable, Identifiable, Sendable {
         case .markets: "chart.line.uptrend.xyaxis"
         case .earnings: "calendar.badge.clock"
         case .signals: "waveform.path.ecg"
+        case .liveMonitor: "dot.radiowaves.left.and.right"
         case .backtests: "chart.xyaxis.line"
         case .strategyLab: "point.3.connected.trianglepath.dotted"
         case .modelLab: "slider.horizontal.3"

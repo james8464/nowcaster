@@ -145,6 +145,7 @@ struct RootView: View {
                 destinationRow(.markets)
                 destinationRow(.earnings)
                 destinationRow(.signals)
+                destinationRow(.liveMonitor)
             } header: {
                 sidebarSectionHeader("Monitor")
             }
@@ -189,6 +190,8 @@ struct RootView: View {
                 EarningsView(model: model, snapshot: snapshot)
             case .signals:
                 SignalsView(model: model, snapshot: snapshot)
+            case .liveMonitor:
+                LiveMonitorView(model: model, settings: settings)
             case .backtests:
                 BacktestsView(model: model, snapshot: snapshot)
             case .strategyLab:

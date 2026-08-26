@@ -17,6 +17,10 @@ final class AppSettings {
         static let pythonExecutable = "pythonExecutablePath"
         static let snapshot = "snapshotPath"
         static let mode = "engineMode"
+        static let stockWatchlist = "monitorStockWatchlist"
+        static let cryptoWatchlist = "monitorCryptoWatchlist"
+        static let monitorAtLogin = "monitorAtLogin"
+        static let resumeMonitoring = "resumeMonitoringAtLogin"
     }
 
     @ObservationIgnored private let defaults: UserDefaults
@@ -25,6 +29,10 @@ final class AppSettings {
     var pythonExecutablePath: String { didSet { defaults.set(pythonExecutablePath, forKey: Key.pythonExecutable) } }
     var snapshotPath: String { didSet { defaults.set(snapshotPath, forKey: Key.snapshot) } }
     var mode: EngineMode { didSet { defaults.set(mode.rawValue, forKey: Key.mode) } }
+    var stockWatchlist: String { didSet { defaults.set(stockWatchlist, forKey: Key.stockWatchlist) } }
+    var cryptoWatchlist: String { didSet { defaults.set(cryptoWatchlist, forKey: Key.cryptoWatchlist) } }
+    var monitorAtLogin: Bool { didSet { defaults.set(monitorAtLogin, forKey: Key.monitorAtLogin) } }
+    var resumeMonitoring: Bool { didSet { defaults.set(resumeMonitoring, forKey: Key.resumeMonitoring) } }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -33,6 +41,18 @@ final class AppSettings {
         pythonExecutablePath = defaults.string(forKey: Key.pythonExecutable) ?? "\(root)/.venv/bin/python"
         snapshotPath = defaults.string(forKey: Key.snapshot) ?? "\(root)/data/app/nowcaster-snapshot.json"
         mode = EngineMode(rawValue: defaults.string(forKey: Key.mode) ?? "demo") ?? .demo
+        stockWatchlist = defaults.string(forKey: Key.stockWatchlist) ?? "AAPL, SPY"
+        cryptoWatchlist = defaults.string(forKey: Key.cryptoWatchlist) ?? "BTCUSDT, ETHUSDT"
+        monitorAtLogin = defaults.bool(forKey: Key.monitorAtLogin)
+        resumeMonitoring = defaults.bool(forKey: Key.resumeMonitoring)
+    }
+
+    var normalizedStocks: [String] { normalizeWatchlist(stockWatchlist) }
+    var normalizedCrypto: [String] { normalizeWatchlist(cryptoWatchlist) }
+
+    private func normalizeWatchlist(_ value: String) -> [String] {
+        Array(Set(value.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() }
+            .filter { !$0.isEmpty })).sorted()
     }
 
     var configuration: EngineConfiguration {
@@ -62,6 +82,7 @@ final class AppSettings {
 
 struct SettingsView: View {
     @Bindable var settings: AppSettings
+    @State private var loginItemMessage: String?
 
     var body: some View {
         Form {
@@ -76,6 +97,26 @@ struct SettingsView: View {
             }
             Section("Native snapshot") {
                 pathRow("Snapshot JSON", text: $settings.snapshotPath)
+            }
+            Section("Live Monitor") {
+                TextField("Stocks", text: $settings.stockWatchlist, prompt: Text("AAPL, SPY"))
+                TextField("Crypto", text: $settings.cryptoWatchlist, prompt: Text("BTCUSDT, ETHUSDT"))
+                Toggle("Start Nowcaster at login", isOn: $settings.monitorAtLogin)
+                    .onChange(of: settings.monitorAtLogin) { _, enabled in
+                        do {
+                            try LoginItemService.setEnabled(enabled)
+                            loginItemMessage = LoginItemService.statusDescription
+                        } catch {
+                            settings.monitorAtLogin = false
+                            loginItemMessage = error.localizedDescription
+                        }
+                    }
+                Toggle("Resume monitoring at login", isOn: $settings.resumeMonitoring)
+                    .disabled(!settings.monitorAtLogin)
+                if let loginItemMessage { Text(loginItemMessage).font(.caption).foregroundStyle(.secondary) }
+                Text("Comma-separated watchlists. Monitoring is notification-only and stops while this Mac sleeps or is offline.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
             BrokerCredentialsView(vault: BrokerCredentialVault())
             let issues = settings.validationIssues()
@@ -101,7 +142,7 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .padding()
-        .frame(width: 640, height: 460)
+        .frame(width: 640, height: 620)
     }
 
     private func pathRow(_ title: String, text: Binding<String>, chooseDirectories: Bool = false) -> some View {

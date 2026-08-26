@@ -1,0 +1,233 @@
+import Foundation
+
+enum LiveMonitorEventType: String, Codable, Sendable {
+    case ready
+    case heartbeat
+    case quote
+    case barFinalized = "bar_finalized"
+    case decision
+    case lifecycleTransition = "lifecycle_transition"
+    case notificationRequest = "notification_request"
+    case providerHealth = "provider_health"
+    case configurationRejected = "configuration_rejected"
+    case fatalError = "fatal_error"
+}
+
+enum LiveMonitorStatus: String, Codable, CaseIterable, Sendable {
+    case stopped, warming, healthy, reconnecting, stale, paused, failed
+
+    var label: String {
+        switch self {
+        case .stopped: "Stopped"
+        case .warming: "Warming Up"
+        case .healthy: "Monitoring"
+        case .reconnecting: "Reconnecting"
+        case .stale: "Data Stale"
+        case .paused: "Paused"
+        case .failed: "Attention Required"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .healthy: "checkmark.circle.fill"
+        case .warming, .reconnecting: "arrow.triangle.2.circlepath"
+        case .stale, .failed: "exclamationmark.triangle.fill"
+        case .paused: "pause.circle.fill"
+        case .stopped: "stop.circle"
+        }
+    }
+}
+
+extension JSONValue {
+    var stringValue: String? {
+        guard case let .string(value) = self else { return nil }
+        return value
+    }
+}
+
+struct LiveMonitorEvent: Codable, Equatable, Sendable, Identifiable {
+    let schemaVersion: Int
+    let id: String
+    let sequence: Int
+    let type: LiveMonitorEventType
+    let emittedAt: Date
+    let payload: [String: JSONValue]
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case id = "event_id"
+        case sequence
+        case type = "event_type"
+        case emittedAt = "emitted_at"
+        case payload
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try values.decode(Int.self, forKey: .schemaVersion)
+        guard schemaVersion == 1 else { throw LiveMonitorProtocolError.unsupportedSchema }
+        id = try values.decode(String.self, forKey: .id)
+        guard id.count == 64, id.allSatisfy({ $0.isHexDigit }) else { throw LiveMonitorProtocolError.invalidIdentity }
+        sequence = try values.decode(Int.self, forKey: .sequence)
+        guard sequence >= 0 else { throw LiveMonitorProtocolError.invalidSequence }
+        type = try values.decode(LiveMonitorEventType.self, forKey: .type)
+        let instant = try values.decode(String.self, forKey: .emittedAt)
+        guard instant.hasSuffix("Z"), let date = parseLiveMonitorInstant(instant) else {
+            throw LiveMonitorProtocolError.invalidTimestamp
+        }
+        emittedAt = date
+        payload = try values.decode([String: JSONValue].self, forKey: .payload)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(schemaVersion, forKey: .schemaVersion)
+        try values.encode(id, forKey: .id)
+        try values.encode(sequence, forKey: .sequence)
+        try values.encode(type, forKey: .type)
+        try values.encode(emittedAt.formatted(.iso8601.timeZone(separator: .omitted)), forKey: .emittedAt)
+        try values.encode(payload, forKey: .payload)
+    }
+}
+
+private func parseLiveMonitorInstant(_ value: String) -> Date? {
+    for options: ISO8601DateFormatter.Options in [
+        [.withInternetDateTime, .withFractionalSeconds],
+        [.withInternetDateTime],
+    ] {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = options
+        if let date = formatter.date(from: value) { return date }
+    }
+    return nil
+}
+
+enum LiveMonitorProtocolError: Error, Equatable {
+    case lineTooLarge
+    case unsupportedSchema
+    case invalidIdentity
+    case invalidSequence
+    case invalidTimestamp
+    case sequenceRegression
+}
+
+struct LiveMonitorEventDecoder: Sendable {
+    private var buffer = Data()
+    private var lastSequence: Int?
+    private let maximumLineBytes: Int
+
+    init(maximumLineBytes: Int = 64 * 1024) {
+        self.maximumLineBytes = max(maximumLineBytes, 1024)
+    }
+
+    mutating func append(_ data: Data) throws -> [LiveMonitorEvent] {
+        buffer.append(data)
+        guard buffer.count <= maximumLineBytes || buffer.contains(0x0A) else {
+            buffer.removeAll()
+            throw LiveMonitorProtocolError.lineTooLarge
+        }
+        var result: [LiveMonitorEvent] = []
+        while let newline = buffer.firstIndex(of: 0x0A) {
+            let line = Data(buffer[..<newline])
+            buffer.removeSubrange(...newline)
+            guard !line.isEmpty else { continue }
+            guard line.count <= maximumLineBytes else { throw LiveMonitorProtocolError.lineTooLarge }
+            let event = try JSONDecoder().decode(LiveMonitorEvent.self, from: line)
+            if let lastSequence, event.sequence <= lastSequence { throw LiveMonitorProtocolError.sequenceRegression }
+            lastSequence = event.sequence
+            result.append(event)
+        }
+        return result
+    }
+}
+
+struct LiveMonitorInvocation: Sendable {
+    let executable: URL
+    let arguments: [String]
+    let workingDirectory: URL
+    let environment: [String: String]
+    let bootstrap: Data
+}
+
+struct LiveMonitorConfiguration: Sendable {
+    let projectRoot: URL
+    let executable: URL
+    let databaseURL: String
+    let stockFeed: String
+    let stocks: [String]
+    let crypto: [String]
+    let interval: String
+    let configHash: String
+    let cohortHash: String
+
+    func invocation(credentials: BrokerCredentials?) throws -> LiveMonitorInvocation {
+        struct Bootstrap: Encodable {
+            let schemaVersion = 1
+            let sessionID: String
+            let databaseURL: String
+            let stockFeed: String
+            let stocks: [String]
+            let crypto: [String]
+            let decisionInterval: String
+            let configHash: String
+            let cohortHash: String
+            let alpacaKeyID: String?
+            let alpacaSecret: String?
+
+            enum CodingKeys: String, CodingKey {
+                case schemaVersion = "schema_version"
+                case sessionID = "session_id"
+                case databaseURL = "database_url"
+                case stockFeed = "stock_feed"
+                case stocks, crypto
+                case decisionInterval = "decision_interval"
+                case configHash = "config_hash"
+                case cohortHash = "cohort_hash"
+                case alpacaKeyID = "alpaca_key_id"
+                case alpacaSecret = "alpaca_secret"
+            }
+        }
+        guard FileManager.default.fileExists(atPath: projectRoot.path) || projectRoot.path == "/tmp/project" else {
+            throw EngineRunnerError.invalidProjectRoot(projectRoot.path)
+        }
+        let normalizedStocks = Array(Set(stocks.map { $0.trimmingCharacters(in: .whitespaces).uppercased() })).sorted()
+        let normalizedCrypto = Array(Set(crypto.map { $0.trimmingCharacters(in: .whitespaces).uppercased() })).sorted()
+        guard normalizedStocks.count <= 200, normalizedCrypto.count <= 200 else {
+            throw EngineJobError.invalidAsset("watchlist exceeds 200 symbols")
+        }
+        let value = Bootstrap(
+            sessionID: UUID().uuidString,
+            databaseURL: databaseURL,
+            stockFeed: stockFeed,
+            stocks: normalizedStocks,
+            crypto: normalizedCrypto,
+            decisionInterval: interval,
+            configHash: configHash,
+            cohortHash: cohortHash,
+            alpacaKeyID: credentials?.keyID,
+            alpacaSecret: credentials?.secret
+        )
+        var bootstrap = try JSONEncoder().encode(value)
+        bootstrap.append(0x0A)
+        return LiveMonitorInvocation(
+            executable: executable,
+            arguments: ["-m", "src.cli", "monitor", "run"],
+            workingDirectory: projectRoot,
+            environment: ["PYTHONUNBUFFERED": "1"],
+            bootstrap: bootstrap
+        )
+    }
+}
+
+struct LiveSetup: Identifiable, Equatable, Sendable {
+    let id: String
+    let symbol: String
+    let posture: String
+    let confidence: Double?
+    let entry: String
+    let stop: String
+    let targets: String
+    let reason: String
+    let updatedAt: Date
+}

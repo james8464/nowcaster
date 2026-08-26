@@ -15,7 +15,11 @@ let package = Package(
                 .copy("Resources/AppIcon.png"),
                 .copy("Resources/Fixtures"),
             ],
-            linkerSettings: [.linkedFramework("Security")]
+            linkerSettings: [
+                .linkedFramework("Security"),
+                .linkedFramework("UserNotifications"),
+                .linkedFramework("ServiceManagement"),
+            ]
         ),
         .testTarget(name: "NowcasterAppTests", dependencies: ["NowcasterApp"]),
     ]
