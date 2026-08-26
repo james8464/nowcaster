@@ -239,6 +239,9 @@ class ProviderHealthEvent(LiveMonitorModel):
     occurred_at: datetime
 
 
+MarketEvent = MarketBar | MarketQuote | ProviderHealthEvent
+
+
 def _bounded_payload(value: Any) -> Any:
     nodes = 0
 
@@ -299,6 +302,7 @@ __all__ = [
     "LifecycleTransition",
     "MarketBar",
     "MarketQuote",
+    "MarketEvent",
     "MonitorHealth",
     "MonitorWireEvent",
     "ProviderHealthEvent",

@@ -14,6 +14,7 @@ from src.app_snapshot import build_app_snapshot, write_snapshot_atomic
 from src.config.settings import Settings
 from src.database.engine import Database
 from src.demo import DEMO_STAGES, demo_pipeline, live_pipeline, run_demo
+from src.live_monitor.command import parse_bootstrap, replay_events, run_live
 from src.reporting.research_report import generate_research_report
 from src.research import run_full_strategy_research
 from src.strategies.pipeline import (
@@ -40,9 +41,33 @@ from src.utils.logging import configure_logging
 app = typer.Typer(help="Alternative-data earnings nowcasting research pipeline.", no_args_is_help=True)
 strategy_app = typer.Typer(help="Run scoped intraday strategy research stages.", no_args_is_help=True)
 trading_app = typer.Typer(help="Operate fail-closed shadow and Alpaca paper sessions.", no_args_is_help=True)
+monitor_app = typer.Typer(help="Run the notification-only live market monitor.", no_args_is_help=True)
 app.add_typer(strategy_app, name="strategy")
 app.add_typer(trading_app, name="trading")
+app.add_typer(monitor_app, name="monitor")
 DEFAULT_PROJECT_ROOT = Path.cwd()
+
+
+@monitor_app.command("run")
+def monitor_run(
+    replay: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
+    replay_provider: Annotated[str, typer.Option()] = "alpaca",
+) -> None:
+    """Read one private bootstrap line from stdin and emit bounded JSONL events."""
+    try:
+        bootstrap = parse_bootstrap(typer.get_text_stream("stdin").readline())
+        if replay is not None:
+            if replay_provider not in {"alpaca", "binance"}:
+                raise ValueError("unsupported replay provider")
+            for event in replay_events(bootstrap, replay=replay, provider=replay_provider):
+                typer.echo(event.model_dump_json())
+            return
+        import asyncio
+
+        asyncio.run(run_live(bootstrap))
+    except (ValueError, OSError):
+        typer.echo(json.dumps({"event": "configuration_rejected"}), err=True)
+        raise typer.Exit(code=2) from None
 
 
 def _trading_settings(project_root: Path, database_url: str | None) -> Settings:
