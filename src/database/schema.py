@@ -1106,6 +1106,105 @@ trading_arms = Table(
     *common_columns(),
 )
 
+monitor_sessions = Table(
+    "monitor_sessions",
+    metadata,
+    Column("session_id", String, primary_key=True),
+    Column("config_hash", String, nullable=False),
+    Column("cohort_hash", String, nullable=False),
+    Column("started_at", DateTime(timezone=True), nullable=False),
+    Column("ended_at", DateTime(timezone=True)),
+    Column("status", String, nullable=False),
+    Column("terminal_reason", Text),
+    *common_columns(),
+)
+
+monitor_setups = Table(
+    "monitor_setups",
+    metadata,
+    Column("setup_id", String, primary_key=True),
+    Column("session_id", String, nullable=False),
+    Column("provider", String, nullable=False),
+    Column("feed", String, nullable=False),
+    Column("symbol", String, nullable=False),
+    Column("interval", String, nullable=False),
+    Column("plan", JSON, nullable=False),
+    Column("current_state", String, nullable=False),
+    *common_columns(),
+)
+
+monitor_transitions = Table(
+    "monitor_transitions",
+    metadata,
+    Column("transition_id", String, primary_key=True),
+    Column("event_id", String, nullable=False, unique=True),
+    Column("setup_id", String, nullable=False),
+    Column("from_state", String, nullable=False),
+    Column("to_state", String, nullable=False),
+    Column("occurred_at", DateTime(timezone=True), nullable=False),
+    Column("reason", Text, nullable=False),
+    Column("actual_fill", Numeric(38, 12)),
+    Column("payload_hash", String, nullable=False),
+    Column("payload", JSON, nullable=False),
+    *common_columns(),
+)
+
+monitor_notification_receipts = Table(
+    "monitor_notification_receipts",
+    metadata,
+    Column("receipt_id", String, primary_key=True),
+    Column("event_id", String, nullable=False, unique=True),
+    Column("delivered_at", DateTime(timezone=True), nullable=False),
+    Column("status", String, nullable=False),
+    *common_columns(),
+)
+
+monitor_health_events = Table(
+    "monitor_health_events",
+    metadata,
+    Column("health_event_id", String, primary_key=True),
+    Column("session_id", String, nullable=False),
+    Column("provider", String),
+    Column("feed", String),
+    Column("status", String, nullable=False),
+    Column("reason", Text),
+    Column("occurred_at", DateTime(timezone=True), nullable=False),
+    Column("details", JSON, nullable=False),
+    *common_columns(),
+)
+
+monitor_decisions = Table(
+    "monitor_decisions",
+    metadata,
+    Column("decision_id", String, primary_key=True),
+    Column("session_id", String, nullable=False),
+    Column("provider", String, nullable=False),
+    Column("feed", String, nullable=False),
+    Column("symbol", String, nullable=False),
+    Column("interval", String, nullable=False),
+    Column("decision_time", DateTime(timezone=True), nullable=False),
+    Column("status", String, nullable=False),
+    Column("reasons", JSON, nullable=False),
+    Column("evidence", JSON, nullable=False),
+    *common_columns(),
+)
+
+monitor_finalized_bars = Table(
+    "monitor_finalized_bars",
+    metadata,
+    Column("bar_id", String, primary_key=True),
+    Column("session_id", String, nullable=False),
+    Column("provider", String, nullable=False),
+    Column("feed", String, nullable=False),
+    Column("symbol", String, nullable=False),
+    Column("interval", String, nullable=False),
+    Column("start_at", DateTime(timezone=True), nullable=False),
+    Column("end_at", DateTime(timezone=True), nullable=False),
+    Column("revision", Integer, nullable=False),
+    Column("payload", JSON, nullable=False),
+    *common_columns(),
+)
+
 TABLES = {table.name: table for table in metadata.tables.values()}
 
 NATURAL_KEYS: dict[str, tuple[str, ...]] = {
@@ -1199,4 +1298,11 @@ NATURAL_KEYS: dict[str, tuple[str, ...]] = {
     "forward_evidence_daily": ("cohort_hash", "period_start", "period_end"),
     "readiness_receipts": ("cohort_hash", "evidence_hash", "policy_hash", "issued_at"),
     "trading_arms": ("arm_id",),
+    "monitor_sessions": ("session_id",),
+    "monitor_setups": ("setup_id",),
+    "monitor_transitions": ("event_id",),
+    "monitor_notification_receipts": ("event_id",),
+    "monitor_health_events": ("health_event_id",),
+    "monitor_decisions": ("decision_id",),
+    "monitor_finalized_bars": ("bar_id",),
 }

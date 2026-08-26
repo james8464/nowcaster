@@ -211,6 +211,26 @@ class TradePlan(LiveMonitorModel):
         return self
 
 
+class LifecycleEvent(LiveMonitorModel):
+    event_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    setup_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    target_state: AlertState
+    occurred_at: datetime
+    reason: str = Field(min_length=1, max_length=256)
+    actual_fill: Decimal | None = Field(default=None, gt=0)
+
+
+class LifecycleTransition(LiveMonitorModel):
+    transition_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    event_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    setup_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    from_state: AlertState
+    to_state: AlertState
+    occurred_at: datetime
+    reason: str = Field(min_length=1, max_length=256)
+    actual_fill: Decimal | None = Field(default=None, gt=0)
+
+
 def _bounded_payload(value: Any) -> Any:
     nodes = 0
 
@@ -267,6 +287,8 @@ class MonitorWireEvent(LiveMonitorModel):
 __all__ = [
     "AlertState",
     "Direction",
+    "LifecycleEvent",
+    "LifecycleTransition",
     "MarketBar",
     "MarketQuote",
     "MonitorHealth",
