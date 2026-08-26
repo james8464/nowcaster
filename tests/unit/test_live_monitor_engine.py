@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from src.live_monitor.engine import EligibilityEvidence, LiveMonitorEngine, evaluate_alert_eligibility
-from src.live_monitor.types import Direction, MarketQuote, MonitorHealth
+from src.live_monitor.types import Direction, MarketBar, MarketQuote, MonitorHealth
 
 NOW = datetime(2026, 8, 26, 14, 0, tzinfo=UTC)
 
@@ -50,6 +50,29 @@ def quote(**updates) -> MarketQuote:
     return MarketQuote(**values)
 
 
+def bar(minute: int, **updates) -> MarketBar:
+    start = NOW + timedelta(minutes=minute)
+    values = {
+        "provider": "alpaca",
+        "feed": "iex",
+        "symbol": "AAPL",
+        "interval": "1m",
+        "start": start,
+        "end": start + timedelta(minutes=1),
+        "available_at": start + timedelta(minutes=1, seconds=1),
+        "received_at": start + timedelta(minutes=1, seconds=1),
+        "open": Decimal("100"),
+        "high": Decimal("100.4"),
+        "low": Decimal("99.6"),
+        "close": Decimal("100"),
+        "volume": Decimal("1000"),
+        "finalized": True,
+        "revision": 0,
+    }
+    values.update(updates)
+    return MarketBar(**values)
+
+
 def test_eligibility_passes_only_complete_matching_fresh_evidence() -> None:
     decision = evaluate_alert_eligibility(
         evidence(), quote(), health=MonitorHealth.HEALTHY, now=NOW + timedelta(seconds=5)
@@ -85,3 +108,42 @@ def test_engine_deduplicates_wire_events_and_never_exposes_order_methods() -> No
     assert first.sequence == duplicate.sequence == 0
     assert not hasattr(engine, "submit_order")
     assert not hasattr(engine, "cancel_order")
+
+
+def test_engine_emits_entry_plan_then_conservative_stop_lifecycle() -> None:
+    def resolver(_bars: tuple[MarketBar, ...], _quote: MarketQuote) -> EligibilityEvidence:
+        return evidence(data_through=NOW + timedelta(minutes=5))
+
+    engine = LiveMonitorEngine(session_id="session-1", evidence_resolver=resolver)
+    engine.accept_market_event(quote(received_at=NOW + timedelta(minutes=5), provider_time=NOW + timedelta(minutes=5)))
+    emitted = []
+    for minute in range(5):
+        emitted.extend(engine.accept_market_event(bar(minute)))
+
+    entry = [item for item in emitted if item.event_type == "notification_request"]
+    assert len(entry) == 1
+    assert entry[0].payload["category"] == "entry"
+    assert entry[0].payload["direction"] == "long"
+    assert Decimal(entry[0].payload["stop"]) < Decimal(entry[0].payload["entry_low"])
+    assert Decimal(entry[0].payload["target_2"]) > Decimal(entry[0].payload["target_1"])
+
+    stop = Decimal(entry[0].payload["stop"])
+    risk_events = engine.accept_market_event(
+        bar(5, low=stop - Decimal("0.1"), high=Decimal(entry[0].payload["target_2"]) + Decimal("0.1"))
+    )
+    notifications = [item for item in risk_events if item.event_type == "notification_request"]
+    assert len(notifications) == 1
+    assert notifications[0].payload["category"] == "stop"
+    assert notifications[0].payload["reason"] == "protective_stop_touched"
+
+
+def test_engine_abstains_without_quote_evidence_or_feasible_levels() -> None:
+    engine = LiveMonitorEngine(session_id="session-1", evidence_resolver=lambda _bars, _quote: None)
+    emitted = []
+    for minute in range(5):
+        emitted.extend(engine.accept_market_event(bar(minute)))
+
+    decisions = [item for item in emitted if item.event_type == "decision"]
+    assert decisions[-1].payload["status"] == "abstain"
+    assert decisions[-1].payload["reasons"] == ["live_quote_unavailable"]
+    assert not [item for item in emitted if item.event_type == "notification_request"]

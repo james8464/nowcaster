@@ -87,3 +87,14 @@ def test_active_setup_can_end_for_each_risk_reason(terminal: AlertState) -> None
     transition = lifecycle.apply(event(4, terminal))
 
     assert transition is not None and transition.to_state is terminal
+
+
+def test_active_lifecycle_can_be_restored_without_replaying_notifications() -> None:
+    lifecycle = AlertLifecycle.restore(SETUP_ID, plan(), state=AlertState.TARGET_1)
+
+    assert lifecycle.state is AlertState.TARGET_1
+    transition = lifecycle.apply(event(9, AlertState.TARGET_2))
+    assert transition is not None and transition.from_state is AlertState.TARGET_1
+
+    with pytest.raises(ValueError, match="terminal"):
+        AlertLifecycle.restore(SETUP_ID, plan(), state=AlertState.STOPPED)

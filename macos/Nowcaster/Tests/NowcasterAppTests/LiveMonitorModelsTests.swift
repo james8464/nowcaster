@@ -56,3 +56,19 @@ import Testing
     #expect(bootstrap.contains("private-key"))
     #expect(bootstrap.contains("private-secret"))
 }
+
+@Test func bundledEngineUsesItsNativeCLIContract() throws {
+    let configuration = LiveMonitorConfiguration(
+        projectRoot: URL(fileURLWithPath: "/tmp/project"),
+        executable: URL(fileURLWithPath: "/tmp/nowcaster-engine"),
+        databaseURL: "duckdb:////tmp/monitor.duckdb",
+        stockFeed: "iex",
+        stocks: ["AAPL"],
+        crypto: [],
+        interval: "5m",
+        configHash: String(repeating: "c", count: 64),
+        cohortHash: String(repeating: "d", count: 64)
+    )
+
+    #expect(try configuration.invocation(credentials: nil).arguments == ["monitor", "run"])
+}

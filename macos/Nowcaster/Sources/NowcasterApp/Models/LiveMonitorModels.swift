@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 enum LiveMonitorEventType: String, Codable, Sendable {
     case ready
@@ -212,10 +213,41 @@ struct LiveMonitorConfiguration: Sendable {
         bootstrap.append(0x0A)
         return LiveMonitorInvocation(
             executable: executable,
-            arguments: ["-m", "src.cli", "monitor", "run"],
+            arguments: executable.lastPathComponent == "nowcaster-engine"
+                ? ["monitor", "run"]
+                : ["-m", "src.cli", "monitor", "run"],
             workingDirectory: projectRoot,
             environment: ["PYTHONUNBUFFERED": "1"],
             bootstrap: bootstrap
+        )
+    }
+
+    @MainActor static func appConfiguration(settings: AppSettings, snapshot: NowcasterSnapshot?) -> Self {
+        let projectRoot = URL(fileURLWithPath: settings.projectRootPath)
+        let bundled = Bundle.main.bundleURL.appending(path: "Contents/Helpers/nowcaster-engine")
+        let executable = FileManager.default.isExecutableFile(atPath: bundled.path)
+            ? bundled
+            : URL(fileURLWithPath: settings.pythonExecutablePath)
+        let watchlistIdentity = (["iex", "5m"] + settings.normalizedStocks + settings.normalizedCrypto)
+            .joined(separator: "|")
+        let configHash = SHA256.hash(data: Data(watchlistIdentity.utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        let evidenceIdentity = (snapshot?.strategies ?? [])
+            .filter { $0.promotionState == "promoted" && $0.causalAuditPassed == true }
+            .map(\.datasetHash).sorted().joined(separator: "|")
+        let cohortHash = evidenceIdentity.isEmpty
+            ? String(repeating: "0", count: 64)
+            : SHA256.hash(data: Data(evidenceIdentity.utf8)).map { String(format: "%02x", $0) }.joined()
+        return Self(
+            projectRoot: projectRoot,
+            executable: executable,
+            databaseURL: "duckdb:///\(projectRoot.appending(path: "data/nowcaster.duckdb").path)",
+            stockFeed: "iex",
+            stocks: settings.normalizedStocks,
+            crypto: settings.normalizedCrypto,
+            interval: "5m",
+            configHash: configHash,
+            cohortHash: cohortHash
         )
     }
 }

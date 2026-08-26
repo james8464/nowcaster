@@ -8,8 +8,12 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, field_validator
 
+from src.config.settings import Settings
+from src.database.engine import Database
 from src.live_monitor.engine import LiveMonitorEngine
+from src.live_monitor.evidence import SealedCohortResolver, load_decision_history, load_sealed_cohorts
 from src.live_monitor.providers import AlpacaMarketDataAdapter, BinanceSpotAdapter
+from src.live_monitor.repository import LiveMonitorRepository
 from src.live_monitor.types import BarIntervalValue, MarketEvent, MonitorWireEvent
 
 
@@ -119,11 +123,48 @@ async def _merged_live_events(bootstrap: MonitorBootstrap) -> AsyncIterator[Mark
 
 
 async def run_live(bootstrap: MonitorBootstrap) -> None:
-    engine = LiveMonitorEngine(session_id=bootstrap.session_id, decision_interval=bootstrap.decision_interval)
-    print(_emit(engine.emit("ready", {"status": "live"}, emitted_at=datetime.now(UTC))), flush=True)
-    async for event in _merged_live_events(bootstrap):
-        for wire_event in engine.accept_market_event(event):
-            print(_emit(wire_event), flush=True)
+    database = Database.from_url(bootstrap.database_url)
+    database.initialize()
+    settings = Settings.load(Path.cwd())
+    cohorts = load_sealed_cohorts(database, settings.strategies.enabled)
+    watchlist = set(bootstrap.stocks) | set(bootstrap.crypto)
+    selected = tuple(
+        item for item in cohorts if item.symbol in watchlist and item.interval == bootstrap.decision_interval
+    )
+    repository = LiveMonitorRepository(database)
+    repository.start_session(
+        bootstrap.session_id,
+        config_hash=bootstrap.config_hash,
+        cohort_hash=bootstrap.cohort_hash,
+    )
+    engine = LiveMonitorEngine(
+        session_id=bootstrap.session_id,
+        decision_interval=bootstrap.decision_interval,
+        evidence_resolver=SealedCohortResolver(selected),
+        persistence=repository,
+    )
+    for cohort in selected:
+        engine.seed_history(load_decision_history(database, cohort))
+    for recovered in repository.recover_active():
+        if recovered.plan.symbol in watchlist and recovered.plan.decision_interval == bootstrap.decision_interval:
+            engine.restore_setup(recovered.plan, state=recovered.state)
+    try:
+        print(
+            _emit(
+                engine.emit(
+                    "ready",
+                    {"status": "live", "qualified_cohorts": len(selected)},
+                    emitted_at=datetime.now(UTC),
+                )
+            ),
+            flush=True,
+        )
+        async for event in _merged_live_events(bootstrap):
+            for wire_event in engine.accept_market_event(event):
+                print(_emit(wire_event), flush=True)
+    finally:
+        repository.finish_session(bootstrap.session_id, reason="monitor_stopped")
+        database.dispose()
 
 
 __all__ = ["MonitorBootstrap", "parse_bootstrap", "replay_events", "run_live"]

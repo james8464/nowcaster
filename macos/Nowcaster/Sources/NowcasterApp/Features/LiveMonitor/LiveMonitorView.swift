@@ -1,4 +1,3 @@
-import CryptoKit
 import SwiftUI
 
 struct LiveMonitorView: View {
@@ -75,22 +74,8 @@ struct LiveMonitorView: View {
         }
         permissionMessage = await model.liveMonitor.requestNotificationPermission() ? nil : "Notifications are disabled"
         let credentials = try? BrokerCredentialVault().loadForSession(environment: .paper)
-        let root = URL(fileURLWithPath: settings.projectRootPath)
-        let cohort = model.snapshot?.strategies.first?.datasetHash ?? String(repeating: "0", count: 64)
-        let configText = settings.normalizedStocks.joined(separator: ",") + settings.normalizedCrypto.joined(separator: ",")
-        let configHash = SHA256.hash(data: Data(configText.utf8)).map { String(format: "%02x", $0) }.joined()
         await model.liveMonitor.start(
-            configuration: LiveMonitorConfiguration(
-                projectRoot: root,
-                executable: URL(fileURLWithPath: settings.pythonExecutablePath),
-                databaseURL: "duckdb:///\(root.appending(path: "data/nowcaster.duckdb").path)",
-                stockFeed: "iex",
-                stocks: settings.normalizedStocks,
-                crypto: settings.normalizedCrypto,
-                interval: "5m",
-                configHash: configHash,
-                cohortHash: cohort.count == 64 ? cohort : String(repeating: "0", count: 64)
-            ),
+            configuration: .appConfiguration(settings: settings, snapshot: model.snapshot),
             credentials: credentials
         )
     }

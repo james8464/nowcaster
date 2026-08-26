@@ -30,6 +30,16 @@ final class NotificationService {
 
     func requestAuthorization() async -> Bool {
         let center = UNUserNotificationCenter.current()
+        let categories = [
+            LiveNotificationCategory.entry,
+            .target,
+            .stop,
+            .close,
+            .health,
+        ].map {
+            UNNotificationCategory(identifier: $0.rawValue, actions: [], intentIdentifiers: [], options: [])
+        }
+        center.setNotificationCategories(Set(categories))
         return (try? await center.requestAuthorization(
             options: [.alert, .sound, .badge, .providesAppNotificationSettings]
         )) ?? false

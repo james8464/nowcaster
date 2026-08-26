@@ -52,6 +52,15 @@ struct RootView: View {
                 model.destination = destination
             }
             await model.loadBundledSnapshot()
+            if !screenshotMode, settings.monitorAtLogin, settings.resumeMonitoring {
+                let credentials = try? BrokerCredentialVault().loadForSession(environment: .paper)
+                if credentials != nil || settings.normalizedStocks.isEmpty {
+                    await model.liveMonitor.start(
+                        configuration: .appConfiguration(settings: settings, snapshot: model.snapshot),
+                        credentials: credentials
+                    )
+                }
+            }
             if screenshotMode {
                 let arguments = ProcessInfo.processInfo.arguments
                 model.applyScreenshotState(arguments: arguments)

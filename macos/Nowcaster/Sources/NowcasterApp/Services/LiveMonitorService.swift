@@ -9,6 +9,7 @@ final class LiveMonitorController {
     private(set) var errorMessage: String?
     private var process: Process?
     @ObservationIgnored private var readerTask: Task<Void, Never>?
+    @ObservationIgnored private var diagnosticTask: Task<Void, Never>?
     @ObservationIgnored private let notifications = NotificationService()
 
     var isRunning: Bool { process?.isRunning == true }
@@ -42,6 +43,14 @@ final class LiveMonitorController {
             process = launched
             status = .warming
             errorMessage = nil
+            diagnosticTask = Task.detached(priority: .utility) {
+                while !Task.isCancelled {
+                    let data = diagnostics.fileHandleForReading.availableData
+                    if data.isEmpty { break }
+                    // Diagnostics are intentionally drained but never surfaced verbatim because provider
+                    // libraries can include request context. The process exit code is the safe UI boundary.
+                }
+            }
             readerTask = Task.detached(priority: .userInitiated) { [weak self] in
                 var decoder = LiveMonitorEventDecoder()
                 do {
@@ -66,6 +75,8 @@ final class LiveMonitorController {
     func pause(reason _: String = "operator_pause") {
         readerTask?.cancel()
         readerTask = nil
+        diagnosticTask?.cancel()
+        diagnosticTask = nil
         if process?.isRunning == true { process?.terminate() }
         process = nil
         status = .paused
@@ -98,12 +109,16 @@ final class LiveMonitorController {
     }
 
     private func didExit(code: Int32) {
+        diagnosticTask?.cancel()
+        diagnosticTask = nil
         process = nil
         if status != .paused { status = code == 0 ? .stopped : .failed }
         if code != 0 { errorMessage = "The live monitor exited with status \(code)." }
     }
 
     private func didFail(_ message: String) {
+        diagnosticTask?.cancel()
+        diagnosticTask = nil
         process = nil
         status = .failed
         errorMessage = message

@@ -57,6 +57,14 @@ class AlertLifecycle:
         self._events: dict[str, LifecycleEvent] = {}
         self._transitions: list[LifecycleTransition] = []
 
+    @classmethod
+    def restore(cls, setup_id: str, plan: TradePlan, *, state: AlertState) -> AlertLifecycle:
+        if state in _TERMINAL:
+            raise ValueError("terminal lifecycle cannot be restored as active")
+        lifecycle = cls(setup_id, plan)
+        lifecycle.state = state
+        return lifecycle
+
     @property
     def transitions(self) -> tuple[LifecycleTransition, ...]:
         return tuple(self._transitions)
