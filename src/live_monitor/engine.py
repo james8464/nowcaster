@@ -209,14 +209,14 @@ class LiveMonitorEngine:
             )
         if isinstance(event, MarketQuote):
             self.quotes[(event.provider, event.feed, event.symbol)] = event
-            self.health.setdefault((event.provider, event.feed), MonitorHealth.HEALTHY)
+            self.health[(event.provider, event.feed)] = MonitorHealth.HEALTHY
             return (self.emit("quote", event.model_dump(mode="json"), emitted_at=event.received_at),)
         if not isinstance(event, MarketBar):
             raise TypeError("unsupported market event")
         acceptance = self.ledger.accept(event)
         if acceptance.status == "duplicate":
             return ()
-        self.health.setdefault((event.provider, event.feed), MonitorHealth.HEALTHY)
+        self.health[(event.provider, event.feed)] = MonitorHealth.HEALTHY
         result = [self.emit("bar_finalized", event.model_dump(mode="json"), emitted_at=event.received_at)]
         result.extend(self._monitor_risk(event))
         scope = tuple(
@@ -286,9 +286,13 @@ class LiveMonitorEngine:
             **decision.model_dump(mode="json"),
         }
         result = [self.emit("decision", payload, emitted_at=now)]
-        if decision.direction is None:
-            return result
         active = self._active.get(scope)
+        if decision.direction is None:
+            if active is not None:
+                result.extend(self._transition(active, AlertState.CLOSED, now, "evidence_gate_failed"))
+                result.append(self._notification(active.plan, "close", now, "evidence_gate_failed"))
+                self._active.pop(scope, None)
+            return result
         if active is not None and active.plan.direction is decision.direction:
             return result
         if active is not None:

@@ -153,3 +153,32 @@ def test_engine_abstains_without_quote_evidence_or_feasible_levels() -> None:
     assert decisions[-1].payload["status"] == "abstain"
     assert decisions[-1].payload["reasons"] == ["live_quote_unavailable"]
     assert not [item for item in emitted if item.event_type == "notification_request"]
+
+
+def test_active_setup_closes_before_an_evidence_gate_failure_can_be_ignored() -> None:
+    latest = {"minute": 5, "promoted": True}
+
+    def resolver(_bars: tuple[MarketBar, ...], _quote: MarketQuote) -> EligibilityEvidence:
+        return evidence(
+            data_through=NOW + timedelta(minutes=latest["minute"]),
+            promoted=latest["promoted"],
+        )
+
+    engine = LiveMonitorEngine(session_id="session-1", evidence_resolver=resolver)
+    engine.accept_market_event(quote(received_at=NOW + timedelta(minutes=5), provider_time=NOW + timedelta(minutes=5)))
+    for minute in range(5):
+        engine.accept_market_event(bar(minute))
+
+    latest.update(minute=10, promoted=False)
+    engine.accept_market_event(
+        quote(received_at=NOW + timedelta(minutes=10), provider_time=NOW + timedelta(minutes=10))
+    )
+    emitted = []
+    for minute in range(5, 10):
+        emitted.extend(engine.accept_market_event(bar(minute)))
+
+    close = [
+        item for item in emitted if item.event_type == "notification_request" and item.payload["category"] == "close"
+    ]
+    assert len(close) == 1
+    assert close[0].payload["reason"] == "evidence_gate_failed"

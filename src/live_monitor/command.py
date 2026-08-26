@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from contextlib import suppress
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
@@ -14,7 +15,7 @@ from src.live_monitor.engine import LiveMonitorEngine
 from src.live_monitor.evidence import SealedCohortResolver, load_decision_history, load_sealed_cohorts
 from src.live_monitor.providers import AlpacaMarketDataAdapter, BinanceSpotAdapter
 from src.live_monitor.repository import LiveMonitorRepository
-from src.live_monitor.types import BarIntervalValue, MarketEvent, MonitorWireEvent
+from src.live_monitor.types import BarIntervalValue, MarketEvent, MonitorWireEvent, ProviderHealthEvent
 
 
 class MonitorBootstrap(BaseModel):
@@ -81,9 +82,13 @@ def replay_events(
 
 async def _merged_live_events(bootstrap: MonitorBootstrap) -> AsyncIterator[MarketEvent]:
     queue: asyncio.Queue[MarketEvent] = asyncio.Queue(maxsize=1_024)
+    last_seen: dict[tuple[str, str], datetime] = {}
+    stale_reported: set[tuple[str, str]] = set()
 
     async def produce(stream: AsyncIterator[MarketEvent]) -> None:
         async for event in stream:
+            last_seen[(event.provider, event.feed)] = datetime.now(UTC)
+            stale_reported.discard((event.provider, event.feed))
             await queue.put(event)
 
     tasks: list[asyncio.Task[None]] = []
@@ -95,6 +100,7 @@ async def _merged_live_events(bootstrap: MonitorBootstrap) -> AsyncIterator[Mark
             key_id=bootstrap.alpaca_key_id.get_secret_value(),
             secret=bootstrap.alpaca_secret.get_secret_value(),
         )
+        last_seen[("alpaca", bootstrap.stock_feed)] = datetime.now(UTC)
         tasks.append(
             asyncio.create_task(
                 produce(
@@ -106,6 +112,7 @@ async def _merged_live_events(bootstrap: MonitorBootstrap) -> AsyncIterator[Mark
             )
         )
     if bootstrap.crypto:
+        last_seen[("binance", "spot")] = datetime.now(UTC)
         tasks.append(
             asyncio.create_task(
                 produce(BinanceSpotAdapter().stream("wss://stream.binance.com:9443/ws", bootstrap.crypto))
@@ -115,7 +122,20 @@ async def _merged_live_events(bootstrap: MonitorBootstrap) -> AsyncIterator[Mark
         raise ValueError("at least one watchlist symbol is required")
     try:
         while True:
-            yield await queue.get()
+            with suppress(TimeoutError):
+                yield await asyncio.wait_for(queue.get(), timeout=5)
+            now = datetime.now(UTC)
+            for (provider, feed), observed_at in tuple(last_seen.items()):
+                if now - observed_at <= timedelta(seconds=30) or (provider, feed) in stale_reported:
+                    continue
+                stale_reported.add((provider, feed))
+                yield ProviderHealthEvent(
+                    provider=provider,
+                    feed=feed,
+                    status="stale",
+                    reason="no_recent_market_data",
+                    occurred_at=now,
+                )
     finally:
         for task in tasks:
             task.cancel()
