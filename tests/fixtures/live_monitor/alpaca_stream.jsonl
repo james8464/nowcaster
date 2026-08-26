@@ -1,0 +1,5 @@
+[{"T":"success","msg":"connected"}]
+[{"T":"success","msg":"authenticated"}]
+[{"T":"subscription","trades":[],"quotes":["AAPL"],"bars":["AAPL"]}]
+[{"T":"q","S":"AAPL","bp":99.90,"ap":100.00,"bs":10,"as":8,"t":"2026-08-26T14:00:10Z","z":"C"},{"T":"b","S":"AAPL","o":99.50,"h":100.20,"l":99.40,"c":100.00,"v":1000,"t":"2026-08-26T14:00:00Z","n":50,"vw":99.85}]
+[{"T":"error","code":406,"msg":"connection limit exceeded"}]

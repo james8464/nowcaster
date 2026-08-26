@@ -231,6 +231,14 @@ class LifecycleTransition(LiveMonitorModel):
     actual_fill: Decimal | None = Field(default=None, gt=0)
 
 
+class ProviderHealthEvent(LiveMonitorModel):
+    provider: str = Field(min_length=1, max_length=32)
+    feed: str = Field(min_length=1, max_length=32)
+    status: MonitorHealth
+    reason: str = Field(min_length=1, max_length=128)
+    occurred_at: datetime
+
+
 def _bounded_payload(value: Any) -> Any:
     nodes = 0
 
@@ -293,6 +301,7 @@ __all__ = [
     "MarketQuote",
     "MonitorHealth",
     "MonitorWireEvent",
+    "ProviderHealthEvent",
     "TradeLevelPolicy",
     "TradePlan",
 ]
