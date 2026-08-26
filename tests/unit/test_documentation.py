@@ -28,12 +28,31 @@ def test_native_documentation_and_visual_evidence_exist():
         "docs/methodology.md",
         "docs/macos_app.md",
         "docs/privacy.md",
+        "docs/live-monitor.md",
         "docs/data_dictionary.md",
         "scripts/capture_macos_app.swift",
     ):
         assert (root / path).is_file(), path
     native_images = {path.name for path in (root / "docs" / "images" / "macos").glob("*.png")}
     assert {"today-light.png", "today-dark.png", "backtests-dark-narrow.png"} <= native_images
+
+
+def test_live_monitor_docs_explain_safety_and_beginner_workflow() -> None:
+    root = Path(__file__).resolve().parents[2]
+    text = (root / "docs/live-monitor.md").read_text(encoding="utf-8").lower()
+
+    for phrase in (
+        "finalized bars",
+        "stop-loss",
+        "take-profit",
+        "abstain",
+        "cannot place orders",
+        "mac sleeps",
+        "no guarantee",
+        "alpaca",
+        "binance",
+    ):
+        assert phrase in text
 
 
 def test_ci_runs_both_language_suites_and_clean_demo():

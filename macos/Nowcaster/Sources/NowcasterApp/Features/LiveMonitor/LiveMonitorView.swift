@@ -96,6 +96,9 @@ struct LiveMonitorView: View {
     }
 
     private func summary(for event: LiveMonitorEvent) -> String {
+        if event.type == .notificationRequest, let body = event.payload["body"]?.stringValue {
+            return body
+        }
         let symbol = event.payload["symbol"]?.stringValue
         let status = event.payload["status"]?.stringValue
         let reason = event.payload["reason"]?.stringValue

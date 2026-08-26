@@ -2,6 +2,8 @@
 
 “Live Locked” is the expected state. A positive backtest, high confidence score, or profitable week is not enough.
 
+This page concerns real-money order execution. The Live Monitor does not unlock that path: its long, short, entry, stop, target, and close events are hypothetical notifications only. Passing its alert gates means the current setup is consistent with one sealed research cohort; it does not mean capital is safe or that the strategy is ready for live orders.
+
 Every gate must pass for one unchanged cohort:
 
 - at least 60 completed equity sessions or 90 crypto calendar days;

@@ -100,6 +100,8 @@ def evaluate_alert_eligibility(
         reasons.append("market_data_unhealthy")
     if now - evidence.data_through > maximum_age or evidence.data_through > now:
         reasons.append("stale_evidence")
+    if now - quote.provider_time > maximum_age or quote.provider_time > now:
+        reasons.append("stale_quote")
     if evidence.probability < minimum_probability:
         reasons.append("probability_calibration")
     if evidence.vote_margin < minimum_vote_margin:
@@ -264,7 +266,7 @@ class LiveMonitorEngine:
         live_decision_bars = tuple(aggregate_finalized(bars, self.decision_interval))
         combined = {item.start: item for item in self._history.get(scope, ()) if item.end <= aggregated.end}
         combined.update({item.start: item for item in live_decision_bars if item.end <= aggregated.end})
-        decision_bars = tuple(combined[key] for key in sorted(combined))
+        decision_bars = self._contiguous_tail(tuple(combined[key] for key in sorted(combined)))
         evidence = self.evidence_resolver(decision_bars, quote)
         if evidence is None:
             return [self._abstention(aggregated, "qualified_evidence_unavailable")]
@@ -318,6 +320,15 @@ class LiveMonitorEngine:
         result.extend(self._transition(lifecycle, AlertState.UNTRACKED, now, "awaiting_operator_fill_tracking"))
         result.append(self._notification(plan, "entry", now, "eligible_closed_bar_decision"))
         return result
+
+    @staticmethod
+    def _contiguous_tail(bars: tuple[MarketBar, ...]) -> tuple[MarketBar, ...]:
+        if not bars:
+            return ()
+        start = len(bars) - 1
+        while start > 0 and bars[start - 1].end == bars[start].start:
+            start -= 1
+        return bars[start:]
 
     def _abstention(self, bar: MarketBar, reason: str) -> MonitorWireEvent:
         return self.emit(

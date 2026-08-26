@@ -88,12 +88,21 @@ The app keeps the last known good snapshot if a refresh fails. Broker credential
 - **Signals** — long, short, and abstain postures with supporting and invalidating evidence.
 - **Backtests** — returns, risk, drawdowns, costs, and development versus final-test results.
 - **Strategy Lab** — compare intraday rules, run bounded learning, or start multi-generation Deep Research. It shows research evidence only and never places an order.
+- **Live Monitor** — watch Alpaca stocks and Binance spot crypto through finalized bars; eligible promoted cohorts can issue hypothetical entry, SL, TP, and close notifications. It cannot place orders.
 - **Model Lab** — model comparisons, calibration, and diagnostic information.
 - **Data Quality** — missing, late, or invalid information that could weaken a result.
 - **Pipeline Runs** — the steps used to rebuild the local research snapshot.
 - **Execution Center** — broker environment, reconciliation health, paper activity, risk decisions, emergency state, and every reason real-money trading is still locked.
 
 A sensible beginner workflow is: start on **Today**, open one signal, read its invalidation evidence, and only then look at its backtest. Avoid judging a model from its headline return alone.
+
+### Using Live Monitor
+
+Build and review historical evidence first, then add comma-separated watchlists in **Settings** and store Alpaca data credentials in Keychain if you monitor stocks. Open **Live Monitor**, grant notification permission, and choose **Start Monitoring**. A five-minute decision is made only after every underlying one-minute bar is finalized.
+
+An alert contains a hypothetical entry range, stop-loss (SL), two take-profit levels (TP1/TP2), and a reason. It is allowed only when a complete promoted strategy cohort from the exact same provider/feed passes causal, no-repaint, calibration, cost, breadth, freshness, and risk/reward gates. Otherwise the result is **Abstain**. Active hypothetical setups are checked on finalized one-minute bars and can produce target, stop, expiry, reversal, or close updates.
+
+Live Monitor is notification-only: it has no order API and cannot guarantee profit. It stops while the Mac sleeps, is offline, the app is quit, or the machine is shut down. See the [beginner Live Monitor guide](docs/live-monitor.md) for setup, terminology, safety boundaries, and troubleshooting.
 
 ### Using Deep Research
 
@@ -169,6 +178,8 @@ make macos-test          # Run Swift model and app tests
 make macos-app           # Assemble build/Nowcaster.app
 make verify-paper-trading # Broker adapter, idempotency, stream, recovery, and CLI tests
 make verify-trading-readiness # Risk, emergency, forward evidence, readiness, live-lock, and arming tests
+make verify-live-monitor   # Live protocol, causal alerts, native models, and deterministic replay
+make replay-live-monitor   # Credential-free recorded Binance protocol replay
 make verify-deep-research # End-to-end ledger, controls, resume, export, and broker-isolation tests
 make macos-ui-test       # Launch the app and verify a real native window
 make macos-screenshots   # Capture the primary native views
@@ -189,7 +200,7 @@ scripts/            native app build and visual-verification tools
 .github/workflows/  continuous integration and macOS release packaging
 ```
 
-For deeper technical detail, see the [strategy methodology](docs/strategy-methodology.md), [provider guide](docs/data-providers.md), [research results](docs/research-results.md), [architecture](docs/architecture.md), [earnings/daily methodology](docs/methodology.md), [backtest protocol](docs/backtest_protocol.md), [data dictionary](docs/data_dictionary.md), [macOS guide](docs/macos_app.md), [privacy policy](docs/privacy.md), and [verification record](docs/native_verification.md).
+For deeper technical detail, see the [Live Monitor guide](docs/live-monitor.md), [strategy methodology](docs/strategy-methodology.md), [provider guide](docs/data-providers.md), [research results](docs/research-results.md), [architecture](docs/architecture.md), [earnings/daily methodology](docs/methodology.md), [backtest protocol](docs/backtest_protocol.md), [data dictionary](docs/data_dictionary.md), [macOS guide](docs/macos_app.md), [privacy policy](docs/privacy.md), and [verification record](docs/native_verification.md).
 
 ## Data, privacy, and limitations
 

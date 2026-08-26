@@ -2,7 +2,7 @@ PYTHON ?= python3
 VENV ?= .venv
 PIP_INDEX ?= https://pypi.org/simple
 
-.PHONY: setup test lint init-db fetch features train backtest report demo research-ci research-live research-live-probe verify-research-fixtures verify-swift-fixture-parity verify-deep-research verify-paper-trading verify-trading-readiness secret-scan clean-generated sync-macos-snapshot engine-bundle macos-build macos-test macos-app macos-open macos-ui-test macos-screenshots release-archive
+.PHONY: setup test lint init-db fetch features train backtest report demo research-ci research-live research-live-probe verify-research-fixtures verify-swift-fixture-parity verify-deep-research verify-paper-trading verify-trading-readiness verify-live-monitor replay-live-monitor secret-scan clean-generated sync-macos-snapshot engine-bundle macos-build macos-test macos-app macos-open macos-ui-test macos-screenshots release-archive
 setup:
 	uv venv --python 3.13 $(VENV)
 	uv pip install --python $(VENV)/bin/python --index-url $(PIP_INDEX) -e '.[dev]'
@@ -85,6 +85,14 @@ verify-paper-trading:
 
 verify-trading-readiness:
 	$(VENV)/bin/pytest -q tests/unit/test_trading_risk.py tests/integration/test_trading_emergency.py tests/unit/test_forward_evidence.py tests/unit/test_live_readiness.py tests/unit/test_live_broker_lock.py tests/unit/test_live_arming.py
+
+replay-live-monitor:
+	$(VENV)/bin/python -c 'import json; print(json.dumps({"schema_version": 1, "session_id": "deterministic-replay", "database_url": "duckdb:///:memory:", "stock_feed": "iex", "stocks": [], "crypto": ["BTCUSDT"], "decision_interval": "5m", "config_hash": "c" * 64, "cohort_hash": "d" * 64}))' | $(VENV)/bin/python -m src.cli monitor run --replay tests/fixtures/live_monitor/binance_stream.jsonl --replay-provider binance
+
+verify-live-monitor:
+	$(VENV)/bin/pytest -q tests/unit/test_live_monitor_*.py tests/integration/test_live_monitor_*.py tests/unit/test_engine_packaging.py
+	cd macos/Nowcaster && swift test --filter LiveMonitor
+	$(MAKE) replay-live-monitor
 
 macos-test:
 	cd macos/Nowcaster && swift test

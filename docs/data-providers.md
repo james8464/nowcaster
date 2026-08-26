@@ -4,6 +4,8 @@
 
 Bars are never treated as interchangeable merely because they share a ticker. Dataset identity includes provider, feed, provider symbol, interval, requested UTC range, exchange calendar version, payload hashes, and coverage gaps. Raw credentials and bulk/licensed bars stay outside Git. Git contains only exact compact manifests, summaries, and the deterministic CI fixture descriptor.
 
+The Live Monitor uses the same identity boundary. Binance public `bookTicker` and closed `kline_1m` events and Alpaca quote/finalized-minute events are normalized into strict models. An unclosed kline is discarded. Reconnect, stale, provider-error, and continuity states block new alerts; the monitor never fills a live gap from another source.
+
 ## Binance spot
 
 The configured app labels map as follows:

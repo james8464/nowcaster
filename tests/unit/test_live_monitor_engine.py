@@ -90,6 +90,12 @@ def test_eligibility_abstains_for_each_fail_closed_boundary() -> None:
         (evidence(no_repaint_passed=False), quote(), MonitorHealth.HEALTHY, "no_repaint_required"),
         (evidence(feed="sip"), quote(), MonitorHealth.HEALTHY, "provider_feed_mismatch"),
         (evidence(data_through=NOW - timedelta(minutes=1)), quote(), MonitorHealth.HEALTHY, "stale_evidence"),
+        (
+            evidence(),
+            quote(provider_time=NOW - timedelta(minutes=1)),
+            MonitorHealth.HEALTHY,
+            "stale_quote",
+        ),
         (evidence(direction=Direction.SHORT, shortable=False), quote(), MonitorHealth.HEALTHY, "shortability_required"),
         (evidence(), quote(), MonitorHealth.RECONNECTING, "market_data_unhealthy"),
     ]

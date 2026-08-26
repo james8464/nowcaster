@@ -63,6 +63,8 @@ jobs:
         run: swift --version
       - name: Swift tests
         run: swift test --package-path macos/Nowcaster
+      - name: Deterministic live-monitor replay
+        run: make verify-live-monitor
       - name: Swift release build
         run: swift build -c release --package-path macos/Nowcaster
       - name: Assemble and verify app

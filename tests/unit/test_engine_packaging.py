@@ -33,3 +33,14 @@ def test_engine_bundle_declares_dynamic_database_timezone_dependency() -> None:
 
     assert "--collect-submodules src.deep_research" in source
     assert "--hidden-import pytz" in source
+    assert "--collect-submodules src.live_monitor" in source
+    assert "--collect-submodules websockets" in source
+
+
+def test_live_monitor_transport_has_no_broker_mutation_imports() -> None:
+    root = Path(__file__).resolve().parents[2]
+    sources = "\n".join(path.read_text(encoding="utf-8") for path in (root / "src/live_monitor").glob("*.py"))
+
+    assert "submit_order" not in sources
+    assert "cancel_order" not in sources
+    assert "src.trading" not in sources

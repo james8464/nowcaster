@@ -51,13 +51,33 @@ The equity and crypto subsystems share infrastructure but not economic assumptio
 
 The bundled snapshot is copied into application resources for a useful first launch. A rebuilt snapshot remains a local generated artifact.
 
+## Live notification control plane
+
+The optional Live Monitor is a separate, notification-only path:
+
+```mermaid
+flowchart LR
+    Alpaca[Alpaca equity stream] --> Normalize[Typed finalized bars and quotes]
+    Binance[Binance spot stream] --> Normalize
+    DB[(Sealed cohorts + historical bars)] --> Gates[Exact provider/feed and evidence gates]
+    Normalize --> Gates
+    Gates -->|eligible| Plan[Immutable entry / SL / TP plan]
+    Gates -->|any failure| Abstain[Abstain with reasons]
+    Plan --> JSONL[Bounded typed JSONL]
+    JSONL --> SwiftActor[Swift process supervisor]
+    SwiftActor --> UI[Live Monitor + menu bar]
+    SwiftActor --> Notice[Local notifications]
+```
+
+`src/live_monitor` imports no trading or broker-order module. Credentials arrive as one private stdin bootstrap, stdout contains typed events only, and stderr is drained without displaying raw provider context. The engine restores active hypothetical setup state from DuckDB after restart. A signed release launches the exact bundled helper; source builds may use the configured Python executable.
+
 ## Contract and atomicity
 
 The snapshot has a top-level schema version, metadata, instruments, earnings forecasts, signals, backtests, diagnostics, data-quality issues, and pipeline runs. Enum decoding is forward-compatible, but an unknown major schema is rejected. Python writes a temporary file, fsyncs where supported, validates it, and atomically replaces the published path so the UI never sees a partial JSON document.
 
 ## Operations and provenance
 
-Every pipeline stage records its configuration hash, Git revision, timestamps, state, and counts. Derived evidence retains source/version metadata. Demo mode is fully offline after checkout; live adapters are explicit and use the same downstream validation. Neither mode includes order execution.
+Every pipeline stage records its configuration hash, Git revision, timestamps, state, and counts. Derived evidence retains source/version metadata. Demo mode is fully offline after checkout; live adapters are explicit and use the same downstream validation. The Live Monitor never executes orders. Separately configured paper-trading modules remain isolated behind their existing risk controls, and real-money trading remains locked.
 
 ## Legacy boundary
 
