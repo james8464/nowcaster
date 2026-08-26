@@ -42,6 +42,8 @@ def test_provider_secret_scan_ignores_names_placeholders_and_presence_metadata()
             f'os.getenv("{alpaca_name}")',
             f"export {alpaca_name}='<local-secret>'",
             f'"{binance_name.lower()}_present": false',
+            "alpaca_secret: SecretStr | None = None",
+            '"alpaca_key_id": "private-key-value"',
             "The Binance API key stays outside Git.",
         ]
     )

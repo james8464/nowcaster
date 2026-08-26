@@ -19,12 +19,24 @@ PROVIDER_ASSIGNMENT = re.compile(
     (?P<value>.+?)\s*$
     """
 )
-PLACEHOLDER_MARKERS = ("<", ">", "${", "REDACTED", "CHANGEME", "PLACEHOLDER", "EXAMPLE")
+PLACEHOLDER_MARKERS = (
+    "<",
+    ">",
+    "${",
+    "REDACTED",
+    "CHANGEME",
+    "PLACEHOLDER",
+    "EXAMPLE",
+    "PRIVATE-KEY-VALUE",
+    "PRIVATE-SECRET-VALUE",
+)
 
 
 def _assigned_real_value(raw: str) -> bool:
     value = raw.strip().rstrip(",").strip().strip("'\"").strip()
     if not value or value.lower() in {"false", "true", "null", "none"}:
+        return False
+    if value.startswith("SecretStr"):
         return False
     upper = value.upper()
     return not any(marker in upper for marker in PLACEHOLDER_MARKERS)

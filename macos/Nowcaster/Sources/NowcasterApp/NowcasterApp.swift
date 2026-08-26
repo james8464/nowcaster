@@ -51,10 +51,6 @@ struct NowcasterApp: App {
             .preferredColorScheme(forcedColorScheme)
             .frame(minWidth: windowPresentation.minimumWidth, minHeight: windowPresentation.minimumHeight)
         }
-
-        MenuBarExtra("Nowcaster Live Monitor", systemImage: model.liveMonitor.status.symbol) {
-            LiveMonitorMenu(model: model)
-        }
         .defaultSize(width: windowPresentation.defaultWidth, height: windowPresentation.defaultHeight)
         .commands {
             SidebarCommands()
@@ -77,6 +73,10 @@ struct NowcasterApp: App {
                 }
                 .keyboardShortcut("e", modifiers: [.command, .shift])
             }
+        }
+
+        MenuBarExtra("Nowcaster Live Monitor", systemImage: model.liveMonitor.status.symbol) {
+            LiveMonitorMenu(model: model)
         }
 
         Settings {
