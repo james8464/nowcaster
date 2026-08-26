@@ -83,6 +83,7 @@ class MarketBar(LiveMonitorModel):
     volume: Decimal = Field(ge=0)
     finalized: Literal[True]
     revision: int = Field(ge=0)
+    repair_verified: bool = False
 
     @field_validator("provider", "feed")
     @classmethod
@@ -123,6 +124,7 @@ class MarketBar(LiveMonitorModel):
                 "close": str(self.close),
                 "volume": str(self.volume),
                 "revision": self.revision,
+                "repair_verified": self.repair_verified,
             }
         )
 
@@ -189,6 +191,12 @@ class TradePlan(LiveMonitorModel):
     reward_to_risk_1: Decimal = Field(gt=0)
     reward_to_risk_2: Decimal = Field(gt=0)
     venue_note: str | None = Field(default=None, max_length=256)
+    cohort_id: str = Field(default="0" * 64, pattern=r"^[0-9a-f]{64}$")
+    dataset_hash: str = Field(default="0" * 64, pattern=r"^[0-9a-f]{64}$")
+    evidence_hash: str = Field(default="0" * 64, pattern=r"^[0-9a-f]{64}$")
+    policy_hash: str = Field(default="0" * 64, pattern=r"^[0-9a-f]{64}$")
+    config_hash: str = Field(default="0" * 64, pattern=r"^[0-9a-f]{64}$")
+    strategy_versions: tuple[tuple[str, str], ...] = ()
 
     @model_validator(mode="after")
     def validate_geometry(self) -> TradePlan:
@@ -280,9 +288,11 @@ class MonitorWireEvent(LiveMonitorModel):
         "quote",
         "bar_finalized",
         "decision",
+        "setup_snapshot",
         "lifecycle_transition",
         "notification_request",
         "provider_health",
+        "control_ack",
         "configuration_rejected",
         "fatal_error",
     ]

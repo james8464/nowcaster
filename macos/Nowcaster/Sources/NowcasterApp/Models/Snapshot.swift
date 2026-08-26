@@ -524,6 +524,8 @@ struct EnsembleComponentSnapshot: Decodable, Identifiable, Sendable {
     let version: String
     let family: String
     let datasetHash: String
+    let provider: String?
+    let feed: String?
     let symbol: String
     let interval: String
     let mode: String
@@ -534,7 +536,7 @@ struct EnsembleComponentSnapshot: Decodable, Identifiable, Sendable {
     let evidence: [String: JSONValue]
 
     var id: String {
-        [strategyId, version, datasetHash, symbol, interval, mode, cohortId ?? "legacy"]
+        [strategyId, version, datasetHash, provider ?? "legacy", feed ?? "legacy", symbol, interval, mode, cohortId ?? "legacy"]
             .joined(separator: "-") + "-\(effectiveAt.timeIntervalSince1970)"
     }
 }

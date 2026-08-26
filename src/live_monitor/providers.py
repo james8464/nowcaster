@@ -8,16 +8,104 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
+import httpx
 from websockets.asyncio.client import connect
 
 from src.live_monitor.types import MarketBar, MarketQuote, MonitorHealth, ProviderHealthEvent
+from src.strategies.calendars import calendar_for
+from src.strategies.types import BarInterval
 
 MarketEvent = MarketBar | MarketQuote | ProviderHealthEvent
 MAXIMUM_MESSAGE_BYTES = 64 * 1024
+MAXIMUM_REPAIR_BARS = 1_000
 
 
 class ProviderDecodeError(ValueError):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderSymbolMetadata:
+    symbol: str
+    tick_size: Decimal
+    tradable: bool
+    shortable: bool
+    easy_to_borrow: bool
+
+
+def load_alpaca_symbol_metadata(
+    symbols: Iterable[str], *, key_id: str, secret: str, client: httpx.Client | None = None
+) -> dict[str, ProviderSymbolMetadata]:
+    normalized = _symbols(symbols)
+    owned = client is None
+    http = client or httpx.Client(timeout=httpx.Timeout(10.0))
+    try:
+        result = {}
+        for symbol in normalized:
+            response = http.get(
+                f"https://paper-api.alpaca.markets/v2/assets/{symbol}",
+                headers={"APCA-API-KEY-ID": key_id, "APCA-API-SECRET-KEY": secret},
+            )
+            response.raise_for_status()
+            payload = response.json()
+            if not isinstance(payload, dict) or str(payload.get("symbol", "")).upper() != symbol:
+                raise ValueError("Alpaca returned invalid symbol metadata")
+            raw_increment = Decimal(str(payload.get("price_increment", "0")))
+            result[symbol] = ProviderSymbolMetadata(
+                symbol=symbol,
+                tick_size=raw_increment if raw_increment > 0 else Decimal(0),
+                tradable=payload.get("tradable") is True,
+                shortable=payload.get("shortable") is True,
+                easy_to_borrow=payload.get("easy_to_borrow") is True,
+            )
+        if not all(item.tradable for item in result.values()):
+            raise ValueError("one or more Alpaca symbols are not tradable")
+        return result
+    except (httpx.HTTPError, ValueError, TypeError) as error:
+        raise ValueError("Alpaca symbol metadata is unavailable") from error
+    finally:
+        if owned:
+            http.close()
+
+
+def load_binance_symbol_metadata(
+    symbols: Iterable[str], *, client: httpx.Client | None = None
+) -> dict[str, ProviderSymbolMetadata]:
+    normalized = _symbols(symbols)
+    owned = client is None
+    http = client or httpx.Client(timeout=httpx.Timeout(10.0))
+    try:
+        response = http.get("https://api.binance.com/api/v3/exchangeInfo", params={"symbols": json.dumps(normalized)})
+        response.raise_for_status()
+        payload = response.json()
+        rows = payload.get("symbols") if isinstance(payload, dict) else None
+        if not isinstance(rows, list):
+            raise ValueError("Binance returned invalid exchange metadata")
+        result = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            symbol = str(row.get("symbol", "")).upper()
+            price_filter = next(
+                (item for item in row.get("filters", []) if item.get("filterType") == "PRICE_FILTER"), None
+            )
+            if symbol not in normalized or not isinstance(price_filter, dict):
+                continue
+            result[symbol] = ProviderSymbolMetadata(
+                symbol=symbol,
+                tick_size=Decimal(str(price_filter["tickSize"])),
+                tradable=row.get("status") == "TRADING" and "SPOT" in row.get("permissions", ["SPOT"]),
+                shortable=True,
+                easy_to_borrow=True,
+            )
+        if set(result) != set(normalized) or not all(item.tradable for item in result.values()):
+            raise ValueError("one or more Binance symbols are not tradable")
+        return result
+    except (httpx.HTTPError, ValueError, TypeError, KeyError) as error:
+        raise ValueError("Binance symbol metadata is unavailable") from error
+    finally:
+        if owned:
+            http.close()
 
 
 def _json_object(message: bytes | str) -> Any:
@@ -54,11 +142,153 @@ def _symbols(values: Iterable[str], *, maximum: int = 200) -> tuple[str, ...]:
     return result
 
 
+def expected_repair_starts(provider: str, feed: str, start: datetime, end: datetime) -> tuple[datetime, ...]:
+    if start.tzinfo is not UTC or end.tzinfo is not UTC or end <= start:
+        raise ValueError("gap repair requires a positive explicit UTC window")
+    expected = calendar_for(provider, feed).expected_opens(start, end, BarInterval.ONE_MINUTE)
+    if len(expected) > MAXIMUM_REPAIR_BARS:
+        raise ValueError("gap exceeds the bounded repair window")
+    return expected
+
+
+def load_alpaca_repair_bars(
+    symbol: str,
+    *,
+    start: datetime,
+    end: datetime,
+    feed: str,
+    key_id: str,
+    secret: str,
+    client: httpx.Client | None = None,
+) -> tuple[MarketBar, ...]:
+    expected = expected_repair_starts("alpaca", feed, start, end)
+    if not expected:
+        return ()
+    owned = client is None
+    http = client or httpx.Client(timeout=httpx.Timeout(10.0))
+    received_at = datetime.now(UTC)
+    try:
+        response = http.get(
+            "https://data.alpaca.markets/v2/stocks/bars",
+            params={
+                "symbols": symbol,
+                "timeframe": "1Min",
+                "start": start.isoformat().replace("+00:00", "Z"),
+                "end": end.isoformat().replace("+00:00", "Z"),
+                "limit": MAXIMUM_REPAIR_BARS,
+                "adjustment": "raw",
+                "feed": feed,
+            },
+            headers={"APCA-API-KEY-ID": key_id, "APCA-API-SECRET-KEY": secret},
+        )
+        response.raise_for_status()
+        payload = response.json()
+        container = payload.get("bars") if isinstance(payload, dict) else None
+        rows = container.get(symbol) if isinstance(container, dict) else None
+        if not isinstance(rows, list):
+            raise ValueError("Alpaca repair response is malformed")
+        bars = tuple(
+            MarketBar(
+                provider="alpaca",
+                feed=feed,
+                symbol=symbol,
+                interval="1m",
+                start=_zulu(str(item["t"])),
+                end=_zulu(str(item["t"])) + timedelta(minutes=1),
+                available_at=received_at,
+                received_at=received_at,
+                open=Decimal(str(item["o"])),
+                high=Decimal(str(item["h"])),
+                low=Decimal(str(item["l"])),
+                close=Decimal(str(item["c"])),
+                volume=Decimal(str(item["v"])),
+                finalized=True,
+                revision=0,
+                repair_verified=True,
+            )
+            for item in rows
+            if isinstance(item, dict) and start <= _zulu(str(item.get("t", ""))) < end
+        )
+    except (httpx.HTTPError, KeyError, TypeError, ValueError) as error:
+        raise ValueError("Alpaca bounded gap repair failed") from error
+    finally:
+        if owned:
+            http.close()
+    if tuple(sorted(item.start for item in bars)) != expected:
+        raise ValueError("Alpaca bounded gap repair is incomplete")
+    return tuple(sorted(bars, key=lambda item: item.start))
+
+
+def load_binance_repair_bars(
+    symbol: str,
+    *,
+    start: datetime,
+    end: datetime,
+    client: httpx.Client | None = None,
+) -> tuple[MarketBar, ...]:
+    expected = expected_repair_starts("binance", "spot", start, end)
+    owned = client is None
+    http = client or httpx.Client(timeout=httpx.Timeout(10.0))
+    received_at = datetime.now(UTC)
+    try:
+        response = http.get(
+            "https://api.binance.com/api/v3/klines",
+            params={
+                "symbol": symbol,
+                "interval": "1m",
+                "startTime": int(start.timestamp() * 1_000),
+                "endTime": int(end.timestamp() * 1_000),
+                "limit": MAXIMUM_REPAIR_BARS,
+            },
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, list):
+            raise ValueError("Binance repair response is malformed")
+        bars = tuple(
+            MarketBar(
+                provider="binance",
+                feed="spot",
+                symbol=symbol,
+                interval="1m",
+                start=_epoch_milliseconds(item[0]),
+                end=_epoch_milliseconds(item[0]) + timedelta(minutes=1),
+                available_at=received_at,
+                received_at=received_at,
+                open=Decimal(str(item[1])),
+                high=Decimal(str(item[2])),
+                low=Decimal(str(item[3])),
+                close=Decimal(str(item[4])),
+                volume=Decimal(str(item[5])),
+                finalized=True,
+                revision=0,
+                repair_verified=True,
+            )
+            for item in payload
+            if isinstance(item, list) and len(item) >= 6 and start <= _epoch_milliseconds(item[0]) < end
+        )
+    except (httpx.HTTPError, IndexError, TypeError, ValueError) as error:
+        raise ValueError("Binance bounded gap repair failed") from error
+    finally:
+        if owned:
+            http.close()
+    if tuple(sorted(item.start for item in bars)) != expected:
+        raise ValueError("Binance bounded gap repair is incomplete")
+    return tuple(sorted(bars, key=lambda item: item.start))
+
+
+def _alpaca_tick_size(metadata: ProviderSymbolMetadata | None, last: Decimal) -> Decimal:
+    if metadata is not None and metadata.tick_size > 0:
+        return metadata.tick_size
+    return Decimal("0.0001") if last < 1 else Decimal("0.01")
+
+
 @dataclass(slots=True)
 class AlpacaMarketDataAdapter:
     feed: str
     key_id: str = field(repr=False)
     secret: str = field(repr=False)
+    metadata: dict[str, ProviderSymbolMetadata] = field(default_factory=dict, repr=False)
 
     def __post_init__(self) -> None:
         self.feed = self.feed.strip().lower()
@@ -86,6 +316,7 @@ class AlpacaMarketDataAdapter:
             if event_type == "q":
                 bid = Decimal(str(item["bp"]))
                 ask = Decimal(str(item["ap"]))
+                last = (bid + ask) / 2
                 result.append(
                     MarketQuote(
                         provider="alpaca",
@@ -93,8 +324,8 @@ class AlpacaMarketDataAdapter:
                         symbol=str(item["S"]),
                         bid=bid,
                         ask=ask,
-                        last=(bid + ask) / 2,
-                        tick_size=Decimal("0.01"),
+                        last=last,
+                        tick_size=_alpaca_tick_size(self.metadata.get(str(item["S"]).upper()), last),
                         provider_time=_zulu(str(item["t"])),
                         received_at=received_at,
                     )
@@ -184,6 +415,7 @@ class AlpacaMarketDataAdapter:
 @dataclass(slots=True)
 class BinanceSpotAdapter:
     feed: str = "spot"
+    metadata: dict[str, ProviderSymbolMetadata] = field(default_factory=dict, repr=False)
 
     def subscription(self, symbols: Iterable[str]) -> dict[str, Any]:
         params: list[str] = []
@@ -197,7 +429,15 @@ class BinanceSpotAdapter:
         if not isinstance(item, dict):
             raise ProviderDecodeError("Binance payload must be an event object")
         if item.get("result") is None and item.get("id") is not None:
-            return ()
+            return (
+                ProviderHealthEvent(
+                    provider="binance",
+                    feed=self.feed,
+                    status=MonitorHealth.HEALTHY,
+                    reason="subscribed",
+                    occurred_at=received_at,
+                ),
+            )
         if "code" in item:
             return (
                 ProviderHealthEvent(
@@ -220,7 +460,9 @@ class BinanceSpotAdapter:
                     bid=bid,
                     ask=ask,
                     last=(bid + ask) / 2,
-                    tick_size=Decimal("0.01"),
+                    tick_size=self.metadata.get(
+                        str(item["s"]).upper(), ProviderSymbolMetadata("", Decimal("0.01"), True, True, True)
+                    ).tick_size,
                     provider_time=_epoch_milliseconds(item["E"]),
                     received_at=received_at,
                 ),
@@ -330,5 +572,11 @@ __all__ = [
     "BinanceSpotAdapter",
     "ProviderDecodeError",
     "ProviderHealthTracker",
+    "ProviderSymbolMetadata",
+    "expected_repair_starts",
     "ReconnectPolicy",
+    "load_alpaca_symbol_metadata",
+    "load_alpaca_repair_bars",
+    "load_binance_repair_bars",
+    "load_binance_symbol_metadata",
 ]

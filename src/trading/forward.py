@@ -29,10 +29,11 @@ class ForwardCohortIdentity(BaseModel):
     config_hash: str
     risk_policy_hash: str
     cost_policy_hash: str
+    selection_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
     @property
     def cohort_hash(self) -> str:
-        return canonical_hash(self.model_dump(mode="json"))
+        return self.selection_hash or canonical_hash(self.model_dump(mode="json", exclude={"selection_hash"}))
 
 
 class ForwardDailyEvidence(BaseModel):
@@ -47,6 +48,8 @@ class ForwardDailyEvidence(BaseModel):
     drawdown: Decimal | None
     reconciliation_mismatches: int = Field(ge=0)
     health_breakers: int = Field(ge=0)
+    modeled_slippage_bps: Decimal | None = Field(default=None, ge=0)
+    observed_slippage_bps: Decimal | None = Field(default=None, ge=0)
     status: Literal["complete", "unavailable"]
     evidence_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     closed_at: datetime
@@ -71,6 +74,8 @@ class ForwardDailyEvidence(BaseModel):
             "drawdown": self.drawdown,
             "reconciliation_mismatches": self.reconciliation_mismatches,
             "health_breakers": self.health_breakers,
+            "modeled_slippage_bps": self.modeled_slippage_bps,
+            "observed_slippage_bps": self.observed_slippage_bps,
         }
 
 
@@ -91,7 +96,40 @@ class ForwardEvidenceBuilder:
         drawdown: Decimal | None,
         reconciliation_mismatches: int,
         health_breakers: int,
+        modeled_slippage_bps: Decimal | None = None,
+        observed_slippage_bps: Decimal | None = None,
     ) -> ForwardDailyEvidence:
+        return self.close_selection_period(
+            cohort_hash=cohort.cohort_hash,
+            period_start=period_start,
+            period_end=period_end,
+            closed_trades=closed_trades,
+            paper_net_return=paper_net_return,
+            stressed_net_return=stressed_net_return,
+            drawdown=drawdown,
+            reconciliation_mismatches=reconciliation_mismatches,
+            health_breakers=health_breakers,
+            modeled_slippage_bps=modeled_slippage_bps,
+            observed_slippage_bps=observed_slippage_bps,
+        )
+
+    def close_selection_period(
+        self,
+        *,
+        cohort_hash: str,
+        period_start: datetime,
+        period_end: datetime,
+        closed_trades: int,
+        paper_net_return: Decimal | None,
+        stressed_net_return: Decimal | None,
+        drawdown: Decimal | None,
+        reconciliation_mismatches: int,
+        health_breakers: int,
+        modeled_slippage_bps: Decimal | None = None,
+        observed_slippage_bps: Decimal | None = None,
+    ) -> ForwardDailyEvidence:
+        if len(cohort_hash) != 64 or any(item not in "0123456789abcdef" for item in cohort_hash):
+            raise ValueError("forward cohort identity must be a SHA-256 hash")
         status = (
             "complete"
             if reconciliation_mismatches == 0
@@ -102,7 +140,7 @@ class ForwardEvidenceBuilder:
             else "unavailable"
         )
         payload = {
-            "cohort_hash": cohort.cohort_hash,
+            "cohort_hash": cohort_hash,
             "period_start": period_start,
             "period_end": period_end,
             "closed_trades": closed_trades,
@@ -111,6 +149,8 @@ class ForwardEvidenceBuilder:
             "drawdown": str(drawdown) if drawdown is not None else None,
             "reconciliation_mismatches": reconciliation_mismatches,
             "health_breakers": health_breakers,
+            "modeled_slippage_bps": str(modeled_slippage_bps) if modeled_slippage_bps is not None else None,
+            "observed_slippage_bps": str(observed_slippage_bps) if observed_slippage_bps is not None else None,
             "status": status,
         }
         evidence = ForwardDailyEvidence(
@@ -122,7 +162,7 @@ class ForwardEvidenceBuilder:
         with self.database.engine.connect() as connection:
             existing = connection.execute(
                 select(table.c.evidence).where(
-                    table.c.cohort_hash == cohort.cohort_hash,
+                    table.c.cohort_hash == cohort_hash,
                     table.c.period_start == period_start,
                     table.c.period_end == period_end,
                 )
@@ -137,8 +177,8 @@ class ForwardEvidenceBuilder:
             "forward_evidence_daily",
             [
                 {
-                    "forward_evidence_id": canonical_hash((cohort.cohort_hash, period_start, period_end)),
-                    "cohort_hash": cohort.cohort_hash,
+                    "forward_evidence_id": canonical_hash((cohort_hash, period_start, period_end)),
+                    "cohort_hash": cohort_hash,
                     "period_start": period_start,
                     "period_end": period_end,
                     "closed_trades": closed_trades,

@@ -39,7 +39,9 @@ fi
 if [[ "${NOWCASTER_SKIP_ENGINE_BUNDLE:-0}" != "1" ]]; then
     ENGINE_ROOT=$("$PROJECT_ROOT/scripts/build_engine_bundle.sh")
     install -m 755 "$ENGINE_ROOT/nowcaster-engine" "$CONTENTS_PATH/Helpers/nowcaster-engine"
-    codesign --force --options runtime "${SIGN_OPTIONS[@]}" --sign "$IDENTITY" "$CONTENTS_PATH/Helpers/nowcaster-engine"
+    codesign --force --options runtime "${SIGN_OPTIONS[@]}" \
+      --entitlements "$PACKAGE_ROOT/Resources/Engine.entitlements" \
+      --sign "$IDENTITY" "$CONTENTS_PATH/Helpers/nowcaster-engine"
     "$PYTHON" "$PROJECT_ROOT/scripts/engine_manifest.py" --root "$PROJECT_ROOT" \
       --executable "$CONTENTS_PATH/Helpers/nowcaster-engine" \
       --output "$CONTENTS_PATH/Resources/engine-manifest.json"

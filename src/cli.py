@@ -15,6 +15,7 @@ from src.config.settings import Settings
 from src.database.engine import Database
 from src.demo import DEMO_STAGES, demo_pipeline, live_pipeline, run_demo
 from src.live_monitor.command import parse_bootstrap, replay_events, run_live
+from src.live_monitor.evidence import load_sealed_cohorts, select_monitor_cohorts
 from src.reporting.research_report import generate_research_report
 from src.research import run_full_strategy_research
 from src.strategies.pipeline import (
@@ -30,6 +31,7 @@ from src.strategies.pipeline import (
     create_strategy_pipeline,
 )
 from src.strategies.types import BarInterval, StrategyMode
+from src.trading.live_monitor_readiness import evaluate_and_persist_live_readiness
 from src.trading.service import (
     create_paper_supervisor,
     create_shadow_supervisor,
@@ -64,10 +66,42 @@ def monitor_run(
             return
         import asyncio
 
-        asyncio.run(run_live(bootstrap))
+        asyncio.run(run_live(bootstrap, control_stream=typer.get_text_stream("stdin")))
     except (ValueError, OSError):
         typer.echo(json.dumps({"event": "configuration_rejected"}), err=True)
         raise typer.Exit(code=2) from None
+
+
+@monitor_app.command("qualify")
+def monitor_qualify(
+    project_root: Annotated[Path, typer.Option(exists=True, file_okay=False)] = DEFAULT_PROJECT_ROOT,
+    database_url: Annotated[str | None, typer.Option()] = None,
+    stock: Annotated[list[str] | None, typer.Option()] = None,
+    crypto: Annotated[list[str] | None, typer.Option()] = None,
+    interval: Annotated[str, typer.Option()] = "5m",
+    stock_feed: Annotated[str, typer.Option()] = "iex",
+) -> None:
+    """Evaluate forward evidence and persist an exact, short-lived live-monitor receipt."""
+    try:
+        settings = Settings.load(project_root, mode="live")
+        database = Database.from_url(database_url or settings.database_url)
+        database.initialize()
+        cohorts = select_monitor_cohorts(
+            load_sealed_cohorts(database, settings.strategies.enabled),
+            stocks=stock or (),
+            crypto=crypto or (),
+            interval=interval,
+            stock_feed=stock_feed,
+        )
+        qualification = evaluate_and_persist_live_readiness(database, cohorts)
+        typer.echo(qualification.model_dump_json())
+        if qualification.status != "eligible":
+            raise typer.Exit(code=1)
+    except typer.Exit:
+        raise
+    except (OSError, ValueError):
+        typer.echo(json.dumps({"event": "readiness_locked", "reason": "invalid_or_incomplete_evidence"}), err=True)
+        raise typer.Exit(code=1) from None
 
 
 def _trading_settings(project_root: Path, database_url: str | None) -> Settings:

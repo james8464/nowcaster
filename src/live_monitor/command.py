@@ -4,18 +4,42 @@ import asyncio
 from collections.abc import AsyncIterator
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
-from typing import Literal
+from typing import Literal, TextIO
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, field_validator
 
 from src.config.settings import Settings
 from src.database.engine import Database
 from src.live_monitor.engine import LiveMonitorEngine
-from src.live_monitor.evidence import SealedCohortResolver, load_decision_history, load_sealed_cohorts
-from src.live_monitor.providers import AlpacaMarketDataAdapter, BinanceSpotAdapter
+from src.live_monitor.evidence import (
+    SealedCohortResolver,
+    load_active_readiness_receipt,
+    load_decision_history,
+    load_sealed_cohorts,
+    select_monitor_cohorts,
+    selected_cohort_hash,
+)
+from src.live_monitor.providers import (
+    AlpacaMarketDataAdapter,
+    BinanceSpotAdapter,
+    ProviderSymbolMetadata,
+    expected_repair_starts,
+    load_alpaca_repair_bars,
+    load_alpaca_symbol_metadata,
+    load_binance_repair_bars,
+    load_binance_symbol_metadata,
+)
 from src.live_monitor.repository import LiveMonitorRepository
-from src.live_monitor.types import BarIntervalValue, MarketEvent, MonitorWireEvent, ProviderHealthEvent
+from src.live_monitor.types import (
+    BarIntervalValue,
+    MarketBar,
+    MarketEvent,
+    MonitorHealth,
+    MonitorWireEvent,
+    ProviderHealthEvent,
+)
 
 
 class MonitorBootstrap(BaseModel):
@@ -42,6 +66,30 @@ class MonitorBootstrap(BaseModel):
         return normalized
 
 
+class MonitorControl(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal[1]
+    command: Literal["shutdown", "notification_delivered", "track_fill"]
+    event_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    setup_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    actual_fill: Decimal | None = Field(default=None, gt=0)
+
+
+def parse_control(line: str) -> MonitorControl:
+    if len(line.encode()) > 4 * 1024:
+        raise ValueError("monitor control exceeds maximum size")
+    try:
+        control = MonitorControl.model_validate_json(line)
+    except ValidationError as error:
+        raise ValueError("monitor control is invalid") from error
+    if control.command == "notification_delivered" and control.event_id is None:
+        raise ValueError("notification receipt requires an event identity")
+    if control.command == "track_fill" and (control.setup_id is None or control.actual_fill is None):
+        raise ValueError("fill tracking requires a setup identity and price")
+    return control
+
+
 def parse_bootstrap(line: str) -> MonitorBootstrap:
     if len(line.encode()) > 64 * 1024:
         raise ValueError("bootstrap exceeds maximum size")
@@ -53,6 +101,16 @@ def parse_bootstrap(line: str) -> MonitorBootstrap:
 
 def _emit(event: MonitorWireEvent) -> str:
     return event.model_dump_json()
+
+
+def _transport_health_after(current: bool, event: MarketEvent) -> bool:
+    if not isinstance(event, ProviderHealthEvent):
+        return True
+    if event.status is MonitorHealth.HEALTHY:
+        return True
+    if event.status in {MonitorHealth.RECONNECTING, MonitorHealth.STALE, MonitorHealth.FAILED, MonitorHealth.STOPPED}:
+        return False
+    return current
 
 
 def replay_events(
@@ -80,15 +138,120 @@ def replay_events(
     return tuple(result)
 
 
-async def _merged_live_events(bootstrap: MonitorBootstrap) -> AsyncIterator[MarketEvent]:
+async def _merged_live_events(
+    bootstrap: MonitorBootstrap,
+    metadata: dict[tuple[str, str], ProviderSymbolMetadata],
+    stop_event: asyncio.Event | None = None,
+    initial_last_bar_end: dict[tuple[str, str, str], datetime] | None = None,
+) -> AsyncIterator[MarketEvent]:
     queue: asyncio.Queue[MarketEvent] = asyncio.Queue(maxsize=1_024)
     last_seen: dict[tuple[str, str], datetime] = {}
+    transport_healthy: dict[tuple[str, str], bool] = {}
+    last_bar_end = dict(initial_last_bar_end or {})
+    continuity_blocked: set[tuple[str, str, str]] = set()
     stale_reported: set[tuple[str, str]] = set()
 
     async def produce(stream: AsyncIterator[MarketEvent]) -> None:
         async for event in stream:
-            last_seen[(event.provider, event.feed)] = datetime.now(UTC)
-            stale_reported.discard((event.provider, event.feed))
+            if not isinstance(event, ProviderHealthEvent):
+                provider_scope = (event.provider, event.feed)
+                last_seen[provider_scope] = datetime.now(UTC)
+                transport_healthy[provider_scope] = _transport_health_after(
+                    transport_healthy.get(provider_scope, False), event
+                )
+                stale_reported.discard(provider_scope)
+            else:
+                provider_scope = (event.provider, event.feed)
+                transport_healthy[provider_scope] = _transport_health_after(
+                    transport_healthy.get(provider_scope, False), event
+                )
+                if event.status == "healthy" and any(
+                    scope[:2] == (event.provider, event.feed) for scope in continuity_blocked
+                ):
+                    continue
+            if isinstance(event, MarketBar):
+                scope = (event.provider, event.feed, event.symbol)
+                previous_end = last_bar_end.get(scope)
+                try:
+                    expected_missing = (
+                        expected_repair_starts(event.provider, event.feed, previous_end, event.start)
+                        if previous_end is not None and event.start > previous_end
+                        else ()
+                    )
+                except ValueError:
+                    continuity_blocked.add(scope)
+                    await queue.put(
+                        ProviderHealthEvent(
+                            provider=event.provider,
+                            feed=event.feed,
+                            status="stale",
+                            reason="gap_repair_window_exceeded",
+                            occurred_at=datetime.now(UTC),
+                        )
+                    )
+                    continue
+                if expected_missing:
+                    now = datetime.now(UTC)
+                    await queue.put(
+                        ProviderHealthEvent(
+                            provider=event.provider,
+                            feed=event.feed,
+                            status="reconnecting",
+                            reason="gap_repair_started",
+                            occurred_at=now,
+                        )
+                    )
+                    try:
+                        if event.provider == "alpaca":
+                            if bootstrap.alpaca_key_id is None or bootstrap.alpaca_secret is None:
+                                raise ValueError("Alpaca credentials are required for gap repair")
+                            repaired = await asyncio.to_thread(
+                                load_alpaca_repair_bars,
+                                event.symbol,
+                                start=previous_end,
+                                end=event.start,
+                                feed=event.feed,
+                                key_id=bootstrap.alpaca_key_id.get_secret_value(),
+                                secret=bootstrap.alpaca_secret.get_secret_value(),
+                            )
+                        else:
+                            repaired = await asyncio.to_thread(
+                                load_binance_repair_bars,
+                                event.symbol,
+                                start=previous_end,
+                                end=event.start,
+                            )
+                    except ValueError:
+                        continuity_blocked.add(scope)
+                        await queue.put(
+                            ProviderHealthEvent(
+                                provider=event.provider,
+                                feed=event.feed,
+                                status="stale",
+                                reason="gap_repair_failed",
+                                occurred_at=datetime.now(UTC),
+                            )
+                        )
+                        # Do not advance or publish this bar. The next finalized bar
+                        # retries from the same durable watermark and health stays stale.
+                        continue
+                    else:
+                        for repaired_bar in repaired:
+                            await queue.put(repaired_bar)
+                        continuity_blocked.discard(scope)
+                        last_bar_end[scope] = event.end
+                        await queue.put(
+                            ProviderHealthEvent(
+                                provider=event.provider,
+                                feed=event.feed,
+                                status="healthy",
+                                reason="gap_repair_complete_delayed_observation",
+                                occurred_at=datetime.now(UTC),
+                            )
+                        )
+                        await queue.put(event)
+                        continue
+                last_bar_end[scope] = max(event.end, previous_end or event.end)
             await queue.put(event)
 
     tasks: list[asyncio.Task[None]] = []
@@ -99,8 +262,10 @@ async def _merged_live_events(bootstrap: MonitorBootstrap) -> AsyncIterator[Mark
             feed=bootstrap.stock_feed,
             key_id=bootstrap.alpaca_key_id.get_secret_value(),
             secret=bootstrap.alpaca_secret.get_secret_value(),
+            metadata={symbol: metadata[("alpaca", symbol)] for symbol in bootstrap.stocks},
         )
         last_seen[("alpaca", bootstrap.stock_feed)] = datetime.now(UTC)
+        transport_healthy[("alpaca", bootstrap.stock_feed)] = False
         tasks.append(
             asyncio.create_task(
                 produce(
@@ -113,78 +278,215 @@ async def _merged_live_events(bootstrap: MonitorBootstrap) -> AsyncIterator[Mark
         )
     if bootstrap.crypto:
         last_seen[("binance", "spot")] = datetime.now(UTC)
+        transport_healthy[("binance", "spot")] = False
         tasks.append(
             asyncio.create_task(
-                produce(BinanceSpotAdapter().stream("wss://stream.binance.com:9443/ws", bootstrap.crypto))
+                produce(
+                    BinanceSpotAdapter(
+                        metadata={symbol: metadata[("binance", symbol)] for symbol in bootstrap.crypto}
+                    ).stream("wss://stream.binance.com:9443/ws", bootstrap.crypto)
+                )
             )
         )
     if not tasks:
         raise ValueError("at least one watchlist symbol is required")
     try:
-        while True:
+        last_heartbeat = datetime.min.replace(tzinfo=UTC)
+        while stop_event is None or not stop_event.is_set():
             with suppress(TimeoutError):
                 yield await asyncio.wait_for(queue.get(), timeout=5)
             now = datetime.now(UTC)
+            heartbeat_due = now - last_heartbeat >= timedelta(seconds=10)
             for (provider, feed), observed_at in tuple(last_seen.items()):
-                if now - observed_at <= timedelta(seconds=30) or (provider, feed) in stale_reported:
-                    continue
-                stale_reported.add((provider, feed))
-                yield ProviderHealthEvent(
-                    provider=provider,
-                    feed=feed,
-                    status="stale",
-                    reason="no_recent_market_data",
-                    occurred_at=now,
-                )
+                if now - observed_at > timedelta(seconds=30) and (provider, feed) not in stale_reported:
+                    stale_reported.add((provider, feed))
+                    yield ProviderHealthEvent(
+                        provider=provider,
+                        feed=feed,
+                        status="stale",
+                        reason="no_recent_market_data",
+                        occurred_at=now,
+                    )
+                if heartbeat_due:
+                    blocked = any(scope[:2] == (provider, feed) for scope in continuity_blocked)
+                    status = (
+                        "stale"
+                        if blocked or now - observed_at > timedelta(seconds=30)
+                        else "healthy"
+                        if transport_healthy.get((provider, feed), False)
+                        else "reconnecting"
+                    )
+                    yield ProviderHealthEvent(
+                        provider=provider,
+                        feed=feed,
+                        status=status,
+                        reason="heartbeat",
+                        occurred_at=now,
+                    )
+            if heartbeat_due:
+                last_heartbeat = now
     finally:
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
-async def run_live(bootstrap: MonitorBootstrap) -> None:
+async def run_live(bootstrap: MonitorBootstrap, *, control_stream: TextIO | None = None) -> None:
     database = Database.from_url(bootstrap.database_url)
     database.initialize()
     settings = Settings.load(Path.cwd())
     cohorts = load_sealed_cohorts(database, settings.strategies.enabled)
-    watchlist = set(bootstrap.stocks) | set(bootstrap.crypto)
-    selected = tuple(
-        item for item in cohorts if item.symbol in watchlist and item.interval == bootstrap.decision_interval
+    selected = select_monitor_cohorts(
+        cohorts,
+        stocks=bootstrap.stocks,
+        crypto=bootstrap.crypto,
+        interval=bootstrap.decision_interval,
+        stock_feed=bootstrap.stock_feed,
     )
+    watchlist = set(bootstrap.stocks) | set(bootstrap.crypto)
+    provider_feeds = ({("alpaca", bootstrap.stock_feed)} if bootstrap.stocks else set()) | (
+        {("binance", "spot")} if bootstrap.crypto else set()
+    )
+    selected_hash = selected_cohort_hash(selected)
+    if bootstrap.cohort_hash != selected_hash:
+        raise ValueError("selected cohort identity does not match the native bootstrap")
+    readiness = load_active_readiness_receipt(database, cohorts=selected, now=datetime.now(UTC))
+    if selected and readiness is None:
+        raise ValueError("an active unexpired readiness receipt is required")
+    metadata: dict[tuple[str, str], ProviderSymbolMetadata] = {}
+    if bootstrap.stocks:
+        if bootstrap.alpaca_key_id is None or bootstrap.alpaca_secret is None:
+            raise ValueError("Alpaca credentials are required for stock monitoring")
+        alpaca_metadata = await asyncio.to_thread(
+            load_alpaca_symbol_metadata,
+            bootstrap.stocks,
+            key_id=bootstrap.alpaca_key_id.get_secret_value(),
+            secret=bootstrap.alpaca_secret.get_secret_value(),
+        )
+        metadata.update({("alpaca", symbol): item for symbol, item in alpaca_metadata.items()})
+    if bootstrap.crypto:
+        binance_metadata = await asyncio.to_thread(load_binance_symbol_metadata, bootstrap.crypto)
+        metadata.update({("binance", symbol): item for symbol, item in binance_metadata.items()})
     repository = LiveMonitorRepository(database)
     repository.start_session(
         bootstrap.session_id,
         config_hash=bootstrap.config_hash,
-        cohort_hash=bootstrap.cohort_hash,
+        cohort_hash=selected_hash,
     )
     engine = LiveMonitorEngine(
         session_id=bootstrap.session_id,
+        config_hash=bootstrap.config_hash,
         decision_interval=bootstrap.decision_interval,
-        evidence_resolver=SealedCohortResolver(selected),
+        evidence_resolver=(
+            SealedCohortResolver(
+                selected,
+                asset_metadata={key: (value.shortable, value.easy_to_borrow) for key, value in metadata.items()},
+            )
+            if selected
+            else None
+        ),
         persistence=repository,
     )
     for cohort in selected:
         engine.seed_history(load_decision_history(database, cohort))
-    for recovered in repository.recover_active():
-        if recovered.plan.symbol in watchlist and recovered.plan.decision_interval == bootstrap.decision_interval:
-            engine.restore_setup(recovered.plan, state=recovered.state)
+    recovered_setups = repository.recover_active(
+        provider_feeds=provider_feeds,
+        symbols=watchlist,
+        interval=bootstrap.decision_interval,
+        config_hash=bootstrap.config_hash,
+        cohort_ids={item.cohort_id for item in selected},
+        now=datetime.now(UTC),
+    )
+    for recovered in recovered_setups:
+        engine.restore_setup(recovered.plan, state=recovered.state, actual_fill=recovered.actual_fill)
+    stop_event = asyncio.Event()
+
+    async def consume_controls() -> None:
+        if control_stream is None:
+            return
+        while not stop_event.is_set():
+            line = await asyncio.to_thread(control_stream.readline)
+            if not line:
+                return
+            try:
+                control = parse_control(line)
+                now = datetime.now(UTC)
+                if control.command == "shutdown":
+                    stop_event.set()
+                    return
+                if control.command == "notification_delivered" and control.event_id is not None:
+                    repository.record_notification_receipt(event_id=control.event_id)
+                elif control.setup_id is not None and control.actual_fill is not None:
+                    for wire_event in engine.track_setup(control.setup_id, actual_fill=control.actual_fill, at=now):
+                        print(_emit(wire_event), flush=True)
+                print(
+                    _emit(
+                        engine.emit(
+                            "control_ack",
+                            {"command": control.command, "accepted": True},
+                            emitted_at=now,
+                        )
+                    ),
+                    flush=True,
+                )
+            except ValueError:
+                print(
+                    _emit(
+                        engine.emit(
+                            "control_ack",
+                            {"command": "invalid", "accepted": False},
+                            emitted_at=datetime.now(UTC),
+                        )
+                    ),
+                    flush=True,
+                )
+
+    control_task = asyncio.create_task(consume_controls())
     try:
         print(
             _emit(
                 engine.emit(
                     "ready",
-                    {"status": "live", "qualified_cohorts": len(selected)},
+                    {
+                        "status": "live",
+                        "qualified_cohorts": len(selected),
+                        "cohort_hash": selected_hash,
+                        "readiness_receipt_id": readiness.receipt_id if readiness is not None else None,
+                    },
                     emitted_at=datetime.now(UTC),
                 )
             ),
             flush=True,
         )
-        async for event in _merged_live_events(bootstrap):
+        for recovered in recovered_setups:
+            print(
+                _emit(
+                    engine.emit(
+                        "setup_snapshot",
+                        {
+                            **recovered.plan.model_dump(mode="json"),
+                            "state": recovered.state.value,
+                            "actual_fill": str(recovered.actual_fill) if recovered.actual_fill is not None else None,
+                        },
+                        emitted_at=datetime.now(UTC),
+                    )
+                ),
+                flush=True,
+            )
+        scopes = {
+            *(("alpaca", bootstrap.stock_feed, symbol) for symbol in bootstrap.stocks),
+            *(("binance", "spot", symbol) for symbol in bootstrap.crypto),
+        }
+        watermarks = repository.latest_finalized_ends(scopes)
+        async for event in _merged_live_events(bootstrap, metadata, stop_event, initial_last_bar_end=watermarks):
             for wire_event in engine.accept_market_event(event):
                 print(_emit(wire_event), flush=True)
     finally:
+        stop_event.set()
+        control_task.cancel()
+        await asyncio.gather(control_task, return_exceptions=True)
         repository.finish_session(bootstrap.session_id, reason="monitor_stopped")
         database.dispose()
 
 
-__all__ = ["MonitorBootstrap", "parse_bootstrap", "replay_events", "run_live"]
+__all__ = ["MonitorBootstrap", "MonitorControl", "parse_bootstrap", "parse_control", "replay_events", "run_live"]

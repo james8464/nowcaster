@@ -98,3 +98,17 @@ def test_active_lifecycle_can_be_restored_without_replaying_notifications() -> N
 
     with pytest.raises(ValueError, match="terminal"):
         AlertLifecycle.restore(SETUP_ID, plan(), state=AlertState.STOPPED)
+
+
+def test_untracked_entry_can_become_tracked_with_the_operator_fill() -> None:
+    lifecycle = AlertLifecycle(SETUP_ID, plan())
+    lifecycle.apply(event(1, AlertState.CANDIDATE))
+    lifecycle.apply(event(2, AlertState.ENTRY_ALERTED))
+    lifecycle.apply(event(3, AlertState.UNTRACKED))
+
+    transition = lifecycle.apply(event(4, AlertState.TRACKED, actual_fill=Decimal("100.04")))
+
+    assert transition is not None
+    assert transition.from_state is AlertState.UNTRACKED
+    assert transition.to_state is AlertState.TRACKED
+    assert lifecycle.actual_fill == Decimal("100.04")

@@ -52,7 +52,11 @@ struct RootView: View {
                 model.destination = destination
             }
             await model.loadBundledSnapshot()
-            if !screenshotMode, settings.monitorAtLogin, settings.resumeMonitoring {
+            if !screenshotMode, settings.resumeMonitoring {
+                model.liveMonitor.configureNotifications(
+                    quietEntries: settings.silenceEntryNotifications,
+                    enabledCategories: enabledNotificationCategories
+                )
                 let credentials = try? BrokerCredentialVault().loadForSession(environment: .paper)
                 if credentials != nil || settings.normalizedStocks.isEmpty {
                     await model.liveMonitor.start(
@@ -70,6 +74,14 @@ struct RootView: View {
         }
         .onChange(of: model.destination) { _, destination in storedDestination = destination.rawValue }
         .onReceive(NotificationCenter.default.publisher(for: .focusGlobalSearch)) { _ in searchIsFocused = true }
+    }
+
+    private var enabledNotificationCategories: Set<LiveNotificationCategory> {
+        var result: Set<LiveNotificationCategory> = [.entry, .health]
+        if settings.targetNotifications { result.insert(.target) }
+        if settings.stopNotifications { result.insert(.stop) }
+        if settings.closeNotifications { result.insert(.close) }
+        return result
     }
 
     @MainActor private func applyScreenshotPresentation(_ presentation: NowcasterWindowPresentation) async {

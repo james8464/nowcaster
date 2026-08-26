@@ -11,17 +11,17 @@ Nowcaster is local-first. The macOS app has no user account, advertising SDK, te
 - Separate Alpaca paper/live credentials in macOS Keychain generic-password items. Values are never stored in `UserDefaults`.
 - Bounded broker order, position, reconciliation, risk, and forward-readiness evidence in local DuckDB/snapshots. Full account IDs and raw broker payloads are excluded from the native snapshot.
 - Append-only Deep Research trials, aggregate fold/stress evidence, checkpoints, and resource samples in local DuckDB. Private control files are mode `0600` inside a mode `0700` local directory and are not exported.
-- Live Monitor sessions, finalized-bar identities, hypothetical plans, lifecycle transitions, and notification receipts in local DuckDB. System notification text contains no credentials or account identifiers.
+- Live Monitor sessions, finalized-bar identities, decisions, provider-health events, hypothetical plans, lifecycle transitions, and notification receipts in local DuckDB. Lock-screen notification text contains no prices, credentials, or account identifiers.
 
 The app persists broker credentials only in Keychain using device-only after-first-unlock accessibility. `.env` is ignored by Git. Snapshot models do not define secret-bearing fields, executable arm tokens, or full account IDs.
 
 ## Network behavior
 
-The native application itself reads local files and launches the local research engine. Demo mode operates from bundled source snapshots. When the user starts Live Monitor, its Python helper opens fixed WebSocket connections to Alpaca market data and/or Binance Spot. Provider terms and privacy policies then apply. No live mode runs silently, and monitoring ends when its visible app process ends.
+The native application itself reads local files and launches the local research engine. Demo mode operates from bundled source snapshots. When the user starts Live Monitor, its Python helper opens fixed WebSocket connections to Alpaca market data and/or Binance Spot. Read-only Alpaca asset/bar and Binance exchange-info/kline requests validate metadata and repair bounded market-data gaps. Provider terms and privacy policies then apply. No live mode runs silently, and monitoring ends when its visible app process ends.
 
 ## Process safety
 
-The app invokes a fixed executable with a structured argument array and never routes configured paths through a shell. Live Monitor credentials use a single private stdin bootstrap; Deep Research control values use their bounded private channel. Secrets never enter command arguments, preferences, snapshots, notifications, or Git. The app drains child diagnostics, surfaces only a safe exit status, supports cancellation, and preserves the last-known-good snapshot after failures. Release artifacts publish SHA-256 checksums.
+The app invokes a fixed executable with a structured argument array and never routes configured paths through a shell. Before launch it verifies the bundled helper's code signature and SHA-256 manifest. Live Monitor credentials use a private stdin bootstrap followed by bounded typed acknowledgements/controls; Deep Research controls use their own bounded private channel. Secrets never enter command arguments, preferences, snapshots, notifications, or Git. The app drains child diagnostics, supervises heartbeats, performs bounded restart, requests a graceful session close before escalating process signals, and preserves the last-known-good snapshot after failures. Release artifacts publish SHA-256 checksums.
 
 ## Production considerations
 

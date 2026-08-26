@@ -3,13 +3,14 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import insert, select, update
 
 from src.database.engine import Database
 from src.database.schema import TABLES
-from src.live_monitor.types import AlertState, LifecycleTransition, TradePlan
+from src.live_monitor.types import AlertState, LifecycleTransition, MarketBar, ProviderHealthEvent, TradePlan
 from src.strategies.types import canonical_hash
 
 
@@ -19,6 +20,7 @@ class RecoveredSetup:
     plan: TradePlan
     state: AlertState
     delivered_event_ids: tuple[str, ...]
+    actual_fill: Decimal | None
 
 
 class LiveMonitorRepository:
@@ -131,8 +133,112 @@ class LiveMonitorRepository:
             )
         return True
 
-    def recover_active(self) -> tuple[RecoveredSetup, ...]:
+    def record_finalized_bar(self, session_id: str, bar: MarketBar) -> bool:
+        identity = canonical_hash((session_id, bar.bar_id))
+        table = TABLES["monitor_finalized_bars"]
+        with self.database.engine.begin() as connection:
+            if connection.execute(select(table.c.bar_id).where(table.c.bar_id == identity)).scalar_one_or_none():
+                return False
+            connection.execute(
+                insert(table).values(
+                    bar_id=identity,
+                    session_id=session_id,
+                    provider=bar.provider,
+                    feed=bar.feed,
+                    symbol=bar.symbol,
+                    interval=bar.interval,
+                    start_at=bar.start,
+                    end_at=bar.end,
+                    revision=bar.revision,
+                    payload={**bar.model_dump(mode="json"), "source_bar_id": bar.bar_id},
+                    **self._common(),
+                )
+            )
+        return True
+
+    def record_decision(self, session_id: str, payload: dict[str, Any]) -> bool:
+        identity = canonical_hash((session_id, payload))
+        table = TABLES["monitor_decisions"]
+        with self.database.engine.begin() as connection:
+            if connection.execute(
+                select(table.c.decision_id).where(table.c.decision_id == identity)
+            ).scalar_one_or_none():
+                return False
+            connection.execute(
+                insert(table).values(
+                    decision_id=identity,
+                    session_id=session_id,
+                    provider=str(payload["provider"]),
+                    feed=str(payload["feed"]),
+                    symbol=str(payload["symbol"]),
+                    interval=str(payload["interval"]),
+                    decision_time=datetime.fromisoformat(str(payload["decision_time"]).replace("Z", "+00:00")),
+                    status=str(payload["status"]),
+                    reasons=list(payload.get("reasons", [])),
+                    evidence=payload,
+                    **self._common(),
+                )
+            )
+        return True
+
+    def record_health_event(self, session_id: str, event: ProviderHealthEvent) -> bool:
+        payload = event.model_dump(mode="json")
+        identity = canonical_hash((session_id, payload))
+        table = TABLES["monitor_health_events"]
+        with self.database.engine.begin() as connection:
+            if connection.execute(
+                select(table.c.health_event_id).where(table.c.health_event_id == identity)
+            ).scalar_one_or_none():
+                return False
+            connection.execute(
+                insert(table).values(
+                    health_event_id=identity,
+                    session_id=session_id,
+                    provider=event.provider,
+                    feed=event.feed,
+                    status=event.status.value,
+                    reason=event.reason,
+                    occurred_at=event.occurred_at,
+                    details=payload,
+                    **self._common(),
+                )
+            )
+        return True
+
+    def latest_finalized_ends(self, scopes: set[tuple[str, str, str]]) -> dict[tuple[str, str, str], datetime]:
+        if not scopes:
+            return {}
+        frame = self.database.frame(
+            "select provider, feed, symbol, max(end_at) as end_at from monitor_finalized_bars "
+            "where interval = '1m' group by provider, feed, symbol"
+        )
+        result: dict[tuple[str, str, str], datetime] = {}
+        for row in frame.itertuples(index=False):
+            scope = (str(row.provider), str(row.feed), str(row.symbol))
+            if scope not in scopes:
+                continue
+            value = row.end_at.to_pydatetime() if hasattr(row.end_at, "to_pydatetime") else row.end_at
+            if value.tzinfo is None:
+                value = value.replace(tzinfo=UTC)
+            result[scope] = value.astimezone(UTC)
+        return result
+
+    def recover_active(
+        self,
+        *,
+        provider_feeds: set[tuple[str, str]],
+        symbols: set[str],
+        interval: str,
+        config_hash: str,
+        cohort_ids: set[str],
+        now: datetime,
+    ) -> tuple[RecoveredSetup, ...]:
+        if now.tzinfo is not UTC:
+            raise ValueError("recovery time must be explicit UTC")
+        if not cohort_ids:
+            return ()
         setup_table = TABLES["monitor_setups"]
+        transition_table = TABLES["monitor_transitions"]
         receipt_table = TABLES["monitor_notification_receipts"]
         terminal = {
             state.value
@@ -149,16 +255,40 @@ class LiveMonitorRepository:
             delivered = tuple(
                 connection.execute(select(receipt_table.c.event_id).order_by(receipt_table.c.delivered_at)).scalars()
             )
-        return tuple(
-            RecoveredSetup(
-                setup_id=str(row["setup_id"]),
-                plan=TradePlan.model_validate(row["plan"]),
-                state=AlertState(str(row["current_state"])),
-                delivered_event_ids=delivered,
+            transition_rows = connection.execute(
+                select(
+                    transition_table.c.setup_id,
+                    transition_table.c.actual_fill,
+                    transition_table.c.occurred_at,
+                )
+                .where(transition_table.c.actual_fill.is_not(None))
+                .order_by(transition_table.c.occurred_at)
+            ).all()
+        fills = {str(row.setup_id): Decimal(str(row.actual_fill)) for row in transition_rows}
+        recovered: list[RecoveredSetup] = []
+        for row in setup_rows:
+            plan = TradePlan.model_validate(row["plan"])
+            state = AlertState(str(row["current_state"]))
+            if (
+                state.value in terminal
+                or (plan.provider, plan.feed) not in provider_feeds
+                or plan.symbol not in symbols
+                or plan.decision_interval != interval
+                or plan.config_hash != config_hash
+                or plan.cohort_id not in cohort_ids
+                or plan.expires_at <= now
+            ):
+                continue
+            recovered.append(
+                RecoveredSetup(
+                    setup_id=str(row["setup_id"]),
+                    plan=plan,
+                    state=state,
+                    delivered_event_ids=delivered,
+                    actual_fill=fills.get(str(row["setup_id"])),
+                )
             )
-            for row in setup_rows
-            if str(row["current_state"]) not in terminal
-        )
+        return tuple(recovered)
 
 
 __all__ = ["LiveMonitorRepository", "RecoveredSetup"]

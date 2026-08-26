@@ -7,9 +7,11 @@ enum LiveMonitorEventType: String, Codable, Sendable {
     case quote
     case barFinalized = "bar_finalized"
     case decision
+    case setupSnapshot = "setup_snapshot"
     case lifecycleTransition = "lifecycle_transition"
     case notificationRequest = "notification_request"
     case providerHealth = "provider_health"
+    case controlAck = "control_ack"
     case configurationRejected = "configuration_rejected"
     case fatalError = "fatal_error"
 }
@@ -117,14 +119,16 @@ struct LiveMonitorEventDecoder: Sendable {
     private var buffer = Data()
     private var lastSequence: Int?
     private let maximumLineBytes: Int
+    private let maximumBufferBytes: Int
 
     init(maximumLineBytes: Int = 64 * 1024) {
         self.maximumLineBytes = max(maximumLineBytes, 1024)
+        maximumBufferBytes = max(maximumLineBytes, 1024) * 16
     }
 
     mutating func append(_ data: Data) throws -> [LiveMonitorEvent] {
         buffer.append(data)
-        guard buffer.count <= maximumLineBytes || buffer.contains(0x0A) else {
+        guard buffer.count <= maximumBufferBytes else {
             buffer.removeAll()
             throw LiveMonitorProtocolError.lineTooLarge
         }
@@ -138,6 +142,10 @@ struct LiveMonitorEventDecoder: Sendable {
             if let lastSequence, event.sequence <= lastSequence { throw LiveMonitorProtocolError.sequenceRegression }
             lastSequence = event.sequence
             result.append(event)
+        }
+        guard buffer.count <= maximumLineBytes else {
+            buffer.removeAll()
+            throw LiveMonitorProtocolError.lineTooLarge
         }
         return result
     }
@@ -232,10 +240,19 @@ struct LiveMonitorConfiguration: Sendable {
             .joined(separator: "|")
         let configHash = SHA256.hash(data: Data(watchlistIdentity.utf8))
             .map { String(format: "%02x", $0) }.joined()
-        let evidenceIdentity = (snapshot?.strategies ?? [])
-            .filter { $0.promotionState == "promoted" && $0.causalAuditPassed == true }
-            .map(\.datasetHash).sorted().joined(separator: "|")
-        let cohortHash = evidenceIdentity.isEmpty
+        let selectedStocks = Set(settings.normalizedStocks)
+        let selectedCrypto = Set(settings.normalizedCrypto)
+        let cohortIdentities = Array(Set((snapshot?.ensembleComponents ?? [])
+            .filter {
+                $0.interval == "5m"
+                    && (($0.provider == "alpaca" && $0.feed == "iex" && selectedStocks.contains($0.symbol))
+                        || ($0.provider == "binance" && $0.feed == "spot" && selectedCrypto.contains($0.symbol)))
+            }
+            .compactMap(\.cohortId))).sorted()
+        let evidenceIdentity = cohortIdentities.joined(separator: "|")
+        let cohortHash = cohortIdentities.count == 1
+            ? cohortIdentities[0]
+            : evidenceIdentity.isEmpty
             ? String(repeating: "0", count: 64)
             : SHA256.hash(data: Data(evidenceIdentity.utf8)).map { String(format: "%02x", $0) }.joined()
         return Self(
@@ -256,10 +273,82 @@ struct LiveSetup: Identifiable, Equatable, Sendable {
     let id: String
     let symbol: String
     let posture: String
-    let confidence: Double?
-    let entry: String
+    let entryLow: String
+    let entryHigh: String
     let stop: String
-    let targets: String
+    let target1: String
+    let target2: String
+    let state: String
+    let actualFill: String?
     let reason: String
     let updatedAt: Date
+
+    private init(
+        id: String,
+        symbol: String,
+        posture: String,
+        entryLow: String,
+        entryHigh: String,
+        stop: String,
+        target1: String,
+        target2: String,
+        state: String,
+        actualFill: String?,
+        reason: String,
+        updatedAt: Date
+    ) {
+        self.id = id
+        self.symbol = symbol
+        self.posture = posture
+        self.entryLow = entryLow
+        self.entryHigh = entryHigh
+        self.stop = stop
+        self.target1 = target1
+        self.target2 = target2
+        self.state = state
+        self.actualFill = actualFill
+        self.reason = reason
+        self.updatedAt = updatedAt
+    }
+
+    init?(payload: [String: JSONValue], updatedAt: Date) {
+        guard let id = payload["plan_id"]?.stringValue,
+              let symbol = payload["symbol"]?.stringValue,
+              let posture = payload["direction"]?.stringValue,
+              let entryLow = payload["entry_low"]?.stringValue,
+              let entryHigh = payload["entry_high"]?.stringValue,
+              let stop = payload["stop"]?.stringValue,
+              let target1 = payload["target_1"]?.stringValue,
+              let target2 = payload["target_2"]?.stringValue
+        else { return nil }
+        self.id = id
+        self.symbol = symbol
+        self.posture = posture
+        self.entryLow = entryLow
+        self.entryHigh = entryHigh
+        self.stop = stop
+        self.target1 = target1
+        self.target2 = target2
+        state = payload["state"]?.stringValue ?? "untracked"
+        actualFill = payload["actual_fill"]?.stringValue
+        reason = payload["reason"]?.stringValue ?? "active_setup"
+        self.updatedAt = updatedAt
+    }
+
+    func applying(state: String, actualFill: String?, reason: String, at: Date) -> Self {
+        Self(
+            id: id,
+            symbol: symbol,
+            posture: posture,
+            entryLow: entryLow,
+            entryHigh: entryHigh,
+            stop: stop,
+            target1: target1,
+            target2: target2,
+            state: state,
+            actualFill: actualFill ?? self.actualFill,
+            reason: reason,
+            updatedAt: at
+        )
+    }
 }

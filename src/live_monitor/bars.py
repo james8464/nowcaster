@@ -36,7 +36,10 @@ def _natural_key(bar: MarketBar) -> tuple[str, str, str, str, datetime, datetime
 
 
 class FinalizedBarLedger:
-    def __init__(self) -> None:
+    def __init__(self, *, maximum_bars: int = 20_000) -> None:
+        if maximum_bars < 100:
+            raise ValueError("finalized-bar retention must be at least 100")
+        self._maximum_bars = maximum_bars
         self._bars: list[MarketBar] = []
         self._ids: set[str] = set()
         self._latest: dict[tuple[str, str, str, str, datetime, datetime], MarketBar] = {}
@@ -55,6 +58,12 @@ class FinalizedBarLedger:
         self._bars.append(bar)
         self._ids.add(bar.bar_id)
         self._latest[key] = bar
+        while len(self._bars) > self._maximum_bars:
+            removed = self._bars.pop(0)
+            self._ids.discard(removed.bar_id)
+            removed_key = _natural_key(removed)
+            if self._latest.get(removed_key) is removed:
+                self._latest.pop(removed_key, None)
         if previous is None:
             return BarAcceptance("accepted", bar.bar_id)
         return BarAcceptance("revised", bar.bar_id, previous.bar_id)

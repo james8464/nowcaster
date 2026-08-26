@@ -1,6 +1,23 @@
 import AppKit
 import SwiftUI
 
+@MainActor
+final class NowcasterApplicationDelegate: NSObject, NSApplicationDelegate {
+    weak var liveMonitor: LiveMonitorController?
+    private var terminationPending = false
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let liveMonitor, liveMonitor.isRunning else { return .terminateNow }
+        guard !terminationPending else { return .terminateLater }
+        terminationPending = true
+        Task { @MainActor in
+            await liveMonitor.shutdownForApplicationTermination()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
+}
+
 struct NowcasterWindowPresentation: Sendable {
     let defaultWidth: CGFloat
     let defaultHeight: CGFloat
@@ -25,6 +42,7 @@ struct NowcasterWindowPresentation: Sendable {
 
 @main
 struct NowcasterApp: App {
+    @NSApplicationDelegateAdaptor(NowcasterApplicationDelegate.self) private var appDelegate
     @State private var settings = AppSettings()
     @State private var model = AppModel()
 
@@ -48,6 +66,7 @@ struct NowcasterApp: App {
     var body: some Scene {
         WindowGroup(id: "main") {
             RootView(model: model, settings: settings)
+            .onAppear { appDelegate.liveMonitor = model.liveMonitor }
             .preferredColorScheme(forcedColorScheme)
             .frame(minWidth: windowPresentation.minimumWidth, minHeight: windowPresentation.minimumHeight)
         }

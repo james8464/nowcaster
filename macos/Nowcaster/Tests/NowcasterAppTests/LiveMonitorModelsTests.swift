@@ -19,6 +19,10 @@ import Testing
     #expect(throws: LiveMonitorProtocolError.lineTooLarge) {
         try bounded.append(Data(repeating: 0x61, count: 1025))
     }
+    var trailing = LiveMonitorEventDecoder(maximumLineBytes: 1024)
+    #expect(throws: LiveMonitorProtocolError.lineTooLarge) {
+        try trailing.append(Data((line + "\n" + String(repeating: "x", count: 1025)).utf8))
+    }
 }
 
 @Test func liveMonitorDecoderRejectsUnknownSchemaTypeAndNonZuluTime() {
@@ -71,4 +75,36 @@ import Testing
     )
 
     #expect(try configuration.invocation(credentials: nil).arguments == ["monitor", "run"])
+}
+
+@Test func typedActiveSetupSurvivesDiagnosticEventEvictionAndAppliesTrackingState() throws {
+    let payload: [String: JSONValue] = [
+        "plan_id": .string(String(repeating: "a", count: 64)),
+        "symbol": .string("AAPL"),
+        "direction": .string("long"),
+        "entry_low": .string("100"),
+        "entry_high": .string("100.10"),
+        "stop": .string("99"),
+        "target_1": .string("102"),
+        "target_2": .string("103"),
+        "state": .string("untracked"),
+    ]
+    let setup = try #require(LiveSetup(payload: payload, updatedAt: .now))
+    let tracked = setup.applying(
+        state: "tracked",
+        actualFill: "100.04",
+        reason: "operator_fill_tracked",
+        at: .now
+    )
+
+    #expect(tracked.id == setup.id)
+    #expect(tracked.state == "tracked")
+    #expect(tracked.actualFill == "100.04")
+}
+
+@Test func mixedProviderHealthUsesWorstSeverityInsteadOfLastWriter() {
+    #expect(LiveMonitorHealthAggregation.aggregate([.stale, .healthy]) == .stale)
+    #expect(LiveMonitorHealthAggregation.aggregate([.warming, .healthy]) == .warming)
+    #expect(LiveMonitorHealthAggregation.aggregate([.reconnecting, .stale]) == .stale)
+    #expect(LiveMonitorHealthAggregation.aggregate([.healthy, .healthy]) == .healthy)
 }

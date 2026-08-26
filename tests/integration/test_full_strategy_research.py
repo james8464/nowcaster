@@ -246,10 +246,11 @@ def test_ci_research_rebuilds_successful_survivors_as_one_cohort_after_a_real_st
 
     snapshot = AppSnapshot.model_validate_json((output_dir / "nowcaster-snapshot.json").read_text())
     snapshot_cohort_ids = {item.cohort_id for item in snapshot.ensemble_components}
-    assert len(snapshot_cohort_ids) == 1
-    snapshot_cohort_id = snapshot_cohort_ids.pop()
-    published_survivors = survivor_cohorts[snapshot_cohort_id]
-    assert {item.strategy_id for item in snapshot.ensemble_components} == published_survivors
+    assert snapshot_cohort_ids == set(survivor_cohorts)
+    for snapshot_cohort_id, published_survivors in survivor_cohorts.items():
+        assert {
+            item.strategy_id for item in snapshot.ensemble_components if item.cohort_id == snapshot_cohort_id
+        } == published_survivors
 
 
 def test_research_fails_closed_on_prepopulated_or_post_cutoff_database(tmp_path: Path) -> None:

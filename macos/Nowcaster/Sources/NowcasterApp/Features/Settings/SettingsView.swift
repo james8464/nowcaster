@@ -21,6 +21,10 @@ final class AppSettings {
         static let cryptoWatchlist = "monitorCryptoWatchlist"
         static let monitorAtLogin = "monitorAtLogin"
         static let resumeMonitoring = "resumeMonitoringAtLogin"
+        static let silenceEntryNotifications = "silenceEntryNotifications"
+        static let targetNotifications = "targetNotifications"
+        static let stopNotifications = "stopNotifications"
+        static let closeNotifications = "closeNotifications"
     }
 
     @ObservationIgnored private let defaults: UserDefaults
@@ -33,6 +37,12 @@ final class AppSettings {
     var cryptoWatchlist: String { didSet { defaults.set(cryptoWatchlist, forKey: Key.cryptoWatchlist) } }
     var monitorAtLogin: Bool { didSet { defaults.set(monitorAtLogin, forKey: Key.monitorAtLogin) } }
     var resumeMonitoring: Bool { didSet { defaults.set(resumeMonitoring, forKey: Key.resumeMonitoring) } }
+    var silenceEntryNotifications: Bool {
+        didSet { defaults.set(silenceEntryNotifications, forKey: Key.silenceEntryNotifications) }
+    }
+    var targetNotifications: Bool { didSet { defaults.set(targetNotifications, forKey: Key.targetNotifications) } }
+    var stopNotifications: Bool { didSet { defaults.set(stopNotifications, forKey: Key.stopNotifications) } }
+    var closeNotifications: Bool { didSet { defaults.set(closeNotifications, forKey: Key.closeNotifications) } }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -45,6 +55,10 @@ final class AppSettings {
         cryptoWatchlist = defaults.string(forKey: Key.cryptoWatchlist) ?? "BTCUSDT, ETHUSDT"
         monitorAtLogin = defaults.bool(forKey: Key.monitorAtLogin)
         resumeMonitoring = defaults.bool(forKey: Key.resumeMonitoring)
+        silenceEntryNotifications = defaults.bool(forKey: Key.silenceEntryNotifications)
+        targetNotifications = defaults.object(forKey: Key.targetNotifications) as? Bool ?? true
+        stopNotifications = defaults.object(forKey: Key.stopNotifications) as? Bool ?? true
+        closeNotifications = defaults.object(forKey: Key.closeNotifications) as? Bool ?? true
     }
 
     var normalizedStocks: [String] { normalizeWatchlist(stockWatchlist) }
@@ -111,8 +125,11 @@ struct SettingsView: View {
                             loginItemMessage = error.localizedDescription
                         }
                     }
-                Toggle("Resume monitoring at login", isOn: $settings.resumeMonitoring)
-                    .disabled(!settings.monitorAtLogin)
+                Toggle("Start monitoring whenever Nowcaster opens", isOn: $settings.resumeMonitoring)
+                Toggle("Silence new-entry banners", isOn: $settings.silenceEntryNotifications)
+                Toggle("Target banners", isOn: $settings.targetNotifications)
+                Toggle("Protective-stop banners", isOn: $settings.stopNotifications)
+                Toggle("Close and expiry banners", isOn: $settings.closeNotifications)
                 if let loginItemMessage { Text(loginItemMessage).font(.caption).foregroundStyle(.secondary) }
                 Text("Comma-separated watchlists. Monitoring is notification-only and stops while this Mac sleeps or is offline.")
                     .font(.footnote)

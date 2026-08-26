@@ -254,6 +254,8 @@ class EnsembleComponentSnapshot(SnapshotModel):
     version: str
     family: str
     dataset_hash: str
+    provider: str | None = None
+    feed: str | None = None
     symbol: str
     interval: str
     mode: str

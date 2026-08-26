@@ -26,6 +26,12 @@ if codesign -d --entitlements :- "$APP_PATH" 2>/dev/null | grep -q 'get-task-all
     print -u2 'Development entitlement get-task-allow is forbidden'
     exit 1
 fi
+HELPER_ENTITLEMENTS=$(codesign -d --entitlements :- "$HELPER" 2>/dev/null)
+print "$HELPER_ENTITLEMENTS" | grep -q 'com.apple.security.cs.disable-library-validation'
+if print "$HELPER_ENTITLEMENTS" | grep -q 'get-task-allow'; then
+    print -u2 'Development entitlement get-task-allow is forbidden on the helper'
+    exit 1
+fi
 xcrun stapler validate "$APP_PATH"
 spctl --assess --type execute --verbose=2 "$APP_PATH"
 print 'Production release verification passed.'

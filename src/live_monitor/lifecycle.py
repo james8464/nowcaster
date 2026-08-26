@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from decimal import Decimal
+
 from src.live_monitor.types import AlertState, LifecycleEvent, LifecycleTransition, TradePlan
 from src.strategies.types import canonical_hash
 
@@ -30,6 +32,7 @@ _TRANSITIONS: dict[AlertState, set[AlertState]] = {
         AlertState.EXPIRED,
     },
     AlertState.UNTRACKED: {
+        AlertState.TRACKED,
         AlertState.TARGET_1,
         AlertState.STOPPED,
         AlertState.CLOSED,
@@ -58,11 +61,18 @@ class AlertLifecycle:
         self._transitions: list[LifecycleTransition] = []
 
     @classmethod
-    def restore(cls, setup_id: str, plan: TradePlan, *, state: AlertState) -> AlertLifecycle:
+    def restore(
+        cls, setup_id: str, plan: TradePlan, *, state: AlertState, actual_fill: Decimal | None = None
+    ) -> AlertLifecycle:
         if state in _TERMINAL:
             raise ValueError("terminal lifecycle cannot be restored as active")
         lifecycle = cls(setup_id, plan)
         lifecycle.state = state
+        if state is AlertState.TRACKED and actual_fill is None:
+            raise ValueError("tracked lifecycle recovery requires its actual fill")
+        if actual_fill is not None and state not in {AlertState.TRACKED, AlertState.TARGET_1}:
+            raise ValueError("actual fill is incompatible with recovered lifecycle state")
+        lifecycle.actual_fill = actual_fill
         return lifecycle
 
     @property

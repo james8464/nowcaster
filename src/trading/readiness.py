@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -103,7 +103,7 @@ class ReadinessEvaluator:
                     Decimal(str(robustness["slippage_model_error"])) <= self.policy.maximum_slippage_model_error,
                 )
             )
-        except (KeyError, ValueError):
+        except (InvalidOperation, KeyError, TypeError, ValueError):
             robustness_passed = False
         gates = tuple(
             sorted(

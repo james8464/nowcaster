@@ -2,7 +2,7 @@ import AppKit
 import Foundation
 import UserNotifications
 
-enum LiveNotificationCategory: String, Sendable {
+enum LiveNotificationCategory: String, CaseIterable, Sendable {
     case entry, target, stop, close, health
 }
 
@@ -45,17 +45,31 @@ final class NotificationService {
         )) ?? false
     }
 
-    func deliver(_ candidate: LiveNotificationCandidate, quietHours: Bool = false) async {
-        guard policy.admit(candidate, appIsActive: NSApplication.shared.isActive, quietHours: quietHours) else { return }
+    func deliver(
+        _ candidate: LiveNotificationCandidate,
+        quietHours: Bool = false,
+        enabledCategories: Set<LiveNotificationCategory> = Set(LiveNotificationCategory.allCases)
+    ) async -> Bool {
+        guard enabledCategories.contains(candidate.category) else { return false }
+        guard policy.admit(candidate, appIsActive: NSApplication.shared.isActive, quietHours: quietHours) else {
+            return false
+        }
         let center = UNUserNotificationCenter.current()
         let settings = await center.notificationSettings()
-        guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else { return }
+        guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else {
+            return false
+        }
         let content = UNMutableNotificationContent()
         content.title = candidate.title
-        content.body = candidate.body
+        content.body = "Open Nowcaster to review the setup and risk levels."
         content.sound = .default
         content.categoryIdentifier = candidate.category.rawValue
         content.userInfo = ["event_id": candidate.id]
-        try? await center.add(UNNotificationRequest(identifier: candidate.id, content: content, trigger: nil))
+        do {
+            try await center.add(UNNotificationRequest(identifier: candidate.id, content: content, trigger: nil))
+            return true
+        } catch {
+            return false
+        }
     }
 }

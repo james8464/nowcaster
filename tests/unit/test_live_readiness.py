@@ -90,3 +90,13 @@ def test_mismatched_cohort_or_nonpositive_stressed_edge_locks() -> None:
         cohort, _evidence(cohort, 60, 100, stressed="-0.001"), _robustness(cohort), as_of=NOW
     )
     assert not negative.gate("stressed_net_edge").passed
+
+
+def test_missing_robustness_metrics_lock_instead_of_crashing() -> None:
+    cohort = _cohort()
+    missing = {"cohort_hash": cohort.cohort_hash, "causal_passed": True}
+
+    result = ReadinessEvaluator().evaluate(cohort, _evidence(cohort, 60, 100), missing, as_of=NOW)
+
+    assert result.status == "locked"
+    assert not result.gate("robustness").passed

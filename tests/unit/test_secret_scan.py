@@ -57,6 +57,16 @@ def test_provider_shaped_unassigned_identifiers_do_not_trigger_false_positive() 
     assert scanner.scan_text(Path("data/research-summary.json"), text) == []
 
 
+def test_secretstr_constructor_is_not_a_scanner_bypass() -> None:
+    secret_name = "ALPACA_" + "API_SECRET"
+    findings = scanner.scan_text(
+        Path("src/example.py"),
+        f'{secret_name}: SecretStr("embedded-real-value")\n',
+    )
+
+    assert len(findings) == 1
+
+
 def test_history_scan_finds_a_secret_committed_then_deleted_without_echoing_it(tmp_path) -> None:
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=tmp_path, check=True)

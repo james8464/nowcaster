@@ -46,7 +46,7 @@ from src.strategies.ensemble import DEFAULT_ENSEMBLE_CONFIG, EnsembleConfig, Ens
 from src.strategies.indicators import rolling_zscore, rsi
 from src.strategies.library import StrategyContext, audit_prefix_invariance, build_strategy_registry
 from src.strategies.registry import RegisteredStrategy, StrategyRegistry
-from src.strategies.types import BarInterval, StrategyMode, canonical_hash
+from src.strategies.types import BarInterval, StrategyMode, canonical_hash, canonical_json
 from src.strategies.validation import (
     DEFAULT_VALIDATION_CONFIG,
     EvaluationRequest,
@@ -2567,6 +2567,25 @@ def _execution_assumptions_record(assumptions: ExecutionAssumptions) -> dict[str
 
 def _evaluation_metrics(evaluation: StrategyEvaluation) -> dict[str, Any]:
     final_boundary = evaluation.evidence_provenance.get("sealed_boundary")
+    calibration = evaluation.evidence_provenance.get("decision_calibration")
+    live_decision_model = {
+        "calibration": json.loads(canonical_json(calibration)) if isinstance(calibration, Mapping) else {},
+        "calibration_hash": evaluation.evidence_provenance.get("decision_calibration_hash"),
+        "calibration_status": evaluation.calibration_status,
+        "economic_evidence_status": evaluation.economic_evidence_status,
+        "expected_edge": evaluation.expected_edge,
+        "expected_cost": evaluation.expected_cost,
+        "uncertainty": evaluation.uncertainty,
+    }
+    robustness_evidence: dict[str, Any] | None = None
+    if evaluation.robustness is not None and evaluation.robustness.receipt_hash:
+        robustness_evidence = {
+            "receipt_payload": json.loads(canonical_json(evaluation.robustness._receipt_payload())),
+            "receipt_hash": evaluation.robustness.receipt_hash,
+            "deflated_sharpe_probability": _finite(evaluation.dsr_probability),
+            "causal_audit_passed": evaluation.causal_audit_passed,
+        }
+        robustness_evidence["evidence_hash"] = canonical_hash(robustness_evidence)
     return {
         "status_reason": evaluation.status_reason,
         "state": evaluation.mode.value,
@@ -2585,6 +2604,8 @@ def _evaluation_metrics(evaluation: StrategyEvaluation) -> dict[str, Any]:
             "reasons": list(evaluation.promotion.reasons),
         },
         "causal_audit_passed": evaluation.causal_audit_passed,
+        "robustness_evidence": robustness_evidence,
+        "live_decision_model": live_decision_model,
         "trial_count": len(evaluation.trial_sharpes),
         "final_boundary": str(final_boundary) if final_boundary is not None else None,
         "warnings": [

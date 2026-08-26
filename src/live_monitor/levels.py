@@ -27,6 +27,7 @@ def plan_trade_levels(
     decision_interval: str,
     decision_time,
     policy: TradeLevelPolicy,
+    identity_context: dict[str, object] | None = None,
 ) -> TradePlan | None:
     if atr <= 0 or structural_invalidation <= 0 or decision_interval not in _INTERVAL_MINUTES:
         return None
@@ -83,6 +84,7 @@ def plan_trade_levels(
         "stop": str(stop),
         "target_1": str(target_1),
         "target_2": str(target_2),
+        "evidence": identity_context or {},
     }
     return TradePlan(
         plan_id=canonical_hash(identity),
@@ -106,6 +108,12 @@ def plan_trade_levels(
             if quote.provider == "binance" and direction is Direction.SHORT
             else None
         ),
+        cohort_id=str((identity_context or {}).get("cohort_id", "0" * 64)),
+        dataset_hash=str((identity_context or {}).get("dataset_hash", "0" * 64)),
+        evidence_hash=str((identity_context or {}).get("evidence_hash", "0" * 64)),
+        policy_hash=str((identity_context or {}).get("policy_hash", "0" * 64)),
+        config_hash=str((identity_context or {}).get("config_hash", "0" * 64)),
+        strategy_versions=tuple((identity_context or {}).get("strategy_versions", ())),
     )
 
 
