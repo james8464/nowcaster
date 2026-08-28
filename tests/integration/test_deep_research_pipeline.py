@@ -38,7 +38,10 @@ strategies:
     )
 
 
-def _bars(path: Path, count: int = 100) -> None:
+BAR_COUNT = 1_200
+
+
+def _bars(path: Path, count: int = BAR_COUNT) -> None:
     start = datetime(2026, 8, 20, tzinfo=UTC)
     rows = ["timestamp,open,high,low,close,volume,vwap,trade_count,finalized,available_at,revision"]
     previous = 100.0
@@ -102,7 +105,9 @@ def test_deep_research_refuses_missing_authenticated_coverage(project_root, tmp_
 def test_deep_research_uses_complete_provider_snapshot_and_persists_every_trial(project_root, tmp_path) -> None:
     pipeline, database = _pipeline(project_root, tmp_path)
     start = datetime(2026, 8, 20, tzinfo=UTC)
-    ingested = pipeline.ingest(IngestOptions(scope=_scope(), start=start, end=start + timedelta(minutes=500)))
+    ingested = pipeline.ingest(
+        IngestOptions(scope=_scope(), start=start, end=start + timedelta(minutes=5 * BAR_COUNT))
+    )
     events = []
 
     outcome = pipeline.deep_research(
@@ -140,7 +145,7 @@ def test_continuous_deep_research_runs_checkpointed_generations_until_time_budge
 ) -> None:
     pipeline, database = _pipeline(project_root, tmp_path)
     start = datetime(2026, 8, 20, tzinfo=UTC)
-    pipeline.ingest(IngestOptions(scope=_scope(), start=start, end=start + timedelta(minutes=500)))
+    pipeline.ingest(IngestOptions(scope=_scope(), start=start, end=start + timedelta(minutes=5 * BAR_COUNT)))
     monotonic_ticks = iter((0.0, 5.0, 7.0))
     monkeypatch.setattr(
         strategy_pipeline,

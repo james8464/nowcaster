@@ -8,7 +8,9 @@ struct DeepResearchConfigurationView: View {
     @State private var resourceProfile = ProcessInfo.processInfo.isLowPowerModeEnabled
         ? DeepResearchResourceProfile.balanced
         : DeepResearchResourceProfile.performance
-    @State private var customWorkers = max(ProcessInfo.processInfo.activeProcessorCount, 1)
+    @State private var customWorkers = DeepResearchResourcePolicy.maximumWorkerCount(
+        activeProcessors: ProcessInfo.processInfo.activeProcessorCount
+    )
     @State private var continuous = true
     @State private var evaluationBudget = 1_000
     @State private var useTimeLimit = false
@@ -32,17 +34,23 @@ struct DeepResearchConfigurationView: View {
 
             Section("Compute") {
                 Picker("Resource profile", selection: $resourceProfile) {
-                    Text("Performance — all CPU cores").tag(DeepResearchResourceProfile.performance)
-                    Text("Balanced — leave one core free").tag(DeepResearchResourceProfile.balanced)
+                    Text("Performance — reserve two cores").tag(DeepResearchResourceProfile.performance)
+                    Text("Balanced — reserve three cores").tag(DeepResearchResourceProfile.balanced)
                     Text("Efficient — use half the cores").tag(DeepResearchResourceProfile.efficient)
                     Text("Custom").tag(DeepResearchResourceProfile.custom)
                 }
                 if resourceProfile == .custom {
-                    Stepper("Workers: \(workers)", value: $customWorkers, in: 1 ... max(ProcessInfo.processInfo.activeProcessorCount, 1))
+                    Stepper(
+                        "Workers: \(workers)",
+                        value: $customWorkers,
+                        in: 1 ... DeepResearchResourcePolicy.maximumWorkerCount(
+                            activeProcessors: ProcessInfo.processInfo.activeProcessorCount
+                        )
+                    )
                 } else {
                     LabeledContent("Workers", value: workers.formatted())
                 }
-                Text("Nowcaster limits numerical libraries to one thread per worker and pauses automatically under serious thermal pressure.")
+                Text("Nowcaster reserves at least two logical processors for live monitoring, macOS, and the interface. It limits numerical libraries to one thread per worker and pauses under serious thermal pressure.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

@@ -1009,7 +1009,7 @@ class StrategyPipeline:
         message = outcome.promotion_outcome.replace("_", " ")
         self._emit(emit, "progress", "deep_research", 1.0, message)
         return StageOutcome(
-            "completed",
+            "unavailable" if outcome.state is RunState.PAUSED else "completed",
             message,
             dataset_hash=snapshot.manifest.dataset_hash,
             deep_research_run_id=run_id,

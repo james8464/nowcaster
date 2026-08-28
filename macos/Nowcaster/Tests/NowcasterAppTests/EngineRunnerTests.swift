@@ -155,11 +155,13 @@ private let learningConfiguration = EngineConfiguration(
 }
 
 @Test func deepResearchResourceProfilesBoundWorkersToAvailableProcessors() {
-    #expect(DeepResearchResourceProfile.performance.workerCount(activeProcessors: 12, customWorkers: 99) == 12)
-    #expect(DeepResearchResourceProfile.balanced.workerCount(activeProcessors: 12, customWorkers: 99) == 11)
+    #expect(DeepResearchResourcePolicy.maximumWorkerCount(activeProcessors: 12) == 10)
+    #expect(DeepResearchResourceProfile.performance.workerCount(activeProcessors: 12, customWorkers: 99) == 10)
+    #expect(DeepResearchResourceProfile.balanced.workerCount(activeProcessors: 12, customWorkers: 99) == 9)
     #expect(DeepResearchResourceProfile.efficient.workerCount(activeProcessors: 12, customWorkers: 99) == 6)
-    #expect(DeepResearchResourceProfile.custom.workerCount(activeProcessors: 12, customWorkers: 99) == 12)
+    #expect(DeepResearchResourceProfile.custom.workerCount(activeProcessors: 12, customWorkers: 99) == 10)
     #expect(DeepResearchResourceProfile.custom.workerCount(activeProcessors: 12, customWorkers: 3) == 3)
+    #expect(DeepResearchResourcePolicy.maximumWorkerCount(activeProcessors: 2) == 1)
 }
 
 @Test func deepResearchControlFileIsPrivateAtomicAndRejectsTerminalResume() throws {

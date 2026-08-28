@@ -6,10 +6,31 @@ from threading import Timer
 from src.database.engine import Database
 from src.deep_research.contracts import ResearchProtocol, RunState
 from src.deep_research.control import ControlState, ResearchControl
-from src.deep_research.coordinator import CandidateWork, DeepResearchCoordinator
+from src.deep_research.coordinator import (
+    CandidateWork,
+    DeepResearchCoordinator,
+    recommended_worker_count,
+    resource_preemption_reason,
+)
 from src.deep_research.repository import DeepResearchRepository
 
 NOW = datetime(2026, 8, 24, 12, tzinfo=UTC)
+
+
+def test_worker_recommendation_always_reserves_two_processors_and_honors_ceiling() -> None:
+    assert recommended_worker_count(12) == 10
+    assert recommended_worker_count(12, configured_max=4) == 4
+    assert recommended_worker_count(2) == 1
+    assert recommended_worker_count(1) == 1
+
+
+def test_resource_preemption_reasons_prioritize_live_safety() -> None:
+    assert resource_preemption_reason(live_heartbeat_healthy=False) == "live_heartbeat_unhealthy"
+    assert resource_preemption_reason(thermal_state="critical") == "thermal_critical"
+    assert resource_preemption_reason(memory_pressure=True) == "memory_pressure"
+    assert resource_preemption_reason(low_disk_space=True) == "low_disk_space"
+    assert resource_preemption_reason(sleeping=True) == "system_sleep"
+    assert resource_preemption_reason() is None
 
 
 def _protocol(*, workers: int, trial_budget: int = 4, continuous: bool = False) -> ResearchProtocol:
@@ -220,7 +241,7 @@ def test_continuous_run_resumes_at_the_checkpointed_ordinal_and_generation(tmp_p
     ]
 
 
-def test_resource_guard_fails_closed_before_worker_dispatch_and_preserves_broker_isolation(tmp_path) -> None:
+def test_resource_guard_pauses_with_checkpoint_before_worker_dispatch_and_preserves_broker_isolation(tmp_path) -> None:
     database = Database.from_url(f"duckdb:///{tmp_path / 'resource-guard.duckdb'}")
     database.initialize()
     repository = DeepResearchRepository(database, clock=lambda: NOW)
@@ -235,8 +256,38 @@ def test_resource_guard_fails_closed_before_worker_dispatch_and_preserves_broker
         resource_guard=lambda _works, _workers, _directory: (False, "memory reserve exhausted", 1234),
     ).run((_work(1), _work(2)))
 
-    assert outcome.state is RunState.FAILED
+    assert outcome.state is RunState.PAUSED
+    assert outcome.promotion_outcome == "resource_preempted"
     assert database.scalar("select count(*) from deep_research_trials") == 0
-    assert database.scalar("select state from deep_research_runs") == "failed"
+    assert database.scalar("select state from deep_research_runs") == "paused"
     assert database.scalar("select terminal_reason from deep_research_runs") == "memory reserve exhausted"
+    assert database.scalar("select count(*) from deep_research_checkpoints") == 1
     assert database.scalar("select count(*) from broker_order_intents") == 0
+
+
+def test_resource_deterioration_between_batches_preempts_new_work_and_keeps_completed_trials(tmp_path) -> None:
+    database = Database.from_url(f"duckdb:///{tmp_path / 'mid-resource.duckdb'}")
+    database.initialize()
+    repository = DeepResearchRepository(database, clock=lambda: NOW)
+    control = ResearchControl(tmp_path / "mid-resource", run_id="mid-resource", nonce="r" * 32)
+    control.initialize()
+    calls = 0
+
+    def guard(_works, _workers, _directory):
+        nonlocal calls
+        calls += 1
+        return (calls < 3, "live heartbeat unavailable" if calls >= 3 else "available", 100)
+
+    outcome = DeepResearchCoordinator(
+        run_id="mid-resource",
+        protocol=_protocol(workers=1, trial_budget=3),
+        repository=repository,
+        control=control,
+        sealed_evaluator=lambda _: (0.01,),
+        resource_guard=guard,
+    ).run((_work(1), _work(2), _work(3)))
+
+    assert outcome.state is RunState.PAUSED
+    assert outcome.evaluated_attempts == 1
+    assert database.scalar("select count(*) from deep_research_trials") == 1
+    assert database.scalar("select max(next_ordinal) from deep_research_checkpoints") == 2

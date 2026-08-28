@@ -19,6 +19,7 @@ from src.backtest.robustness import effective_sample_size, lower_mean_confidence
 from src.deep_research.contracts import (
     AttemptStatus,
     CandidateAttempt,
+    ChampionChallengerTransition,
     FoldEvidence,
     PromotionEvidence,
     ResearchProtocol,
@@ -41,6 +42,47 @@ from src.deep_research.worker import WorkerResult, configure_worker_environment,
 EventSink = Callable[[dict[str, Any]], None]
 SealedEvaluator = Callable[["CandidateWork"], tuple[float, ...]]
 ResourceGuard = Callable[[Sequence["CandidateWork"], int, str], tuple[bool, str, int | None]]
+
+
+def recommended_worker_count(
+    active_processors: int,
+    *,
+    reserved_processors: int = 2,
+    configured_max: int | None = None,
+) -> int:
+    """Reserve host capacity for live monitoring, the UI, and the operating system."""
+    for name, value in {"active_processors": active_processors, "reserved_processors": reserved_processors}.items():
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError(f"{name} must be a positive integer")
+    if configured_max is not None and (
+        isinstance(configured_max, bool) or not isinstance(configured_max, int) or configured_max < 1
+    ):
+        raise ValueError("configured worker maximum must be a positive integer")
+    safe = max(active_processors - reserved_processors, 1)
+    return min(safe, configured_max) if configured_max is not None else safe
+
+
+def resource_preemption_reason(
+    *,
+    thermal_state: str = "nominal",
+    memory_pressure: bool = False,
+    low_disk_space: bool = False,
+    sleeping: bool = False,
+    live_heartbeat_healthy: bool = True,
+) -> str | None:
+    """Return the highest-priority reason to checkpoint before dispatching more research."""
+    if not live_heartbeat_healthy:
+        return "live_heartbeat_unhealthy"
+    normalized_thermal = thermal_state.strip().lower()
+    if normalized_thermal in {"serious", "critical", "unknown"}:
+        return f"thermal_{normalized_thermal}"
+    if memory_pressure:
+        return "memory_pressure"
+    if low_disk_space:
+        return "low_disk_space"
+    if sleeping:
+        return "system_sleep"
+    return None
 
 
 def evaluate_resource_capacity(
@@ -131,6 +173,11 @@ class DeepResearchCoordinator:
         self.emit = emit
         self.clock = clock or (lambda: datetime.now(UTC))
         self.resource_guard = resource_guard or evaluate_resource_capacity
+        self.worker_count = recommended_worker_count(
+            os.cpu_count() or 1,
+            reserved_processors=protocol.reserved_processors,
+            configured_max=protocol.workers,
+        )
 
     def _now(self) -> datetime:
         value = self.clock()
@@ -209,14 +256,14 @@ class DeepResearchCoordinator:
         completed_count = 0
         capacity_ok, capacity_reason, memory_estimate = self.resource_guard(
             ordered_work,
-            self.protocol.workers,
+            self.worker_count,
             str(self.control.directory),
         )
         self.repository.append_resource_sample(
             self.run_id,
             ResourceSample(
                 sampled_at=self._now(),
-                active_workers=min(self.protocol.workers, len(ordered_work)),
+                active_workers=min(self.worker_count, len(ordered_work)),
                 queued_trials=len(ordered_work),
                 memory_bytes=memory_estimate,
                 thermal_state="host_managed",
@@ -230,23 +277,60 @@ class DeepResearchCoordinator:
                 generation=generation,
                 payload={"reason": "resource_guard", "detail": capacity_reason},
             )
-            self.repository.set_state(self.run_id, RunState.FAILED, reason=capacity_reason)
+            self.repository.set_state(self.run_id, RunState.PAUSED, reason=capacity_reason)
             self._event("resource_guard", 0.0, capacity_reason)
             return DeepResearchOutcome(
                 self.run_id,
-                RunState.FAILED,
+                RunState.PAUSED,
                 0,
                 (),
                 None,
-                "failed",
+                "resource_preempted",
                 (),
             )
         with ProcessPoolExecutor(
-            max_workers=self.protocol.workers,
+            max_workers=self.worker_count,
             initializer=configure_worker_environment,
         ) as executor:
-            for offset in range(0, len(ordered_work), self.protocol.workers):
-                batch = ordered_work[offset : offset + self.protocol.workers]
+            for offset in range(0, len(ordered_work), self.worker_count):
+                batch = ordered_work[offset : offset + self.worker_count]
+                capacity_ok, capacity_reason, memory_estimate = self.resource_guard(
+                    batch,
+                    self.worker_count,
+                    str(self.control.directory),
+                )
+                if not capacity_ok:
+                    self.repository.append_resource_sample(
+                        self.run_id,
+                        ResourceSample(
+                            sampled_at=self._now(),
+                            active_workers=0,
+                            queued_trials=len(ordered_work) - completed_count,
+                            memory_bytes=memory_estimate,
+                            thermal_state="preempted",
+                        ),
+                    )
+                    self.repository.checkpoint(
+                        self.run_id,
+                        next_ordinal=batch[0].ordinal,
+                        generation=generation,
+                        payload={"reason": "resource_preemption", "detail": capacity_reason},
+                    )
+                    self.repository.set_state(self.run_id, RunState.PAUSED, reason=capacity_reason)
+                    self._event(
+                        "resource_preemption",
+                        completed_count / max(1, len(ordered_work)),
+                        capacity_reason,
+                    )
+                    return DeepResearchOutcome(
+                        self.run_id,
+                        RunState.PAUSED,
+                        completed_count,
+                        tuple((ordinal, attempts[ordinal].fitness) for ordinal in sorted(attempts)),
+                        None,
+                        "resource_preempted",
+                        tuple(sorted(worker_limits)),
+                    )
                 state = self.control.read()
                 if state is ControlState.PAUSED:
                     self.repository.set_state(self.run_id, RunState.PAUSED, reason="operator_pause")
@@ -346,7 +430,7 @@ class DeepResearchCoordinator:
                     f"evaluated {completed_count} of {len(ordered_work)} trials",
                     completed_trials=completed_count,
                     total_trials=len(ordered_work),
-                    workers=self.protocol.workers,
+                    workers=self.worker_count,
                     generation=generation,
                 )
 
@@ -397,6 +481,24 @@ class DeepResearchCoordinator:
                 if incumbent_hash is not None and not promotion.promoted
                 else promotion.outcome
             )
+            transitioned_at = self._now()
+            transition = (
+                ChampionChallengerTransition.start_shadow(
+                    challenger_hash=best_hash,
+                    incumbent_hash=incumbent_hash,
+                    protocol_hash=self.protocol.identity,
+                    transitioned_at=transitioned_at,
+                )
+                if promotion.promoted
+                else ChampionChallengerTransition.reject(
+                    challenger_hash=best_hash,
+                    incumbent_hash=incumbent_hash,
+                    protocol_hash=self.protocol.identity,
+                    transitioned_at=transitioned_at,
+                )
+            )
+            if promotion.promoted:
+                promotion_outcome = "shadow_cohort_started"
             self.repository.append_promotion(
                 self.run_id,
                 PromotionEvidence(
@@ -405,8 +507,12 @@ class DeepResearchCoordinator:
                     promoted=promotion.promoted,
                     outcome=promotion_outcome,
                     score=promotion.score,
-                    evidence={"stress_evidence_grade": stress.evidence_grade},
+                    evidence={
+                        "stress_evidence_grade": stress.evidence_grade,
+                        "governance": transition.as_record(),
+                    },
                     failed_gates=promotion.failed_gates,
+                    transition=transition,
                 ),
             )
 
@@ -521,4 +627,6 @@ __all__ = [
     "DeepResearchCoordinator",
     "DeepResearchOutcome",
     "evaluate_resource_capacity",
+    "recommended_worker_count",
+    "resource_preemption_reason",
 ]

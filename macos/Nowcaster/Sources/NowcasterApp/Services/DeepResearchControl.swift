@@ -38,6 +38,15 @@ enum DeepResearchThermalPolicy {
     }
 }
 
+enum DeepResearchResourcePolicy {
+    static func maximumWorkerCount(
+        activeProcessors: Int,
+        reservedProcessors: Int = 2
+    ) -> Int {
+        max(activeProcessors - max(reservedProcessors, 1), 1)
+    }
+}
+
 struct DeepResearchControlIdentity: Equatable, Sendable {
     let runID: String
     let nonce: String

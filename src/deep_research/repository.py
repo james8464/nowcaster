@@ -213,7 +213,7 @@ class DeepResearchRepository:
         )
 
     def append_promotion(self, run_id: str, evidence: PromotionEvidence) -> str:
-        now = self._now()
+        now = max(self._now(), evidence.transition.transitioned_at)
         promotion_id = canonical_hash({"run_id": run_id, "evaluated_at": now})
         self.database.insert(
             "deep_research_promotions",
@@ -222,12 +222,17 @@ class DeepResearchRepository:
                     "promotion_id": promotion_id,
                     "run_id": run_id,
                     "candidate_hash": evidence.candidate_hash,
+                    "challenger_hash": evidence.transition.challenger_hash,
                     "incumbent_hash": evidence.incumbent_hash,
+                    "deployment_state": evidence.transition.deployment_state.value,
+                    "shadow_cohort_hash": evidence.transition.shadow_cohort_hash,
+                    "rollback_target_hash": evidence.transition.rollback_target_hash,
+                    "forward_evidence_reset": evidence.transition.forward_evidence_reset,
                     "evaluated_at": now,
                     "promoted": evidence.promoted,
                     "outcome": evidence.outcome,
                     "score": evidence.score,
-                    "evidence": evidence.evidence,
+                    "evidence": {**evidence.evidence, "transition": evidence.transition.as_record()},
                     "failed_gates": list(evidence.failed_gates),
                     **self._common(),
                 }

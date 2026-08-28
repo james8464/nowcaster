@@ -74,6 +74,13 @@ class AttemptStatus(StrEnum):
     INTERRUPTED = "interrupted"
 
 
+class DeploymentState(StrEnum):
+    REJECTED = "rejected"
+    SHADOW = "shadow"
+    FORWARD_QUALIFIED = "forward_qualified"
+    ROLLED_BACK = "rolled_back"
+
+
 @dataclass(frozen=True, slots=True)
 class ResearchProtocol:
     dataset_hash: str
@@ -93,6 +100,7 @@ class ResearchProtocol:
     protocol_version: str = "deep-research-v1"
     cycle_budget: int = 100
     search_family: str = "deep_strategy_search"
+    reserved_processors: int = 2
 
     def __post_init__(self) -> None:
         for name in ("dataset_hash", "code_hash", "search_space_hash", "cost_policy_hash"):
@@ -109,6 +117,12 @@ class ResearchProtocol:
             raise ValueError("seed must be an integer")
         if isinstance(self.workers, bool) or not isinstance(self.workers, int) or self.workers < 1:
             raise ValueError("workers must be a positive integer")
+        if (
+            isinstance(self.reserved_processors, bool)
+            or not isinstance(self.reserved_processors, int)
+            or self.reserved_processors < 1
+        ):
+            raise ValueError("reserved processors must be a positive integer")
         if isinstance(self.cycle_budget, bool) or self.cycle_budget < 1:
             raise ValueError("cycle_budget must be a positive integer")
         if self.continuous:
@@ -132,6 +146,7 @@ class ResearchProtocol:
                 "provider": self.provider,
                 "search_space_hash": self.search_space_hash,
                 "search_family": self.search_family,
+                "reserved_processors": self.reserved_processors,
                 "seed": self.seed,
                 "symbol": self.symbol,
             }
@@ -156,6 +171,7 @@ class ResearchProtocol:
             "created_at": self.created_at.isoformat().replace("+00:00", "Z"),
             "protocol_version": self.protocol_version,
             "search_family": self.search_family,
+            "reserved_processors": self.reserved_processors,
         }
 
 
@@ -215,6 +231,129 @@ class StressEvidence:
 
 
 @dataclass(frozen=True, slots=True)
+class ChampionChallengerTransition:
+    challenger_hash: str
+    incumbent_hash: str | None
+    protocol_hash: str
+    deployment_state: DeploymentState
+    shadow_cohort_hash: str | None
+    rollback_target_hash: str | None
+    forward_evidence_reset: bool
+    transitioned_at: datetime
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "challenger_hash", _hash(self.challenger_hash, "challenger_hash"))
+        object.__setattr__(self, "protocol_hash", _hash(self.protocol_hash, "protocol_hash"))
+        object.__setattr__(self, "deployment_state", DeploymentState(self.deployment_state))
+        if self.incumbent_hash is not None:
+            object.__setattr__(self, "incumbent_hash", _hash(self.incumbent_hash, "incumbent_hash"))
+        if self.shadow_cohort_hash is not None:
+            object.__setattr__(self, "shadow_cohort_hash", _hash(self.shadow_cohort_hash, "shadow_cohort_hash"))
+        if self.rollback_target_hash is not None:
+            object.__setattr__(
+                self,
+                "rollback_target_hash",
+                _hash(self.rollback_target_hash, "rollback_target_hash"),
+            )
+        _utc(self.transitioned_at, "transitioned_at")
+        if type(self.forward_evidence_reset) is not bool:
+            raise ValueError("forward evidence reset must be a boolean")
+        if self.deployment_state is DeploymentState.SHADOW:
+            if self.shadow_cohort_hash is None or not self.forward_evidence_reset:
+                raise ValueError("shadow transitions require a new cohort and forward evidence reset")
+            if self.rollback_target_hash != self.incumbent_hash:
+                raise ValueError("shadow rollback target must be the incumbent")
+        elif self.deployment_state is DeploymentState.FORWARD_QUALIFIED:
+            if self.shadow_cohort_hash is None or self.forward_evidence_reset:
+                raise ValueError("forward qualification must retain completed shadow evidence")
+            if self.rollback_target_hash != self.incumbent_hash:
+                raise ValueError("forward qualification rollback target must be the incumbent")
+        elif self.deployment_state is DeploymentState.REJECTED:
+            if self.shadow_cohort_hash is not None or self.forward_evidence_reset:
+                raise ValueError("rejected challengers cannot create a forward cohort")
+        elif self.rollback_target_hash is None:
+            raise ValueError("rollback transitions require a rollback target")
+
+    @property
+    def transition_id(self) -> str:
+        return canonical_hash(self.as_record())
+
+    def as_record(self) -> dict[str, Any]:
+        return {
+            "challenger_hash": self.challenger_hash,
+            "incumbent_hash": self.incumbent_hash,
+            "protocol_hash": self.protocol_hash,
+            "deployment_state": self.deployment_state.value,
+            "shadow_cohort_hash": self.shadow_cohort_hash,
+            "rollback_target_hash": self.rollback_target_hash,
+            "forward_evidence_reset": self.forward_evidence_reset,
+            "transitioned_at": self.transitioned_at.isoformat().replace("+00:00", "Z"),
+        }
+
+    @classmethod
+    def start_shadow(
+        cls,
+        *,
+        challenger_hash: str,
+        incumbent_hash: str | None,
+        protocol_hash: str,
+        transitioned_at: datetime,
+    ) -> ChampionChallengerTransition:
+        shadow_cohort_hash = canonical_hash(
+            {
+                "challenger_hash": challenger_hash,
+                "incumbent_hash": incumbent_hash,
+                "protocol_hash": protocol_hash,
+                "deployment_state": DeploymentState.SHADOW.value,
+            }
+        )
+        return cls(
+            challenger_hash=challenger_hash,
+            incumbent_hash=incumbent_hash,
+            protocol_hash=protocol_hash,
+            deployment_state=DeploymentState.SHADOW,
+            shadow_cohort_hash=shadow_cohort_hash,
+            rollback_target_hash=incumbent_hash,
+            forward_evidence_reset=True,
+            transitioned_at=transitioned_at,
+        )
+
+    @classmethod
+    def reject(
+        cls,
+        *,
+        challenger_hash: str,
+        incumbent_hash: str | None,
+        protocol_hash: str,
+        transitioned_at: datetime,
+    ) -> ChampionChallengerTransition:
+        return cls(
+            challenger_hash=challenger_hash,
+            incumbent_hash=incumbent_hash,
+            protocol_hash=protocol_hash,
+            deployment_state=DeploymentState.REJECTED,
+            shadow_cohort_hash=None,
+            rollback_target_hash=incumbent_hash,
+            forward_evidence_reset=False,
+            transitioned_at=transitioned_at,
+        )
+
+    def roll_back(self, *, transitioned_at: datetime) -> ChampionChallengerTransition:
+        if self.incumbent_hash is None:
+            raise ValueError("a challenger without an incumbent has no strategy rollback target")
+        return type(self)(
+            challenger_hash=self.challenger_hash,
+            incumbent_hash=self.incumbent_hash,
+            protocol_hash=self.protocol_hash,
+            deployment_state=DeploymentState.ROLLED_BACK,
+            shadow_cohort_hash=self.shadow_cohort_hash,
+            rollback_target_hash=self.incumbent_hash,
+            forward_evidence_reset=False,
+            transitioned_at=transitioned_at,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class PromotionEvidence:
     candidate_hash: str | None
     incumbent_hash: str | None
@@ -223,6 +362,15 @@ class PromotionEvidence:
     score: float | None
     evidence: dict[str, Any]
     failed_gates: tuple[str, ...]
+    transition: ChampionChallengerTransition
+
+    def __post_init__(self) -> None:
+        if self.candidate_hash != self.transition.challenger_hash:
+            raise ValueError("promotion candidate and challenger identities must match")
+        if self.incumbent_hash != self.transition.incumbent_hash:
+            raise ValueError("promotion incumbent and rollback transition must match")
+        if self.promoted != (self.transition.deployment_state is DeploymentState.SHADOW):
+            raise ValueError("offline promotion can only start a shadow cohort")
 
 
 @dataclass(frozen=True, slots=True)

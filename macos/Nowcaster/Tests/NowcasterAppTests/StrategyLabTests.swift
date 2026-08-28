@@ -304,6 +304,11 @@ private func strategyLabFixtureWithDuplicateContext() throws -> NowcasterSnapsho
     #expect(DeepResearchThermalPolicy.action(for: .critical, automaticallyPaused: false) == .pause)
 }
 
+@Test func deepResearchAlwaysReservesProcessorsForLiveMonitoringAndTheSystem() {
+    #expect(DeepResearchResourcePolicy.maximumWorkerCount(activeProcessors: 16, reservedProcessors: 2) == 14)
+    #expect(DeepResearchResourcePolicy.maximumWorkerCount(activeProcessors: 2, reservedProcessors: 2) == 1)
+}
+
 @Test func deepResearchPresentationMakesFailedGatesAndHypotheticalStatusExplicit() throws {
     let data = Data(
         """

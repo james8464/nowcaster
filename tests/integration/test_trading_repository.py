@@ -122,8 +122,8 @@ def test_v4_database_migrates_to_v5_idempotently_without_altering_trading_tables
     database.initialize()
     database.initialize()
 
-    assert database.schema_version() == 11
-    assert database.scalar("SELECT count(*) FROM schema_versions WHERE version = 11") == 1
+    assert database.schema_version() == 12
+    assert database.scalar("SELECT count(*) FROM schema_versions WHERE version = 12") == 1
     assert {"strategy_runs", "broker_sessions", "broker_order_events", "readiness_receipts"} <= set(
         database.table_names()
     )

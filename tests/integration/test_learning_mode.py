@@ -12,7 +12,7 @@ from src.backtest.execution import ExecutionAssumptions
 from src.database.engine import Database
 from src.database.schema import learning_trials
 from src.learning.grammar import RuleNode
-from src.learning.promotion import ForwardEvidence, promote_candidate
+from src.learning.promotion import ForwardEvidence, forward_qualification_transition, promote_candidate
 from src.learning.search import (
     FitnessPenalties,
     FoldMetrics,
@@ -389,3 +389,24 @@ def test_promotion_is_pure_and_consumption_is_caller_supplied_state(tmp_path) ->
     assert promote_candidate(candidate, consumed) == PromotionDecision(
         False, ("forward outer block has already been consumed",)
     )
+
+
+def test_forward_qualification_is_an_immutable_transition_with_rollback() -> None:
+    candidate = RuleCandidate(
+        rule=RuleNode.compare("gt", RuleNode.indicator("rsi", lag=1), RuleNode.number(50)),
+        discovered_at=datetime(2026, 8, 24, 12, tzinfo=UTC),
+        evidence_through=datetime(2026, 8, 20, 22, tzinfo=UTC),
+    )
+
+    transition = forward_qualification_transition(
+        candidate,
+        _forward(candidate),
+        incumbent_hash="f" * 64,
+        shadow_cohort_hash="e" * 64,
+        transitioned_at=datetime(2026, 8, 25, tzinfo=UTC),
+    )
+
+    assert transition.deployment_state.value == "forward_qualified"
+    assert transition.rollback_target_hash == "f" * 64
+    assert transition.shadow_cohort_hash == "e" * 64
+    assert transition.forward_evidence_reset is False

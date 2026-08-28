@@ -6,7 +6,14 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from src.database.engine import Database
-from src.deep_research.contracts import AttemptStatus, CandidateAttempt, ResearchProtocol, RunState
+from src.deep_research.contracts import (
+    AttemptStatus,
+    CandidateAttempt,
+    ChampionChallengerTransition,
+    PromotionEvidence,
+    ResearchProtocol,
+    RunState,
+)
 from src.deep_research.repository import DeepResearchRepository
 
 NOW = datetime(2026, 8, 24, 12, tzinfo=UTC)
@@ -55,7 +62,7 @@ def test_schema_v5_initializes_idempotently_with_all_research_tables(tmp_path) -
     database, _ = _repository(tmp_path)
     database.initialize()
 
-    assert database.schema_version() == 11
+    assert database.schema_version() == 12
     assert {
         "deep_research_runs",
         "deep_research_trials",
@@ -135,3 +142,39 @@ def test_global_trial_identity_survives_run_restarts_and_counts_protocol_changes
 
     assert repository.global_trial_count(protocol) == 2
     assert repository.global_successful_fitness(protocol) == (1.0, 1.0)
+
+
+def test_promotion_ledger_records_shadow_cohort_rollback_and_evidence_reset(tmp_path) -> None:
+    database, repository = _repository(tmp_path)
+    protocol = _protocol()
+    repository.create_run("run-1", protocol)
+    transition = ChampionChallengerTransition.start_shadow(
+        challenger_hash="a" * 64,
+        incumbent_hash="b" * 64,
+        protocol_hash=protocol.identity,
+        transitioned_at=NOW,
+    )
+
+    repository.append_promotion(
+        "run-1",
+        PromotionEvidence(
+            candidate_hash="a" * 64,
+            incumbent_hash="b" * 64,
+            promoted=True,
+            outcome="shadow_cohort_started",
+            score=1.2,
+            evidence={"offline_gates": "passed"},
+            failed_gates=(),
+            transition=transition,
+        ),
+    )
+    row = database.frame(
+        "select challenger_hash, deployment_state, shadow_cohort_hash, rollback_target_hash, "
+        "forward_evidence_reset from deep_research_promotions"
+    ).iloc[0]
+
+    assert row.challenger_hash == "a" * 64
+    assert row.deployment_state == "shadow"
+    assert row.shadow_cohort_hash == transition.shadow_cohort_hash
+    assert row.rollback_target_hash == "b" * 64
+    assert bool(row.forward_evidence_reset) is True

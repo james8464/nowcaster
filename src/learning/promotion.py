@@ -3,7 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from src.deep_research.contracts import ChampionChallengerTransition, DeploymentState
 from src.learning.search import RuleCandidate
+from src.strategies.types import canonical_hash
 from src.strategies.validation import PromotionDecision
 
 
@@ -67,4 +69,49 @@ def promote_candidate(candidate: RuleCandidate, evidence: ForwardEvidence) -> Pr
     return PromotionDecision(not reasons, tuple(dict.fromkeys(reasons)))
 
 
-__all__ = ["ForwardEvidence", "PromotionDecision", "promote_candidate"]
+def forward_qualification_transition(
+    candidate: RuleCandidate,
+    evidence: ForwardEvidence,
+    *,
+    incumbent_hash: str | None,
+    shadow_cohort_hash: str,
+    transitioned_at: datetime,
+) -> ChampionChallengerTransition:
+    """Record forward qualification without mutating or silently deploying either strategy."""
+    decision = promote_candidate(candidate, evidence)
+    if not decision.promoted:
+        raise ValueError("forward qualification gates did not pass: " + "; ".join(decision.reasons))
+    _utc(transitioned_at, "forward qualification transitioned_at")
+    if transitioned_at < evidence.evaluated_at:
+        raise ValueError("forward qualification cannot predate its evidence")
+    protocol_hash = canonical_hash(
+        {
+            "schema_version": 1,
+            "candidate_version": candidate.version,
+            "causal_audit_passed": evidence.causal_audit_passed,
+            "validation": {
+                "promoted": evidence.validation.promoted,
+                "reasons": evidence.validation.reasons,
+            },
+            "outer_block_inspected": evidence.outer_block_inspected,
+            "outer_block_consumed": evidence.outer_block_consumed,
+        }
+    )
+    return ChampionChallengerTransition(
+        challenger_hash=candidate.candidate_hash,
+        incumbent_hash=incumbent_hash,
+        protocol_hash=protocol_hash,
+        deployment_state=DeploymentState.FORWARD_QUALIFIED,
+        shadow_cohort_hash=shadow_cohort_hash,
+        rollback_target_hash=incumbent_hash,
+        forward_evidence_reset=False,
+        transitioned_at=transitioned_at,
+    )
+
+
+__all__ = [
+    "ForwardEvidence",
+    "PromotionDecision",
+    "forward_qualification_transition",
+    "promote_candidate",
+]

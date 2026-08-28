@@ -7,6 +7,8 @@ import pytest
 from src.deep_research.contracts import (
     AttemptStatus,
     CandidateAttempt,
+    ChampionChallengerTransition,
+    DeploymentState,
     ResearchProtocol,
     RunState,
 )
@@ -43,11 +45,18 @@ def test_protocol_identity_is_canonical_and_normalizes_scope() -> None:
     assert first.provider == "binance"
     assert first.identity == second.identity
     assert len(first.identity) == 64
+    assert first.reserved_processors == 2
 
 
 @pytest.mark.parametrize(
     ("field", "value"),
-    [("workers", 0), ("trial_budget", 0), ("seed", True), ("final_test_start", datetime(2026, 8, 24))],
+    [
+        ("workers", 0),
+        ("reserved_processors", 0),
+        ("trial_budget", 0),
+        ("seed", True),
+        ("final_test_start", datetime(2026, 8, 24)),
+    ],
 )
 def test_protocol_rejects_unsafe_resource_and_time_bounds(field: str, value: object) -> None:
     with pytest.raises(ValueError):
@@ -106,3 +115,32 @@ def test_run_and_attempt_states_are_closed_enums() -> None:
         "failed",
         "interrupted",
     }
+
+
+def test_shadow_transition_resets_evidence_and_binds_rollback_target() -> None:
+    transition = ChampionChallengerTransition.start_shadow(
+        challenger_hash="a" * 64,
+        incumbent_hash="b" * 64,
+        protocol_hash="c" * 64,
+        transitioned_at=NOW,
+    )
+
+    assert transition.deployment_state is DeploymentState.SHADOW
+    assert transition.rollback_target_hash == "b" * 64
+    assert transition.forward_evidence_reset is True
+    assert transition.shadow_cohort_hash is not None
+    rolled_back = transition.roll_back(transitioned_at=NOW)
+    assert rolled_back.deployment_state is DeploymentState.ROLLED_BACK
+    assert rolled_back.rollback_target_hash == transition.incumbent_hash
+
+    with pytest.raises(ValueError, match="reset"):
+        ChampionChallengerTransition(
+            challenger_hash="a" * 64,
+            incumbent_hash="b" * 64,
+            protocol_hash="c" * 64,
+            deployment_state=DeploymentState.SHADOW,
+            shadow_cohort_hash="d" * 64,
+            rollback_target_hash="b" * 64,
+            forward_evidence_reset=False,
+            transitioned_at=NOW,
+        )

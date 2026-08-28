@@ -35,7 +35,10 @@ strategies:
     )
 
 
-def _write_bars(path: Path, count: int = 100) -> None:
+BAR_COUNT = 1_200
+
+
+def _write_bars(path: Path, count: int = BAR_COUNT) -> None:
     start = datetime(2026, 8, 20, tzinfo=UTC)
     rows = ["timestamp,open,high,low,close,volume,vwap,trade_count,finalized,available_at,revision"]
     previous = 100.0
@@ -77,7 +80,7 @@ def test_deep_research_full_evidence_export_is_honest_reproducible_and_broker_is
         mode=StrategyMode.WALK_FORWARD_LEARNING,
     )
     start = datetime(2026, 8, 20, tzinfo=UTC)
-    pipeline.ingest(IngestOptions(scope=scope, start=start, end=start + timedelta(minutes=500)))
+    pipeline.ingest(IngestOptions(scope=scope, start=start, end=start + timedelta(minutes=5 * BAR_COUNT)))
 
     research = pipeline.deep_research(
         DeepResearchOptions(

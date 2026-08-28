@@ -13,6 +13,8 @@ from src.database.engine import Database
 from src.deep_research.contracts import (
     AttemptStatus,
     CandidateAttempt,
+    ChampionChallengerTransition,
+    DeploymentState,
     PromotionEvidence,
     ResearchProtocol,
     ResourceSample,
@@ -78,6 +80,16 @@ def test_snapshot_projects_bounded_run_counts_resources_and_honest_failed_gates(
             score=0.5,
             evidence={"stress_evidence_grade": "conservative_default_liquidity"},
             failed_gates=("minimum 300 closed trades not met",),
+            transition=ChampionChallengerTransition(
+                challenger_hash="1".zfill(64),
+                incumbent_hash=None,
+                protocol_hash=_protocol().identity,
+                deployment_state=DeploymentState.REJECTED,
+                shadow_cohort_hash=None,
+                rollback_target_hash=None,
+                forward_evidence_reset=False,
+                transitioned_at=NOW,
+            ),
         ),
     )
     repository.set_state("deep-1", RunState.COMPLETED, reason="cycle_complete")

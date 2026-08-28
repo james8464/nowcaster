@@ -11,7 +11,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from src.database.schema import NATURAL_KEYS, TABLES, metadata, schema_versions
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 
 class Database:
@@ -66,6 +66,38 @@ class Database:
                     "WHERE drift_policy_hash IS NULL"
                 ),
                 {"legacy_hash": "0" * 64},
+            )
+            promotion_columns = {
+                column["name"] for column in inspect(connection).get_columns("deep_research_promotions")
+            }
+            promotion_migrations = {
+                "challenger_hash": "VARCHAR",
+                "deployment_state": "VARCHAR",
+                "shadow_cohort_hash": "VARCHAR",
+                "rollback_target_hash": "VARCHAR",
+                "forward_evidence_reset": "BOOLEAN",
+            }
+            for name, sql_type in promotion_migrations.items():
+                if name not in promotion_columns:
+                    connection.execute(text(f"ALTER TABLE deep_research_promotions ADD COLUMN {name} {sql_type}"))
+            connection.execute(
+                text(
+                    "UPDATE deep_research_promotions SET challenger_hash = candidate_hash "
+                    "WHERE challenger_hash IS NULL"
+                )
+            )
+            connection.execute(
+                text(
+                    "UPDATE deep_research_promotions SET deployment_state = "
+                    "CASE WHEN promoted THEN 'legacy_research_promoted' ELSE 'rejected' END "
+                    "WHERE deployment_state IS NULL"
+                )
+            )
+            connection.execute(
+                text(
+                    "UPDATE deep_research_promotions SET forward_evidence_reset = false "
+                    "WHERE forward_evidence_reset IS NULL"
+                )
             )
             applied = connection.execute(
                 select(schema_versions.c.version).where(schema_versions.c.version == SCHEMA_VERSION)

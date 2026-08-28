@@ -36,11 +36,12 @@ enum DeepResearchResourceProfile: String, Codable, CaseIterable, Sendable {
 
     func workerCount(activeProcessors: Int, customWorkers: Int) -> Int {
         let available = max(activeProcessors, 1)
+        let safeMaximum = DeepResearchResourcePolicy.maximumWorkerCount(activeProcessors: available)
         return switch self {
-        case .performance: available
-        case .balanced: max(available - 1, 1)
-        case .efficient: max(available / 2, 1)
-        case .custom: min(max(customWorkers, 1), available)
+        case .performance: safeMaximum
+        case .balanced: max(safeMaximum - 1, 1)
+        case .efficient: min(max(available / 2, 1), safeMaximum)
+        case .custom: min(max(customWorkers, 1), safeMaximum)
         }
     }
 }
