@@ -1,5 +1,35 @@
 import SwiftUI
 
+enum LiveMonitorPresentation {
+    static func summary(for event: LiveMonitorEvent) -> String {
+        if event.type == .notificationRequest, let body = event.payload["body"]?.stringValue {
+            return body
+        }
+        let symbol = event.payload["symbol"]?.stringValue
+        let status = event.payload["status"]?.stringValue
+        let reason = event.payload["reason"]?.stringValue
+        let edge = event.payload["expected_net_edge"]?.stringValue.flatMap(Double.init).map {
+            "\(ResearchFormatting.percentage($0, precision: 2)) lower net edge"
+        }
+        let drift = event.payload["drift_status"]?.stringValue.map { "drift \($0)" }
+        let source = sourceDescription(event.payload)
+        return [joined(symbol, status), edge, drift, source, reason]
+            .compactMap { $0?.nonempty }
+            .joined(separator: " · ")
+            .nonempty ?? "Live monitor event recorded"
+    }
+
+    private static func joined(_ first: String?, _ second: String?) -> String? {
+        [first, second].compactMap { $0?.nonempty }.joined(separator: " · ").nonempty
+    }
+
+    private static func sourceDescription(_ payload: [String: JSONValue]) -> String? {
+        joined(payload["provider"]?.stringValue, payload["feed"]?.stringValue)?.replacingOccurrences(
+            of: " · ", with: "/"
+        )
+    }
+}
+
 struct LiveMonitorView: View {
     @Bindable var model: AppModel
     let settings: AppSettings
@@ -97,7 +127,10 @@ struct LiveMonitorView: View {
             Image(systemName: icon(for: event.type)).frame(width: 22)
             VStack(alignment: .leading, spacing: 4) {
                 Text(title(for: event)).fontWeight(.medium)
-                Text(summary(for: event)).font(.caption).foregroundStyle(.secondary).lineLimit(3)
+                Text(LiveMonitorPresentation.summary(for: event))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
             }
             Spacer()
             Text(event.emittedAt, style: .time).font(.caption).foregroundStyle(.secondary)
@@ -181,15 +214,6 @@ struct LiveMonitorView: View {
         event.type.rawValue.replacingOccurrences(of: "_", with: " ").capitalized
     }
 
-    private func summary(for event: LiveMonitorEvent) -> String {
-        if event.type == .notificationRequest, let body = event.payload["body"]?.stringValue {
-            return body
-        }
-        let symbol = event.payload["symbol"]?.stringValue
-        let status = event.payload["status"]?.stringValue
-        let reason = event.payload["reason"]?.stringValue
-        return [symbol, status, reason].compactMap { $0 }.joined(separator: " · ").nonempty ?? "Live monitor event recorded"
-    }
 }
 
 private extension String {

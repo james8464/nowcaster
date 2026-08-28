@@ -104,6 +104,7 @@ def test_deep_research_full_evidence_export_is_honest_reproducible_and_broker_is
     assert run.outcome in {
         "no_reliable_strategy_found",
         "research_champion_found",
+        "shadow_cohort_started",
         "existing_champion_retained",
     }
     if run.outcome == "no_reliable_strategy_found":

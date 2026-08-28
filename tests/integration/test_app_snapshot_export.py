@@ -29,6 +29,11 @@ def test_demo_database_exports_a_populated_native_snapshot(tmp_path, demo_databa
     assert decoded.signals
     assert decoded.model_diagnostics
     assert decoded.backtests
+    crypto_signal = next(signal for signal in decoded.signals if signal.asset_class == "crypto")
+    assert crypto_signal.venue == "composite"
+    assert crypto_signal.probability_definition == "positive close-to-close return over the stated horizon"
+    assert crypto_signal.gross_edge == crypto_signal.strength
+    assert crypto_signal.model_age_seconds is not None and crypto_signal.model_age_seconds >= 0
     assert "probability of profit" not in path.read_text().lower()
 
 

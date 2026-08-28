@@ -159,6 +159,46 @@ class ResearchSignalSnapshot(SnapshotModel):
     invalidation: str
     evidence_summary: str
     reasons: list[str] = Field(default_factory=list)
+    provider: str | None = None
+    feed: str | None = None
+    venue: str | None = None
+    product: str | None = None
+    probability_definition: str | None = None
+    probability_lower_bound: float | None = Field(default=None, ge=0, le=1)
+    probability_upper_bound: float | None = Field(default=None, ge=0, le=1)
+    calibration_observations: int | None = Field(default=None, ge=0)
+    calibration_effective_observations: float | None = Field(default=None, ge=0)
+    brier_score: float | None = Field(default=None, ge=0, le=1)
+    expected_calibration_error: float | None = Field(default=None, ge=0, le=1)
+    gross_edge: float | None = None
+    estimated_cost: float | None = Field(default=None, ge=0)
+    lower_net_edge: float | None = None
+    model_age_seconds: float | None = Field(default=None, ge=0)
+    regime: str | None = None
+    drift_status: str | None = None
+    drift_score: float | None = Field(default=None, ge=0)
+    latency_ms: float | None = Field(default=None, ge=0)
+    coverage_ratio: float | None = Field(default=None, ge=0, le=1)
+    coverage_status: str | None = None
+
+    @model_validator(mode="after")
+    def evidence_is_coherent(self) -> ResearchSignalSnapshot:
+        lower = self.probability_lower_bound
+        upper = self.probability_upper_bound
+        if lower is not None and upper is not None and lower > upper:
+            raise ValueError("probability lower bound cannot exceed upper bound")
+        if self.calibrated_probability is not None:
+            if lower is not None and self.calibrated_probability < lower:
+                raise ValueError("calibrated probability cannot be below its lower bound")
+            if upper is not None and self.calibrated_probability > upper:
+                raise ValueError("calibrated probability cannot exceed its upper bound")
+        if (
+            self.calibration_observations is not None
+            and self.calibration_effective_observations is not None
+            and self.calibration_effective_observations > self.calibration_observations
+        ):
+            raise ValueError("effective calibration observations cannot exceed raw observations")
+        return self
 
 
 class ModelDiagnosticSnapshot(SnapshotModel):
@@ -371,6 +411,7 @@ class DeepResearchRunSnapshot(SnapshotModel):
         "research_running",
         "no_reliable_strategy_found",
         "research_champion_found",
+        "shadow_cohort_started",
         "existing_champion_retained",
         "stopped",
         "failed",

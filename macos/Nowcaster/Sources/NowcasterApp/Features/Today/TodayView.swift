@@ -62,6 +62,12 @@ struct TodayView: View {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(signal.instrumentId).font(.headline)
                                     Text(signal.evidenceSummary).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                    if let evidence = ResearchFormatting.compactEvidence(signal) {
+                                        Text(evidence)
+                                            .font(.caption2)
+                                            .foregroundStyle(.tertiary)
+                                            .lineLimit(1)
+                                    }
                                 }
                                 Spacer()
                                 Text(ResearchFormatting.probability(signal.calibratedProbability))

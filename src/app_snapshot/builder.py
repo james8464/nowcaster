@@ -67,6 +67,25 @@ def _python_date(value: Any) -> date:
     return pd.Timestamp(value).date()
 
 
+def _optional_text(*values: Any) -> str | None:
+    for value in values:
+        if value is not None and not pd.isna(value) and str(value).strip():
+            return str(value).strip()
+    return None
+
+
+def _optional_int(value: Any) -> int | None:
+    number = _finite(value)
+    return int(number) if number is not None else None
+
+
+def _age_seconds(value: Any) -> float | None:
+    instant = _python_datetime(value)
+    if instant is None:
+        return None
+    return max((datetime.now(UTC) - instant).total_seconds(), 0.0)
+
+
 def _execution_projection(database: Database) -> dict[str, Any]:
     sessions = database.frame(
         "select environment, account_suffix, status from broker_sessions order by started_at desc limit 1"
@@ -383,17 +402,25 @@ def _equity_signals(database: Database) -> list[ResearchSignalSnapshot]:
 def _crypto_signals(database: Database) -> list[ResearchSignalSnapshot]:
     frame = database.frame(
         """
-        select signal_id, instrument_id, decision_date, horizon_days, posture,
-               direction_probability, expected_return, confidence_score,
-               training_samples, calibration_status, explanation
-        from market_signals_daily
-        where asset_class = 'crypto'
-        order by decision_date desc, confidence_score desc
+        select s.signal_id, s.instrument_id, s.decision_date, s.horizon_days, s.model_name, s.posture,
+               s.direction_probability, s.expected_return, s.confidence_score,
+               s.training_samples, s.calibration_status, s.status, s.explanation,
+               s.created_at as model_created_at, i.venue, i.configuration
+        from market_signals_daily s
+        left join instruments i on s.instrument_id = i.instrument_id
+        where s.asset_class = 'crypto'
+        order by s.decision_date desc, s.confidence_score desc
         limit 1000
         """
     )
     signals: list[ResearchSignalSnapshot] = []
     for row in frame.itertuples(index=False):
+        explanation = dict(row.explanation) if isinstance(row.explanation, dict) else {}
+        configuration = dict(row.configuration) if isinstance(row.configuration, dict) else {}
+        venue = _optional_text(row.venue)
+        provider = _optional_text(explanation.get("provider"), configuration.get("provider"))
+        if provider is None and venue is not None and venue.lower() in {"alpaca", "binance"}:
+            provider = venue.lower()
         reasons: list[str] = []
         if str(row.posture) == "abstain":
             reasons.append("Model probability, expected return, and directional agreement did not all clear gates")
@@ -417,6 +444,36 @@ def _crypto_signals(database: Database) -> list[ResearchSignalSnapshot]:
                     f"{row.calibration_status}"
                 ),
                 reasons=reasons,
+                provider=provider,
+                feed=_optional_text(explanation.get("feed"), configuration.get("feed")),
+                venue=venue,
+                product=_optional_text(explanation.get("product"), configuration.get("product")),
+                probability_definition=_optional_text(
+                    explanation.get("probability_definition"),
+                    "positive close-to-close return over the stated horizon",
+                ),
+                probability_lower_bound=_finite(explanation.get("probability_lower_bound")),
+                probability_upper_bound=_finite(explanation.get("probability_upper_bound")),
+                calibration_observations=_optional_int(explanation.get("calibration_observations")),
+                calibration_effective_observations=_finite(
+                    explanation.get("calibration_effective_observations")
+                ),
+                brier_score=_finite(explanation.get("brier_score")),
+                expected_calibration_error=_finite(explanation.get("expected_calibration_error")),
+                gross_edge=_finite(row.expected_return),
+                estimated_cost=_finite(explanation.get("estimated_cost")),
+                lower_net_edge=_finite(explanation.get("lower_net_edge")),
+                model_age_seconds=(
+                    _finite(explanation.get("model_age_seconds"))
+                    if explanation.get("model_age_seconds") is not None
+                    else _age_seconds(row.model_created_at)
+                ),
+                regime=_optional_text(explanation.get("regime")),
+                drift_status=_optional_text(explanation.get("drift_status")),
+                drift_score=_finite(explanation.get("drift_score")),
+                latency_ms=_finite(explanation.get("latency_ms")),
+                coverage_ratio=_finite(explanation.get("coverage_ratio")),
+                coverage_status=_optional_text(explanation.get("coverage_status")),
             )
         )
     return signals

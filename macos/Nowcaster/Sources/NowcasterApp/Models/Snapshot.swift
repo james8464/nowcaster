@@ -316,6 +316,27 @@ struct ResearchSignalSnapshot: Decodable, Identifiable, Sendable {
     let invalidation: String
     let evidenceSummary: String
     let reasons: [String]
+    let provider: String?
+    let feed: String?
+    let venue: String?
+    let product: String?
+    let probabilityDefinition: String?
+    let probabilityLowerBound: Double?
+    let probabilityUpperBound: Double?
+    let calibrationObservations: Int?
+    let calibrationEffectiveObservations: Double?
+    let brierScore: Double?
+    let expectedCalibrationError: Double?
+    let grossEdge: Double?
+    let estimatedCost: Double?
+    let lowerNetEdge: Double?
+    let modelAgeSeconds: Double?
+    let regime: String?
+    let driftStatus: String?
+    let driftScore: Double?
+    let latencyMs: Double?
+    let coverageRatio: Double?
+    let coverageStatus: String?
 
     var id: String { signalId }
 }

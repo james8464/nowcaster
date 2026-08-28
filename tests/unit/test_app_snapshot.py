@@ -6,7 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from src.app_snapshot import models as snapshot_models
-from src.app_snapshot.models import AppSnapshot, SnapshotMetadata
+from src.app_snapshot.models import AppSnapshot, ResearchSignalSnapshot, SnapshotMetadata
 from src.app_snapshot.writer import write_snapshot_atomic
 
 
@@ -30,6 +30,66 @@ def test_snapshot_contract_is_strictly_versioned_and_uses_safe_confidence_copy()
         AppSnapshot(
             schema_version=1,
             metadata=snapshot.metadata,
+        )
+
+
+def test_signal_accuracy_evidence_is_optional_bounded_and_backward_compatible() -> None:
+    legacy = ResearchSignalSnapshot.model_validate(
+        {
+            "signal_id": "legacy",
+            "instrument_id": "BTCUSDT",
+            "asset_class": "crypto",
+            "decision_date": "2026-08-28",
+            "horizon": "5m target-before-stop",
+            "posture": "abstain",
+            "eligibility": "research_only",
+            "catalyst": "finalized bar",
+            "invalidation": "evidence gate failed",
+            "evidence_summary": "legacy snapshot",
+        }
+    )
+    assert legacy.provider is None
+    assert legacy.probability_lower_bound is None
+    assert legacy.lower_net_edge is None
+    assert legacy.drift_status is None
+
+    rich = ResearchSignalSnapshot.model_validate(
+        {
+            **legacy.model_dump(),
+            "provider": "binance",
+            "feed": "spot",
+            "venue": "Binance",
+            "product": "USDT spot",
+            "calibrated_probability": 0.67,
+            "probability_definition": "target before protective stop within 12 bars",
+            "probability_lower_bound": 0.61,
+            "probability_upper_bound": 0.73,
+            "calibration_observations": 420,
+            "calibration_effective_observations": 211.5,
+            "brier_score": 0.18,
+            "expected_calibration_error": 0.04,
+            "gross_edge": 0.0048,
+            "estimated_cost": 0.0012,
+            "lower_net_edge": 0.0011,
+            "model_age_seconds": 45,
+            "regime": "high_volatility",
+            "drift_status": "stable",
+            "drift_score": 0.12,
+            "latency_ms": 84,
+            "coverage_ratio": 0.31,
+            "coverage_status": "selective",
+        }
+    )
+    assert rich.calibration_effective_observations == 211.5
+    assert rich.probability_lower_bound <= rich.calibrated_probability <= rich.probability_upper_bound
+
+    with pytest.raises(ValidationError, match="probability"):
+        ResearchSignalSnapshot.model_validate(
+            {**rich.model_dump(), "probability_lower_bound": 0.70, "probability_upper_bound": 0.73}
+        )
+    with pytest.raises(ValidationError, match="effective"):
+        ResearchSignalSnapshot.model_validate(
+            {**rich.model_dump(), "calibration_effective_observations": 421}
         )
 
 

@@ -301,6 +301,47 @@ private let completeV2Payload = Data(
     #expect(metadata.lastRefresh != nil)
 }
 
+@Test func signalAccuracyEvidenceDecodesWhileLegacySignalsKeepNilEvidence() throws {
+    let legacy = Data(
+        """
+        {"signal_id":"legacy","instrument_id":"BTCUSDT","asset_class":"crypto",\
+        "decision_date":"2026-08-28","horizon":"5m","posture":"abstain",\
+        "eligibility":"research_only","strength":null,"calibrated_probability":null,\
+        "confidence_score":null,"catalyst":"bar","invalidation":"gate",\
+        "evidence_summary":"legacy","reasons":[]}
+        """.utf8
+    )
+    let oldSignal = try JSONDecoder.nowcaster.decode(ResearchSignalSnapshot.self, from: legacy)
+    #expect(oldSignal.provider == nil)
+    #expect(oldSignal.probabilityLowerBound == nil)
+    #expect(oldSignal.lowerNetEdge == nil)
+    #expect(oldSignal.driftStatus == nil)
+
+    let rich = Data(
+        """
+        {"signal_id":"rich","instrument_id":"BTCUSDT","asset_class":"crypto",\
+        "decision_date":"2026-08-28","horizon":"5m target-before-stop",\
+        "posture":"long_research","eligibility":"research_only","strength":0.0048,\
+        "calibrated_probability":0.67,"confidence_score":67,"catalyst":"bar",\
+        "invalidation":"gate","evidence_summary":"calibrated","reasons":[],\
+        "provider":"binance","feed":"spot","venue":"Binance","product":"USDT spot",\
+        "probability_definition":"target before protective stop within 12 bars",\
+        "probability_lower_bound":0.61,"probability_upper_bound":0.73,\
+        "calibration_observations":420,"calibration_effective_observations":211.5,\
+        "brier_score":0.18,"expected_calibration_error":0.04,"gross_edge":0.0048,\
+        "estimated_cost":0.0012,"lower_net_edge":0.0011,"model_age_seconds":45,\
+        "regime":"high_volatility","drift_status":"stable","drift_score":0.12,\
+        "latency_ms":84,"coverage_ratio":0.31,"coverage_status":"selective"}
+        """.utf8
+    )
+    let signal = try JSONDecoder.nowcaster.decode(ResearchSignalSnapshot.self, from: rich)
+    #expect(signal.provider == "binance")
+    #expect(signal.probabilityLowerBound == 0.61)
+    #expect(signal.calibrationEffectiveObservations == 211.5)
+    #expect(signal.lowerNetEdge == 0.0011)
+    #expect(signal.driftStatus == "stable")
+}
+
 @Test func schemaV2InstantsRequireZuluUTCWhileLegacyDatesRemainDateOnlyCompatible() async throws {
     let repository = SnapshotRepository()
     let offset = Data(
