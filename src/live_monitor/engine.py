@@ -10,7 +10,7 @@ from typing import Literal, Protocol
 from pydantic import Field, model_validator
 
 from src.live_monitor.bars import FinalizedBarLedger, aggregate_finalized
-from src.live_monitor.levels import plan_trade_levels
+from src.live_monitor.levels import EmpiricalLevelEvidence, plan_trade_levels
 from src.live_monitor.lifecycle import AlertLifecycle
 from src.live_monitor.types import (
     AlertState,
@@ -69,6 +69,7 @@ class EligibilityEvidence(LiveMonitorModel):
     probability: Decimal = Field(ge=0, le=1)
     vote_margin: Decimal = Field(ge=0, le=1)
     expected_net_edge: Decimal
+    empirical_levels: EmpiricalLevelEvidence | None = None
     breadth: int = Field(ge=0)
     data_through: datetime
     shortable: bool
@@ -479,6 +480,7 @@ class LiveMonitorEngine:
             atr=risk[0],
             structural_invalidation=risk[1],
             expected_targets=risk[2],
+            empirical_evidence=evidence.empirical_levels,
             decision_interval=self.decision_interval,
             decision_time=aggregated.end,
             policy=self._level_policy,
