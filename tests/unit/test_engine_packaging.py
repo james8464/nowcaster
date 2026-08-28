@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import ast
+import subprocess
+import sys
 from pathlib import Path
 
 
@@ -47,6 +49,33 @@ def test_live_monitor_transport_has_no_broker_mutation_imports() -> None:
     assert "submit_order" not in sources
     assert "cancel_order" not in sources
     assert "src.trading" not in sources
+
+
+def test_live_monitor_import_does_not_require_research_only_scipy_or_sklearn() -> None:
+    root = Path(__file__).resolve().parents[2]
+    probe = """
+import importlib.abc
+import sys
+
+class ResearchDependencyBlocker(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.partition(".")[0] in {"scipy", "sklearn"}:
+            raise ModuleNotFoundError(fullname)
+        return None
+
+sys.meta_path.insert(0, ResearchDependencyBlocker())
+import src.live_monitor.command
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_frozen_helper_declares_only_the_required_pyinstaller_library_entitlement() -> None:
