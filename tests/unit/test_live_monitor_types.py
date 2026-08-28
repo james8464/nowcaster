@@ -8,9 +8,13 @@ from pydantic import ValidationError
 
 from src.live_monitor.types import (
     AlertState,
+    DepthLevel,
     Direction,
     MarketBar,
+    MarketDepth,
     MarketQuote,
+    MarketStatusEvent,
+    MarketTrade,
     MonitorHealth,
     MonitorWireEvent,
     TradePlan,
@@ -69,6 +73,79 @@ def test_market_quote_rejects_crossed_market_and_nonpositive_tick() -> None:
             ask=Decimal("100"),
             last=Decimal("100.5"),
             tick_size=Decimal("0.01"),
+            provider_time=NOW,
+            received_at=NOW,
+        )
+
+
+def test_market_quote_trade_depth_and_status_retain_microstructure_provenance() -> None:
+    quote = MarketQuote(
+        provider="binance",
+        feed="spot",
+        symbol="btcusdt",
+        bid=Decimal("64000.10"),
+        ask=Decimal("64000.20"),
+        bid_size=Decimal("1.2"),
+        ask_size=Decimal("0.8"),
+        last=Decimal("64000.15"),
+        tick_size=Decimal("0.01"),
+        sequence=42,
+        provider_time=NOW,
+        received_at=NOW + timedelta(milliseconds=5),
+    )
+    trade = MarketTrade(
+        provider="binance",
+        feed="spot",
+        symbol="BTCUSDT",
+        trade_id="17",
+        price=Decimal("64000.15"),
+        size=Decimal("0.25"),
+        aggressor="sell",
+        sequence=17,
+        provider_time=NOW,
+        received_at=NOW + timedelta(milliseconds=6),
+    )
+    depth = MarketDepth(
+        provider="binance",
+        feed="spot",
+        symbol="BTCUSDT",
+        first_update_id=40,
+        final_update_id=42,
+        bids=(DepthLevel(price=Decimal("64000.10"), size=Decimal("1.2")),),
+        asks=(DepthLevel(price=Decimal("64000.20"), size=Decimal("0.8")),),
+        provider_time=NOW,
+        received_at=NOW + timedelta(milliseconds=7),
+    )
+    status = MarketStatusEvent(
+        provider="alpaca",
+        feed="sip",
+        symbol="AAPL",
+        kind="luld",
+        status="limit_state",
+        provider_time=NOW,
+        received_at=NOW + timedelta(milliseconds=8),
+        details={"lower": "99", "upper": "101"},
+    )
+
+    assert (quote.bid_size, quote.ask_size, quote.sequence) == (Decimal("1.2"), Decimal("0.8"), 42)
+    assert quote.processed_at == quote.received_at
+    assert trade.aggressor == "sell" and len(trade.event_id) == 64
+    assert depth.sequence == 42 and depth.bids[0].price == Decimal("64000.10")
+    assert status.kind == "luld" and len(status.event_id) == 64
+
+
+def test_microstructure_events_reject_negative_sizes_and_reversed_sequences() -> None:
+    with pytest.raises(ValidationError):
+        DepthLevel(price=Decimal("100"), size=Decimal("-1"))
+    with pytest.raises(ValidationError, match="update id"):
+        MarketDepth(
+            provider="binance",
+            feed="spot",
+            symbol="BTCUSDT",
+            first_update_id=12,
+            final_update_id=11,
+            bids=(),
+            asks=(),
             provider_time=NOW,
             received_at=NOW,
         )

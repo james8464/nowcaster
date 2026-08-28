@@ -135,10 +135,14 @@ class MarketQuote(LiveMonitorModel):
     symbol: str = Field(min_length=1, max_length=32)
     bid: Decimal = Field(gt=0)
     ask: Decimal = Field(gt=0)
+    bid_size: Decimal | None = Field(default=None, ge=0)
+    ask_size: Decimal | None = Field(default=None, ge=0)
     last: Decimal = Field(gt=0)
     tick_size: Decimal = Field(gt=0)
+    sequence: int | None = Field(default=None, ge=0)
     provider_time: datetime
     received_at: datetime
+    processed_at: datetime | None = None
 
     @field_validator("provider", "feed")
     @classmethod
@@ -154,7 +158,129 @@ class MarketQuote(LiveMonitorModel):
     def quote_is_not_crossed(self) -> MarketQuote:
         if self.ask < self.bid:
             raise ValueError("ask must be greater than or equal to bid")
+        object.__setattr__(self, "processed_at", self.processed_at or self.received_at)
+        if self.received_at < self.provider_time or self.processed_at < self.received_at:
+            raise ValueError("quote provenance timestamps must be ordered")
         return self
+
+    @property
+    def event_id(self) -> str:
+        return canonical_hash(self.model_dump(mode="json", exclude={"processed_at"}))
+
+
+class MarketTrade(LiveMonitorModel):
+    provider: str = Field(min_length=1, max_length=32)
+    feed: str = Field(min_length=1, max_length=32)
+    symbol: str = Field(min_length=1, max_length=32)
+    trade_id: str | None = Field(default=None, max_length=128)
+    price: Decimal = Field(gt=0)
+    size: Decimal = Field(gt=0)
+    aggressor: Literal["buy", "sell", "unknown"] = "unknown"
+    sequence: int | None = Field(default=None, ge=0)
+    provider_time: datetime
+    received_at: datetime
+    processed_at: datetime | None = None
+
+    @field_validator("provider", "feed")
+    @classmethod
+    def normalize_identity(cls, value: str) -> str:
+        return value.strip().lower()
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_symbol(cls, value: str) -> str:
+        return value.strip().upper()
+
+    @model_validator(mode="after")
+    def ordered_provenance(self) -> MarketTrade:
+        object.__setattr__(self, "processed_at", self.processed_at or self.received_at)
+        if self.received_at < self.provider_time or self.processed_at < self.received_at:
+            raise ValueError("trade provenance timestamps must be ordered")
+        return self
+
+    @property
+    def event_id(self) -> str:
+        return canonical_hash(self.model_dump(mode="json", exclude={"processed_at"}))
+
+
+class DepthLevel(LiveMonitorModel):
+    price: Decimal = Field(gt=0)
+    size: Decimal = Field(ge=0)
+
+
+class MarketDepth(LiveMonitorModel):
+    provider: str = Field(min_length=1, max_length=32)
+    feed: str = Field(min_length=1, max_length=32)
+    symbol: str = Field(min_length=1, max_length=32)
+    first_update_id: int = Field(ge=0)
+    final_update_id: int = Field(ge=0)
+    bids: tuple[DepthLevel, ...]
+    asks: tuple[DepthLevel, ...]
+    provider_time: datetime
+    received_at: datetime
+    processed_at: datetime | None = None
+
+    @field_validator("provider", "feed")
+    @classmethod
+    def normalize_identity(cls, value: str) -> str:
+        return value.strip().lower()
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_symbol(cls, value: str) -> str:
+        return value.strip().upper()
+
+    @model_validator(mode="after")
+    def ordered_updates_and_provenance(self) -> MarketDepth:
+        object.__setattr__(self, "processed_at", self.processed_at or self.received_at)
+        if self.final_update_id < self.first_update_id:
+            raise ValueError("final update id must not precede first update id")
+        if self.received_at < self.provider_time or self.processed_at < self.received_at:
+            raise ValueError("depth provenance timestamps must be ordered")
+        return self
+
+    @property
+    def sequence(self) -> int:
+        return self.final_update_id
+
+    @property
+    def event_id(self) -> str:
+        return canonical_hash(self.model_dump(mode="json", exclude={"processed_at"}))
+
+
+class MarketStatusEvent(LiveMonitorModel):
+    provider: str = Field(min_length=1, max_length=32)
+    feed: str = Field(min_length=1, max_length=32)
+    symbol: str = Field(min_length=1, max_length=32)
+    kind: Literal["status", "luld", "correction", "cancel_error"]
+    status: str = Field(min_length=1, max_length=128)
+    reference_id: str | None = Field(default=None, max_length=128)
+    sequence: int | None = Field(default=None, ge=0)
+    provider_time: datetime
+    received_at: datetime
+    processed_at: datetime | None = None
+    details: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("provider", "feed")
+    @classmethod
+    def normalize_identity(cls, value: str) -> str:
+        return value.strip().lower()
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_symbol(cls, value: str) -> str:
+        return value.strip().upper()
+
+    @model_validator(mode="after")
+    def ordered_provenance(self) -> MarketStatusEvent:
+        object.__setattr__(self, "processed_at", self.processed_at or self.received_at)
+        if self.received_at < self.provider_time or self.processed_at < self.received_at:
+            raise ValueError("status provenance timestamps must be ordered")
+        return self
+
+    @property
+    def event_id(self) -> str:
+        return canonical_hash(self.model_dump(mode="json", exclude={"processed_at"}))
 
 
 class TradeLevelPolicy(LiveMonitorModel):
@@ -247,7 +373,8 @@ class ProviderHealthEvent(LiveMonitorModel):
     occurred_at: datetime
 
 
-MarketEvent = MarketBar | MarketQuote | ProviderHealthEvent
+GranularMarketEvent = MarketQuote | MarketTrade | MarketDepth | MarketStatusEvent
+MarketEvent = MarketBar | GranularMarketEvent | ProviderHealthEvent
 
 
 def _bounded_payload(value: Any) -> Any:
@@ -308,11 +435,16 @@ class MonitorWireEvent(LiveMonitorModel):
 __all__ = [
     "AlertState",
     "Direction",
+    "DepthLevel",
+    "GranularMarketEvent",
     "LifecycleEvent",
     "LifecycleTransition",
     "MarketBar",
+    "MarketDepth",
     "MarketQuote",
     "MarketEvent",
+    "MarketStatusEvent",
+    "MarketTrade",
     "MonitorHealth",
     "MonitorWireEvent",
     "ProviderHealthEvent",

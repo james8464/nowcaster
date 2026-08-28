@@ -10,7 +10,18 @@ from sqlalchemy import insert, select, update
 
 from src.database.engine import Database
 from src.database.schema import TABLES
-from src.live_monitor.types import AlertState, LifecycleTransition, MarketBar, ProviderHealthEvent, TradePlan
+from src.live_monitor.types import (
+    AlertState,
+    GranularMarketEvent,
+    LifecycleTransition,
+    MarketBar,
+    MarketDepth,
+    MarketQuote,
+    MarketStatusEvent,
+    MarketTrade,
+    ProviderHealthEvent,
+    TradePlan,
+)
 from src.strategies.types import canonical_hash
 
 
@@ -151,6 +162,46 @@ class LiveMonitorRepository:
                     end_at=bar.end,
                     revision=bar.revision,
                     payload={**bar.model_dump(mode="json"), "source_bar_id": bar.bar_id},
+                    **self._common(),
+                )
+            )
+        return True
+
+    def record_market_event(self, session_id: str, event: GranularMarketEvent) -> bool:
+        payload = event.model_dump(mode="json")
+        payload_hash = canonical_hash(payload)
+        source_event_id = event.event_id
+        identity = canonical_hash((session_id, source_event_id))
+        event_type = {
+            MarketQuote: "quote",
+            MarketTrade: "trade",
+            MarketDepth: "depth",
+            MarketStatusEvent: event.kind if isinstance(event, MarketStatusEvent) else "status",
+        }[type(event)]
+        table = TABLES["live_market_events"]
+        with self.database.engine.begin() as connection:
+            existing = connection.execute(
+                select(table.c.payload_hash).where(table.c.event_id == identity)
+            ).scalar_one_or_none()
+            if existing is not None:
+                if existing != payload_hash:
+                    raise ValueError("conflicting live market event identity")
+                return False
+            connection.execute(
+                insert(table).values(
+                    event_id=identity,
+                    session_id=session_id,
+                    source_event_id=source_event_id,
+                    provider=event.provider,
+                    feed=event.feed,
+                    symbol=event.symbol,
+                    event_type=event_type,
+                    provider_time=event.provider_time,
+                    received_at=event.received_at,
+                    processed_at=event.processed_at,
+                    sequence=event.sequence,
+                    payload_hash=payload_hash,
+                    payload=payload,
                     **self._common(),
                 )
             )

@@ -1208,6 +1208,26 @@ monitor_finalized_bars = Table(
     *common_columns(),
 )
 
+live_market_events = Table(
+    "live_market_events",
+    metadata,
+    Column("event_id", String, primary_key=True),
+    Column("session_id", String, nullable=False),
+    Column("source_event_id", String, nullable=False),
+    Column("provider", String, nullable=False),
+    Column("feed", String, nullable=False),
+    Column("symbol", String, nullable=False),
+    Column("event_type", String, nullable=False),
+    Column("provider_time", DateTime(timezone=True), nullable=False),
+    Column("received_at", DateTime(timezone=True), nullable=False),
+    Column("processed_at", DateTime(timezone=True), nullable=False),
+    Column("sequence", Integer),
+    Column("payload_hash", String, nullable=False),
+    Column("payload", JSON, nullable=False),
+    *common_columns(),
+    UniqueConstraint("session_id", "source_event_id", name="uq_live_market_event_source"),
+)
+
 TABLES = {table.name: table for table in metadata.tables.values()}
 
 NATURAL_KEYS: dict[str, tuple[str, ...]] = {
@@ -1308,4 +1328,5 @@ NATURAL_KEYS: dict[str, tuple[str, ...]] = {
     "monitor_health_events": ("health_event_id",),
     "monitor_decisions": ("decision_id",),
     "monitor_finalized_bars": ("bar_id",),
+    "live_market_events": ("session_id", "source_event_id"),
 }

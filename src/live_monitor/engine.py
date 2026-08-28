@@ -19,8 +19,11 @@ from src.live_monitor.types import (
     LifecycleEvent,
     LiveMonitorModel,
     MarketBar,
+    MarketDepth,
     MarketEvent,
     MarketQuote,
+    MarketStatusEvent,
+    MarketTrade,
     MonitorHealth,
     MonitorWireEvent,
     ProviderHealthEvent,
@@ -41,6 +44,10 @@ class MonitorPersistence(Protocol):
     def record_decision(self, session_id: str, payload: dict) -> bool: ...
 
     def record_health_event(self, session_id: str, event: ProviderHealthEvent) -> bool: ...
+
+    def record_market_event(
+        self, session_id: str, event: MarketQuote | MarketTrade | MarketDepth | MarketStatusEvent
+    ) -> bool: ...
 
 
 class EligibilityEvidence(LiveMonitorModel):
@@ -253,6 +260,8 @@ class LiveMonitorEngine:
                 ),
             )
         if isinstance(event, MarketQuote):
+            if self.persistence is not None:
+                self.persistence.record_market_event(self.session_id, event)
             self.quotes[(event.provider, event.feed, event.symbol)] = event
             provider_scope = (event.provider, event.feed)
             if self.health.get(provider_scope, MonitorHealth.WARMING) in {
@@ -278,6 +287,10 @@ class LiveMonitorEngine:
             else:
                 self._pending.pop(scope, None)
             return tuple(result)
+        if isinstance(event, (MarketTrade, MarketDepth, MarketStatusEvent)):
+            if self.persistence is not None:
+                self.persistence.record_market_event(self.session_id, event)
+            return ()
         if not isinstance(event, MarketBar):
             raise TypeError("unsupported market event")
         acceptance = self.ledger.accept(event)

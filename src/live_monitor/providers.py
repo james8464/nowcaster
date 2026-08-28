@@ -11,11 +11,20 @@ from typing import Any
 import httpx
 from websockets.asyncio.client import connect
 
-from src.live_monitor.types import MarketBar, MarketQuote, MonitorHealth, ProviderHealthEvent
+from src.live_monitor.types import (
+    DepthLevel,
+    MarketBar,
+    MarketDepth,
+    MarketEvent,
+    MarketQuote,
+    MarketStatusEvent,
+    MarketTrade,
+    MonitorHealth,
+    ProviderHealthEvent,
+)
 from src.strategies.calendars import calendar_for
 from src.strategies.types import BarInterval
 
-MarketEvent = MarketBar | MarketQuote | ProviderHealthEvent
 MAXIMUM_MESSAGE_BYTES = 64 * 1024
 MAXIMUM_REPAIR_BARS = 1_000
 
@@ -140,6 +149,17 @@ def _symbols(values: Iterable[str], *, maximum: int = 200) -> tuple[str, ...]:
     if not result or len(result) > maximum or any(len(value) > 32 for value in result):
         raise ValueError("watchlist must contain between 1 and the provider symbol limit")
     return result
+
+
+def _depth_levels(value: Any) -> tuple[DepthLevel, ...]:
+    if not isinstance(value, list) or len(value) > 5_000:
+        raise ProviderDecodeError("provider depth levels are malformed")
+    result: list[DepthLevel] = []
+    for item in value:
+        if not isinstance(item, list) or len(item) != 2:
+            raise ProviderDecodeError("provider depth level is malformed")
+        result.append(DepthLevel(price=Decimal(str(item[0])), size=Decimal(str(item[1]))))
+    return tuple(result)
 
 
 def expected_repair_starts(provider: str, feed: str, start: datetime, end: datetime) -> tuple[datetime, ...]:
@@ -302,7 +322,16 @@ class AlpacaMarketDataAdapter:
 
     def subscription(self, symbols: Iterable[str]) -> dict[str, Any]:
         normalized = list(_symbols(symbols))
-        return {"action": "subscribe", "quotes": normalized, "bars": normalized}
+        return {
+            "action": "subscribe",
+            "trades": normalized,
+            "quotes": normalized,
+            "bars": normalized,
+            "statuses": normalized,
+            "lulds": normalized,
+            "corrections": normalized,
+            "cancelErrors": normalized,
+        }
 
     def decode(self, message: bytes | str, *, received_at: datetime) -> tuple[MarketEvent, ...]:
         payload = _json_object(message)
@@ -324,8 +353,26 @@ class AlpacaMarketDataAdapter:
                         symbol=str(item["S"]),
                         bid=bid,
                         ask=ask,
+                        bid_size=Decimal(str(item["bs"])) if item.get("bs") is not None else None,
+                        ask_size=Decimal(str(item["as"])) if item.get("as") is not None else None,
                         last=last,
                         tick_size=_alpaca_tick_size(self.metadata.get(str(item["S"]).upper()), last),
+                        sequence=int(item["i"]) if item.get("i") is not None else None,
+                        provider_time=_zulu(str(item["t"])),
+                        received_at=received_at,
+                    )
+                )
+            elif event_type == "t":
+                result.append(
+                    MarketTrade(
+                        provider="alpaca",
+                        feed=self.feed,
+                        symbol=str(item["S"]),
+                        trade_id=str(item["i"]) if item.get("i") is not None else None,
+                        price=Decimal(str(item["p"])),
+                        size=Decimal(str(item["s"])),
+                        aggressor="unknown",
+                        sequence=int(item["i"]) if item.get("i") is not None else None,
                         provider_time=_zulu(str(item["t"])),
                         received_at=received_at,
                     )
@@ -368,6 +415,29 @@ class AlpacaMarketDataAdapter:
                         status=MonitorHealth.WARMING,
                         reason="subscribed",
                         occurred_at=received_at,
+                    )
+                )
+            elif event_type in {"s", "l", "c", "x"}:
+                kind = {"s": "status", "l": "luld", "c": "correction", "x": "cancel_error"}[event_type]
+                status = {
+                    "s": str(item.get("sm") or item.get("sc") or "trading_status"),
+                    "l": "limit_state",
+                    "c": "trade_correction",
+                    "x": "trade_cancel_error",
+                }[event_type]
+                reference = item.get("ci") or item.get("oi") or item.get("i")
+                result.append(
+                    MarketStatusEvent(
+                        provider="alpaca",
+                        feed=self.feed,
+                        symbol=str(item["S"]),
+                        kind=kind,
+                        status=status,
+                        reference_id=str(reference) if reference is not None else None,
+                        sequence=int(reference) if isinstance(reference, int) and reference >= 0 else None,
+                        provider_time=_zulu(str(item.get("t", received_at.isoformat()))),
+                        received_at=received_at,
+                        details={str(key): value for key, value in item.items() if key not in {"T", "S", "t"}},
                     )
                 )
             elif event_type == "error":
@@ -421,7 +491,14 @@ class BinanceSpotAdapter:
         params: list[str] = []
         for symbol in _symbols(symbols):
             lowered = symbol.lower()
-            params.extend((f"{lowered}@bookTicker", f"{lowered}@kline_1m"))
+            params.extend(
+                (
+                    f"{lowered}@aggTrade",
+                    f"{lowered}@bookTicker",
+                    f"{lowered}@depth@100ms",
+                    f"{lowered}@kline_1m",
+                )
+            )
         return {"method": "SUBSCRIBE", "params": params, "id": 1}
 
     def decode(self, message: bytes | str, *, received_at: datetime) -> tuple[MarketEvent, ...]:
@@ -459,10 +536,43 @@ class BinanceSpotAdapter:
                     symbol=str(item["s"]),
                     bid=bid,
                     ask=ask,
+                    bid_size=Decimal(str(item["B"])),
+                    ask_size=Decimal(str(item["A"])),
                     last=(bid + ask) / 2,
                     tick_size=self.metadata.get(
                         str(item["s"]).upper(), ProviderSymbolMetadata("", Decimal("0.01"), True, True, True)
                     ).tick_size,
+                    sequence=int(item["u"]) if item.get("u") is not None else None,
+                    provider_time=_epoch_milliseconds(item["E"]),
+                    received_at=received_at,
+                ),
+            )
+        if event_type == "aggTrade":
+            sequence = int(item["a"])
+            return (
+                MarketTrade(
+                    provider="binance",
+                    feed=self.feed,
+                    symbol=str(item["s"]),
+                    trade_id=str(sequence),
+                    price=Decimal(str(item["p"])),
+                    size=Decimal(str(item["q"])),
+                    aggressor="sell" if item.get("m") is True else "buy",
+                    sequence=sequence,
+                    provider_time=_epoch_milliseconds(item.get("T", item["E"])),
+                    received_at=received_at,
+                ),
+            )
+        if event_type == "depthUpdate":
+            return (
+                MarketDepth(
+                    provider="binance",
+                    feed=self.feed,
+                    symbol=str(item["s"]),
+                    first_update_id=int(item["U"]),
+                    final_update_id=int(item["u"]),
+                    bids=_depth_levels(item["b"]),
+                    asks=_depth_levels(item["a"]),
                     provider_time=_epoch_milliseconds(item["E"]),
                     received_at=received_at,
                 ),

@@ -11,6 +11,8 @@ from src.live_monitor.types import (
     Direction,
     LifecycleEvent,
     MarketBar,
+    MarketQuote,
+    MarketTrade,
     MonitorHealth,
     ProviderHealthEvent,
     TradePlan,
@@ -215,3 +217,44 @@ def test_repository_records_complete_live_audit_ledger(tmp_path) -> None:
     assert store.scalar("select count(*) from monitor_finalized_bars") == 1
     assert store.scalar("select count(*) from monitor_decisions") == 1
     assert store.scalar("select count(*) from monitor_health_events") == 1
+
+
+def test_repository_persists_normalized_market_events_idempotently(tmp_path) -> None:
+    store = database(tmp_path)
+    repository = LiveMonitorRepository(store, clock=lambda: NOW)
+    repository.start_session("session-1", config_hash="c" * 64, cohort_hash="d" * 64)
+    quote = MarketQuote(
+        provider="binance",
+        feed="spot",
+        symbol="BTCUSDT",
+        bid=Decimal("64000.10"),
+        ask=Decimal("64000.20"),
+        bid_size=Decimal("1.2"),
+        ask_size=Decimal("0.8"),
+        last=Decimal("64000.15"),
+        tick_size=Decimal("0.01"),
+        sequence=42,
+        provider_time=NOW,
+        received_at=NOW,
+    )
+    trade = MarketTrade(
+        provider="binance",
+        feed="spot",
+        symbol="BTCUSDT",
+        trade_id="17",
+        price=Decimal("64000.15"),
+        size=Decimal("0.25"),
+        aggressor="sell",
+        sequence=17,
+        provider_time=NOW,
+        received_at=NOW,
+    )
+
+    assert repository.record_market_event("session-1", quote)
+    assert not repository.record_market_event("session-1", quote)
+    assert repository.record_market_event("session-1", trade)
+    rows = store.frame("select event_type, sequence from live_market_events order by event_type")
+    assert rows.to_dict("records") == [
+        {"event_type": "quote", "sequence": 42},
+        {"event_type": "trade", "sequence": 17},
+    ]

@@ -19,7 +19,15 @@ from src.live_monitor.providers import (
     load_alpaca_symbol_metadata,
     load_binance_repair_bars,
 )
-from src.live_monitor.types import MarketBar, MarketQuote, MonitorHealth, ProviderHealthEvent
+from src.live_monitor.types import (
+    MarketBar,
+    MarketDepth,
+    MarketQuote,
+    MarketStatusEvent,
+    MarketTrade,
+    MonitorHealth,
+    ProviderHealthEvent,
+)
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "live_monitor"
 NOW = datetime(2026, 8, 26, 14, 1, 2, tzinfo=UTC)
@@ -34,14 +42,20 @@ def test_alpaca_decodes_complete_multi_event_frame_and_classifies_connection_lim
     assert adapter.authentication() == {"action": "auth", "key": "key-value", "secret": "secret-value"}
     assert adapter.subscription(("aapl",)) == {
         "action": "subscribe",
+        "trades": ["AAPL"],
         "quotes": ["AAPL"],
         "bars": ["AAPL"],
+        "statuses": ["AAPL"],
+        "lulds": ["AAPL"],
+        "corrections": ["AAPL"],
+        "cancelErrors": ["AAPL"],
     }
 
     events = adapter.decode(lines("alpaca_stream.jsonl")[3], received_at=NOW)
 
     assert len(events) == 2
     assert isinstance(events[0], MarketQuote) and events[0].symbol == "AAPL"
+    assert (events[0].bid_size, events[0].ask_size) == (Decimal("10"), Decimal("8"))
     assert isinstance(events[1], MarketBar) and events[1].finalized is True
     error = adapter.decode(lines("alpaca_stream.jsonl")[4], received_at=NOW)
     assert error == (
@@ -75,9 +89,13 @@ def test_binance_accepts_only_closed_klines_and_maps_book_ticker() -> None:
     assert adapter.subscription(("BTCUSDT", "ethusdt")) == {
         "method": "SUBSCRIBE",
         "params": [
+            "btcusdt@aggTrade",
             "btcusdt@bookTicker",
+            "btcusdt@depth@100ms",
             "btcusdt@kline_1m",
+            "ethusdt@aggTrade",
             "ethusdt@bookTicker",
+            "ethusdt@depth@100ms",
             "ethusdt@kline_1m",
         ],
         "id": 1,
@@ -87,9 +105,36 @@ def test_binance_accepts_only_closed_klines_and_maps_book_ticker() -> None:
     open_kline = adapter.decode(lines("binance_stream.jsonl")[3], received_at=NOW)
 
     assert len(quote) == 1 and isinstance(quote[0], MarketQuote)
+    assert (quote[0].bid_size, quote[0].ask_size) == (Decimal("1.2"), Decimal("0.8"))
     assert len(closed) == 1 and isinstance(closed[0], MarketBar)
     assert closed[0].symbol == "BTCUSDT" and closed[0].feed == "spot"
     assert open_kline == ()
+
+
+def test_decoders_normalize_trades_depth_status_and_corrections() -> None:
+    alpaca = AlpacaMarketDataAdapter(feed="sip", key_id="key", secret="secret")
+    equity = alpaca.decode(
+        '[{"T":"t","S":"AAPL","i":91,"p":100.05,"s":25,"t":"2026-08-26T14:01:02Z"},'
+        '{"T":"s","S":"AAPL","sc":"T","sm":"Trading Halt","t":"2026-08-26T14:01:02Z"},'
+        '{"T":"c","S":"AAPL","oi":90,"ci":91,"t":"2026-08-26T14:01:02Z"}]',
+        received_at=NOW,
+    )
+    assert isinstance(equity[0], MarketTrade) and equity[0].trade_id == "91"
+    assert isinstance(equity[1], MarketStatusEvent) and equity[1].kind == "status"
+    assert isinstance(equity[2], MarketStatusEvent) and equity[2].kind == "correction"
+
+    binance = BinanceSpotAdapter()
+    trade = binance.decode(
+        '{"e":"aggTrade","E":1787752810000,"s":"BTCUSDT","a":17,"p":"64000.15","q":"0.25","T":1787752810000,"m":true}',
+        received_at=NOW,
+    )[0]
+    depth = binance.decode(
+        '{"e":"depthUpdate","E":1787752810000,"s":"BTCUSDT","U":40,"u":42,'
+        '"b":[["64000.10","1.2"]],"a":[["64000.20","0.8"]]}',
+        received_at=NOW,
+    )[0]
+    assert isinstance(trade, MarketTrade) and trade.aggressor == "sell" and trade.sequence == 17
+    assert isinstance(depth, MarketDepth) and depth.sequence == 42
 
 
 def test_decoders_reject_oversized_malformed_and_unknown_payloads_without_secrets() -> None:
