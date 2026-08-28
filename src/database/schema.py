@@ -1114,6 +1114,7 @@ readiness_receipts = Table(
     Column("cohort_hash", String, nullable=False),
     Column("evidence_hash", String, nullable=False),
     Column("policy_hash", String, nullable=False),
+    Column("drift_policy_hash", String, nullable=False),
     Column("gates", JSON, nullable=False),
     Column("issued_at", DateTime(timezone=True), nullable=False),
     Column("expires_at", DateTime(timezone=True), nullable=False),

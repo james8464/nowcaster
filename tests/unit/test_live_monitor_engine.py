@@ -6,6 +6,7 @@ from decimal import Decimal
 from src.live_monitor.command import parse_control
 from src.live_monitor.engine import EligibilityEvidence, LiveMonitorEngine, evaluate_alert_eligibility
 from src.live_monitor.types import Direction, MarketBar, MarketQuote, MonitorHealth, ProviderHealthEvent
+from src.models.drift import DEFAULT_DRIFT_POLICY_HASH
 
 NOW = datetime(2026, 8, 26, 14, 0, tzinfo=UTC)
 
@@ -35,6 +36,11 @@ def evidence(**updates) -> EligibilityEvidence:
         "probability_definition": "target_before_stop_after_costs",
         "vote_margin": Decimal("0.40"),
         "expected_net_edge": Decimal("0.002"),
+        "drift_status": "stable",
+        "drift_score": Decimal("0"),
+        "drift_policy_hash": DEFAULT_DRIFT_POLICY_HASH,
+        "drift_evidence_hash": "9" * 64,
+        "drift_confirmed_metrics": (),
         "breadth": 3,
         "data_through": NOW,
         "shortable": True,
@@ -127,11 +133,44 @@ def test_eligibility_abstains_for_each_fail_closed_boundary() -> None:
             MonitorHealth.HEALTHY,
             "selective_threshold",
         ),
+        (evidence(drift_status="confirmed"), quote(), MonitorHealth.HEALTHY, "material_model_drift"),
     ]
     for item, market_quote, health, reason in cases:
         decision = evaluate_alert_eligibility(item, market_quote, health=health, now=NOW + timedelta(seconds=5))
         assert decision.status == "abstain"
         assert reason in decision.reasons
+
+
+def test_engine_invalidates_readiness_once_and_abstains_on_confirmed_drift() -> None:
+    invalidations: list[tuple[str, str, datetime]] = []
+
+    def resolver(_bars: tuple[MarketBar, ...], _quote: MarketQuote) -> EligibilityEvidence:
+        return evidence(
+            data_through=NOW + timedelta(minutes=5),
+            drift_status="confirmed",
+            drift_score=Decimal("4.2"),
+            drift_confirmed_metrics=("prediction_distribution",),
+        )
+
+    engine = LiveMonitorEngine(
+        session_id="session-1",
+        evidence_resolver=resolver,
+        readiness_cohort_hash="c" * 64,
+        readiness_invalidator=lambda cohort_hash, evidence_hash, at: invalidations.append(
+            (cohort_hash, evidence_hash, at)
+        ),
+    )
+    for minute in range(5):
+        engine.accept_market_event(bar(minute))
+    at = NOW + timedelta(minutes=5, seconds=2)
+    emitted = engine.accept_market_event(quote(received_at=at, provider_time=at))
+
+    assert invalidations == [("c" * 64, "9" * 64, at)]
+    assert any(item.event_type == "model_drift" for item in emitted)
+    decision = next(item for item in emitted if item.event_type == "decision")
+    assert decision.payload["status"] == "abstain"
+    assert "material_model_drift" in decision.payload["reasons"]
+    assert not [item for item in emitted if item.event_type == "notification_request"]
 
 
 def test_engine_deduplicates_wire_events_and_never_exposes_order_methods() -> None:

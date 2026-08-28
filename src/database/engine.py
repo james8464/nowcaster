@@ -11,7 +11,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from src.database.schema import NATURAL_KEYS, TABLES, metadata, schema_versions
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 
 class Database:
@@ -55,6 +55,18 @@ class Database:
                 connection.execute(
                     text(f"UPDATE {table_name} SET global_trial_id = trial_id WHERE global_trial_id IS NULL")
                 )
+            readiness_columns = {
+                column["name"] for column in inspect(connection).get_columns("readiness_receipts")
+            }
+            if "drift_policy_hash" not in readiness_columns:
+                connection.execute(text("ALTER TABLE readiness_receipts ADD COLUMN drift_policy_hash VARCHAR"))
+            connection.execute(
+                text(
+                    "UPDATE readiness_receipts SET drift_policy_hash = :legacy_hash "
+                    "WHERE drift_policy_hash IS NULL"
+                ),
+                {"legacy_hash": "0" * 64},
+            )
             applied = connection.execute(
                 select(schema_versions.c.version).where(schema_versions.c.version == SCHEMA_VERSION)
             ).scalar_one_or_none()

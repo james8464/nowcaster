@@ -13,6 +13,12 @@ from pydantic import Field, model_validator
 from src.database.engine import Database
 from src.live_monitor.engine import EligibilityEvidence
 from src.live_monitor.types import BarIntervalValue, Direction, LiveMonitorModel, MarketBar, MarketQuote
+from src.models.drift import (
+    DEFAULT_DRIFT_POLICY,
+    DEFAULT_DRIFT_POLICY_HASH,
+    DriftPolicy,
+    StreamingDriftMonitor,
+)
 from src.strategies.library import StrategyContext, generate_signals
 from src.strategies.types import StrategySpec, canonical_hash
 
@@ -61,6 +67,7 @@ class ActiveReadinessReceipt(LiveMonitorModel):
     cohort_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     evidence_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     policy_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    drift_policy_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     gates: tuple[ActiveReadinessGate, ...]
     issued_at: datetime
     expires_at: datetime
@@ -373,9 +380,14 @@ class SealedCohortResolver:
         cohorts: Sequence[SealedCohort],
         *,
         asset_metadata: dict[tuple[str, str], tuple[bool, bool]] | None = None,
+        drift_policy: DriftPolicy = DEFAULT_DRIFT_POLICY,
     ):
         self._cohorts = {(item.provider, item.feed, item.symbol, item.interval): item for item in cohorts}
         self._asset_metadata = asset_metadata or {}
+        self._drift_policy = drift_policy
+        self._drift_monitors = {
+            key: StreamingDriftMonitor(drift_policy) for key in self._cohorts
+        }
 
     def __call__(self, bars: tuple[MarketBar, ...], quote: MarketQuote) -> EligibilityEvidence | None:
         intervals = {item.interval for item in bars}
@@ -386,7 +398,25 @@ class SealedCohortResolver:
         if cohort is None:
             return None
         shortable, easy = self._asset_metadata.get((quote.provider, quote.symbol), (False, False))
-        return evaluate_sealed_cohort(cohort, bars, quote, shortable=shortable, easy_to_borrow=easy)
+        evidence = evaluate_sealed_cohort(cohort, bars, quote, shortable=shortable, easy_to_borrow=easy)
+        values: dict[str, float] = {
+            "prediction_distribution": float(evidence.probability),
+            "net_edge": float(evidence.expected_net_edge),
+            "latency": max((quote.received_at - quote.provider_time).total_seconds() * 1_000, 0.0),
+        }
+        if len(bars) >= 2 and bars[-2].close > 0:
+            values["feature_distribution"] = float(bars[-1].close / bars[-2].close - Decimal(1))
+        report = self._drift_monitors[(quote.provider, quote.feed, quote.symbol, interval)].update(values)
+        score = report.maximum_standardized_shift
+        return evidence.model_copy(
+            update={
+                "drift_status": report.status,
+                "drift_score": Decimal(str(score)) if score is not None else None,
+                "drift_policy_hash": report.policy_hash,
+                "drift_evidence_hash": report.evidence_hash,
+                "drift_confirmed_metrics": report.confirmed_metrics,
+            }
+        )
 
 
 def selected_cohort_hash(cohorts: Sequence[SealedCohort]) -> str:
@@ -550,6 +580,7 @@ def live_readiness_policy_hash(cohorts: Sequence[SealedCohort]) -> str:
             "schema_version": 1,
             "readiness": LIVE_READINESS_POLICY,
             "alert_eligibility": LIVE_ALERT_POLICY,
+            "drift": DEFAULT_DRIFT_POLICY.model_dump(mode="json"),
             "cohort_policies": [
                 {
                     "cohort_id": item.cohort_id,
@@ -577,7 +608,7 @@ def load_active_readiness_receipt(
     expected_evidence_hash = live_readiness_evidence_hash(cohorts, forward_evidence)
     expected_policy_hash = live_readiness_policy_hash(cohorts)
     frame = database.frame(
-        "select readiness_receipt_id, cohort_hash, evidence_hash, policy_hash, gates, issued_at, "
+        "select readiness_receipt_id, cohort_hash, evidence_hash, policy_hash, drift_policy_hash, gates, issued_at, "
         "expires_at, status, invalidated_at from readiness_receipts where cohort_hash = :cohort_hash "
         "order by issued_at desc limit 1",
         {"cohort_hash": cohort_hash},
@@ -599,6 +630,7 @@ def load_active_readiness_receipt(
             cohort_hash=str(row["cohort_hash"]),
             evidence_hash=str(row["evidence_hash"]),
             policy_hash=str(row["policy_hash"]),
+            drift_policy_hash=str(row["drift_policy_hash"]),
             gates=tuple(row["gates"]),
             issued_at=utc(row["issued_at"]),
             expires_at=utc(row["expires_at"]),
@@ -610,6 +642,7 @@ def load_active_readiness_receipt(
         if receipt.valid_at(now, cohort_hash=cohort_hash)
         and receipt.evidence_hash == expected_evidence_hash
         and receipt.policy_hash == expected_policy_hash
+        and receipt.drift_policy_hash == DEFAULT_DRIFT_POLICY_HASH
         else None
     )
 

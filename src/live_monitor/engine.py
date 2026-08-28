@@ -30,6 +30,7 @@ from src.live_monitor.types import (
     TradeLevelPolicy,
     TradePlan,
 )
+from src.models.drift import DEFAULT_DRIFT_POLICY_HASH
 from src.strategies.calendars import XNYS_CALENDAR
 from src.strategies.types import canonical_hash
 
@@ -79,6 +80,11 @@ class EligibilityEvidence(LiveMonitorModel):
     probability_definition: str = "unavailable"
     vote_margin: Decimal = Field(ge=0, le=1)
     expected_net_edge: Decimal
+    drift_status: Literal["stable", "warning", "confirmed", "unavailable"] = "unavailable"
+    drift_score: Decimal | None = Field(default=None, ge=0)
+    drift_policy_hash: str = Field(default=DEFAULT_DRIFT_POLICY_HASH, pattern=r"^[0-9a-f]{64}$")
+    drift_evidence_hash: str = Field(default="0" * 64, pattern=r"^[0-9a-f]{64}$")
+    drift_confirmed_metrics: tuple[str, ...] = ()
     empirical_levels: EmpiricalLevelEvidence | None = None
     breadth: int = Field(ge=0)
     data_through: datetime
@@ -150,6 +156,14 @@ def evaluate_alert_eligibility(
         reasons.append("calibration_error")
     if evidence.economic_evidence_status != "authenticated":
         reasons.append("economic_evidence_required")
+    if evidence.drift_policy_hash != DEFAULT_DRIFT_POLICY_HASH:
+        reasons.append("drift_policy_mismatch")
+    if evidence.drift_status == "confirmed":
+        reasons.append("material_model_drift")
+    elif evidence.drift_status == "warning":
+        reasons.append("model_drift_warning")
+    elif evidence.drift_status != "stable":
+        reasons.append("drift_evidence_warming")
     if (evidence.provider, evidence.feed, evidence.symbol) != (quote.provider, quote.feed, quote.symbol):
         reasons.append("provider_feed_mismatch")
     if health is not MonitorHealth.HEALTHY:
@@ -205,6 +219,8 @@ class LiveMonitorEngine:
         decision_interval: BarIntervalValue = "5m",
         evidence_resolver: Callable[[tuple[MarketBar, ...], MarketQuote], EligibilityEvidence | None] | None = None,
         persistence: MonitorPersistence | None = None,
+        readiness_cohort_hash: str | None = None,
+        readiness_invalidator: Callable[[str, str, datetime], None] | None = None,
     ):
         self.session_id = session_id
         if len(config_hash) != 64 or any(character not in "0123456789abcdef" for character in config_hash):
@@ -213,6 +229,13 @@ class LiveMonitorEngine:
         self.decision_interval = decision_interval
         self.evidence_resolver = evidence_resolver
         self.persistence = persistence
+        if readiness_cohort_hash is not None and (
+            len(readiness_cohort_hash) != 64
+            or any(character not in "0123456789abcdef" for character in readiness_cohort_hash)
+        ):
+            raise ValueError("readiness cohort hash is invalid")
+        self.readiness_cohort_hash = readiness_cohort_hash
+        self.readiness_invalidator = readiness_invalidator
         self.ledger = FinalizedBarLedger()
         self.health: dict[tuple[str, str], MonitorHealth] = {}
         self.quotes: dict[tuple[str, str, str], MarketQuote] = {}
@@ -226,6 +249,7 @@ class LiveMonitorEngine:
         self._last_risk_end: dict[tuple[str, str, str], datetime] = {}
         self._last_quote_emitted: dict[tuple[str, str, str], datetime] = {}
         self._continuity_healthy: dict[tuple[str, str, str], bool] = {}
+        self._invalidated_drift_evidence: set[str] = set()
         self._level_policy = TradeLevelPolicy(
             atr_multiplier=Decimal("1"),
             maximum_chase_bps=Decimal("10"),
@@ -437,6 +461,30 @@ class LiveMonitorEngine:
         if evidence is None:
             return [self._abstention(aggregated, "qualified_evidence_unavailable")]
         now = max(aggregated.received_at, quote.received_at)
+        result: list[MonitorWireEvent] = []
+        if (
+            evidence.drift_status == "confirmed"
+            and evidence.drift_evidence_hash not in self._invalidated_drift_evidence
+        ):
+            self._invalidated_drift_evidence.add(evidence.drift_evidence_hash)
+            if self.readiness_invalidator is not None and self.readiness_cohort_hash is not None:
+                self.readiness_invalidator(self.readiness_cohort_hash, evidence.drift_evidence_hash, now)
+            result.append(
+                self.emit(
+                    "model_drift",
+                    {
+                        "cohort_hash": self.readiness_cohort_hash,
+                        "drift_status": evidence.drift_status,
+                        "drift_score": (
+                            str(evidence.drift_score) if evidence.drift_score is not None else None
+                        ),
+                        "confirmed_metrics": evidence.drift_confirmed_metrics,
+                        "drift_policy_hash": evidence.drift_policy_hash,
+                        "drift_evidence_hash": evidence.drift_evidence_hash,
+                    },
+                    emitted_at=now,
+                )
+            )
         provider_health = self.health.get((aggregated.provider, aggregated.feed), MonitorHealth.WARMING)
         effective_health = (
             MonitorHealth.HEALTHY
@@ -461,9 +509,14 @@ class LiveMonitorEngine:
             "policy_hash": evidence.policy_hash,
             "strategy_versions": evidence.strategy_versions,
             "config_hash": self.config_hash,
+            "drift_status": evidence.drift_status,
+            "drift_score": str(evidence.drift_score) if evidence.drift_score is not None else None,
+            "drift_policy_hash": evidence.drift_policy_hash,
+            "drift_evidence_hash": evidence.drift_evidence_hash,
+            "drift_confirmed_metrics": evidence.drift_confirmed_metrics,
             **decision.model_dump(mode="json"),
         }
-        result = [self.emit("decision", payload, emitted_at=now)]
+        result.append(self.emit("decision", payload, emitted_at=now))
         if self.persistence is not None:
             self.persistence.record_decision(self.session_id, payload)
         active = self._active.get(scope)
@@ -482,6 +535,10 @@ class LiveMonitorEngine:
                 "economic_evidence_required",
                 "shortability_required",
                 "regular_session_required",
+                "drift_policy_mismatch",
+                "material_model_drift",
+                "model_drift_warning",
+                "drift_evidence_warming",
             }
             operational_reasons = set(decision.reasons).intersection(operational)
             if operational_reasons:

@@ -9,6 +9,7 @@ from src.database.engine import Database
 from src.live_monitor.evidence import (
     REQUIRED_READINESS_GATES,
     SealedCohort,
+    SealedCohortResolver,
     SealedComponent,
     evaluate_sealed_cohort,
     live_readiness_evidence_hash,
@@ -19,9 +20,13 @@ from src.live_monitor.evidence import (
     selected_cohort_hash,
 )
 from src.live_monitor.types import Direction, MarketBar, MarketQuote
+from src.models.drift import DEFAULT_DRIFT_POLICY_HASH
 from src.strategies.types import BarInterval, StrategyFamily, StrategySpec, canonical_hash
 from src.trading.forward import ForwardEvidenceBuilder
-from src.trading.live_monitor_readiness import evaluate_and_persist_live_readiness
+from src.trading.live_monitor_readiness import (
+    evaluate_and_persist_live_readiness,
+    invalidate_readiness_for_drift,
+)
 from src.trading.types import ExecutionObservation
 
 NOW = datetime(2026, 8, 26, 14, tzinfo=UTC)
@@ -201,6 +206,19 @@ def test_live_evidence_recalculates_only_current_causal_component_signals() -> N
     assert evidence.data_through == bars()[-1].end
 
 
+def test_sealed_resolver_warms_then_attaches_stable_multimetric_drift_evidence() -> None:
+    resolver = SealedCohortResolver(
+        (cohort(),), asset_metadata={("alpaca", "AAPL"): (True, True)}
+    )
+
+    reports = [resolver(bars(), quote()) for _ in range(40)]
+
+    assert reports[0] is not None and reports[0].drift_status == "unavailable"
+    assert reports[-1] is not None and reports[-1].drift_status == "stable"
+    assert reports[-1].drift_policy_hash == DEFAULT_DRIFT_POLICY_HASH
+    assert reports[-1].drift_evidence_hash != "0" * 64
+
+
 def test_live_evidence_fails_closed_when_component_version_does_not_match() -> None:
     bad = component("macd_histogram_trend", "1").model_copy(update={"strategy_version": "wrong"})
     evidence = evaluate_sealed_cohort(
@@ -366,6 +384,7 @@ def test_selected_identity_and_readiness_receipt_must_be_exact_current_and_all_p
                 "cohort_hash": selected,
                 "evidence_hash": live_readiness_evidence_hash(cohorts, ()),
                 "policy_hash": live_readiness_policy_hash(cohorts),
+                "drift_policy_hash": DEFAULT_DRIFT_POLICY_HASH,
                 "gates": gates,
                 "issued_at": NOW - timedelta(minutes=1),
                 "expires_at": NOW + timedelta(minutes=1),
@@ -440,4 +459,14 @@ def test_forward_evidence_can_issue_persist_and_reload_an_exact_live_receipt(tmp
 
     assert qualification.status == "eligible"
     assert qualification.receipt is not None
+    assert qualification.receipt.drift_policy_hash == DEFAULT_DRIFT_POLICY_HASH
     assert loaded == qualification.receipt
+
+    assert invalidate_readiness_for_drift(
+        database,
+        cohort_hash=selection_hash,
+        drift_evidence_hash="9" * 64,
+        drift_policy_hash=DEFAULT_DRIFT_POLICY_HASH,
+        invalidated_at=NOW + timedelta(minutes=2),
+    )
+    assert load_active_readiness_receipt(database, cohorts=cohorts, now=NOW + timedelta(minutes=3)) is None

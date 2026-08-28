@@ -40,6 +40,8 @@ from src.live_monitor.types import (
     MonitorWireEvent,
     ProviderHealthEvent,
 )
+from src.models.drift import DEFAULT_DRIFT_POLICY_HASH
+from src.trading.live_monitor_readiness import invalidate_readiness_for_drift
 
 
 class MonitorBootstrap(BaseModel):
@@ -373,6 +375,18 @@ async def run_live(bootstrap: MonitorBootstrap, *, control_stream: TextIO | None
         config_hash=bootstrap.config_hash,
         cohort_hash=selected_hash,
     )
+    drift_invalidator = None
+    if readiness is not None:
+
+        def drift_invalidator(cohort_hash: str, evidence_hash: str, at: datetime) -> None:
+            invalidate_readiness_for_drift(
+                database,
+                cohort_hash=cohort_hash,
+                drift_evidence_hash=evidence_hash,
+                drift_policy_hash=DEFAULT_DRIFT_POLICY_HASH,
+                invalidated_at=at,
+            )
+
     engine = LiveMonitorEngine(
         session_id=bootstrap.session_id,
         config_hash=bootstrap.config_hash,
@@ -386,6 +400,8 @@ async def run_live(bootstrap: MonitorBootstrap, *, control_stream: TextIO | None
             else None
         ),
         persistence=repository,
+        readiness_cohort_hash=selected_hash if readiness is not None else None,
+        readiness_invalidator=drift_invalidator,
     )
     for cohort in selected:
         engine.seed_history(load_decision_history(database, cohort))

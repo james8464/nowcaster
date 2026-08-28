@@ -419,6 +419,7 @@ class MonitorWireEvent(LiveMonitorModel):
         "lifecycle_transition",
         "notification_request",
         "provider_health",
+        "model_drift",
         "control_ack",
         "configuration_rejected",
         "fatal_error",
