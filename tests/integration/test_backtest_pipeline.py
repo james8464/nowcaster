@@ -54,7 +54,7 @@ def test_signal_event_study_flows_into_market_neutral_portfolio():
 def test_demo_crypto_backtests_preserve_final_test_and_cost_sensitivity(demo_database):
     _, database = demo_database
     runs = database.frame("select * from backtest_runs where asset_class = 'crypto'")
-    assert set(runs["symbol"]) == {"BTC-USD", "ETH-USD"}
+    assert set(runs["symbol"]) == {"BTCUSDT", "ETHUSDT"}
     assert set(runs["readiness"]) <= {"decision_ready", "research_only", "not_ready"}
     assert (pd.to_datetime(runs["development_end"]) < pd.to_datetime(runs["final_test_start"])).all()
     assert database.scalar("select count(*) from backtest_curve where phase = 'final_test'") > 0

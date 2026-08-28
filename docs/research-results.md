@@ -49,7 +49,7 @@ Task 9 ran the unbounded official Binance spot REST profile from the earliest pr
 
 The isolated working database stored 2,722,446 finalized bars. It found 4,848 missing expected bars across 206 distinct gap segments, zero duplicate logical bars, zero invalid OHLCV rows, and zero revisions; timestamps were UTC-normalized, finalized, and no later than the cutoff. The return diagnostic covered 2,722,438 observations and flagged 64,358 robust outliers for downstream caution. Because no symbol/interval passed exact full-coverage gates, all 19 strategies and the learning benchmark remained explicitly unavailable and received no ensemble weight. Missing data was never replaced with CI data. The 4h cross-sectional rule would remain unavailable even with complete scalar histories because two configured assets cannot satisfy its five-asset point-in-time universe.
 
-`BTC-USD`/`ETH-USD` in app configuration were mapped truthfully to Binance `BTCUSDT`/`ETHUSDT`. Results would describe that venue's USDT-quoted spot market, not composite USD.
+The provider configuration now uses Binance `BTCUSDT`/`ETHUSDT` exactly. These results describe that venue's USDT-quoted spot market, not the separately disclosed composite-USD daily demo proxies.
 
 The exact attempt and page checksums are kept in the compact live manifest generated during Task 9. The 463 MB raw page cache and 1.1 GB working DuckDB remained outside Git.
 

@@ -165,16 +165,22 @@ class DemoStages:
                 for instrument in instruments
             ],
         )
-        existing = set(
-            self.database.frame("select distinct symbol from market_prices_daily where symbol like '%-USD'")["symbol"]
-        )
+        existing = set(self.database.frame("select distinct symbol from market_prices_daily")["symbol"])
         rows: list[dict[str, object]] = []
         for instrument in instruments:
             if instrument.symbol in existing:
                 continue
-            path = self.demo_root / "crypto" / f"{instrument.symbol}.json"
+            proxy_symbol = instrument.historical_proxy_symbol or instrument.symbol
+            path = self.demo_root / "crypto" / f"{proxy_symbol}.json"
             frame = parse_yahoo_chart(path.read_text(encoding="utf-8"))
-            rows.extend(price_rows(frame, source="yahoo_chart_public_snapshot", source_version="snapshot-2026-08-22"))
+            frame["symbol"] = instrument.symbol
+            rows.extend(
+                price_rows(
+                    frame,
+                    source=instrument.historical_proxy_provider or "yahoo_chart_public_snapshot",
+                    source_version="snapshot-2026-08-22",
+                )
+            )
         return {
             "instruments": instrument_count,
             "market_prices_daily_crypto": self.database.insert("market_prices_daily", rows),
@@ -760,19 +766,21 @@ class LiveStages(DemoStages):
             ],
         )
         provider = YahooChartPriceProvider(self.settings.project_root / "data" / "cache" / "crypto")
-        existing = set(
-            self.database.frame("select distinct symbol from market_prices_daily where symbol like '%-USD'")["symbol"]
-        )
-        rows = [
-            item
-            for instrument in instruments
-            if instrument.symbol not in existing
-            for item in price_rows(
-                provider.fetch(instrument.symbol, date(2014, 1, 1), date.today()),
-                source="yahoo_chart_live_unofficial",
-                source_version="retrieved-live",
+        existing = set(self.database.frame("select distinct symbol from market_prices_daily")["symbol"])
+        rows: list[dict[str, object]] = []
+        for instrument in instruments:
+            if instrument.symbol in existing:
+                continue
+            proxy_symbol = instrument.historical_proxy_symbol or instrument.symbol
+            frame = provider.fetch(proxy_symbol, date(2014, 1, 1), date.today())
+            frame["symbol"] = instrument.symbol
+            rows.extend(
+                price_rows(
+                    frame,
+                    source=instrument.historical_proxy_provider or "yahoo_chart_live_unofficial",
+                    source_version="retrieved-live",
+                )
             )
-        ]
         return {
             "instruments": instrument_count,
             "market_prices_daily_crypto": self.database.insert("market_prices_daily", rows),

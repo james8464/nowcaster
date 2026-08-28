@@ -422,6 +422,9 @@ def _root_validation_snapshot_is_auditable(
         "minimum_effective_observations": config.minimum_effective_observations,
         "minimum_bootstrap_probability": float(config.minimum_bootstrap_probability),
         "minimum_rolling_holdouts": config.minimum_rolling_holdouts,
+        "minimum_calibration_observations": config.minimum_calibration_observations,
+        "minimum_effective_calibration_observations": config.minimum_effective_calibration_observations,
+        "minimum_isotonic_calibration_observations": config.minimum_isotonic_calibration_observations,
     }
     if canonical_hash(config_record) != canonical_hash(expected_config):
         return False

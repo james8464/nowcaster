@@ -99,6 +99,16 @@ class InstrumentConfig(BaseModel):
     asset_class: Literal["equity", "crypto"]
     currency: str = "USD"
     venue: str = "composite"
+    provider: str = "composite"
+    feed: str = "daily"
+    product: Literal["composite", "equity", "spot", "margin", "perpetual"] = "composite"
+    shortable: bool = False
+    short_mechanism: Literal["none", "borrow", "derivative"] = "none"
+    funding_applicable: bool = False
+    borrow_applicable: bool = False
+    trading_calendar: str = "unknown"
+    historical_proxy_symbol: str | None = None
+    historical_proxy_provider: str | None = None
     horizons: tuple[int, ...] = (5,)
     primary_horizon: int = 5
     minimum_training_days: int = Field(default=365, ge=120)
@@ -117,6 +127,18 @@ class InstrumentConfig(BaseModel):
             raise ValueError("instrument horizons must be positive")
         if self.primary_horizon not in self.horizons:
             raise ValueError("primary_horizon must be included in horizons")
+        if any(not value.strip() for value in (self.provider, self.feed, self.venue, self.trading_calendar)):
+            raise ValueError("instrument source and calendar identities cannot be blank")
+        if self.shortable != (self.short_mechanism != "none"):
+            raise ValueError("shortable instruments require an explicit short mechanism")
+        if self.borrow_applicable != (self.short_mechanism == "borrow"):
+            raise ValueError("borrow applicability must match the short mechanism")
+        if self.funding_applicable and self.short_mechanism != "derivative":
+            raise ValueError("funding is applicable only to derivative instruments")
+        if self.product == "spot" and self.funding_applicable:
+            raise ValueError("spot instruments cannot have perpetual funding")
+        if (self.historical_proxy_symbol is None) != (self.historical_proxy_provider is None):
+            raise ValueError("historical proxy symbol and provider must be declared together")
         return self
 
 
@@ -192,10 +214,35 @@ class DeepResearchConfig(BaseModel):
 
     default_cycle_budget: int = Field(default=100, ge=4, le=100_000)
     maximum_workers: int = Field(default=256, ge=1, le=256)
+    reserved_processors: int = Field(default=2, ge=2, le=16)
+    minimum_calibration_observations: int = Field(default=100, ge=100)
+    minimum_effective_calibration_observations: int = Field(default=100, ge=100)
+    minimum_isotonic_calibration_observations: int = Field(default=1_000, ge=1_000)
+    maximum_brier_score: float = Field(default=0.25, ge=0, le=0.25)
+    maximum_calibration_error: float = Field(default=0.10, ge=0, le=0.10)
+    minimum_walk_forward_train_observations: int = Field(default=500, ge=500)
+    minimum_walk_forward_validation_observations: int = Field(default=100, ge=100)
+    minimum_promotion_observations: int = Field(default=1_000, ge=1_000)
+    minimum_effective_promotion_observations: int = Field(default=300, ge=300)
+    minimum_promotion_trades: int = Field(default=300, ge=300)
+    minimum_rolling_holdouts: int = Field(default=3, ge=3)
+    minimum_promotion_bootstrap_probability: float = Field(default=0.99, ge=0.99, le=1)
+    minimum_promotion_dsr_probability: float = Field(default=0.99, ge=0.99, le=1)
+    maximum_promotion_pbo_probability: float = Field(default=0.10, ge=0, le=0.10)
     crypto_fee_bps: float = Field(default=10.0, ge=0)
     equity_fee_bps: float = Field(default=0.0, ge=0)
     half_spread_bps: float = Field(default=2.0, ge=0)
     slippage_bps: float = Field(default=5.0, ge=0)
+
+    @model_validator(mode="after")
+    def evidence_thresholds_are_coherent(self) -> DeepResearchConfig:
+        if self.minimum_effective_calibration_observations > self.minimum_calibration_observations:
+            raise ValueError("effective calibration minimum cannot exceed the raw calibration minimum")
+        if self.minimum_isotonic_calibration_observations < self.minimum_calibration_observations:
+            raise ValueError("isotonic calibration must require at least the general calibration minimum")
+        if self.minimum_effective_promotion_observations > self.minimum_promotion_observations:
+            raise ValueError("effective promotion observations cannot exceed raw promotion observations")
+        return self
 
 
 class Settings(BaseModel):

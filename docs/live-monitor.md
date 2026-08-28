@@ -16,6 +16,8 @@ It cannot place orders. Every alert is a research prompt that a person must revi
 | Confidence | A calibrated evidence score from the sealed historical cohort. It is not the probability of making money. |
 | Abstain | The safe result when one or more required checks are missing or weak. |
 
+The detail view also shows a probability range, Brier score, calibration error, raw and effective calibration samples, selective coverage, modeled costs, and lower net edge. Lower net edge is the conservative bound after costs and uncertainty; zero or less always means Abstain. These diagnostics describe historical calibration, not a guaranteed win rate.
+
 ## How an alert is allowed
 
 The engine never evaluates an unfinished candle. Finalized one-minute bars are combined into a finalized five-minute decision bar, and the prior decision cannot repaint when later bars arrive. A live alert requires all of the following:
@@ -30,12 +32,14 @@ The engine never evaluates an unfinished candle. Finalized one-minute bars are c
 
 If any check fails, the app displays **Abstain** and its reasons. Zero qualified cohorts is a safe connected state: quotes and health remain visible, but entry alerts are impossible. The monitor does not substitute another provider, lower a threshold, extrapolate a probability, or infer across a missing bar.
 
+Streaming drift checks compare current feature distributions, predictions, calibration residuals, observed costs, latency, and net edge with the sealed reference. Warming or warning status blocks new entries. Confirmed drift invalidates the readiness receipt, so restarting the app cannot clear the condition.
+
 After a disconnect, pending pre-gap decisions are discarded and quotes cannot silently restore health. A gap of at most 60 one-minute bars is repaired from the provider's read-only historical endpoint and accepted only if every minute is present. Larger or incomplete gaps fail closed and require a new contiguous live window. Any stop or target first observed in repaired data is labelled **delayed observation**; the app never turns a repaired historical bar into a retrospective entry.
 
 ## Data connections
 
 - **Alpaca** supplies US equity quotes and finalized minute bars. A read-only metadata request validates each symbol, price precision, tradability, and borrow status. Add paper/data credentials in Nowcaster Settings; credentials remain in macOS Keychain and enter the engine through private standard input, never command-line arguments.
-- **Binance Spot** supplies public `bookTicker` quotes and finalized one-minute klines for symbols such as `BTCUSDT`; read-only exchange metadata validates symbol status and tick size. A crypto short alert describes a directional hypothesis only; actual short execution depends on a separate margin, futures, or other venue and its rules.
+- **Binance Spot** supplies public trades, best bid/ask, depth updates, and finalized one-minute klines for symbols such as `BTCUSDT`; read-only exchange metadata validates symbol status and tick size. The configured spot product is not shortable. A short hypothesis is therefore ineligible for execution on that product; margin or derivatives would require a separate instrument, cost model, data history, and validation cohort.
 
 Provider and feed identity are part of the evidence. Alpaca IEX research cannot authorize a SIP alert, and Binance evidence is never spliced with another crypto venue.
 

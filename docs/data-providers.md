@@ -8,12 +8,14 @@ The Live Monitor uses the same identity boundary. Binance public `bookTicker` an
 
 ## Binance spot
 
-The configured app labels map as follows:
+The configured Binance USDT spot instruments are named exactly as the official products:
 
-| App label | Official request symbol | Venue/feed | Quote disclosure |
+| Instrument | Official request symbol | Venue/feed | Trading semantics |
 |---|---|---|---|
-| `BTC-USD` | `BTCUSDT` | Binance spot | USDT quote; not composite USD |
-| `ETH-USD` | `ETHUSDT` | Binance spot | USDT quote; not composite USD |
+| `BTCUSDT` | `BTCUSDT` | Binance spot | USDT quote; spot is not shortable; no funding or borrow model |
+| `ETHUSDT` | `ETHUSDT` | Binance spot | USDT quote; spot is not shortable; no funding or borrow model |
+
+Spot, margin, and perpetual contracts are separate instruments. Nowcaster cannot turn a Binance spot short hypothesis into an executable short, and it never borrows a perpetual's funding history or a composite USD proxy to fill missing spot evidence. The frozen daily demo uses clearly labelled BTC-USD and ETH-USD public-history proxies only for its educational daily model; those rows cannot qualify a Binance live cohort.
 
 “All available Binance history” means every finalized bar officially returned for each enabled compatible symbol/interval, beginning at that pair's earliest official bar and ending before one fixed UTC cutoff recorded in the manifest. The intervals derived from enabled crypto-compatible strategies are `5m`, `15m`, `1h`, and `4h`. A provider gap remains a gap; it is not filled with generated, daily, or third-party data.
 

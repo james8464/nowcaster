@@ -270,6 +270,9 @@ def _with_root_snapshot(evaluation: StrategyEvaluation) -> StrategyEvaluation:
         "minimum_effective_observations": 0,
         "minimum_bootstrap_probability": 0.0,
         "minimum_rolling_holdouts": 0,
+        "minimum_calibration_observations": 100,
+        "minimum_effective_calibration_observations": 100,
+        "minimum_isotonic_calibration_observations": 1000,
     }
     snapshot = {
         "schema_version": 3,

@@ -42,7 +42,7 @@ from src.strategies.types import BarInterval, StrategyMode, canonical_hash
 
 CI_CUTOFF = datetime(2026, 8, 20, tzinfo=UTC)
 CI_BAR_COUNT = 110
-SYMBOL_MAP = {"BTC-USD": "BTCUSDT", "ETH-USD": "ETHUSDT"}
+SYMBOL_MAP = {"BTCUSDT": "BTCUSDT", "ETHUSDT": "ETHUSDT"}
 EQUITY_SESSION_ONLY = {"opening_range_breakout", "etf_last_half_hour_momentum"}
 PAIRED_CONTEXT = {"rolling_cointegration_pairs"}
 CROSS_SECTIONAL_CONTEXT = {"crypto_cross_sectional_momentum"}
@@ -440,7 +440,7 @@ def _ci_run(settings: Settings, database: Database, output_dir: Path) -> dict[st
     attempts: list[dict[str, Any]] = []
     # One configured symbol is enough to exercise every scalar-compatible strategy in CI.
     # The live profile remains responsible for every configured provider mapping.
-    for configured_symbol, provider_symbol in (("BTC-USD", "BTCUSDT"),):
+    for configured_symbol, provider_symbol in (("BTCUSDT", "BTCUSDT"),):
         if configured_symbol not in {item.symbol for item in settings.instruments.instruments if item.enabled}:
             continue
         for interval in intervals:

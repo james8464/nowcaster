@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+import pytest
+
 from src.live_monitor.command import parse_control
 from src.live_monitor.engine import EligibilityEvidence, LiveMonitorEngine, evaluate_alert_eligibility
 from src.live_monitor.types import Direction, MarketBar, MarketQuote, MonitorHealth, ProviderHealthEvent
@@ -114,6 +116,19 @@ def test_eligibility_abstains_for_each_fail_closed_boundary() -> None:
             "stale_quote",
         ),
         (evidence(direction=Direction.SHORT, shortable=False), quote(), MonitorHealth.HEALTHY, "shortability_required"),
+        (
+            evidence(
+                provider="binance",
+                feed="spot",
+                symbol="BTCUSDT",
+                direction=Direction.SHORT,
+                shortable=False,
+                easy_to_borrow=False,
+            ),
+            quote(provider="binance", feed="spot", symbol="BTCUSDT"),
+            MonitorHealth.HEALTHY,
+            "shortability_required",
+        ),
         (evidence(), quote(), MonitorHealth.RECONNECTING, "market_data_unhealthy"),
         (
             evidence(calibration_effective_observations=Decimal("99")),
@@ -139,6 +154,31 @@ def test_eligibility_abstains_for_each_fail_closed_boundary() -> None:
         decision = evaluate_alert_eligibility(item, market_quote, health=health, now=NOW + timedelta(seconds=5))
         assert decision.status == "abstain"
         assert reason in decision.reasons
+
+
+def test_engine_calibration_policy_can_only_tighten_the_fail_closed_gate() -> None:
+    with pytest.raises(ValueError, match="below 100"):
+        LiveMonitorEngine(
+            session_id="session-1",
+            minimum_effective_calibration_observations=Decimal("99"),
+        )
+
+    engine = LiveMonitorEngine(
+        session_id="session-1",
+        evidence_resolver=lambda _bars, _quote: evidence(data_through=NOW + timedelta(minutes=5)),
+        minimum_effective_calibration_observations=Decimal("101"),
+    )
+    for minute in range(5):
+        engine.accept_market_event(bar(minute))
+    at = NOW + timedelta(minutes=5, seconds=2)
+    decision = next(
+        item
+        for item in engine.accept_market_event(quote(provider_time=at, received_at=at))
+        if item.event_type == "decision"
+    )
+
+    assert decision.payload["status"] == "abstain"
+    assert "minimum_effective_calibration_sample" in decision.payload["reasons"]
 
 
 def test_engine_invalidates_readiness_once_and_abstains_on_confirmed_drift() -> None:

@@ -402,6 +402,11 @@ async def run_live(bootstrap: MonitorBootstrap, *, control_stream: TextIO | None
         persistence=repository,
         readiness_cohort_hash=selected_hash if readiness is not None else None,
         readiness_invalidator=drift_invalidator,
+        minimum_effective_calibration_observations=Decimal(
+            settings.deep_research.minimum_effective_calibration_observations
+        ),
+        maximum_brier_score=Decimal(str(settings.deep_research.maximum_brier_score)),
+        maximum_calibration_error=Decimal(str(settings.deep_research.maximum_calibration_error)),
     )
     for cohort in selected:
         engine.seed_history(load_decision_history(database, cohort))

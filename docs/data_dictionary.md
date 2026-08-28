@@ -20,6 +20,23 @@ All dates use ISO calendar dates. `available_date` means the earliest date an in
 | `data_quality_issues` | `issue_id` | Stage, entity, severity, rule, observed value, message, detection time |
 | `pipeline_runs` | `pipeline_run_id` | Command/stage, mode, configuration hash, Git revision, timestamps, row counts, status, error |
 
+## Native signal evidence fields
+
+The app snapshot adds these nullable fields to a research signal. Nullable means “not measured,” never zero:
+
+| Field | Plain-English meaning |
+|---|---|
+| `provider`, `feed`, `venue`, `product` | Exact market-data and tradable-product identity represented by the evidence. |
+| `probability_definition` | The observed event being estimated, such as target-before-stop after costs. |
+| `probability_lower_bound`, `probability_upper_bound` | Conservative uncertainty range around `calibrated_probability`. |
+| `calibration_observations` | Raw number of out-of-fold outcomes used for calibration. |
+| `calibration_effective_observations` | Dependence-adjusted information count; repeated/correlated outcomes count less. |
+| `brier_score`, `expected_calibration_error` | Historical probability-quality diagnostics; lower is better, but neither proves future accuracy. |
+| `gross_edge`, `estimated_cost`, `lower_net_edge` | Expected return before costs, modeled costs, and the conservative net bound after uncertainty. |
+| `model_age_seconds`, `regime`, `latency_ms` | Freshness and current operating context. |
+| `drift_status`, `drift_score` | Whether live evidence still resembles the sealed reference. |
+| `coverage_ratio`, `coverage_status` | Fraction/status of observations on which the selective model was willing to issue a prediction. |
+
 ## Units
 
 SEC monetary values retain issuer filing units (normally USD). Dashboard cards may display billions for readability. Returns, variants, growth, and MAPE are stored as decimal fractions. Confidence scores use a 0–100 research scale. Transaction-cost fields are decimal-return deductions.

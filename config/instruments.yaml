@@ -1,20 +1,40 @@
 instruments:
-  - symbol: BTC-USD
-    name: Bitcoin / US Dollar
+  - symbol: BTCUSDT
+    name: Bitcoin / Tether US
     asset_class: crypto
-    currency: USD
-    venue: composite
+    currency: USDT
+    venue: Binance
+    provider: binance
+    feed: spot
+    product: spot
+    shortable: false
+    short_mechanism: none
+    funding_applicable: false
+    borrow_applicable: false
+    trading_calendar: 24x7
+    historical_proxy_symbol: BTC-USD
+    historical_proxy_provider: yahoo_chart_public_snapshot
     horizons: [1, 5, 20]
     primary_horizon: 5
     minimum_training_days: 365
     fee_bps: 10
     slippage_bps: 5
     enabled: true
-  - symbol: ETH-USD
-    name: Ether / US Dollar
+  - symbol: ETHUSDT
+    name: Ether / Tether US
     asset_class: crypto
-    currency: USD
-    venue: composite
+    currency: USDT
+    venue: Binance
+    provider: binance
+    feed: spot
+    product: spot
+    shortable: false
+    short_mechanism: none
+    funding_applicable: false
+    borrow_applicable: false
+    trading_calendar: 24x7
+    historical_proxy_symbol: ETH-USD
+    historical_proxy_provider: yahoo_chart_public_snapshot
     horizons: [1, 5, 20]
     primary_horizon: 5
     minimum_training_days: 365

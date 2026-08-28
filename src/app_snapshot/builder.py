@@ -417,8 +417,13 @@ def _crypto_signals(database: Database) -> list[ResearchSignalSnapshot]:
     for row in frame.itertuples(index=False):
         explanation = dict(row.explanation) if isinstance(row.explanation, dict) else {}
         configuration = dict(row.configuration) if isinstance(row.configuration, dict) else {}
-        venue = _optional_text(row.venue)
-        provider = _optional_text(explanation.get("provider"), configuration.get("provider"))
+        historical_proxy = _optional_text(configuration.get("historical_proxy_provider"))
+        venue = _optional_text(explanation.get("venue"), "composite" if historical_proxy else row.venue)
+        provider = _optional_text(
+            explanation.get("provider"),
+            historical_proxy,
+            configuration.get("provider"),
+        )
         if provider is None and venue is not None and venue.lower() in {"alpaca", "binance"}:
             provider = venue.lower()
         reasons: list[str] = []
@@ -445,9 +450,15 @@ def _crypto_signals(database: Database) -> list[ResearchSignalSnapshot]:
                 ),
                 reasons=reasons,
                 provider=provider,
-                feed=_optional_text(explanation.get("feed"), configuration.get("feed")),
+                feed=_optional_text(
+                    explanation.get("feed"),
+                    "frozen_daily_proxy" if historical_proxy else configuration.get("feed"),
+                ),
                 venue=venue,
-                product=_optional_text(explanation.get("product"), configuration.get("product")),
+                product=_optional_text(
+                    explanation.get("product"),
+                    "composite USD daily proxy" if historical_proxy else configuration.get("product"),
+                ),
                 probability_definition=_optional_text(
                     explanation.get("probability_definition"),
                     "positive close-to-close return over the stated horizon",

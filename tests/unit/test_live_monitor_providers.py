@@ -18,6 +18,7 @@ from src.live_monitor.providers import (
     expected_repair_starts,
     load_alpaca_symbol_metadata,
     load_binance_repair_bars,
+    load_binance_symbol_metadata,
 )
 from src.live_monitor.types import (
     MarketBar,
@@ -184,6 +185,30 @@ def test_alpaca_rejects_untradable_metadata_and_uses_sub_dollar_increment() -> N
         received_at=NOW,
     )[0]
     assert isinstance(event, MarketQuote) and event.tick_size == Decimal("0.0001")
+
+
+def test_binance_spot_metadata_is_tradable_but_never_claims_shortability() -> None:
+    def metadata_response(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "symbols": [
+                    {
+                        "symbol": "BTCUSDT",
+                        "status": "TRADING",
+                        "permissions": ["SPOT"],
+                        "filters": [{"filterType": "PRICE_FILTER", "tickSize": "0.01"}],
+                    }
+                ]
+            },
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(metadata_response)) as client:
+        metadata = load_binance_symbol_metadata(("BTCUSDT",), client=client)["BTCUSDT"]
+
+    assert metadata.tradable is True
+    assert metadata.shortable is False
+    assert metadata.easy_to_borrow is False
 
 
 def test_binance_gap_repair_requires_every_bounded_minute() -> None:

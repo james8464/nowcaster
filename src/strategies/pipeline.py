@@ -847,6 +847,7 @@ class StrategyPipeline:
             interval=options.scope.interval.value,
             seed=options.seed,
             workers=options.workers,
+            reserved_processors=self._settings.deep_research.reserved_processors,
             trial_budget=None if options.continuous else budget,
             continuous=options.continuous,
             cycle_budget=budget,
@@ -2419,11 +2420,28 @@ def create_strategy_pipeline(
         maximum_family_weight=max(family_caps.values(), default=DEFAULT_ENSEMBLE_CONFIG.maximum_family_weight),
         family_weight_caps=family_caps,
     )
+    research = settings.deep_research
+    validation_config = replace(
+        DEFAULT_VALIDATION_CONFIG,
+        minimum_train_observations=research.minimum_walk_forward_train_observations,
+        validation_observations=research.minimum_walk_forward_validation_observations,
+        minimum_trades=research.minimum_promotion_trades,
+        minimum_development_observations=research.minimum_promotion_observations,
+        minimum_effective_observations=research.minimum_effective_promotion_observations,
+        minimum_dsr_probability=research.minimum_promotion_dsr_probability,
+        minimum_bootstrap_probability=research.minimum_promotion_bootstrap_probability,
+        maximum_pbo_probability=research.maximum_promotion_pbo_probability,
+        minimum_rolling_holdouts=research.minimum_rolling_holdouts,
+        minimum_calibration_observations=research.minimum_calibration_observations,
+        minimum_effective_calibration_observations=research.minimum_effective_calibration_observations,
+        minimum_isotonic_calibration_observations=research.minimum_isotonic_calibration_observations,
+    )
     return StrategyPipeline(
         database,
         registry,
         providers,
         provider_unavailable=unavailable,
+        validation_config=validation_config,
         ensemble_config=ensemble_config,
     ).bind_settings(settings)
 
@@ -2557,6 +2575,9 @@ def _validation_config_record(config: ValidationConfig) -> dict[str, Any]:
         "minimum_effective_observations": config.minimum_effective_observations,
         "minimum_bootstrap_probability": config.minimum_bootstrap_probability,
         "minimum_rolling_holdouts": config.minimum_rolling_holdouts,
+        "minimum_calibration_observations": config.minimum_calibration_observations,
+        "minimum_effective_calibration_observations": config.minimum_effective_calibration_observations,
+        "minimum_isotonic_calibration_observations": config.minimum_isotonic_calibration_observations,
     }
 
 

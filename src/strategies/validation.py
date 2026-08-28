@@ -58,6 +58,9 @@ class ValidationConfig:
     minimum_effective_observations: int = 0
     minimum_bootstrap_probability: float = 0.0
     minimum_rolling_holdouts: int = 0
+    minimum_calibration_observations: int = 100
+    minimum_effective_calibration_observations: int = 100
+    minimum_isotonic_calibration_observations: int = 1_000
 
     def __post_init__(self) -> None:
         if not 0 < self.final_test_fraction < 1:
@@ -73,8 +76,14 @@ class ValidationConfig:
             or self.minimum_development_observations <= 0
             or self.minimum_effective_observations < 0
             or self.minimum_rolling_holdouts < 0
+            or self.minimum_calibration_observations < 2
+            or self.minimum_effective_calibration_observations < 2
         ):
             raise ValueError("period and evidence counts must be valid")
+        if self.minimum_effective_calibration_observations > self.minimum_calibration_observations:
+            raise ValueError("effective calibration minimum cannot exceed the raw minimum")
+        if self.minimum_isotonic_calibration_observations < self.minimum_calibration_observations:
+            raise ValueError("isotonic calibration minimum cannot be below the raw minimum")
         probabilities = (
             self.maximum_drawdown,
             self.minimum_dsr_probability,
@@ -600,6 +609,9 @@ def _config_record(config: ValidationConfig) -> dict[str, Any]:
         "minimum_effective_observations": config.minimum_effective_observations,
         "minimum_bootstrap_probability": float(config.minimum_bootstrap_probability),
         "minimum_rolling_holdouts": config.minimum_rolling_holdouts,
+        "minimum_calibration_observations": config.minimum_calibration_observations,
+        "minimum_effective_calibration_observations": config.minimum_effective_calibration_observations,
+        "minimum_isotonic_calibration_observations": config.minimum_isotonic_calibration_observations,
     }
 
 
@@ -1016,6 +1028,10 @@ def fit_strategy_oof_calibration(
     development_mask: pd.Series,
     current_signal: int,
     current_strength: float,
+    *,
+    minimum_observations: int = 100,
+    minimum_effective_observations: int = 100,
+    isotonic_minimum: int = 1_000,
 ) -> tuple[str, float, float, float, float, Mapping[str, Any]]:
     signals = evidence.signals.copy()
     required = {"decision_timestamp", "signal", "strength"}
@@ -1040,7 +1056,7 @@ def fit_strategy_oof_calibration(
         end = pd.Timestamp(fold.validation_end)
         fold_mask |= joined["decision_timestamp"].between(start, end, inclusive="both")
     joined = joined.loc[fold_mask].sort_values("decision_timestamp", kind="stable")
-    if len(joined) < 100:
+    if len(joined) < minimum_observations:
         return (
             "unavailable",
             0.5,
@@ -1048,7 +1064,10 @@ def fit_strategy_oof_calibration(
             0.0,
             0.0,
             {
-                "reason": "promotion-grade calibration requires at least 100 out-of-fold observations",
+                "reason": (
+                    "promotion-grade calibration requires at least "
+                    f"{minimum_observations} out-of-fold observations"
+                ),
                 "observations": len(joined),
             },
         )
@@ -1062,8 +1081,13 @@ def fit_strategy_oof_calibration(
         raw_probabilities.to_numpy(dtype=float),
         favorable.to_numpy(dtype=int),
         timestamps,
+        minimum_observations=minimum_observations,
+        isotonic_minimum=isotonic_minimum,
     )
-    if calibration.status != "calibrated" or calibration.report.effective_sample_size < 100:
+    if (
+        calibration.status != "calibrated"
+        or calibration.report.effective_sample_size < minimum_effective_observations
+    ):
         return (
             "unavailable",
             0.5,
@@ -1071,7 +1095,10 @@ def fit_strategy_oof_calibration(
             0.0,
             0.0,
             {
-                "reason": "promotion-grade calibration requires at least 100 effective out-of-fold observations",
+                "reason": (
+                    "promotion-grade calibration requires at least "
+                    f"{minimum_effective_observations} effective out-of-fold observations"
+                ),
                 "observations": len(joined),
                 "effective_observations": calibration.report.effective_sample_size,
             },
@@ -1415,7 +1442,16 @@ def evaluate_registry(request: EvaluationRequest) -> tuple[StrategyEvaluation, .
             expected_cost,
             uncertainty,
             decision_calibration,
-        ) = fit_strategy_oof_calibration(evidence, mapped_curve, development_mask, signal, strength)
+        ) = fit_strategy_oof_calibration(
+            evidence,
+            mapped_curve,
+            development_mask,
+            signal,
+            strength,
+            minimum_observations=request.config.minimum_calibration_observations,
+            minimum_effective_observations=request.config.minimum_effective_calibration_observations,
+            isotonic_minimum=request.config.minimum_isotonic_calibration_observations,
+        )
         development_sharpe = _finite_or_none(development.sharpe)
         development_maximum_drawdown = _finite_or_none(development.maximum_drawdown)
         final_sharpe = _finite_or_none(final.sharpe)

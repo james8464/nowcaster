@@ -188,10 +188,8 @@ def evaluate_alert_eligibility(
         session = XNYS_CALENDAR.session_bounds(quote.provider_time)
         if session is None or not session[0] <= quote.provider_time < session[1]:
             reasons.append("regular_session_required")
-    if (
-        evidence.provider == "alpaca"
-        and evidence.direction is Direction.SHORT
-        and (not evidence.shortable or not evidence.easy_to_borrow)
+    if evidence.direction is Direction.SHORT and (
+        not evidence.shortable or (evidence.provider == "alpaca" and not evidence.easy_to_borrow)
     ):
         reasons.append("shortability_required")
     unique_reasons = tuple(dict.fromkeys(reasons))
@@ -221,6 +219,9 @@ class LiveMonitorEngine:
         persistence: MonitorPersistence | None = None,
         readiness_cohort_hash: str | None = None,
         readiness_invalidator: Callable[[str, str, datetime], None] | None = None,
+        minimum_effective_calibration_observations: Decimal = Decimal("100"),
+        maximum_brier_score: Decimal = Decimal("0.25"),
+        maximum_calibration_error: Decimal = Decimal("0.10"),
     ):
         self.session_id = session_id
         if len(config_hash) != 64 or any(character not in "0123456789abcdef" for character in config_hash):
@@ -229,6 +230,15 @@ class LiveMonitorEngine:
         self.decision_interval = decision_interval
         self.evidence_resolver = evidence_resolver
         self.persistence = persistence
+        if minimum_effective_calibration_observations < 100:
+            raise ValueError("effective calibration minimum cannot be weakened below 100")
+        if not Decimal(0) <= maximum_brier_score <= Decimal("0.25"):
+            raise ValueError("maximum Brier score must remain within [0, 0.25]")
+        if not Decimal(0) <= maximum_calibration_error <= Decimal("0.10"):
+            raise ValueError("maximum calibration error must remain within [0, 0.10]")
+        self.minimum_effective_calibration_observations = minimum_effective_calibration_observations
+        self.maximum_brier_score = maximum_brier_score
+        self.maximum_calibration_error = maximum_calibration_error
         if readiness_cohort_hash is not None and (
             len(readiness_cohort_hash) != 64
             or any(character not in "0123456789abcdef" for character in readiness_cohort_hash)
@@ -496,6 +506,9 @@ class LiveMonitorEngine:
             quote,
             health=effective_health,
             now=now,
+            minimum_effective_calibration_observations=self.minimum_effective_calibration_observations,
+            maximum_brier_score=self.maximum_brier_score,
+            maximum_calibration_error=self.maximum_calibration_error,
         )
         payload = {
             "provider": aggregated.provider,

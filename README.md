@@ -6,6 +6,8 @@ It collects historical market and company information, asks models what that inf
 
 Nowcaster is a research and risk-control tool. It can monitor **shadow** decisions and submit separately configured **Alpaca paper** orders, but real-money trading remains hard-locked unless every forward-evidence, security, signing, account, and manual-arming gate passes. It cannot guarantee profit and is not investment advice.
 
+For intraday research, the main probability means “the target is reached before the protective stop within the declared horizon, after the entry decision.” It is a target-before-stop estimate—not a promise that a whole account will make money.
+
 ![Nowcaster Today view](docs/images/macos/today-light.png)
 
 ## What problem does it solve?
@@ -80,6 +82,17 @@ The Python engine writes one validated JSON snapshot. The SwiftUI app reads that
 
 The app keeps the last known good snapshot if a refresh fails. Broker credentials are stored in the macOS Keychain, passed to the engine only for one process session, and never placed in command arguments, snapshots, logs, preferences, or Git.
 
+### How to read an accuracy card
+
+- **Calibrated probability** compares this setup with genuinely out-of-fold past outcomes.
+- **Probability range** shows uncertainty around that estimate. A narrow-looking range can still be wrong after a regime change.
+- **Brier score** and calibration error measure whether historical probabilities matched observed frequencies.
+- **Lower net edge** is the conservative return estimate after modeled fees, spread, slippage, execution uncertainty, and statistical uncertainty. A non-positive value forces Abstain.
+- **Coverage** is the fraction of otherwise eligible observations on which the selective model was willing to speak. Higher confidence often means lower coverage.
+- **Drift** warns when features, predictions, calibration errors, costs, latency, or realized edge stop resembling the sealed evidence.
+
+Missing evidence is displayed as unavailable; the app does not silently substitute a favorable number.
+
 ## What you can explore in the app
 
 - **Today** — a plain overview of the current research snapshot and its warnings.
@@ -110,11 +123,13 @@ Live Monitor is notification-only: it has no order API and cannot guarantee prof
 
 Open **Strategy Lab**, select a strategy with complete data coverage, then choose **Deep Research**. The configuration sheet lets you choose:
 
-- **Performance** to use every logical CPU, **Balanced** to leave one free, **Efficient** to use about half, or a custom worker count.
+- **Performance**, **Balanced**, **Efficient**, or a custom worker count. Every profile leaves at least two logical processors for macOS and live monitoring when the hardware permits it.
 - A fixed number of candidate attempts, or continuous generations that run until you press **Stop**.
 - An optional time limit and reproducible random seed.
 
-Each generation creates typed parameter/rule challengers, evaluates them only on chronological development folds, records failures and duplicates as real trials, and stress-tests the strongest development candidate. The sealed final period is never sent to search workers. Pause drains the current small worker batch before dispatch stops; Stop checkpoints completed evidence. The app also pauses automatically under serious Mac thermal pressure.
+Each generation creates typed parameter/rule challengers, evaluates them only on chronological development folds, records failures and duplicates as real trials, and stress-tests the strongest development candidate. The sealed final period is never sent to search workers. Pause drains the current small worker batch before dispatch stops; Stop checkpoints completed evidence. The app also pauses automatically under serious Mac thermal pressure, memory pressure, low disk space, sleep, or an unhealthy live heartbeat.
+
+An offline winner starts a new **shadow cohort**; it never replaces a live champion directly. Its forward evidence begins at zero and must be collected under the exact unchanged model, data, cost, and policy identity. A rejected challenger is recorded, and a forward-qualified challenger retains an explicit rollback target.
 
 Trying more formulas creates more chances to find a lucky historical accident. Nowcaster therefore counts every attempt and tightens its statistical interpretation using the true trial ledger, block bootstrap, Deflated Sharpe, probability of backtest overfitting, parameter stability, doubled-cost stress, drawdown, trade-count, concentration, causal, provenance, coverage, execution, sealed-holdout, and incumbent-improvement gates. A failed gate produces **No reliable strategy found** rather than hiding the failure. **Abstain** is a successful safety outcome, not an app error.
 
@@ -128,8 +143,8 @@ These are frozen demo results through 22 August 2026. They are included to demon
 
 | Research system | App status | Development Sharpe | Final-test Sharpe | Total trades | Worst drawdown |
 |---|---|---:|---:|---:|---:|
-| BTC-USD calibrated ensemble | Research only | 0.769 | 0.571 | 173 | -26.1% |
-| ETH-USD calibrated ensemble | Not ready | 0.152 | 0.593 | 57 | -16.8% |
+| BTCUSDT daily proxy ensemble | Research only | 0.769 | 0.571 | 173 | -26.1% |
+| ETHUSDT daily proxy ensemble | Not ready | 0.152 | 0.593 | 57 | -16.8% |
 
 In plain language:
 
@@ -210,7 +225,7 @@ For deeper technical detail, see the [Live Monitor guide](docs/live-monitor.md),
 - Public data can be missing, revised, delayed, or wrong.
 - Yahoo chart data comes from an unofficial endpoint with no service guarantee.
 - Users are responsible for data-provider terms and production data licences.
-- `BTC-USD` and `ETH-USD` map to Binance `BTCUSDT` and `ETHUSDT` for provider research. These are venue-specific USDT spot pairs, not composite USD prices.
+- Live/provider research names Binance `BTCUSDT` and `ETHUSDT` exactly. They are venue-specific USDT spot products, not composite USD prices, and ordinary Binance spot is not shortable. The bundled daily demo separately discloses its frozen `BTC-USD`/`ETH-USD` public-history proxies; proxy results cannot authorize a Binance live alert.
 - Raw credentials and bulk/licensed bars stay outside Git. Only fixture descriptors, checksummed manifests, and compact results are committed.
 - Optional Alpaca paper trading contacts Alpaca only after the user stores separate paper credentials in Keychain. Live credentials use a different Keychain service and endpoint and cannot fall back to paper credentials.
 - Broker orders, positions, reconciliation results, and risk decisions remain local in DuckDB and a bounded snapshot; full account IDs and raw secret-bearing payloads are excluded.

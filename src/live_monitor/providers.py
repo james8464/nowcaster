@@ -104,8 +104,8 @@ def load_binance_symbol_metadata(
                 symbol=symbol,
                 tick_size=Decimal(str(price_filter["tickSize"])),
                 tradable=row.get("status") == "TRADING" and "SPOT" in row.get("permissions", ["SPOT"]),
-                shortable=True,
-                easy_to_borrow=True,
+                shortable=False,
+                easy_to_borrow=False,
             )
         if set(result) != set(normalized) or not all(item.tradable for item in result.values()):
             raise ValueError("one or more Binance symbols are not tradable")
@@ -540,7 +540,7 @@ class BinanceSpotAdapter:
                     ask_size=Decimal(str(item["A"])),
                     last=(bid + ask) / 2,
                     tick_size=self.metadata.get(
-                        str(item["s"]).upper(), ProviderSymbolMetadata("", Decimal("0.01"), True, True, True)
+                        str(item["s"]).upper(), ProviderSymbolMetadata("", Decimal("0.01"), True, False, False)
                     ).tick_size,
                     sequence=int(item["u"]) if item.get("u") is not None else None,
                     provider_time=_epoch_milliseconds(item["E"]),

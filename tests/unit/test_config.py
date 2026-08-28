@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from src.config.settings import Settings
+from src.config.settings import DeepResearchConfig, InstrumentConfig, Settings
 
 
 def test_settings_loads_yaml_and_environment_override(project_root, monkeypatch):
@@ -47,3 +47,59 @@ def test_checked_in_configuration_is_valid():
 
     assert len(settings.universe.companies) == 14
     assert settings.universe.companies[1].wikipedia_article == "Nike,_Inc."
+
+
+def test_bundled_crypto_instruments_are_exact_non_shortable_binance_usdt_spot_products() -> None:
+    root = Path(__file__).resolve().parents[2]
+    settings = Settings.load(root, mode="test")
+    instruments = settings.instruments.instruments
+
+    assert {item.symbol for item in instruments} == {"BTCUSDT", "ETHUSDT"}
+    for item in instruments:
+        assert item.provider == "binance"
+        assert item.feed == "spot"
+        assert item.venue == "Binance"
+        assert item.currency == "USDT"
+        assert item.product == "spot"
+        assert item.shortable is False
+        assert item.short_mechanism == "none"
+        assert item.funding_applicable is False
+        assert item.borrow_applicable is False
+        assert item.trading_calendar == "24x7"
+
+
+def test_instrument_and_research_safety_settings_cannot_be_weakened() -> None:
+    with pytest.raises(ValueError, match="short mechanism"):
+        InstrumentConfig(
+            symbol="BTCUSDT",
+            name="Bitcoin / Tether",
+            asset_class="crypto",
+            provider="binance",
+            feed="spot",
+            venue="Binance",
+            currency="USDT",
+            product="spot",
+            shortable=True,
+            short_mechanism="none",
+        )
+    with pytest.raises(ValueError):
+        DeepResearchConfig(reserved_processors=0)
+    with pytest.raises(ValueError):
+        DeepResearchConfig(minimum_effective_calibration_observations=99)
+    with pytest.raises(ValueError):
+        DeepResearchConfig(maximum_calibration_error=0.11)
+
+
+def test_checked_in_research_thresholds_reserve_compute_and_bind_promotion_evidence() -> None:
+    root = Path(__file__).resolve().parents[2]
+    policy = Settings.load(root, mode="test").deep_research
+
+    assert policy.reserved_processors == 2
+    assert policy.minimum_effective_calibration_observations >= 100
+    assert policy.minimum_isotonic_calibration_observations >= 1_000
+    assert policy.minimum_promotion_observations >= 1_000
+    assert policy.minimum_effective_promotion_observations >= 300
+    assert policy.minimum_promotion_trades >= 300
+    assert policy.minimum_rolling_holdouts >= 3
+    assert policy.minimum_promotion_bootstrap_probability >= 0.99
+    assert policy.maximum_promotion_pbo_probability <= 0.10

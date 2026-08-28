@@ -55,6 +55,39 @@ def test_live_monitor_docs_explain_safety_and_beginner_workflow() -> None:
         assert phrase in text
 
 
+def test_accuracy_and_self_improvement_docs_explain_the_new_safety_contracts() -> None:
+    root = Path(__file__).resolve().parents[2]
+    required = {
+        "README.md": (
+            "target-before-stop",
+            "probability range",
+            "lower net edge",
+            "shadow cohort",
+            "two logical processors",
+        ),
+        "docs/methodology.md": (
+            "effective sample size",
+            "selective coverage",
+            "target-before-stop",
+            "model drift",
+        ),
+        "docs/backtest_protocol.md": ("global trial", "adverse stop-before-target", "rolling holdout"),
+        "docs/live-readiness.md": ("shadow cohort", "execution-cost model", "drift"),
+        "docs/live-monitor.md": ("brier", "lower net edge", "drift"),
+        "docs/data-providers.md": ("binance usdt spot", "not shortable"),
+        "docs/data_dictionary.md": (
+            "probability_lower_bound",
+            "calibration_effective_observations",
+            "lower_net_edge",
+            "drift_status",
+        ),
+    }
+    for relative_path, phrases in required.items():
+        text = (root / relative_path).read_text(encoding="utf-8").lower()
+        for phrase in phrases:
+            assert phrase in text, f"{relative_path} is missing {phrase!r}"
+
+
 def test_ci_runs_both_language_suites_and_clean_demo():
     root = Path(__file__).resolve().parents[2]
     workflow = yaml.safe_load((root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))

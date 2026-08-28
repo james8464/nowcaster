@@ -368,8 +368,8 @@ def evaluate_sealed_cohort(
         expected_net_edge=expected_net_edge if authenticated else Decimal(0),
         breadth=breadth,
         data_through=data_through,
-        shortable=cohort.provider != "alpaca" if shortable is None else shortable,
-        easy_to_borrow=cohort.provider != "alpaca" if easy_to_borrow is None else easy_to_borrow,
+        shortable=False if shortable is None else shortable,
+        easy_to_borrow=False if easy_to_borrow is None else easy_to_borrow,
         reasons=unique_reasons,
     )
 
