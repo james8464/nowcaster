@@ -464,12 +464,19 @@ def derive_live_readiness_robustness(
     for row in forward_evidence:
         try:
             paper = Decimal(str(row["paper_net_return"]))
-            modeled = Decimal(str(row["modeled_slippage_bps"]))
-            observed = Decimal(str(row["observed_slippage_bps"]))
-            if not paper.is_finite() or not modeled.is_finite() or not observed.is_finite() or modeled <= 0:
+            error_upper = Decimal(str(row["execution_error_upper_ratio"]))
+            effective = Decimal(str(row["execution_effective_observations"]))
+            closed_trades = Decimal(str(row["closed_trades"]))
+            if (
+                not paper.is_finite()
+                or not error_upper.is_finite()
+                or not effective.is_finite()
+                or row.get("execution_model_status") != "calibrated"
+                or effective < closed_trades
+            ):
                 raise ValueError
             paper_returns.append(float(paper))
-            slippage_errors.append(abs(observed - modeled) / modeled)
+            slippage_errors.append(error_upper)
         except (KeyError, TypeError, ValueError):
             paper_returns = []
             slippage_errors = []

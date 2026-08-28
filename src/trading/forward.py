@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Literal
@@ -7,9 +8,11 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select
 
+from src.backtest.costs import execution_model_error
 from src.database.engine import Database
 from src.database.schema import TABLES
 from src.strategies.types import canonical_hash
+from src.trading.types import ExecutionObservation
 
 
 class ForwardCohortIdentity(BaseModel):
@@ -50,6 +53,13 @@ class ForwardDailyEvidence(BaseModel):
     health_breakers: int = Field(ge=0)
     modeled_slippage_bps: Decimal | None = Field(default=None, ge=0)
     observed_slippage_bps: Decimal | None = Field(default=None, ge=0)
+    execution_observations: int = Field(default=0, ge=0)
+    execution_effective_observations: Decimal = Field(default=Decimal(0), ge=0)
+    execution_error_upper_ratio: Decimal | None = Field(default=None, ge=0)
+    execution_cost_buffer_bps: Decimal | None = Field(default=None, ge=0)
+    execution_model_status: Literal["calibrated", "unavailable"] = "unavailable"
+    execution_error_limit_ratio: Decimal = Field(default=Decimal("0.20"), ge=0)
+    execution_observation_records: tuple[ExecutionObservation, ...] = ()
     status: Literal["complete", "unavailable"]
     evidence_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     closed_at: datetime
@@ -76,6 +86,8 @@ class ForwardDailyEvidence(BaseModel):
             "health_breakers": self.health_breakers,
             "modeled_slippage_bps": self.modeled_slippage_bps,
             "observed_slippage_bps": self.observed_slippage_bps,
+            "execution_observations": self.execution_observation_records,
+            "maximum_execution_error_ratio": self.execution_error_limit_ratio,
         }
 
 
@@ -98,6 +110,8 @@ class ForwardEvidenceBuilder:
         health_breakers: int,
         modeled_slippage_bps: Decimal | None = None,
         observed_slippage_bps: Decimal | None = None,
+        execution_observations: Sequence[ExecutionObservation] = (),
+        maximum_execution_error_ratio: Decimal = Decimal("0.20"),
     ) -> ForwardDailyEvidence:
         return self.close_selection_period(
             cohort_hash=cohort.cohort_hash,
@@ -111,6 +125,8 @@ class ForwardEvidenceBuilder:
             health_breakers=health_breakers,
             modeled_slippage_bps=modeled_slippage_bps,
             observed_slippage_bps=observed_slippage_bps,
+            execution_observations=execution_observations,
+            maximum_execution_error_ratio=maximum_execution_error_ratio,
         )
 
     def close_selection_period(
@@ -127,9 +143,33 @@ class ForwardEvidenceBuilder:
         health_breakers: int,
         modeled_slippage_bps: Decimal | None = None,
         observed_slippage_bps: Decimal | None = None,
+        execution_observations: Sequence[ExecutionObservation] = (),
+        maximum_execution_error_ratio: Decimal = Decimal("0.20"),
     ) -> ForwardDailyEvidence:
         if len(cohort_hash) != 64 or any(item not in "0123456789abcdef" for item in cohort_hash):
             raise ValueError("forward cohort identity must be a SHA-256 hash")
+        if maximum_execution_error_ratio < 0 or not maximum_execution_error_ratio.is_finite():
+            raise ValueError("maximum execution error ratio must be finite and non-negative")
+        observations = tuple(execution_observations)
+        for observation in observations:
+            if observation.cohort_hash != cohort_hash:
+                raise ValueError("execution observation cohort does not match the forward cohort")
+            if not period_start <= observation.decision_at <= observation.terminal_at <= period_end:
+                raise ValueError("execution observation falls outside its forward period")
+        report = execution_model_error(observations, minimum_observations=max(closed_trades, 1))
+        if observations:
+            predicted = sum((item.predicted_execution_cost_bps for item in observations), Decimal(0)) / len(
+                observations
+            )
+            realized = sum((item.realized_execution_cost_bps for item in observations), Decimal(0)) / len(
+                observations
+            )
+            if modeled_slippage_bps is not None and modeled_slippage_bps != predicted:
+                raise ValueError("modeled execution cost conflicts with its observation ledger")
+            if observed_slippage_bps is not None and observed_slippage_bps != realized:
+                raise ValueError("observed execution cost conflicts with its observation ledger")
+            modeled_slippage_bps = predicted
+            observed_slippage_bps = realized
         status = (
             "complete"
             if reconciliation_mismatches == 0
@@ -137,6 +177,9 @@ class ForwardEvidenceBuilder:
             and paper_net_return is not None
             and stressed_net_return is not None
             and drawdown is not None
+            and report.status == "calibrated"
+            and report.upper_relative_error is not None
+            and report.upper_relative_error <= maximum_execution_error_ratio
             else "unavailable"
         )
         payload = {
@@ -151,6 +194,19 @@ class ForwardEvidenceBuilder:
             "health_breakers": health_breakers,
             "modeled_slippage_bps": str(modeled_slippage_bps) if modeled_slippage_bps is not None else None,
             "observed_slippage_bps": str(observed_slippage_bps) if observed_slippage_bps is not None else None,
+            "execution_observations": report.observation_count,
+            "execution_effective_observations": str(report.effective_observations),
+            "execution_error_upper_ratio": (
+                str(report.upper_relative_error) if report.upper_relative_error is not None else None
+            ),
+            "execution_cost_buffer_bps": (
+                str(report.conservative_cost_buffer_bps)
+                if report.conservative_cost_buffer_bps is not None
+                else None
+            ),
+            "execution_model_status": report.status,
+            "execution_error_limit_ratio": str(maximum_execution_error_ratio),
+            "execution_observation_records": [item.model_dump(mode="json") for item in observations],
             "status": status,
         }
         evidence = ForwardDailyEvidence(

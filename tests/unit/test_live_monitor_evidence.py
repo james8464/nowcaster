@@ -22,8 +22,42 @@ from src.live_monitor.types import Direction, MarketBar, MarketQuote
 from src.strategies.types import BarInterval, StrategyFamily, StrategySpec, canonical_hash
 from src.trading.forward import ForwardEvidenceBuilder
 from src.trading.live_monitor_readiness import evaluate_and_persist_live_readiness
+from src.trading.types import ExecutionObservation
 
 NOW = datetime(2026, 8, 26, 14, tzinfo=UTC)
+
+
+def execution_observations(cohort_hash: str, start: datetime) -> tuple[ExecutionObservation, ...]:
+    return tuple(
+        ExecutionObservation(
+            observation_id=canonical_hash((cohort_hash, start, index)),
+            session_id="paper-readiness",
+            cohort_hash=cohort_hash,
+            intent_id=f"intent-{start.isoformat()}-{index}",
+            broker_order_id=f"order-{start.isoformat()}-{index}",
+            symbol="AAPL",
+            side="buy",
+            decision_at=start + timedelta(hours=1, minutes=index),
+            submitted_at=start + timedelta(hours=1, minutes=index),
+            first_fill_at=start + timedelta(hours=1, minutes=index, milliseconds=100),
+            terminal_at=start + timedelta(hours=1, minutes=index, milliseconds=100),
+            requested_quantity=Decimal("1"),
+            filled_quantity=Decimal("1"),
+            reference_price=Decimal("100"),
+            predicted_fill_price=Decimal("100.05"),
+            realized_fill_price=Decimal("100.055"),
+            predicted_spread_bps=Decimal("2"),
+            realized_spread_bps=Decimal("2"),
+            predicted_slippage_bps=Decimal("3"),
+            realized_slippage_bps=Decimal("3.5"),
+            predicted_impact_bps=Decimal("0"),
+            realized_impact_bps=Decimal("0"),
+            predicted_latency_ms=Decimal("50"),
+            realized_latency_ms=Decimal("100"),
+            observed_at=start + timedelta(hours=1, minutes=index, milliseconds=100),
+        )
+        for index in range(2)
+    )
 
 
 def component(strategy_id: str, weight: str) -> SealedComponent:
@@ -398,8 +432,7 @@ def test_forward_evidence_can_issue_persist_and_reload_an_exact_live_receipt(tmp
             drawdown=Decimal("0.001"),
             reconciliation_mismatches=0,
             health_breakers=0,
-            modeled_slippage_bps=Decimal("5"),
-            observed_slippage_bps=Decimal("5.5"),
+            execution_observations=execution_observations(selection_hash, period_start),
         )
 
     qualification = evaluate_and_persist_live_readiness(database, cohorts, as_of=NOW)

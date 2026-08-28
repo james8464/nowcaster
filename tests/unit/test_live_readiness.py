@@ -29,23 +29,31 @@ def _cohort(asset_class="equity"):
 
 
 def _evidence(cohort, periods, trades, stressed="0.01"):
-    return tuple(
-        ForwardDailyEvidence(
+    result = []
+    for index in range(periods):
+        closed_trades = trades // periods + (1 if index < trades % periods else 0)
+        result.append(ForwardDailyEvidence(
             cohort_hash=cohort.cohort_hash,
             period_start=NOW - timedelta(days=periods - index),
             period_end=NOW - timedelta(days=periods - index - 1),
-            closed_trades=trades // periods + (1 if index < trades % periods else 0),
+            closed_trades=closed_trades,
             paper_net_return=Decimal("0.02"),
             stressed_net_return=Decimal(stressed),
             drawdown=Decimal("0.01"),
             reconciliation_mismatches=0,
             health_breakers=0,
+            modeled_slippage_bps=Decimal("5"),
+            observed_slippage_bps=Decimal("5.5"),
+            execution_observations=closed_trades,
+            execution_effective_observations=Decimal(closed_trades),
+            execution_error_upper_ratio=Decimal("0.10"),
+            execution_cost_buffer_bps=Decimal("0.5"),
+            execution_model_status="calibrated",
             status="complete",
             evidence_hash=(f"{index:064x}"[-64:]),
             closed_at=NOW,
-        )
-        for index in range(periods)
-    )
+        ))
+    return tuple(result)
 
 
 def _robustness(cohort):

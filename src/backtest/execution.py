@@ -163,12 +163,19 @@ class Fill:
     order_type: str
     requested_quantity: float
     quantity: float
+    reference_price: float
+    quote_price: float
     price: float
     notional: float
     fee: float
     commission: float
     spread_cost: float
     slippage_cost: float
+    impact_cost: float
+    predicted_spread_bps: float
+    predicted_slippage_bps: float
+    predicted_impact_bps: float
+    latency_ms: float
     total_cost: float
     status: Literal["filled", "partial"]
     fill_reason: str
@@ -181,6 +188,10 @@ class Fill:
         object.__setattr__(self, "source_decisions", ordered_sources)
         object.__setattr__(self, "source_decision_hashes", tuple(source.decision_hash for source in ordered_sources))
         object.__setattr__(self, "decision_hash", _source_decision_hash(self.symbol, ordered_sources))
+
+    @property
+    def fill_fraction(self) -> float:
+        return self.quantity / self.requested_quantity
 
 
 @dataclass(frozen=True, slots=True)
@@ -326,29 +337,41 @@ def _make_fill(
     quote = _quote_price(raw_price, order.side, bar, assumptions)
     direction = 1 if order.side == "buy" else -1
     slipped = quote * (1 + direction * assumptions.costs.slippage_bps / 10_000)
-    price = _round_price(slipped, assumptions.tick_size, order.side)
+    participation = min(quantity / max(float(bar["volume"]), quantity), 1.0)
+    impact_bps = assumptions.costs.market_impact_bps * math.sqrt(participation)
+    impacted = slipped * (1 + direction * impact_bps / 10_000)
+    price = _round_price(impacted, assumptions.tick_size, order.side)
     notional = quantity * price
     transaction = calculate_transaction_cost(notional, quantity, assumptions.costs, liquidity=order.liquidity)
     reference = raw_price
     spread_cost = max(direction * (quote - reference) * quantity, 0.0)
     slippage_cost = max(direction * (price - quote) * quantity, 0.0)
+    impact_cost = max(direction * (impacted - slipped) * quantity, 0.0)
     total_cost = transaction.total + spread_cost + slippage_cost
+    timestamp = execution_timestamp or pd.Timestamp(bar["open_timestamp"])
     return Fill(
         order_id=order.order_id,
         strategy_id=order.strategy_id,
         symbol=order.symbol,
         decision_timestamp=order.decision_timestamp,
-        execution_timestamp=execution_timestamp or pd.Timestamp(bar["open_timestamp"]),
+        execution_timestamp=timestamp,
         side=order.side,
         order_type=order_type or order.order_type,
         requested_quantity=order.quantity,
         quantity=quantity,
+        reference_price=reference,
+        quote_price=quote,
         price=price,
         notional=notional,
         fee=transaction.fee,
         commission=transaction.commission,
         spread_cost=spread_cost,
         slippage_cost=slippage_cost,
+        impact_cost=impact_cost,
+        predicted_spread_bps=abs(quote - reference) / reference * 10_000,
+        predicted_slippage_bps=assumptions.costs.slippage_bps,
+        predicted_impact_bps=impact_bps,
+        latency_ms=max((timestamp - order.decision_timestamp).total_seconds() * 1_000, 0.0),
         total_cost=total_cost,
         status="partial" if quantity + 1e-12 < order.quantity else "filled",
         fill_reason=reason,

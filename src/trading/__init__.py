@@ -8,6 +8,7 @@ from src.trading.types import (
     BrokerOrderRequest,
     BrokerOrderStatus,
     BrokerPosition,
+    ExecutionObservation,
     TradeUpdate,
     TradingEnvironment,
 )
@@ -20,6 +21,7 @@ __all__ = [
     "BrokerOrderRequest",
     "BrokerOrderStatus",
     "BrokerPosition",
+    "ExecutionObservation",
     "TradeUpdate",
     "TradingEnvironment",
 ]

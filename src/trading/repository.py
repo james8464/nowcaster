@@ -16,6 +16,7 @@ from src.trading.types import (
     BrokerOrder,
     BrokerOrderRequest,
     BrokerPosition,
+    ExecutionObservation,
     TradeUpdate,
     TradingEnvironment,
 )
@@ -239,6 +240,68 @@ class TradingRepository:
                     received_at=event.received_at,
                     raw_payload_hash=event.raw_payload_hash,
                     payload=payload,
+                    **self._common(),
+                )
+            )
+        return True
+
+    def record_execution_observation(self, observation: ExecutionObservation) -> bool:
+        """Append one immutable simulator-versus-broker comparison."""
+        self._session_environment(observation.session_id)
+        intent_table = TABLES["broker_order_intents"]
+        order_table = TABLES["broker_orders"]
+        table = TABLES["execution_observations"]
+        payload = observation.model_dump(mode="json")
+        payload_hash = canonical_hash(payload)
+        with self.database.engine.begin() as connection:
+            intent = connection.execute(
+                select(intent_table.c.cohort_hash).where(
+                    intent_table.c.intent_id == observation.intent_id,
+                    intent_table.c.session_id == observation.session_id,
+                )
+            ).scalar_one_or_none()
+            if intent is None:
+                raise ValueError("execution observation requires a recorded order intent")
+            if intent != observation.cohort_hash:
+                raise ValueError("execution observation cohort does not match its order intent")
+            order_exists = connection.execute(
+                select(order_table.c.order_record_id).where(
+                    order_table.c.intent_id == observation.intent_id,
+                    order_table.c.broker_order_id == observation.broker_order_id,
+                )
+            ).scalar_one_or_none()
+            if order_exists is None:
+                raise ValueError("execution observation requires a recorded broker order")
+            existing = connection.execute(
+                select(table.c.payload_hash).where(table.c.observation_id == observation.observation_id)
+            ).scalar_one_or_none()
+            if existing is not None:
+                if existing != payload_hash:
+                    raise ValueError("conflicting execution observation for one observation identity")
+                return False
+            connection.execute(
+                insert(table).values(
+                    observation_id=observation.observation_id,
+                    payload_hash=payload_hash,
+                    session_id=observation.session_id,
+                    cohort_hash=observation.cohort_hash,
+                    intent_id=observation.intent_id,
+                    broker_order_id=observation.broker_order_id,
+                    symbol=observation.symbol,
+                    side=observation.side,
+                    decision_at=observation.decision_at,
+                    submitted_at=observation.submitted_at,
+                    first_fill_at=observation.first_fill_at,
+                    terminal_at=observation.terminal_at,
+                    requested_quantity=observation.requested_quantity,
+                    filled_quantity=observation.filled_quantity,
+                    predicted_total_cost_bps=observation.predicted_execution_cost_bps,
+                    realized_total_cost_bps=observation.realized_execution_cost_bps,
+                    predicted_latency_ms=observation.predicted_latency_ms,
+                    realized_latency_ms=observation.realized_latency_ms,
+                    missed_fill=observation.missed_fill,
+                    observed_at=observation.observed_at,
+                    observation=payload,
                     **self._common(),
                 )
             )

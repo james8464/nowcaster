@@ -14,6 +14,7 @@ from src.trading.types import (
     BrokerOrderRequest,
     BrokerOrderStatus,
     BrokerPosition,
+    ExecutionObservation,
     TradeUpdate,
     TradingEnvironment,
 )
@@ -78,6 +79,38 @@ def _event(*, fill_price: str = "190.40") -> TradeUpdate:
     )
 
 
+def _execution_observation(**updates) -> ExecutionObservation:
+    values = dict(
+        observation_id="f" * 64,
+        session_id="session-1",
+        cohort_hash="d" * 64,
+        intent_id="intent-1",
+        broker_order_id="broker-order-1",
+        symbol="AAPL",
+        side="buy",
+        decision_at=NOW,
+        submitted_at=NOW,
+        first_fill_at=NOW,
+        terminal_at=NOW,
+        requested_quantity=Decimal("1"),
+        filled_quantity=Decimal("0.5"),
+        reference_price=Decimal("190.35"),
+        predicted_fill_price=Decimal("190.39"),
+        realized_fill_price=Decimal("190.40"),
+        predicted_spread_bps=Decimal("1"),
+        realized_spread_bps=Decimal("1.2"),
+        predicted_slippage_bps=Decimal("1"),
+        realized_slippage_bps=Decimal("1.3"),
+        predicted_impact_bps=Decimal("0.1"),
+        realized_impact_bps=Decimal("0.2"),
+        predicted_latency_ms=Decimal("50"),
+        realized_latency_ms=Decimal("100"),
+        observed_at=NOW,
+    )
+    values.update(updates)
+    return ExecutionObservation(**values)
+
+
 def test_v4_database_migrates_to_v5_idempotently_without_altering_trading_tables(tmp_path) -> None:
     path = tmp_path / "v4.duckdb"
     database = Database.from_url(f"duckdb:///{path}")
@@ -89,8 +122,8 @@ def test_v4_database_migrates_to_v5_idempotently_without_altering_trading_tables
     database.initialize()
     database.initialize()
 
-    assert database.schema_version() == 9
-    assert database.scalar("SELECT count(*) FROM schema_versions WHERE version = 9") == 1
+    assert database.schema_version() == 10
+    assert database.scalar("SELECT count(*) FROM schema_versions WHERE version = 10") == 1
     assert {"strategy_runs", "broker_sessions", "broker_order_events", "readiness_receipts"} <= set(
         database.table_names()
     )
@@ -206,4 +239,42 @@ def test_trade_event_is_idempotent_but_conflicting_payload_fails(tmp_path) -> No
             session_id="session-1",
             account_suffix="1234",
             event=_event(fill_price="191.00"),
+        )
+
+
+def test_execution_observation_ledger_is_idempotent_and_conflicts_fail(tmp_path) -> None:
+    database = _database(tmp_path)
+    repository = TradingRepository(database, clock=lambda: NOW)
+    repository.start_session(
+        session_id="session-1",
+        environment=TradingEnvironment.PAPER,
+        account_suffix="1234",
+        code_hash="b" * 64,
+        config_hash="c" * 64,
+    )
+    repository.record_intent(
+        intent_id="intent-1",
+        session_id="session-1",
+        account_suffix="1234",
+        cohort_hash="d" * 64,
+        decision_hash="e" * 64,
+        provider="alpaca",
+        feed="iex",
+        interval="5m",
+        strategy_id="ema_adx_trend",
+        strategy_version="1.0.0",
+        decision_timestamp=NOW,
+        request=_request(),
+    )
+    repository.record_submission(
+        session_id="session-1", intent_id="intent-1", account_suffix="1234", order=_order()
+    )
+    observation = _execution_observation()
+
+    assert repository.record_execution_observation(observation) is True
+    assert repository.record_execution_observation(observation) is False
+    assert database.scalar("select count(*) from execution_observations") == 1
+    with pytest.raises(ValueError, match="conflicting execution observation"):
+        repository.record_execution_observation(
+            observation.model_copy(update={"realized_slippage_bps": Decimal("9")})
         )

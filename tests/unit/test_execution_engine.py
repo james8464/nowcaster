@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import pandas as pd
 import pytest
 
-from src.backtest.costs import CostAssumptions, calculate_carry_cost, calculate_transaction_cost
+from src.backtest.costs import (
+    CostAssumptions,
+    calculate_carry_cost,
+    calculate_transaction_cost,
+    execution_model_error,
+)
 from src.backtest.execution import DecisionProvenance, ExecutionAssumptions, OrderIntent, run_execution
+from src.trading.types import ExecutionObservation
 
 
 def _bars() -> pd.DataFrame:
@@ -61,6 +68,74 @@ def test_market_orders_wait_for_next_bar_and_round_price_and_quantity_adversely(
     assert fill.spread_cost == pytest.approx(0.206)
     assert fill.slippage_cost == pytest.approx(0.824)
     assert fill.total_cost == pytest.approx(2.27733)
+    assert fill.reference_price == 101
+    assert fill.quote_price == 101.02
+    assert fill.fill_fraction == pytest.approx(10.3 / 10.37)
+    assert fill.latency_ms == 0
+
+
+def test_market_impact_is_adverse_and_scales_with_participation() -> None:
+    order = OrderIntent(
+        order_id="impact",
+        strategy_id="trend",
+        symbol="XYZ",
+        decision_timestamp=pd.Timestamp("2026-08-21 10:02", tz="UTC"),
+        side="buy",
+        quantity=10,
+    )
+    assumptions = ExecutionAssumptions(
+        tick_size=0.0001,
+        participation_rate=1,
+        costs=CostAssumptions(market_impact_bps=20),
+    )
+
+    fill = run_execution(_bars(), [order], assumptions).fills[0]
+
+    assert fill.predicted_impact_bps == pytest.approx(20 * (10 / 12) ** 0.5)
+    assert fill.price > fill.quote_price
+    assert fill.impact_cost > 0
+
+
+def test_execution_model_error_uses_a_one_sided_confidence_bound_and_fails_closed() -> None:
+    now = datetime(2026, 8, 21, 10, tzinfo=UTC)
+    observations = tuple(
+        ExecutionObservation(
+            observation_id=f"{index:064x}",
+            session_id="paper-1",
+            cohort_hash="a" * 64,
+            intent_id=f"intent-{index}",
+            broker_order_id=f"order-{index}",
+            symbol="XYZ",
+            side="buy",
+            decision_at=now,
+            submitted_at=now,
+            first_fill_at=now + timedelta(milliseconds=100),
+            terminal_at=now + timedelta(milliseconds=100),
+            requested_quantity=Decimal("10"),
+            filled_quantity=Decimal("10"),
+            reference_price=Decimal("100"),
+            predicted_fill_price=Decimal("100.05"),
+            realized_fill_price=Decimal("100.06"),
+            predicted_spread_bps=Decimal("2"),
+            realized_spread_bps=Decimal("2"),
+            predicted_slippage_bps=Decimal("3"),
+            realized_slippage_bps=Decimal("4") + Decimal(index) / Decimal("10"),
+            predicted_impact_bps=Decimal("0"),
+            realized_impact_bps=Decimal("0"),
+            predicted_latency_ms=Decimal("50"),
+            realized_latency_ms=Decimal("100"),
+            observed_at=now + timedelta(milliseconds=100),
+        )
+        for index in range(30)
+    )
+
+    report = execution_model_error(observations)
+
+    assert report.status == "calibrated"
+    assert report.observation_count == 30
+    assert report.upper_relative_error >= report.mean_relative_error
+    assert report.conservative_cost_buffer_bps >= report.mean_underestimation_bps
+    assert execution_model_error(observations[:29]).status == "unavailable"
 
 
 def test_sell_uses_bid_and_downward_tick_rounding_and_maker_fee_is_explicit() -> None:

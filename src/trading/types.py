@@ -183,3 +183,82 @@ class TradeUpdate(TradingModel):
     @classmethod
     def normalize_symbol(cls, value: str) -> str:
         return value.strip().upper()
+
+
+class ExecutionObservation(TradingModel):
+    """Immutable paper/live comparison between the simulator and a broker fill."""
+
+    observation_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    session_id: str = Field(min_length=1, max_length=128)
+    cohort_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    intent_id: str = Field(min_length=1, max_length=128)
+    broker_order_id: str = Field(min_length=1, max_length=128)
+    symbol: str = Field(min_length=1, max_length=32)
+    side: Literal["buy", "sell"]
+    decision_at: datetime
+    submitted_at: datetime
+    first_fill_at: datetime | None
+    terminal_at: datetime
+    requested_quantity: Decimal = Field(gt=0)
+    filled_quantity: Decimal = Field(ge=0)
+    reference_price: Decimal = Field(gt=0)
+    predicted_fill_price: Decimal = Field(gt=0)
+    realized_fill_price: Decimal | None = Field(default=None, gt=0)
+    predicted_spread_bps: Decimal = Field(ge=0)
+    realized_spread_bps: Decimal = Field(ge=0)
+    predicted_slippage_bps: Decimal = Field(ge=0)
+    realized_slippage_bps: Decimal = Field(ge=0)
+    predicted_impact_bps: Decimal = Field(ge=0)
+    realized_impact_bps: Decimal = Field(ge=0)
+    predicted_latency_ms: Decimal = Field(ge=0)
+    realized_latency_ms: Decimal = Field(ge=0)
+    predicted_funding_bps: Decimal = Decimal(0)
+    realized_funding_bps: Decimal = Decimal(0)
+    predicted_borrow_bps: Decimal = Field(default=Decimal(0), ge=0)
+    realized_borrow_bps: Decimal = Field(default=Decimal(0), ge=0)
+    missed_fill: bool = False
+    observed_at: datetime
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_execution_symbol(cls, value: str) -> str:
+        return value.strip().upper()
+
+    @model_validator(mode="after")
+    def validate_execution_observation(self) -> ExecutionObservation:
+        if self.filled_quantity > self.requested_quantity:
+            raise ValueError("filled quantity cannot exceed requested quantity")
+        if not self.decision_at <= self.submitted_at <= self.terminal_at <= self.observed_at:
+            raise ValueError("execution observation timestamps must be causally ordered")
+        if self.first_fill_at is not None and not self.submitted_at <= self.first_fill_at <= self.terminal_at:
+            raise ValueError("first fill timestamp must fall within the broker order lifetime")
+        if self.missed_fill:
+            if self.filled_quantity != 0 or self.first_fill_at is not None or self.realized_fill_price is not None:
+                raise ValueError("missed fills cannot contain realized fill state")
+        elif self.filled_quantity <= 0 or self.first_fill_at is None or self.realized_fill_price is None:
+            raise ValueError("filled observations require quantity, price, and first-fill timestamp")
+        return self
+
+    @property
+    def fill_fraction(self) -> Decimal:
+        return self.filled_quantity / self.requested_quantity
+
+    @property
+    def predicted_execution_cost_bps(self) -> Decimal:
+        return (
+            self.predicted_spread_bps
+            + self.predicted_slippage_bps
+            + self.predicted_impact_bps
+            + self.predicted_funding_bps
+            + self.predicted_borrow_bps
+        )
+
+    @property
+    def realized_execution_cost_bps(self) -> Decimal:
+        return (
+            self.realized_spread_bps
+            + self.realized_slippage_bps
+            + self.realized_impact_bps
+            + self.realized_funding_bps
+            + self.realized_borrow_bps
+        )

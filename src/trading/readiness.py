@@ -84,7 +84,14 @@ class ReadinessEvaluator:
         trades = sum(item.closed_trades for item in ordered)
         cohort_matches = bool(ordered) and all(item.cohort_hash == cohort.cohort_hash for item in ordered)
         operational = cohort_matches and all(
-            item.status == "complete" and item.reconciliation_mismatches == 0 and item.health_breakers == 0
+            item.status == "complete"
+            and item.reconciliation_mismatches == 0
+            and item.health_breakers == 0
+            and item.execution_model_status == "calibrated"
+            and item.execution_observations >= item.closed_trades
+            and item.execution_effective_observations >= item.closed_trades
+            and item.execution_error_upper_ratio is not None
+            and item.execution_error_upper_ratio <= self.policy.maximum_slippage_model_error
             for item in ordered
         )
         stressed_total = sum((item.stressed_net_return or Decimal(0) for item in ordered), Decimal(0))
