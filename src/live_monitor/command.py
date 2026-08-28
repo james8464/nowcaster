@@ -31,6 +31,7 @@ from src.live_monitor.providers import (
     load_binance_repair_bars,
     load_binance_symbol_metadata,
 )
+from src.live_monitor.readiness import invalidate_readiness_for_drift
 from src.live_monitor.repository import LiveMonitorRepository
 from src.live_monitor.types import (
     BarIntervalValue,
@@ -41,7 +42,6 @@ from src.live_monitor.types import (
     ProviderHealthEvent,
 )
 from src.models.drift import DEFAULT_DRIFT_POLICY_HASH
-from src.trading.live_monitor_readiness import invalidate_readiness_for_drift
 
 
 class MonitorBootstrap(BaseModel):

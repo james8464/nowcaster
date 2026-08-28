@@ -385,9 +385,7 @@ class SealedCohortResolver:
         self._cohorts = {(item.provider, item.feed, item.symbol, item.interval): item for item in cohorts}
         self._asset_metadata = asset_metadata or {}
         self._drift_policy = drift_policy
-        self._drift_monitors = {
-            key: StreamingDriftMonitor(drift_policy) for key in self._cohorts
-        }
+        self._drift_monitors = {key: StreamingDriftMonitor(drift_policy) for key in self._cohorts}
 
     def __call__(self, bars: tuple[MarketBar, ...], quote: MarketQuote) -> EligibilityEvidence | None:
         intervals = {item.interval for item in bars}

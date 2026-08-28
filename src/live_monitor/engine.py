@@ -485,9 +485,7 @@ class LiveMonitorEngine:
                     {
                         "cohort_hash": self.readiness_cohort_hash,
                         "drift_status": evidence.drift_status,
-                        "drift_score": (
-                            str(evidence.drift_score) if evidence.drift_score is not None else None
-                        ),
+                        "drift_score": (str(evidence.drift_score) if evidence.drift_score is not None else None),
                         "confirmed_metrics": evidence.drift_confirmed_metrics,
                         "drift_policy_hash": evidence.drift_policy_hash,
                         "drift_evidence_hash": evidence.drift_evidence_hash,

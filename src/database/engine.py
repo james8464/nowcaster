@@ -55,16 +55,11 @@ class Database:
                 connection.execute(
                     text(f"UPDATE {table_name} SET global_trial_id = trial_id WHERE global_trial_id IS NULL")
                 )
-            readiness_columns = {
-                column["name"] for column in inspect(connection).get_columns("readiness_receipts")
-            }
+            readiness_columns = {column["name"] for column in inspect(connection).get_columns("readiness_receipts")}
             if "drift_policy_hash" not in readiness_columns:
                 connection.execute(text("ALTER TABLE readiness_receipts ADD COLUMN drift_policy_hash VARCHAR"))
             connection.execute(
-                text(
-                    "UPDATE readiness_receipts SET drift_policy_hash = :legacy_hash "
-                    "WHERE drift_policy_hash IS NULL"
-                ),
+                text("UPDATE readiness_receipts SET drift_policy_hash = :legacy_hash WHERE drift_policy_hash IS NULL"),
                 {"legacy_hash": "0" * 64},
             )
             promotion_columns = {
@@ -82,8 +77,7 @@ class Database:
                     connection.execute(text(f"ALTER TABLE deep_research_promotions ADD COLUMN {name} {sql_type}"))
             connection.execute(
                 text(
-                    "UPDATE deep_research_promotions SET challenger_hash = candidate_hash "
-                    "WHERE challenger_hash IS NULL"
+                    "UPDATE deep_research_promotions SET challenger_hash = candidate_hash WHERE challenger_hash IS NULL"
                 )
             )
             connection.execute(

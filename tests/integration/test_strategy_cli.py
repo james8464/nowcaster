@@ -226,7 +226,8 @@ def test_strategy_cli_is_nested_without_removing_legacy_earnings_commands() -> N
 def test_injected_lot_size_is_effective_and_matches_persisted_policy_hash(project_root, tmp_path) -> None:
     _configure_strategy(project_root)
     bars = tmp_path / "effective-lot-bars.csv"
-    _write_bars(bars, 80)
+    learning_bar_count = 800
+    _write_bars(bars, learning_bar_count)
     database_url = f"duckdb:///{tmp_path / 'effective-lot.duckdb'}"
     configured, database = _csv_pipeline(project_root, database_url, bars)
     assumptions = ExecutionAssumptions(lot_size=1_000_000)
@@ -241,7 +242,7 @@ def test_injected_lot_size_is_effective_and_matches_persisted_policy_hash(projec
     ).bind_settings(_settings(project_root, database_url))
     scope = _scope("rsi_reversal")
 
-    assert pipeline.ingest(_ingest_options(scope)).status == "completed"
+    assert pipeline.ingest(_ingest_options(scope, count=learning_bar_count)).status == "completed"
     assert pipeline.evaluate(EvaluationOptions(scope=scope)).status == "completed"
     metrics = database.frame("select metrics from strategy_runs where status = 'evaluated'").iloc[0]["metrics"]
 
@@ -254,12 +255,13 @@ def test_injected_lot_size_is_effective_and_matches_persisted_policy_hash(projec
 def test_default_pipeline_uses_and_records_default_lot_size_without_override(project_root, tmp_path) -> None:
     _configure_strategy(project_root)
     bars = tmp_path / "default-lot-bars.csv"
-    _write_bars(bars, 80)
+    learning_bar_count = 800
+    _write_bars(bars, learning_bar_count)
     database_url = f"duckdb:///{tmp_path / 'default-lot.duckdb'}"
     pipeline, _database = _csv_pipeline(project_root, database_url, bars)
     scope = _scope("rsi_reversal")
 
-    assert pipeline.ingest(_ingest_options(scope)).status == "completed"
+    assert pipeline.ingest(_ingest_options(scope, count=learning_bar_count)).status == "completed"
     experiment = _captured_learning_experiment(pipeline, scope)
 
     assert pipeline.execution_assumptions.lot_size == 1.0
@@ -1687,7 +1689,7 @@ def test_post_commit_exception_reconciles_complete_cohort_and_failure_handler_ca
 def test_strategy_learning_uses_observed_bounded_trial_ledger_and_jsonl_progress(project_root, tmp_path) -> None:
     _configure_strategy(project_root)
     bars = tmp_path / "bars.csv"
-    _write_bars(bars, 100)
+    _write_bars(bars, 800)
     database_url = f"duckdb:///{tmp_path / 'learn.duckdb'}"
     common = _base_arguments(project_root, database_url, bars)
     ingested = RUNNER.invoke(
@@ -1699,7 +1701,7 @@ def test_strategy_learning_uses_observed_bounded_trial_ledger_and_jsonl_progress
             "--start",
             "2026-08-20T00:00:00Z",
             "--end",
-            "2026-08-20T08:20:00Z",
+            "2026-08-22T18:40:00Z",
         ],
     )
     assert ingested.exit_code == 0, ingested.output
@@ -1719,7 +1721,7 @@ def test_strategy_learning_uses_observed_bounded_trial_ledger_and_jsonl_progress
 def test_post_hoc_learning_trials_are_not_admitted_to_the_historical_sealed_boundary(project_root, tmp_path) -> None:
     _configure_strategy(project_root)
     bars = tmp_path / "boundary-bars.csv"
-    _write_bars(bars, 100)
+    _write_bars(bars, 800)
     database_url = f"duckdb:///{tmp_path / 'boundary.duckdb'}"
     common = _base_arguments(project_root, database_url, bars)
     ingested = RUNNER.invoke(
@@ -1731,7 +1733,7 @@ def test_post_hoc_learning_trials_are_not_admitted_to_the_historical_sealed_boun
             "--start",
             "2026-08-20T00:00:00Z",
             "--end",
-            "2026-08-20T08:20:00Z",
+            "2026-08-22T18:40:00Z",
         ],
     )
     learned = RUNNER.invoke(
@@ -1759,7 +1761,7 @@ def test_post_hoc_learning_trials_are_not_admitted_to_the_historical_sealed_boun
     database = Database.from_url(database_url)
     trial_payloads = database.frame("select candidate from learning_trials order by evaluated_at")["candidate"]
     metrics = database.frame("select metrics from strategy_runs where status = 'evaluated'").iloc[0]["metrics"]
-    expected_boundary = "2026-08-20T06:40:00+00:00"
+    expected_boundary = "2026-08-22T05:20:00+00:00"
     snapshot = AppSnapshot.model_validate_json(output.read_text(encoding="utf-8"))
 
     assert ingested.exit_code == learned.exit_code == evaluated.exit_code == exported.exit_code == 0

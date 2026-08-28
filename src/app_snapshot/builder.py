@@ -50,9 +50,14 @@ from src.utils.provenance import git_commit
 
 
 def _finite(value: Any) -> float | None:
-    if value is None or pd.isna(value):
+    if value is None or not np.isscalar(value):
         return None
-    number = float(value)
+    try:
+        if pd.isna(value):
+            return None
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
     return number if math.isfinite(number) else None
 
 
@@ -466,9 +471,7 @@ def _crypto_signals(database: Database) -> list[ResearchSignalSnapshot]:
                 probability_lower_bound=_finite(explanation.get("probability_lower_bound")),
                 probability_upper_bound=_finite(explanation.get("probability_upper_bound")),
                 calibration_observations=_optional_int(explanation.get("calibration_observations")),
-                calibration_effective_observations=_finite(
-                    explanation.get("calibration_effective_observations")
-                ),
+                calibration_effective_observations=_finite(explanation.get("calibration_effective_observations")),
                 brier_score=_finite(explanation.get("brier_score")),
                 expected_calibration_error=_finite(explanation.get("expected_calibration_error")),
                 gross_edge=_finite(row.expected_return),

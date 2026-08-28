@@ -266,15 +266,11 @@ def test_execution_observation_ledger_is_idempotent_and_conflicts_fail(tmp_path)
         decision_timestamp=NOW,
         request=_request(),
     )
-    repository.record_submission(
-        session_id="session-1", intent_id="intent-1", account_suffix="1234", order=_order()
-    )
+    repository.record_submission(session_id="session-1", intent_id="intent-1", account_suffix="1234", order=_order())
     observation = _execution_observation()
 
     assert repository.record_execution_observation(observation) is True
     assert repository.record_execution_observation(observation) is False
     assert database.scalar("select count(*) from execution_observations") == 1
     with pytest.raises(ValueError, match="conflicting execution observation"):
-        repository.record_execution_observation(
-            observation.model_copy(update={"realized_slippage_bps": Decimal("9")})
-        )
+        repository.record_execution_observation(observation.model_copy(update={"realized_slippage_bps": Decimal("9")}))

@@ -1065,8 +1065,7 @@ def fit_strategy_oof_calibration(
             0.0,
             {
                 "reason": (
-                    "promotion-grade calibration requires at least "
-                    f"{minimum_observations} out-of-fold observations"
+                    f"promotion-grade calibration requires at least {minimum_observations} out-of-fold observations"
                 ),
                 "observations": len(joined),
             },
@@ -1084,10 +1083,7 @@ def fit_strategy_oof_calibration(
         minimum_observations=minimum_observations,
         isotonic_minimum=isotonic_minimum,
     )
-    if (
-        calibration.status != "calibrated"
-        or calibration.report.effective_sample_size < minimum_effective_observations
-    ):
+    if calibration.status != "calibrated" or calibration.report.effective_sample_size < minimum_effective_observations:
         return (
             "unavailable",
             0.5,

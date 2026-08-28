@@ -105,9 +105,7 @@ def test_deep_research_refuses_missing_authenticated_coverage(project_root, tmp_
 def test_deep_research_uses_complete_provider_snapshot_and_persists_every_trial(project_root, tmp_path) -> None:
     pipeline, database = _pipeline(project_root, tmp_path)
     start = datetime(2026, 8, 20, tzinfo=UTC)
-    ingested = pipeline.ingest(
-        IngestOptions(scope=_scope(), start=start, end=start + timedelta(minutes=5 * BAR_COUNT))
-    )
+    ingested = pipeline.ingest(IngestOptions(scope=_scope(), start=start, end=start + timedelta(minutes=5 * BAR_COUNT)))
     events = []
 
     outcome = pipeline.deep_research(

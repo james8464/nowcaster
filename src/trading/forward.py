@@ -161,9 +161,7 @@ class ForwardEvidenceBuilder:
             predicted = sum((item.predicted_execution_cost_bps for item in observations), Decimal(0)) / len(
                 observations
             )
-            realized = sum((item.realized_execution_cost_bps for item in observations), Decimal(0)) / len(
-                observations
-            )
+            realized = sum((item.realized_execution_cost_bps for item in observations), Decimal(0)) / len(observations)
             if modeled_slippage_bps is not None and modeled_slippage_bps != predicted:
                 raise ValueError("modeled execution cost conflicts with its observation ledger")
             if observed_slippage_bps is not None and observed_slippage_bps != realized:
@@ -200,9 +198,7 @@ class ForwardEvidenceBuilder:
                 str(report.upper_relative_error) if report.upper_relative_error is not None else None
             ),
             "execution_cost_buffer_bps": (
-                str(report.conservative_cost_buffer_bps)
-                if report.conservative_cost_buffer_bps is not None
-                else None
+                str(report.conservative_cost_buffer_bps) if report.conservative_cost_buffer_bps is not None else None
             ),
             "execution_model_status": report.status,
             "execution_error_limit_ratio": str(maximum_execution_error_ratio),

@@ -207,9 +207,7 @@ def test_live_evidence_recalculates_only_current_causal_component_signals() -> N
 
 
 def test_sealed_resolver_warms_then_attaches_stable_multimetric_drift_evidence() -> None:
-    resolver = SealedCohortResolver(
-        (cohort(),), asset_metadata={("alpaca", "AAPL"): (True, True)}
-    )
+    resolver = SealedCohortResolver((cohort(),), asset_metadata={("alpaca", "AAPL"): (True, True)})
 
     reports = [resolver(bars(), quote()) for _ in range(40)]
 

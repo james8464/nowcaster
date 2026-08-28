@@ -88,9 +88,7 @@ def test_signal_accuracy_evidence_is_optional_bounded_and_backward_compatible() 
             {**rich.model_dump(), "probability_lower_bound": 0.70, "probability_upper_bound": 0.73}
         )
     with pytest.raises(ValidationError, match="effective"):
-        ResearchSignalSnapshot.model_validate(
-            {**rich.model_dump(), "calibration_effective_observations": 421}
-        )
+        ResearchSignalSnapshot.model_validate({**rich.model_dump(), "calibration_effective_observations": 421})
 
 
 def _snapshot_model(name: str):
