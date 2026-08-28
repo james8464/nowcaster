@@ -16,6 +16,7 @@ from src.backtest.execution import ExecutionAssumptions
 from src.backtest.intraday import RiskLimits, run_intraday_backtest
 from src.backtest.metrics import calculate_backtest_metrics
 from src.database.engine import Database
+from src.deep_research.contracts import global_trial_identity
 from src.learning.grammar import RuleNode, semantic_dedupe
 from src.strategies.types import BarInterval, StrategyMode, canonical_hash
 from src.strategies.validation import WalkForwardFold
@@ -136,6 +137,7 @@ class LearningExperiment:
     timestamp_column: str = "decision_timestamp"
     availability_column: str = "available_at"
     outcome_availability_column: str = "outcome_available_at"
+    search_family: str = "interpretable_rule_grammar"
     database: Database | None = field(default=None, compare=False, repr=False)
     clock: Callable[[], datetime] = field(default=lambda: datetime.now(UTC), compare=False, repr=False)
 
@@ -161,10 +163,12 @@ class LearningExperiment:
             raise ValueError("evaluation budget must be positive")
         evaluator_version = self.evaluator_version.strip()
         evaluator_cost_contract = self.evaluator_cost_contract.strip()
-        if not evaluator_version or not evaluator_cost_contract:
-            raise ValueError("evaluator version and cost contract must not be empty")
+        search_family = self.search_family.strip().lower()
+        if not evaluator_version or not evaluator_cost_contract or not search_family:
+            raise ValueError("evaluator version, cost contract, and search family must not be empty")
         object.__setattr__(self, "evaluator_version", evaluator_version)
         object.__setattr__(self, "evaluator_cost_contract", evaluator_cost_contract)
+        object.__setattr__(self, "search_family", search_family)
         if not self.inner_folds:
             raise ValueError("learning requires chronological inner folds")
         names = tuple(sorted({name.strip() for name in self.indicators if name.strip()}))
@@ -222,6 +226,7 @@ class LearningTrial:
     fold_metrics: tuple[FoldMetrics, ...] = ()
     fitness: float | None = None
     error_summary: str | None = None
+    global_trial_id: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -604,7 +609,7 @@ def _execution_contract(experiment: LearningExperiment) -> dict[str, object]:
 
 
 _TRIAL_SOURCE = "interpretable_learning"
-_TRIAL_SOURCE_VERSION = "2"
+_TRIAL_SOURCE_VERSION = "3"
 
 
 def _timestamp_text(value: object) -> str:
@@ -635,11 +640,14 @@ def _trial_payload(
     development_digest: str,
 ) -> dict[str, object]:
     payload: dict[str, object] = {
-        "schema_version": 2,
+        "schema_version": 3,
         "experiment_hash": _experiment_hash(experiment),
+        "search_protocol_hash": _search_protocol_hash(experiment),
+        "search_family": experiment.search_family,
         "development_evidence_digest": development_digest,
         "ordinal": trial.ordinal,
         "trial_id": trial.trial_id,
+        "global_trial_id": trial.global_trial_id,
         "candidate_hash": trial.candidate.candidate_hash,
         "strategy_id": trial.candidate.strategy_id,
         "version": trial.candidate.version,
@@ -726,6 +734,65 @@ def _experiment_hash(experiment: LearningExperiment) -> str:
     )
 
 
+def _search_protocol_hash(experiment: LearningExperiment) -> str:
+    evaluator = experiment.evaluator
+    evaluator_identity = (
+        "default_cost_aware_evaluator"
+        if evaluator is None
+        else f"{getattr(evaluator, '__module__', '')}.{getattr(evaluator, '__qualname__', type(evaluator).__name__)}"
+    )
+    return canonical_hash(
+        {
+            "schema_version": 1,
+            "search_family": experiment.search_family,
+            "dataset_hash": experiment.dataset_hash,
+            "symbol": experiment.symbol,
+            "interval": experiment.interval.value,
+            "development_data_through": experiment.development_data_through,
+            "sealed_final_start": experiment.sealed_final_start,
+            "seed": experiment.seed,
+            "inner_folds": [
+                {"train_index": fold.train_index, "validation_index": fold.validation_index}
+                for fold in experiment.inner_folds
+            ],
+            "indicators": experiment.indicators,
+            "thresholds": experiment.thresholds,
+            "seed_rules": [rule.canonical for rule in experiment.seed_rules],
+            "grammar_bounds": {
+                "max_depth": experiment.max_depth,
+                "max_nodes": experiment.max_nodes,
+                "maximum_lag": experiment.maximum_lag,
+            },
+            "execution_contract": _execution_contract(experiment),
+            "columns": {
+                "return": experiment.return_column,
+                "timestamp": experiment.timestamp_column,
+                "availability": experiment.availability_column,
+                "outcome_availability": experiment.outcome_availability_column,
+            },
+            "penalties": {
+                "drawdown": experiment.penalties.drawdown,
+                "turnover": experiment.penalties.turnover,
+                "instability": experiment.penalties.instability,
+                "complexity": experiment.penalties.complexity,
+            },
+            "evaluator": evaluator_identity,
+            "evaluator_version": experiment.evaluator_version,
+            "evaluator_cost_contract": experiment.evaluator_cost_contract,
+        }
+    )
+
+
+def _learning_global_trial_id(experiment: LearningExperiment, candidate_hash: str, ordinal: int) -> str:
+    return global_trial_identity(
+        search_family=experiment.search_family,
+        dataset_hash=experiment.dataset_hash,
+        protocol_hash=_search_protocol_hash(experiment),
+        candidate_hash=candidate_hash,
+        attempt_ordinal=ordinal,
+    )
+
+
 def _persist_trial(
     experiment: LearningExperiment,
     trial: LearningTrial,
@@ -738,6 +805,7 @@ def _persist_trial(
         [
             {
                 "trial_id": trial.trial_id,
+                "global_trial_id": trial.global_trial_id,
                 "learning_run_id": experiment.learning_run_id,
                 "candidate_hash": trial.candidate.candidate_hash,
                 "dataset_hash": experiment.dataset_hash,
@@ -781,7 +849,7 @@ def _resume_trials(experiment: LearningExperiment, development_digest: str) -> l
     for row in persisted.to_dict(orient="records"):
         payload = _json_payload(row["candidate"])
         receipt = payload.pop("receipt_hash", None)
-        if payload.get("schema_version") != 2 or receipt != canonical_hash(payload):
+        if payload.get("schema_version") != 3 or receipt != canonical_hash(payload):
             raise ValueError("persisted trial immutable receipt is malformed")
         if payload.get("experiment_hash") != _experiment_hash(experiment):
             raise ValueError("persisted trial does not authenticate the complete search contract")
@@ -800,6 +868,7 @@ def _resume_trials(experiment: LearningExperiment, development_digest: str) -> l
         )
         mirrors = {
             "trial_id": str(row["trial_id"]),
+            "global_trial_id": str(row["global_trial_id"]),
             "learning_run_id": str(row["learning_run_id"]),
             "candidate_hash": str(row["candidate_hash"]),
             "dataset_hash": str(row["dataset_hash"]),
@@ -823,6 +892,7 @@ def _resume_trials(experiment: LearningExperiment, development_digest: str) -> l
             "mode": StrategyMode.WALK_FORWARD_LEARNING.value,
             "source": _TRIAL_SOURCE,
             "source_version": _TRIAL_SOURCE_VERSION,
+            "search_family": experiment.search_family,
         }
         if any(payload.get(name) != value for name, value in expected_context.items()):
             raise ValueError("persisted trial receipt context conflicts with the experiment")
@@ -868,6 +938,9 @@ def _resume_trials(experiment: LearningExperiment, development_digest: str) -> l
         )
         if payload.get("trial_id") != expected_trial_id:
             raise ValueError("persisted trial identity is malformed")
+        expected_global_trial_id = _learning_global_trial_id(experiment, candidate.candidate_hash, ordinal)
+        if payload.get("global_trial_id") != expected_global_trial_id:
+            raise ValueError("persisted global trial identity is malformed")
         status = str(payload["status"])
         if status not in {"succeeded", "failed", "invalid", "budget_stop"}:
             raise ValueError("persisted trial status is malformed")
@@ -922,6 +995,7 @@ def _resume_trials(experiment: LearningExperiment, development_digest: str) -> l
                 fold_metrics=metrics,
                 fitness=fitness,
                 error_summary=error_summary if isinstance(error_summary, str) else None,
+                global_trial_id=expected_global_trial_id,
             )
         )
     return trials
@@ -1009,6 +1083,7 @@ def discover_rules(experiment: LearningExperiment, development_bars: pd.DataFram
                 "ordinal": ordinal,
             }
         )
+        global_trial_id = _learning_global_trial_id(experiment, candidate.candidate_hash, ordinal)
         if rule is None:
             evaluated_at = experiment.event_time()
             received_at = experiment.event_time()
@@ -1020,6 +1095,7 @@ def discover_rules(experiment: LearningExperiment, development_bars: pd.DataFram
                 received_at,
                 "budget_stop",
                 error_summary="bounded semantic candidate space exhausted",
+                global_trial_id=global_trial_id,
             )
             trials.append(trial)
             _persist_trial(experiment, trial, development_digest)
@@ -1037,6 +1113,7 @@ def discover_rules(experiment: LearningExperiment, development_bars: pd.DataFram
                 received_at,
                 "invalid",
                 error_summary=f"{type(error).__name__}: {error}",
+                global_trial_id=global_trial_id,
             )
             trials.append(trial)
             _persist_trial(experiment, trial, development_digest)
@@ -1066,6 +1143,7 @@ def discover_rules(experiment: LearningExperiment, development_bars: pd.DataFram
                 received_at,
                 "failed",
                 error_summary=f"{type(error).__name__}: {error}",
+                global_trial_id=global_trial_id,
             )
             trials.append(trial)
             _persist_trial(experiment, trial, development_digest)
@@ -1081,6 +1159,7 @@ def discover_rules(experiment: LearningExperiment, development_bars: pd.DataFram
             "succeeded",
             tuple(fold_metrics),
             fitness,
+            global_trial_id=global_trial_id,
         )
         trials.append(trial)
         _persist_trial(experiment, trial, development_digest)
@@ -1102,6 +1181,25 @@ def discover_rules(experiment: LearningExperiment, development_bars: pd.DataFram
     return result
 
 
+def global_learning_trial_count(database: Database, *, dataset_hash: str, search_family: str) -> int:
+    """Count distinct semantic evaluations across learning-run restarts."""
+    family = search_family.strip().lower()
+    if not family:
+        raise ValueError("search_family must not be empty")
+    frame = database.frame(
+        "select global_trial_id, candidate from learning_trials where dataset_hash = :dataset_hash",
+        {"dataset_hash": dataset_hash},
+    )
+    if frame.empty:
+        return 0
+    identities: set[str] = set()
+    for row in frame.itertuples(index=False):
+        payload = _json_payload(row.candidate)
+        if str(payload.get("search_family", "")) == family:
+            identities.add(str(row.global_trial_id))
+    return len(identities)
+
+
 __all__ = [
     "FitnessPenalties",
     "FoldMetrics",
@@ -1111,4 +1209,5 @@ __all__ = [
     "RuleCandidate",
     "calculate_fitness",
     "discover_rules",
+    "global_learning_trial_count",
 ]

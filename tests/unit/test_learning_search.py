@@ -12,6 +12,7 @@ import pytest
 
 from src.backtest.costs import CostAssumptions
 from src.backtest.execution import ExecutionAssumptions
+from src.database.engine import Database
 from src.learning.grammar import RuleNode
 from src.learning.search import (
     FitnessPenalties,
@@ -20,6 +21,7 @@ from src.learning.search import (
     RuleCandidate,
     calculate_fitness,
     discover_rules,
+    global_learning_trial_count,
 )
 from src.strategies.types import BarInterval
 from src.strategies.validation import WalkForwardFold
@@ -587,3 +589,38 @@ def test_finalized_execution_close_must_precede_availability_and_decision(
 
     with pytest.raises(ValueError, match="execution.*available.*decision"):
         discover_rules(_experiment(evaluation_budget=1), malformed)
+
+
+def test_learning_global_trials_do_not_reset_with_a_new_run_id(tmp_path) -> None:
+    database = Database.from_url(f"duckdb:///{tmp_path / 'global-learning.duckdb'}")
+    database.initialize()
+    at = datetime(2026, 8, 24, 12, tzinfo=UTC)
+    first = discover_rules(
+        _experiment(
+            learning_run_id="first-run",
+            evaluation_budget=1,
+            database=database,
+            clock=lambda: at,
+        ),
+        _bars(),
+    )
+    second = discover_rules(
+        _experiment(
+            learning_run_id="second-run",
+            evaluation_budget=1,
+            database=database,
+            clock=lambda: at,
+        ),
+        _bars(),
+    )
+
+    assert first.trials[0].trial_id != second.trials[0].trial_id
+    assert first.trials[0].global_trial_id == second.trials[0].global_trial_id
+    assert (
+        global_learning_trial_count(
+            database,
+            dataset_hash="d" * 64,
+            search_family="interpretable_rule_grammar",
+        )
+        == 1
+    )

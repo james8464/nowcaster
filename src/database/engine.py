@@ -11,7 +11,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from src.database.schema import NATURAL_KEYS, TABLES, metadata, schema_versions
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 
 class Database:
@@ -48,6 +48,13 @@ class Database:
             connection.execute(
                 text("UPDATE market_bars SET vintage_fidelity = 'unknown_legacy' WHERE vintage_fidelity IS NULL")
             )
+            for table_name in ("learning_trials", "deep_research_trials"):
+                trial_columns = {column["name"] for column in inspect(connection).get_columns(table_name)}
+                if "global_trial_id" not in trial_columns:
+                    connection.execute(text(f"ALTER TABLE {table_name} ADD COLUMN global_trial_id VARCHAR"))
+                connection.execute(
+                    text(f"UPDATE {table_name} SET global_trial_id = trial_id WHERE global_trial_id IS NULL")
+                )
             applied = connection.execute(
                 select(schema_versions.c.version).where(schema_versions.c.version == SCHEMA_VERSION)
             ).scalar_one_or_none()

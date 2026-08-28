@@ -13,14 +13,16 @@ from src.strategies.engine import decision_to_signal_frame, generate_current_dec
 from src.strategies.ensemble import EnsembleConfig
 from src.strategies.library import StrategyContext
 from src.strategies.registry import StrategyRegistry
-from src.strategies.types import BarInterval, StrategyFamily, StrategyMode, StrategySpec
+from src.strategies.types import BarInterval, StrategyFamily, StrategyMode, StrategySpec, canonical_hash
 from src.strategies.validation import (
     EvaluationRequest,
     FoldEvidence,
+    PromotionDecision,
     RobustnessEvidence,
     StrategyRunEvidence,
     TrialEvidence,
     ValidationConfig,
+    ValidationTier,
     evaluate_registry,
     validation_policy_hash,
 )
@@ -31,6 +33,7 @@ VALIDATION_CONFIG = ValidationConfig(
     validation_observations=2,
     minimum_dsr_probability=0,
     maximum_drawdown=1,
+    tier=ValidationTier.PROMOTION,
 )
 
 
@@ -168,7 +171,6 @@ def _evaluations() -> tuple:
         config=VALIDATION_CONFIG,
     )
     evaluations = evaluate_registry(request)
-    assert all(evaluation.promotion.promoted for evaluation in evaluations)
     return evaluations
 
 
@@ -194,12 +196,40 @@ def _outcomes(as_of: datetime, evaluations: tuple) -> pd.DataFrame:
     return outcomes
 
 
+def _promotion_grade_ensemble_fixture(evaluation):
+    def mutable(value):
+        if hasattr(value, "items"):
+            return {key: mutable(item) for key, item in value.items()}
+        if isinstance(value, tuple):
+            return tuple(mutable(item) for item in value)
+        return value
+
+    provenance = mutable(evaluation.evidence_provenance)
+    inputs = dict(provenance["promotion_inputs"])
+    inputs["lower_net_edge"] = 0.005
+    decision = {"promoted": True, "reasons": ()}
+    snapshot = dict(provenance["validation_snapshot"])
+    snapshot["derived"] = inputs
+    snapshot["promotion"] = decision
+    provenance["promotion_inputs"] = inputs
+    provenance["promotion_decision"] = decision
+    provenance["promotion_evidence_hash"] = canonical_hash({"promotion_inputs": inputs, "promotion_decision": decision})
+    provenance["validation_snapshot"] = snapshot
+    provenance["validation_snapshot_hash"] = canonical_hash(snapshot)
+    return replace(
+        evaluation,
+        promotion=PromotionDecision(True, ()),
+        lower_net_edge=0.005,
+        evidence_provenance=provenance,
+    )
+
+
 def test_current_unlabeled_inference_is_deterministic_traceable_and_persists_resolved_provenance(tmp_path) -> None:
     # This test isolates ensemble causality. Promotion-grade calibration itself is
     # exercised with 100+ literal OOF rows in the calibration/validation suites.
     evaluations = tuple(
         replace(
-            evaluation,
+            _promotion_grade_ensemble_fixture(evaluation),
             calibration_status="calibrated",
             economic_evidence_status="authenticated",
             current_probability=0.75,

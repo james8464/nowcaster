@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -54,7 +55,7 @@ def test_schema_v5_initializes_idempotently_with_all_research_tables(tmp_path) -
     database, _ = _repository(tmp_path)
     database.initialize()
 
-    assert database.schema_version() == 6
+    assert database.schema_version() == 9
     assert {
         "deep_research_runs",
         "deep_research_trials",
@@ -114,3 +115,23 @@ def test_checkpoint_resume_requires_exact_protocol_identity(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="protocol identity"):
         repository.load_resume_state("run-1", _protocol(dataset_hash="9" * 64))
+
+
+def test_global_trial_identity_survives_run_restarts_and_counts_protocol_changes(tmp_path) -> None:
+    database, repository = _repository(tmp_path)
+    protocol = _protocol()
+    repository.create_run("run-1", protocol)
+    repository.create_run("run-2", protocol)
+    repository.append_attempt("run-1", _attempt(1))
+    repository.append_attempt("run-2", _attempt(1))
+
+    restarted = database.frame("select global_trial_id from deep_research_trials order by run_id")
+    assert restarted["global_trial_id"].nunique() == 1
+    assert repository.global_trial_count(protocol) == 1
+
+    changed = replace(protocol, code_hash="e" * 64)
+    repository.create_run("run-3", changed)
+    repository.append_attempt("run-3", _attempt(1))
+
+    assert repository.global_trial_count(protocol) == 2
+    assert repository.global_successful_fitness(protocol) == (1.0, 1.0)

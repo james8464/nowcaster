@@ -24,6 +24,7 @@ from src.strategies.validation import (
     RobustnessEvidence,
     StrategyEvaluation,
     ValidationConfig,
+    ValidationTier,
 )
 
 AS_OF = datetime(2026, 8, 22, 12, tzinfo=UTC)
@@ -31,6 +32,7 @@ TEST_VALIDATION_CONFIG = ValidationConfig(
     final_test_fraction=0.2,
     minimum_train_observations=4,
     validation_observations=2,
+    tier=ValidationTier.PROMOTION,
 )
 
 
@@ -153,8 +155,12 @@ def _evaluation(
         "fold_stability": 1.0,
         "cost_survives": True,
         "observations": 100,
+        "effective_observations": 100.0,
         "trades": 20,
         "dsr_probability": 0.9,
+        "bootstrap_probability": 0.9,
+        "lower_net_edge": 0.005,
+        "rolling_holdout_returns": (),
         "trial_sharpes": trial_sharpes,
         "causal_audit_passed": causal,
         "robustness_available": True,
@@ -194,6 +200,9 @@ def _evaluation(
         fold_stability=1.0,
         cost_survives=True,
         observations=100,
+        effective_observations=100.0,
+        bootstrap_probability=0.9,
+        lower_net_edge=0.005,
         trades=20,
         dsr_probability=0.9,
         trial_sharpes=trial_sharpes,
@@ -243,6 +252,7 @@ def _with_root_snapshot(evaluation: StrategyEvaluation) -> StrategyEvaluation:
     )
     provenance = dict(evaluation.evidence_provenance)
     validation_config = {
+        "tier": "promotion",
         "final_test_fraction": 0.2,
         "minimum_train_observations": 4,
         "validation_observations": 2,
@@ -257,9 +267,12 @@ def _with_root_snapshot(evaluation: StrategyEvaluation) -> StrategyEvaluation:
         "maximum_pbo_probability": 0.5,
         "minimum_parameter_neighbor_positive_fraction": 0.5,
         "minimum_parameter_neighbor_median_ratio": 0.5,
+        "minimum_effective_observations": 0,
+        "minimum_bootstrap_probability": 0.0,
+        "minimum_rolling_holdouts": 0,
     }
     snapshot = {
-        "schema_version": 2,
+        "schema_version": 3,
         "context": {
             "dataset_hash": evaluation.dataset_hash,
             "strategy_id": evaluation.strategy_id,

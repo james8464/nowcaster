@@ -13,7 +13,13 @@ import pandas as pd
 
 from src.backtest.intraday import IntradayBacktestResult
 from src.backtest.metrics import BacktestMetrics, calculate_backtest_metrics
-from src.backtest.robustness import deflated_sharpe_probability, doubled_cost_survival
+from src.backtest.robustness import (
+    deflated_sharpe_probability,
+    doubled_cost_survival,
+    effective_sample_size,
+    lower_mean_confidence_bound,
+    run_block_bootstrap,
+)
 from src.models.calibration import fit_out_of_fold_calibration, selective_threshold
 from src.strategies.registry import StrategyRegistry
 from src.strategies.types import BarInterval, StrategyFamily, StrategyMode, canonical_hash
@@ -23,6 +29,13 @@ class EvaluationStatus(StrEnum):
     EVALUATED = "evaluated"
     UNAVAILABLE = "unavailable"
     FAILED = "failed"
+
+
+class ValidationTier(StrEnum):
+    EXPLORATORY = "exploratory"
+    RESEARCH = "research"
+    PROMOTION = "promotion"
+    FORWARD = "forward"
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +54,10 @@ class ValidationConfig:
     maximum_pbo_probability: float = 0.5
     minimum_parameter_neighbor_positive_fraction: float = 0.5
     minimum_parameter_neighbor_median_ratio: float = 0.5
+    tier: ValidationTier = ValidationTier.EXPLORATORY
+    minimum_effective_observations: int = 0
+    minimum_bootstrap_probability: float = 0.0
+    minimum_rolling_holdouts: int = 0
 
     def __post_init__(self) -> None:
         if not 0 < self.final_test_fraction < 1:
@@ -49,7 +66,14 @@ class ValidationConfig:
             raise ValueError("training and validation observations must be positive")
         if any(value < timedelta(0) for value in (self.forecast_horizon, self.publication_delay, self.embargo)):
             raise ValueError("horizon, publication delay, and embargo cannot be negative")
-        if self.periods_per_year <= 0 or self.minimum_trades < 0 or self.minimum_development_observations <= 0:
+        object.__setattr__(self, "tier", ValidationTier(self.tier))
+        if (
+            self.periods_per_year <= 0
+            or self.minimum_trades < 0
+            or self.minimum_development_observations <= 0
+            or self.minimum_effective_observations < 0
+            or self.minimum_rolling_holdouts < 0
+        ):
             raise ValueError("period and evidence counts must be valid")
         probabilities = (
             self.maximum_drawdown,
@@ -57,6 +81,7 @@ class ValidationConfig:
             self.maximum_pbo_probability,
             self.minimum_parameter_neighbor_positive_fraction,
             self.minimum_parameter_neighbor_median_ratio,
+            self.minimum_bootstrap_probability,
         )
         if any(not 0 <= value <= 1 for value in probabilities):
             raise ValueError("promotion probability and drawdown thresholds must be in [0, 1]")
@@ -65,16 +90,64 @@ class ValidationConfig:
     def effective_embargo(self) -> timedelta:
         return max(self.embargo, self.forecast_horizon + self.publication_delay)
 
+    @classmethod
+    def for_tier(cls, tier: ValidationTier | str) -> ValidationConfig:
+        selected = ValidationTier(tier)
+        if selected is ValidationTier.EXPLORATORY:
+            return cls(tier=selected)
+        if selected is ValidationTier.RESEARCH:
+            return cls(
+                tier=selected,
+                minimum_train_observations=100,
+                validation_observations=25,
+                minimum_trades=100,
+                minimum_development_observations=300,
+                minimum_effective_observations=100,
+                minimum_dsr_probability=0.95,
+                minimum_bootstrap_probability=0.95,
+                maximum_pbo_probability=0.25,
+                minimum_parameter_neighbor_positive_fraction=0.70,
+                minimum_parameter_neighbor_median_ratio=0.70,
+                maximum_drawdown=0.20,
+                minimum_rolling_holdouts=3,
+            )
+        return cls(
+            tier=selected,
+            minimum_train_observations=500,
+            validation_observations=100,
+            minimum_trades=300,
+            minimum_development_observations=1_000,
+            minimum_effective_observations=300,
+            minimum_dsr_probability=0.99,
+            minimum_bootstrap_probability=0.99,
+            maximum_pbo_probability=0.10,
+            minimum_parameter_neighbor_positive_fraction=0.80,
+            minimum_parameter_neighbor_median_ratio=0.80,
+            maximum_drawdown=0.10,
+            minimum_rolling_holdouts=3,
+        )
 
-DEFAULT_VALIDATION_CONFIG = ValidationConfig()
+
+DEFAULT_VALIDATION_CONFIG = ValidationConfig.for_tier(ValidationTier.PROMOTION)
 
 
 def promotion_reasons(inputs: Mapping[str, Any], config: ValidationConfig) -> tuple[str, ...]:
     reasons: list[str] = []
+    if config.tier is ValidationTier.EXPLORATORY:
+        reasons.append("exploratory evidence cannot promote")
+    elif config.tier is ValidationTier.RESEARCH:
+        reasons.append("promotion validation tier required")
     if inputs["status"] != EvaluationStatus.EVALUATED.value:
         reasons.append("strategy evaluation did not complete")
     if int(inputs["observations"]) < config.minimum_development_observations:
         reasons.append("insufficient development observations")
+    effective = inputs.get("effective_observations")
+    if (
+        effective is None
+        or not math.isfinite(float(effective))
+        or float(effective) < config.minimum_effective_observations
+    ):
+        reasons.append("insufficient effective observations")
     if int(inputs["trades"]) < config.minimum_trades:
         reasons.append("insufficient development trades")
     development_sharpe = inputs["development_sharpe"]
@@ -97,6 +170,26 @@ def promotion_reasons(inputs: Mapping[str, Any], config: ValidationConfig) -> tu
         reasons.append("observed trial Sharpe vector is unavailable")
     elif not math.isfinite(float(dsr_probability)) or float(dsr_probability) < config.minimum_dsr_probability:
         reasons.append("Deflated Sharpe probability failed")
+    bootstrap_probability = inputs.get("bootstrap_probability")
+    if (
+        bootstrap_probability is None
+        or not math.isfinite(float(bootstrap_probability))
+        or float(bootstrap_probability) < config.minimum_bootstrap_probability
+    ):
+        reasons.append("bootstrap probability failed")
+    lower_net_edge = inputs.get("lower_net_edge")
+    if lower_net_edge is None or not math.isfinite(float(lower_net_edge)) or float(lower_net_edge) <= 0:
+        reasons.append("lower net-edge confidence bound is not positive")
+    if config.minimum_rolling_holdouts:
+        rolling_holdouts = inputs.get("rolling_holdout_returns")
+        if (
+            not isinstance(rolling_holdouts, (tuple, list))
+            or len(rolling_holdouts) < config.minimum_rolling_holdouts
+            or any(not math.isfinite(float(value)) for value in rolling_holdouts)
+        ):
+            reasons.append("insufficient rolling sealed holdouts")
+        elif min(float(value) for value in rolling_holdouts) <= 0:
+            reasons.append("rolling sealed holdout return is not uniformly positive")
     if inputs["causal_audit_passed"] is not True:
         reasons.append("causal audit failed")
     if inputs.get("robustness_available") is not True:
@@ -257,6 +350,10 @@ class StrategyEvaluation:
     fold_stability: float | None = None
     cost_survives: bool | None = None
     observations: int = 0
+    effective_observations: float = 0.0
+    bootstrap_probability: float | None = None
+    lower_net_edge: float | None = None
+    rolling_holdout_returns: tuple[float, ...] = ()
     trades: int = 0
     dsr_probability: float | None = None
     trial_sharpes: tuple[float, ...] = ()
@@ -485,6 +582,7 @@ def _fold_plan(folds: Sequence[OuterFold]) -> tuple[dict[str, Any], ...]:
 
 def _config_record(config: ValidationConfig) -> dict[str, Any]:
     return {
+        "tier": config.tier.value,
         "final_test_fraction": float(config.final_test_fraction),
         "minimum_train_observations": config.minimum_train_observations,
         "validation_observations": config.validation_observations,
@@ -499,6 +597,9 @@ def _config_record(config: ValidationConfig) -> dict[str, Any]:
         "maximum_pbo_probability": float(config.maximum_pbo_probability),
         "minimum_parameter_neighbor_positive_fraction": float(config.minimum_parameter_neighbor_positive_fraction),
         "minimum_parameter_neighbor_median_ratio": float(config.minimum_parameter_neighbor_median_ratio),
+        "minimum_effective_observations": config.minimum_effective_observations,
+        "minimum_bootstrap_probability": float(config.minimum_bootstrap_probability),
+        "minimum_rolling_holdouts": config.minimum_rolling_holdouts,
     }
 
 
@@ -670,6 +771,38 @@ def select_final_boundary(
         development_index=tuple(range(start)),
         final_index=tuple(range(start, len(timestamps))),
     )
+
+
+def make_rolling_sealed_boundaries(
+    chronology: Sequence[object] | pd.Series,
+    *,
+    minimum_development_observations: int,
+    holdout_observations: int,
+    step_observations: int | None = None,
+    maximum_holdouts: int | None = None,
+) -> tuple[FinalBoundary, ...]:
+    """Create deterministic expanding-development, non-overlapping sealed holdouts."""
+    timestamps = _timestamps(chronology, name="chronology")
+    step = holdout_observations if step_observations is None else step_observations
+    if minimum_development_observations < 1 or holdout_observations < 1 or step < holdout_observations:
+        raise ValueError("rolling holdout sizes must be positive and non-overlapping")
+    if maximum_holdouts is not None and maximum_holdouts < 1:
+        raise ValueError("maximum_holdouts must be positive")
+    boundaries: list[FinalBoundary] = []
+    start = minimum_development_observations
+    while start + holdout_observations <= len(timestamps):
+        stop = start + holdout_observations
+        boundaries.append(
+            FinalBoundary(
+                final_start=pd.Timestamp(timestamps.iloc[start]),
+                development_index=tuple(range(start)),
+                final_index=tuple(range(start, stop)),
+            )
+        )
+        start += step
+    if maximum_holdouts is not None:
+        boundaries = boundaries[-maximum_holdouts:]
+    return tuple(boundaries)
 
 
 def make_outer_folds(
@@ -1208,6 +1341,43 @@ def evaluate_registry(request: EvaluationRequest) -> tuple[StrategyEvaluation, .
         )
         final = _segment_metrics(mapped_backtest, final_mask, periods_per_year=request.config.periods_per_year)
         development_returns = pd.to_numeric(mapped_curve.loc[development_mask, "net_return"], errors="coerce").dropna()
+        effective_observations = (
+            effective_sample_size(development_returns.to_numpy(dtype=float)) if len(development_returns) else 0.0
+        )
+        lower_net_edge = (
+            lower_mean_confidence_bound(development_returns.to_numpy(dtype=float))
+            if len(development_returns) >= 2
+            else None
+        )
+        bootstrap_probability = (
+            run_block_bootstrap(
+                development_returns.to_numpy(dtype=float),
+                block_size=min(10, len(development_returns)),
+                samples=2_000,
+            ).probability_positive
+            if len(development_returns)
+            else None
+        )
+        rolling_holdout_returns: tuple[float, ...] = ()
+        if request.config.minimum_rolling_holdouts:
+            rolling_boundaries = make_rolling_sealed_boundaries(
+                chronology,
+                minimum_development_observations=request.config.minimum_train_observations,
+                holdout_observations=request.config.validation_observations,
+                maximum_holdouts=request.config.minimum_rolling_holdouts,
+            )
+            rolling_holdout_returns = tuple(
+                float(
+                    np.prod(
+                        1
+                        + pd.to_numeric(
+                            mapped_curve.iloc[list(item.final_index)]["net_return"], errors="coerce"
+                        ).to_numpy(dtype=float)
+                    )
+                    - 1
+                )
+                for item in rolling_boundaries
+            )
         downside = development_returns.loc[development_returns < 0]
         downside_risk = float(np.sqrt(np.mean(np.square(downside)))) if len(downside) else 0.0
         try:
@@ -1258,8 +1428,12 @@ def evaluate_registry(request: EvaluationRequest) -> tuple[StrategyEvaluation, .
             "fold_stability": stability,
             "cost_survives": cost_survives,
             "observations": len(development_returns),
+            "effective_observations": effective_observations,
             "trades": development.trades,
             "dsr_probability": dsr,
+            "bootstrap_probability": bootstrap_probability,
+            "lower_net_edge": lower_net_edge,
+            "rolling_holdout_returns": rolling_holdout_returns,
             "trial_sharpes": sealed_evidence.trial_sharpes,
             "causal_audit_passed": evidence.causal_audit_passed,
             "robustness_available": sealed_evidence.robustness is not None,
@@ -1308,7 +1482,7 @@ def evaluate_registry(request: EvaluationRequest) -> tuple[StrategyEvaluation, .
         promotion_evidence_through = max(promotion_timestamps)
         validation_config_record = _config_record(request.config)
         validation_snapshot = {
-            "schema_version": 2,
+            "schema_version": 3,
             "context": context_record,
             "chronology": chronology_record,
             "chronology_hash": canonical_hash(chronology_record),
@@ -1352,6 +1526,10 @@ def evaluate_registry(request: EvaluationRequest) -> tuple[StrategyEvaluation, .
                 fold_stability=stability,
                 cost_survives=cost_survives,
                 observations=len(development_returns),
+                effective_observations=effective_observations,
+                bootstrap_probability=bootstrap_probability,
+                lower_net_edge=lower_net_edge,
+                rolling_holdout_returns=rolling_holdout_returns,
                 trades=development.trades,
                 dsr_probability=dsr,
                 trial_sharpes=sealed_evidence.trial_sharpes,
@@ -1391,10 +1569,13 @@ __all__ = [
     "StrategyRunEvidence",
     "TrialEvidence",
     "ValidationConfig",
+    "ValidationTier",
     "WalkForwardFold",
     "evaluate_registry",
     "fit_strategy_oof_calibration",
     "make_outer_folds",
+    "make_rolling_sealed_boundaries",
+    "promotion_reasons",
     "run_frozen_protocol",
     "select_final_boundary",
     "validation_policy_hash",

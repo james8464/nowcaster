@@ -15,10 +15,21 @@ class ReliabilityThresholds:
     maximum_drawdown: float = 0.10
     maximum_profit_concentration: float = 0.50
     minimum_score_improvement: float = 0.01
+    minimum_effective_observations: int = 300
+    minimum_rolling_holdouts: int = 3
+    minimum_global_trials: int = 2
 
     def __post_init__(self) -> None:
-        if self.minimum_trades < 1:
-            raise ValueError("minimum_trades must be positive")
+        if (
+            min(
+                self.minimum_trades,
+                self.minimum_effective_observations,
+                self.minimum_rolling_holdouts,
+                self.minimum_global_trials,
+            )
+            < 1
+        ):
+            raise ValueError("reliability evidence counts must be positive")
         probability_values = (
             self.minimum_deflated_sharpe_probability,
             self.minimum_bootstrap_positive_probability,
@@ -52,6 +63,11 @@ class ReliabilityEvidence:
     execution_audit_passed: bool
     candidate_score: float
     incumbent_score: float
+    validation_tier: str = "unavailable"
+    effective_sample_size: float = math.nan
+    lower_net_edge: float = math.nan
+    rolling_holdout_returns: tuple[float, ...] = ()
+    global_trial_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +88,25 @@ def evaluate_research_promotion(
 ) -> ReliabilityDecision:
     thresholds = thresholds or ReliabilityThresholds()
     failures: list[str] = []
+
+    if evidence.validation_tier != "promotion":
+        failures.append("promotion validation tier is required")
+    if not _finite(evidence.effective_sample_size):
+        failures.append("effective observations are unavailable")
+    elif evidence.effective_sample_size < thresholds.minimum_effective_observations:
+        failures.append(f"minimum {thresholds.minimum_effective_observations} effective observations not met")
+    if not _finite(evidence.lower_net_edge):
+        failures.append("lower net-edge confidence bound is unavailable")
+    elif evidence.lower_net_edge <= 0:
+        failures.append("positive lower net-edge confidence bound not met")
+    if len(evidence.rolling_holdout_returns) < thresholds.minimum_rolling_holdouts or not all(
+        _finite(value) for value in evidence.rolling_holdout_returns
+    ):
+        failures.append(f"minimum {thresholds.minimum_rolling_holdouts} rolling sealed holdouts not met")
+    elif min(evidence.rolling_holdout_returns) <= 0:
+        failures.append("rolling sealed holdouts are not uniformly positive")
+    if evidence.global_trial_count < thresholds.minimum_global_trials:
+        failures.append("global trial ledger is incomplete")
 
     if evidence.trade_count < thresholds.minimum_trades:
         failures.append(f"minimum {thresholds.minimum_trades} closed trades not met")

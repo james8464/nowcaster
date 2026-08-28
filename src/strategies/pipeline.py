@@ -1809,7 +1809,7 @@ class StrategyPipeline:
         self, manifest: DatasetManifest, scope: StrategyScope, final_start: pd.Timestamp
     ) -> tuple[TrialEvidence, ...]:
         frame = self.database.frame(
-            "select trial_id, evaluated_at, candidate from learning_trials "
+            "select global_trial_id, evaluated_at, candidate from learning_trials "
             "where dataset_hash = :dataset_hash and symbol = :symbol and interval = :interval "
             "and status = 'succeeded' order by evaluated_at, trial_id",
             {
@@ -1818,7 +1818,7 @@ class StrategyPipeline:
                 "interval": scope.interval.value,
             },
         )
-        evidence: list[TrialEvidence] = []
+        evidence: dict[str, TrialEvidence] = {}
         for row in frame.itertuples(index=False):
             evaluated_at = _utc_datetime(row.evaluated_at)
             if evaluated_at >= final_start.to_pydatetime():
@@ -1832,15 +1832,18 @@ class StrategyPipeline:
             ]
             if not sharpes:
                 continue
-            evidence.append(
-                TrialEvidence(
-                    str(row.trial_id),
-                    float(np.median(sharpes)),
-                    evaluated_at,
-                    evaluated_at,
-                )
+            trial_id = str(row.global_trial_id)
+            current = TrialEvidence(
+                trial_id,
+                float(np.median(sharpes)),
+                evaluated_at,
+                evaluated_at,
             )
-        return tuple(evidence)
+            previous = evidence.get(trial_id)
+            if previous is not None and previous.sharpe != current.sharpe:
+                raise ValueError("duplicate global learning trial has conflicting fold evidence")
+            evidence[trial_id] = current
+        return tuple(evidence[key] for key in sorted(evidence))
 
     def _persist_evaluation_batch_if_current(
         self,
@@ -2539,6 +2542,7 @@ def _ensemble_config_record(config: EnsembleConfig) -> dict[str, Any]:
 
 def _validation_config_record(config: ValidationConfig) -> dict[str, Any]:
     return {
+        "tier": config.tier.value,
         "final_test_fraction": config.final_test_fraction,
         "minimum_train_observations": config.minimum_train_observations,
         "validation_observations": config.validation_observations,
@@ -2550,6 +2554,9 @@ def _validation_config_record(config: ValidationConfig) -> dict[str, Any]:
         "minimum_development_observations": config.minimum_development_observations,
         "maximum_drawdown": config.maximum_drawdown,
         "minimum_dsr_probability": config.minimum_dsr_probability,
+        "minimum_effective_observations": config.minimum_effective_observations,
+        "minimum_bootstrap_probability": config.minimum_bootstrap_probability,
+        "minimum_rolling_holdouts": config.minimum_rolling_holdouts,
     }
 
 
@@ -2594,6 +2601,10 @@ def _evaluation_metrics(evaluation: StrategyEvaluation) -> dict[str, Any]:
             "maximum_drawdown": _finite(evaluation.development_maximum_drawdown),
             "downside_risk": _finite(evaluation.downside_risk),
             "observations": evaluation.observations,
+            "effective_observations": evaluation.effective_observations,
+            "bootstrap_probability": _finite(evaluation.bootstrap_probability),
+            "lower_net_edge": _finite(evaluation.lower_net_edge),
+            "rolling_holdout_returns": list(evaluation.rolling_holdout_returns),
             "trades": evaluation.trades,
             "fold_stability": _finite(evaluation.fold_stability),
             "dsr_probability": _finite(evaluation.dsr_probability),

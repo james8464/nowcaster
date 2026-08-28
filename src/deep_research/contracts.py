@@ -35,6 +35,28 @@ def _hash(value: str, name: str) -> str:
     return normalized
 
 
+def global_trial_identity(
+    *,
+    search_family: str,
+    dataset_hash: str,
+    protocol_hash: str,
+    candidate_hash: str,
+    attempt_ordinal: int,
+) -> str:
+    """Identify one semantic evaluation globally, independent of a run/session id."""
+    if isinstance(attempt_ordinal, bool) or not isinstance(attempt_ordinal, int) or attempt_ordinal < 0:
+        raise ValueError("attempt ordinal must be a non-negative integer")
+    return canonical_hash(
+        {
+            "search_family": _identifier(search_family, "search_family", lowercase=True),
+            "dataset_hash": _hash(dataset_hash, "dataset_hash"),
+            "protocol_hash": _hash(protocol_hash, "protocol_hash"),
+            "candidate_hash": _hash(candidate_hash, "candidate_hash"),
+            "attempt_ordinal": attempt_ordinal,
+        }
+    )
+
+
 class RunState(StrEnum):
     RUNNING = "running"
     PAUSED = "paused"
@@ -70,6 +92,7 @@ class ResearchProtocol:
     created_at: datetime
     protocol_version: str = "deep-research-v1"
     cycle_budget: int = 100
+    search_family: str = "deep_strategy_search"
 
     def __post_init__(self) -> None:
         for name in ("dataset_hash", "code_hash", "search_space_hash", "cost_policy_hash"):
@@ -79,6 +102,7 @@ class ResearchProtocol:
         object.__setattr__(self, "feed", _identifier(self.feed, "feed", lowercase=True))
         object.__setattr__(self, "interval", _identifier(self.interval, "interval", lowercase=True))
         object.__setattr__(self, "protocol_version", _identifier(self.protocol_version, "protocol_version"))
+        object.__setattr__(self, "search_family", _identifier(self.search_family, "search_family", lowercase=True))
         _utc(self.final_test_start, "final_test_start")
         _utc(self.created_at, "created_at")
         if isinstance(self.seed, bool) or not isinstance(self.seed, int):
@@ -107,6 +131,7 @@ class ResearchProtocol:
                 "protocol_version": self.protocol_version,
                 "provider": self.provider,
                 "search_space_hash": self.search_space_hash,
+                "search_family": self.search_family,
                 "seed": self.seed,
                 "symbol": self.symbol,
             }
@@ -130,6 +155,7 @@ class ResearchProtocol:
             "final_test_start": self.final_test_start.isoformat().replace("+00:00", "Z"),
             "created_at": self.created_at.isoformat().replace("+00:00", "Z"),
             "protocol_version": self.protocol_version,
+            "search_family": self.search_family,
         }
 
 

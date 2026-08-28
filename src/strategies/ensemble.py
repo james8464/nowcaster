@@ -337,8 +337,12 @@ _PROMOTION_INPUT_FIELDS = {
     "fold_stability",
     "cost_survives",
     "observations",
+    "effective_observations",
     "trades",
     "dsr_probability",
+    "bootstrap_probability",
+    "lower_net_edge",
+    "rolling_holdout_returns",
     "trial_sharpes",
     "causal_audit_passed",
     "robustness_available",
@@ -361,7 +365,7 @@ def _root_validation_snapshot_is_auditable(
     if not isinstance(snapshot, Mapping) or set(snapshot) != _VALIDATION_SNAPSHOT_FIELDS:
         return False
     schema_version = snapshot["schema_version"]
-    if isinstance(schema_version, bool) or not isinstance(schema_version, int) or schema_version != 2:
+    if isinstance(schema_version, bool) or not isinstance(schema_version, int) or schema_version != 3:
         return False
     if provenance["validation_snapshot_hash"] != canonical_hash(snapshot):
         return False
@@ -400,6 +404,7 @@ def _root_validation_snapshot_is_auditable(
     config_record = snapshot["validation_config"]
     config = validation_config
     expected_config = {
+        "tier": config.tier.value,
         "final_test_fraction": config.final_test_fraction,
         "minimum_train_observations": config.minimum_train_observations,
         "validation_observations": config.validation_observations,
@@ -414,6 +419,9 @@ def _root_validation_snapshot_is_auditable(
         "maximum_pbo_probability": float(config.maximum_pbo_probability),
         "minimum_parameter_neighbor_positive_fraction": float(config.minimum_parameter_neighbor_positive_fraction),
         "minimum_parameter_neighbor_median_ratio": float(config.minimum_parameter_neighbor_median_ratio),
+        "minimum_effective_observations": config.minimum_effective_observations,
+        "minimum_bootstrap_probability": float(config.minimum_bootstrap_probability),
+        "minimum_rolling_holdouts": config.minimum_rolling_holdouts,
     }
     if canonical_hash(config_record) != canonical_hash(expected_config):
         return False
@@ -586,8 +594,12 @@ def _sealed_evidence_is_auditable(
             "fold_stability": evaluation.fold_stability,
             "cost_survives": evaluation.cost_survives,
             "observations": evaluation.observations,
+            "effective_observations": evaluation.effective_observations,
             "trades": evaluation.trades,
             "dsr_probability": evaluation.dsr_probability,
+            "bootstrap_probability": evaluation.bootstrap_probability,
+            "lower_net_edge": evaluation.lower_net_edge,
+            "rolling_holdout_returns": evaluation.rolling_holdout_returns,
             "trial_sharpes": evaluation.trial_sharpes,
             "causal_audit_passed": evaluation.causal_audit_passed,
             "robustness_available": evaluation.robustness is not None,

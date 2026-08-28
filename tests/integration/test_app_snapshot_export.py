@@ -156,6 +156,7 @@ def test_snapshot_v2_builds_strategy_ensemble_coverage_learning_and_causal_audit
         [
             {
                 "trial_id": "trial-2",
+                "global_trial_id": "2" * 64,
                 "learning_run_id": "learn-1",
                 "candidate_hash": "b" * 64,
                 "dataset_hash": dataset_hash,
@@ -179,6 +180,7 @@ def test_snapshot_v2_builds_strategy_ensemble_coverage_learning_and_causal_audit
             },
             {
                 "trial_id": "trial-1",
+                "global_trial_id": "1" * 64,
                 "learning_run_id": "learn-1",
                 "candidate_hash": "a" * 64,
                 "dataset_hash": dataset_hash,

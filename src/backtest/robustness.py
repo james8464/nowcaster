@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
-from scipy.stats import norm
+from scipy.stats import norm, t
 
 
 @dataclass(frozen=True)
@@ -58,6 +58,47 @@ class CostSurvivalResult:
     base_cumulative_return: float
     doubled_cost_cumulative_return: float
     survives: bool
+
+
+def effective_sample_size(returns: np.ndarray | Sequence[float], *, maximum_lag: int = 20) -> float:
+    """Estimate independent information after positive serial correlation."""
+    values = np.asarray(returns, dtype=float)
+    if values.ndim != 1 or not len(values) or np.any(~np.isfinite(values)):
+        raise ValueError("returns must be a non-empty finite vector")
+    if maximum_lag < 1:
+        raise ValueError("maximum_lag must be positive")
+    if len(values) == 1:
+        return 1.0
+    centered = values - values.mean()
+    denominator = float(np.dot(centered, centered))
+    if denominator <= np.finfo(float).eps:
+        return float(len(values))
+    correlation_sum = 0.0
+    for lag in range(1, min(maximum_lag, len(values) - 1) + 1):
+        correlation = float(np.dot(centered[:-lag], centered[lag:]) / denominator)
+        if not math.isfinite(correlation) or correlation <= 0:
+            break
+        correlation_sum += correlation
+    estimate = len(values) / (1.0 + 2.0 * correlation_sum)
+    return float(min(len(values), max(1.0, estimate)))
+
+
+def lower_mean_confidence_bound(
+    returns: np.ndarray | Sequence[float], *, confidence: float = 0.95, maximum_lag: int = 20
+) -> float:
+    """Return a one-sided Student-t lower bound using effective observations."""
+    values = np.asarray(returns, dtype=float)
+    if values.ndim != 1 or len(values) < 2 or np.any(~np.isfinite(values)):
+        raise ValueError("returns must contain at least two finite observations")
+    if not 0.5 < confidence < 1:
+        raise ValueError("confidence must be in (0.5, 1)")
+    effective = effective_sample_size(values, maximum_lag=maximum_lag)
+    deviation = float(values.std(ddof=1))
+    if deviation == 0:
+        return float(values.mean())
+    degrees_of_freedom = max(1.0, effective - 1.0)
+    critical = float(t.ppf(confidence, degrees_of_freedom))
+    return float(values.mean() - critical * deviation / math.sqrt(effective))
 
 
 def run_block_bootstrap(

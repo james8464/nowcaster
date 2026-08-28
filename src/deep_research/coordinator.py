@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import kurtosis, skew
 
+from src.backtest.robustness import effective_sample_size, lower_mean_confidence_bound
 from src.deep_research.contracts import (
     AttemptStatus,
     CandidateAttempt,
@@ -449,7 +450,7 @@ class DeepResearchCoordinator:
             "where run_id = :run_id and status = 'succeeded' and fitness is not null order by ordinal",
             {"run_id": self.run_id},
         )
-        trial_sharpes = [float(value) for value in trial_rows["fitness"].tolist()]
+        trial_sharpes = list(self.repository.global_successful_fitness(self.protocol))
         if len(trial_sharpes) >= 2 and len(net) >= 3:
             dsr = deflated_sharpe_probability(
                 statistics.median(fold.net_sharpe for fold in result.folds),
@@ -506,6 +507,11 @@ class DeepResearchCoordinator:
                 execution_audit_passed=True,
                 candidate_score=result.fitness,
                 incumbent_score=incumbent_score,
+                validation_tier="promotion",
+                effective_sample_size=effective_sample_size(net) if len(net) else math.nan,
+                lower_net_edge=lower_mean_confidence_bound(net) if len(net) >= 2 else math.nan,
+                rolling_holdout_returns=tuple(fold.net_return for fold in result.folds),
+                global_trial_count=self.repository.global_trial_count(self.protocol),
             )
         )
 

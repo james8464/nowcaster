@@ -17,6 +17,7 @@ from src.deep_research.contracts import (
     ResumeState,
     RunState,
     StressEvidence,
+    global_trial_identity,
 )
 from src.strategies.types import canonical_hash
 
@@ -84,13 +85,16 @@ class DeepResearchRepository:
             raise ValueError("attempt batch contains duplicate ordinals")
         table = TABLES["deep_research_trials"]
         with self.database.engine.begin() as connection:
-            if (
-                connection.execute(
-                    select(TABLES["deep_research_runs"].c.run_id).where(TABLES["deep_research_runs"].c.run_id == run_id)
-                ).scalar_one_or_none()
-                is None
-            ):
+            run_table = TABLES["deep_research_runs"]
+            run = connection.execute(
+                select(run_table.c.protocol_id, run_table.c.dataset_hash, run_table.c.protocol).where(
+                    run_table.c.run_id == run_id
+                )
+            ).first()
+            if run is None:
                 raise ValueError(f"unknown deep research run: {run_id}")
+            protocol_record = dict(run.protocol)
+            search_family = str(protocol_record.get("search_family", "deep_strategy_search"))
             existing = {
                 int(row[0]) for row in connection.execute(select(table.c.ordinal).where(table.c.run_id == run_id)).all()
             }
@@ -108,6 +112,13 @@ class DeepResearchRepository:
                 rows.append(
                     {
                         "trial_id": canonical_hash({"run_id": run_id, "ordinal": attempt.ordinal}),
+                        "global_trial_id": global_trial_identity(
+                            search_family=search_family,
+                            dataset_hash=str(run.dataset_hash),
+                            protocol_hash=str(run.protocol_id),
+                            candidate_hash=attempt.candidate_hash,
+                            attempt_ordinal=attempt.ordinal,
+                        ),
                         "run_id": run_id,
                         "ordinal": attempt.ordinal,
                         "persisted_sequence": sequence + offset,
@@ -124,6 +135,47 @@ class DeepResearchRepository:
                 )
             if rows:
                 connection.execute(insert(table), rows)
+
+    def global_trial_count(self, protocol: ResearchProtocol) -> int:
+        """Count distinct logical trials across restarts and protocol revisions."""
+        frame = self.database.frame(
+            "select t.global_trial_id, r.protocol from deep_research_trials t "
+            "join deep_research_runs r on r.run_id = t.run_id where r.dataset_hash = :dataset_hash",
+            {"dataset_hash": protocol.dataset_hash},
+        )
+        if frame.empty:
+            return 0
+        identities = {
+            str(row.global_trial_id)
+            for row in frame.itertuples(index=False)
+            if isinstance(row.protocol, dict)
+            and str(row.protocol.get("search_family", "deep_strategy_search")) == protocol.search_family
+        }
+        return len(identities)
+
+    def global_successful_fitness(self, protocol: ResearchProtocol) -> tuple[float, ...]:
+        """Return one authenticated fitness per global trial for multiplicity control."""
+        frame = self.database.frame(
+            "select t.global_trial_id, t.fitness, t.status, r.protocol from deep_research_trials t "
+            "join deep_research_runs r on r.run_id = t.run_id where r.dataset_hash = :dataset_hash",
+            {"dataset_hash": protocol.dataset_hash},
+        )
+        values: dict[str, float] = {}
+        for row in frame.itertuples(index=False):
+            if (
+                not isinstance(row.protocol, dict)
+                or str(row.protocol.get("search_family", "deep_strategy_search")) != protocol.search_family
+                or str(row.status) != "succeeded"
+                or row.fitness is None
+            ):
+                continue
+            identity = str(row.global_trial_id)
+            fitness = float(row.fitness)
+            previous = values.get(identity)
+            if previous is not None and previous != fitness:
+                raise ValueError("duplicate global trial has conflicting fitness evidence")
+            values[identity] = fitness
+        return tuple(values[identity] for identity in sorted(values))
 
     def append_fold_evidence(self, run_id: str, evidence: FoldEvidence) -> None:
         self.database.insert(

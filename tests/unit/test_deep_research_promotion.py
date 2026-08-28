@@ -28,6 +28,11 @@ def _evidence(**changes: object) -> ReliabilityEvidence:
         "execution_audit_passed": True,
         "candidate_score": 1.1,
         "incumbent_score": 1.0,
+        "validation_tier": "promotion",
+        "effective_sample_size": 325.0,
+        "lower_net_edge": 0.001,
+        "rolling_holdout_returns": (0.01, 0.02, 0.015),
+        "global_trial_count": 25,
     }
     values.update(changes)
     return ReliabilityEvidence(**values)  # type: ignore[arg-type]
@@ -57,6 +62,10 @@ def test_candidate_must_pass_every_default_gate_before_research_promotion() -> N
         ({"sealed_test_return": 0.0}, "positive sealed final-test return"),
         ({"causal_audit_passed": False}, "causal audit"),
         ({"candidate_score": 1.009}, "material improvement"),
+        ({"validation_tier": "research"}, "promotion validation tier"),
+        ({"effective_sample_size": 299}, "effective observations"),
+        ({"lower_net_edge": 0.0}, "lower net-edge"),
+        ({"rolling_holdout_returns": (0.01, 0.02)}, "rolling sealed holdouts"),
     ],
 )
 def test_each_hard_gate_fails_closed(change: dict[str, object], expected_gate: str) -> None:

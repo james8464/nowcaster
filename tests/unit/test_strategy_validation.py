@@ -18,10 +18,13 @@ from src.strategies.validation import (
     StrategyRunEvidence,
     TrialEvidence,
     ValidationConfig,
+    ValidationTier,
     calculate_fold_calibration_error,
     evaluate_registry,
     fit_strategy_oof_calibration,
     make_outer_folds,
+    make_rolling_sealed_boundaries,
+    promotion_reasons,
     run_frozen_protocol,
     select_final_boundary,
     validation_policy_hash,
@@ -55,6 +58,65 @@ def _registry(*strategy_ids: str) -> StrategyRegistry:
             lambda *_: pd.DataFrame(),
         )
     return registry
+
+
+def _passing_promotion_inputs() -> dict[str, object]:
+    return {
+        "status": EvaluationStatus.EVALUATED.value,
+        "observations": 1_000,
+        "effective_observations": 500.0,
+        "trades": 500,
+        "development_sharpe": 1.2,
+        "maximum_drawdown": 0.05,
+        "fold_stability": 1.0,
+        "cost_survives": True,
+        "dsr_probability": 0.999,
+        "bootstrap_probability": 0.999,
+        "lower_net_edge": 0.001,
+        "causal_audit_passed": True,
+        "robustness_available": True,
+        "median_walk_forward_net_edge": 0.001,
+        "pbo_probability": 0.05,
+        "parameter_neighborhood_stable": True,
+        "parameter_neighbor_positive_fraction": 0.9,
+        "parameter_neighbor_median_ratio": 0.9,
+    }
+
+
+def test_exploratory_tier_can_never_promote() -> None:
+    config = ValidationConfig.for_tier(ValidationTier.EXPLORATORY)
+
+    assert "exploratory evidence cannot promote" in promotion_reasons(_passing_promotion_inputs(), config)
+
+
+def test_promotion_tier_uses_literal_reliability_thresholds() -> None:
+    config = ValidationConfig.for_tier(ValidationTier.PROMOTION)
+
+    assert config.minimum_trades == 300
+    assert config.minimum_effective_observations == 300
+    assert config.minimum_dsr_probability == 0.99
+    assert config.minimum_bootstrap_probability == 0.99
+    assert config.maximum_pbo_probability == 0.10
+    assert config.minimum_parameter_neighbor_positive_fraction == 0.80
+    assert config.maximum_drawdown == 0.10
+
+
+def test_rolling_sealed_boundaries_are_disjoint_and_chronological() -> None:
+    chronology = pd.date_range("2024-01-01", periods=20, freq="D", tz="UTC")
+
+    boundaries = make_rolling_sealed_boundaries(
+        chronology,
+        minimum_development_observations=8,
+        holdout_observations=4,
+        step_observations=4,
+    )
+
+    assert [item.final_index for item in boundaries] == [
+        (8, 9, 10, 11),
+        (12, 13, 14, 15),
+        (16, 17, 18, 19),
+    ]
+    assert all(max(item.development_index) < min(item.final_index) for item in boundaries)
 
 
 def _backtest(final_returns: tuple[float, float] = (0.03, -0.01)) -> IntradayBacktestResult:
