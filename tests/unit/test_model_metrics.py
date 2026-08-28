@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from src.models.metrics import evaluate_forecasts
+from src.models.metrics import evaluate_forecasts, evaluate_probability_forecasts
 
 
 def test_metrics_are_hand_calculated_and_mape_excludes_zero_actuals():
@@ -29,3 +29,11 @@ def test_metrics_report_empty_sample_without_invented_values():
 
     assert metrics["n"] == 0
     assert pd.isna(metrics["mae"])
+
+
+def test_probability_metrics_expose_calibration_diagnostics() -> None:
+    metrics = evaluate_probability_forecasts([0.25, 0.75], [0, 1], slice_identity="crypto:5m")
+
+    assert metrics["sample_size"] == 2
+    assert metrics["brier_score"] == pytest.approx(0.0625)
+    assert metrics["slice_identity"] == "crypto:5m"

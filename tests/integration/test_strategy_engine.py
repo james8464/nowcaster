@@ -195,7 +195,20 @@ def _outcomes(as_of: datetime, evaluations: tuple) -> pd.DataFrame:
 
 
 def test_current_unlabeled_inference_is_deterministic_traceable_and_persists_resolved_provenance(tmp_path) -> None:
-    evaluations = _evaluations()
+    # This test isolates ensemble causality. Promotion-grade calibration itself is
+    # exercised with 100+ literal OOF rows in the calibration/validation suites.
+    evaluations = tuple(
+        replace(
+            evaluation,
+            calibration_status="calibrated",
+            economic_evidence_status="authenticated",
+            current_probability=0.75,
+            expected_edge=0.02,
+            expected_cost=0.001,
+            uncertainty=0.001,
+        )
+        for evaluation in _evaluations()
+    )
     as_of = evaluations[0].decision_timestamp
     assert as_of is not None
     outcomes = _outcomes(as_of, evaluations)

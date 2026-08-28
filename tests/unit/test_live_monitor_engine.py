@@ -23,6 +23,16 @@ def evidence(**updates) -> EligibilityEvidence:
         "economic_evidence_status": "authenticated",
         "direction": Direction.LONG,
         "probability": Decimal("0.68"),
+        "probability_lower_bound": Decimal("0.58"),
+        "probability_upper_bound": Decimal("0.76"),
+        "calibration_method": "oof_sigmoid_v2",
+        "calibration_observations": 100,
+        "calibration_effective_observations": Decimal("100"),
+        "brier_score": Decimal("0.19"),
+        "expected_calibration_error": Decimal("0.04"),
+        "selective_threshold": Decimal("0.60"),
+        "selective_coverage": Decimal("0.30"),
+        "probability_definition": "target_before_stop_after_costs",
         "vote_margin": Decimal("0.40"),
         "expected_net_edge": Decimal("0.002"),
         "breadth": 3,
@@ -99,6 +109,24 @@ def test_eligibility_abstains_for_each_fail_closed_boundary() -> None:
         ),
         (evidence(direction=Direction.SHORT, shortable=False), quote(), MonitorHealth.HEALTHY, "shortability_required"),
         (evidence(), quote(), MonitorHealth.RECONNECTING, "market_data_unhealthy"),
+        (
+            evidence(calibration_effective_observations=Decimal("99")),
+            quote(),
+            MonitorHealth.HEALTHY,
+            "minimum_effective_calibration_sample",
+        ),
+        (
+            evidence(probability_lower_bound=Decimal("0.54")),
+            quote(),
+            MonitorHealth.HEALTHY,
+            "probability_lower_bound",
+        ),
+        (
+            evidence(probability=Decimal("0.59")),
+            quote(),
+            MonitorHealth.HEALTHY,
+            "selective_threshold",
+        ),
     ]
     for item, market_quote, health, reason in cases:
         decision = evaluate_alert_eligibility(item, market_quote, health=health, now=NOW + timedelta(seconds=5))

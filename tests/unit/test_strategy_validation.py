@@ -20,6 +20,7 @@ from src.strategies.validation import (
     ValidationConfig,
     calculate_fold_calibration_error,
     evaluate_registry,
+    fit_strategy_oof_calibration,
     make_outer_folds,
     run_frozen_protocol,
     select_final_boundary,
@@ -296,7 +297,7 @@ def test_robustness_receipt_seals_exact_fold_context_and_rejects_post_hoc_or_tam
         assert "sealed final boundary" in rejected.status_reason
 
 
-def test_fold_fitted_decision_calibration_uses_only_development_outcomes() -> None:
+def test_small_fold_calibration_cannot_become_live_eligible() -> None:
     registry = _registry("calibrated")
     base = _backtest(final_returns=(0.8, -0.8))
     signals = _signals().copy()
@@ -314,13 +315,64 @@ def test_fold_fitted_decision_calibration_uses_only_development_outcomes() -> No
     )
     second = evaluate_registry(_evaluation_request(registry, {"calibrated": replace(evidence, backtest=changed)}))[0]
 
-    assert first.calibration_status == "calibrated"
-    assert first.current_probability == pytest.approx(0.25)
-    assert first.expected_edge == pytest.approx(0.04 / 6)
+    assert first.calibration_status == "unavailable"
+    assert first.current_probability == pytest.approx(0.5)
+    assert first.expected_edge == 0
+    assert "100" in first.evidence_provenance["decision_calibration"]["reason"]
     assert first.current_probability == second.current_probability
     assert first.expected_edge == second.expected_edge
     assert first.expected_cost == second.expected_cost
     assert first.uncertainty == second.uncertainty
+
+
+def test_strategy_oof_calibration_emits_promotion_grade_receipt() -> None:
+    decisions = pd.date_range("2026-01-01", periods=120, freq="min", tz="UTC")
+    favorable = pd.Series([index % 2 == 0 for index in range(120)])
+    signals = pd.DataFrame(
+        {
+            "decision_timestamp": decisions,
+            "signal": 1,
+            "strength": favorable.map({True: 0.8, False: 0.1}),
+        }
+    )
+    curve = pd.DataFrame(
+        {
+            "decision_timestamp": decisions,
+            "cost_decision_timestamp": decisions,
+            "outcome_available_at": decisions + pd.Timedelta(minutes=1),
+            "net_return": favorable.map({True: 0.005, False: -0.001}),
+            "gross_return": favorable.map({True: 0.006, False: 0.0}),
+            "cost_return": 0.001,
+        }
+    )
+    evidence = StrategyRunEvidence(
+        signals=signals,
+        fold_evidence=(
+            FoldEvidence(
+                0,
+                decisions[0].to_pydatetime(),
+                decisions[-1].to_pydatetime(),
+                (decisions[-1] + pd.Timedelta(minutes=1)).to_pydatetime(),
+                1.0,
+                0.1,
+            ),
+        ),
+    )
+
+    status, probability, edge, cost, uncertainty, receipt = fit_strategy_oof_calibration(
+        evidence,
+        curve,
+        pd.Series(True, index=curve.index),
+        current_signal=1,
+        current_strength=0.8,
+    )
+
+    assert status == "calibrated"
+    assert receipt["method"] == "oof_sigmoid_v2"
+    assert receipt["effective_observations"] == pytest.approx(120)
+    assert receipt["lower_expected_net_edge"] > 0
+    assert probability >= receipt["selective_threshold"]
+    assert edge - cost - uncertainty == pytest.approx(receipt["lower_expected_net_edge"])
 
 
 def test_fold_calibration_is_scored_at_mapped_outcome_rows() -> None:

@@ -71,12 +71,24 @@ def component(strategy_id: str, weight: str) -> SealedComponent:
         weight=Decimal(weight),
         promoted=True,
         causal_audit_passed=True,
-        calibration_method="development_only_beta_binomial_v1",
+        calibration_method="oof_sigmoid_v2",
         calibration_observations=100,
+        calibration_effective_observations=Decimal("100"),
         calibration_successes=67,
+        calibrated_probability=Decimal("0.68"),
+        probability_lower_bound=Decimal("0.58"),
+        probability_upper_bound=Decimal("0.76"),
+        brier_score=Decimal("0.19"),
+        log_loss=Decimal("0.58"),
+        expected_calibration_error=Decimal("0.04"),
+        calibration_slice_identity="AAPL:5m:global",
+        probability_definition="target_before_stop_after_costs",
+        selective_threshold=Decimal("0.60"),
+        selective_coverage=Decimal("0.30"),
         expected_edge=Decimal("0.006"),
         expected_cost=Decimal("0.001"),
         uncertainty=Decimal("0.001"),
+        lower_expected_net_edge=Decimal("0.004"),
         model_hash="a" * 64,
         robustness_evidence=robustness_evidence,
     )
@@ -193,8 +205,27 @@ def test_live_evidence_applies_sealed_models_to_current_short_direction() -> Non
     assert evidence.direction is Direction.SHORT
     assert evidence.calibration_status == "calibrated"
     assert evidence.economic_evidence_status == "authenticated"
-    assert evidence.probability == Decimal(68) / Decimal(102)
+    assert evidence.probability == Decimal("0.68")
+    assert evidence.probability_lower_bound == Decimal("0.58")
     assert evidence.expected_net_edge == Decimal("0.004")
+
+
+def test_live_evidence_rejects_small_effective_calibration_samples() -> None:
+    weak = component("macd_histogram_trend", "0.5").model_copy(
+        update={"calibration_effective_observations": Decimal("99")}
+    )
+    evidence = evaluate_sealed_cohort(cohort(components=(weak, component("ema_adx_trend", "0.5"))), bars(), quote())
+
+    assert evidence.calibration_status == "unavailable"
+    assert "minimum_effective_calibration_sample" in evidence.reasons
+
+
+def test_live_evidence_rejects_nonpositive_lower_net_edge() -> None:
+    weak = component("macd_histogram_trend", "0.5").model_copy(update={"lower_expected_net_edge": Decimal("-0.001")})
+    evidence = evaluate_sealed_cohort(cohort(components=(weak, component("ema_adx_trend", "0.5"))), bars(), quote())
+
+    assert evidence.economic_evidence_status == "unavailable"
+    assert "nonpositive_lower_net_edge" in evidence.reasons
 
 
 class FrameDatabase:
@@ -209,9 +240,21 @@ def test_loader_keeps_promoted_cohort_when_cutoff_posture_abstained() -> None:
     configured = (component("macd_histogram_trend", "0.6"), component("ema_adx_trend", "0.4"))
     members = [{"strategy_id": item.spec.strategy_id, "strategy_version": item.strategy_version} for item in configured]
     calibration = {
-        "method": "development_only_beta_binomial_v1",
+        "method": "oof_sigmoid_v2",
         "observations": 100,
+        "effective_observations": 100,
         "successes": 67,
+        "probability": 0.68,
+        "confidence_low": 0.58,
+        "confidence_high": 0.76,
+        "brier_score": 0.19,
+        "log_loss": 0.58,
+        "expected_calibration_error": 0.04,
+        "slice_identity": "AAPL:5m:global",
+        "probability_definition": "target_before_stop_after_costs",
+        "selective_threshold": 0.60,
+        "selective_coverage": 0.30,
+        "lower_expected_net_edge": 0.004,
         "outcomes_through": NOW.isoformat(),
         "decision_rows_hash": "b" * 64,
     }

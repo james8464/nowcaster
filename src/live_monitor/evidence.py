@@ -47,6 +47,7 @@ LIVE_ALERT_POLICY = {
     "equity_session": "XNYS_regular_only",
     "equity_shortability": "shortable_and_easy_to_borrow",
 }
+PROMOTION_GRADE_CALIBRATION_METHODS = frozenset({"oof_beta_v2", "oof_sigmoid_v2", "oof_isotonic_v2"})
 
 
 class ActiveReadinessGate(LiveMonitorModel):
@@ -80,12 +81,24 @@ class SealedComponent(LiveMonitorModel):
     weight: Decimal = Field(gt=0, le=1)
     promoted: bool
     causal_audit_passed: bool
-    calibration_method: Literal["development_only_beta_binomial_v1"]
-    calibration_observations: int = Field(ge=5)
+    calibration_method: Literal["oof_beta_v2", "oof_sigmoid_v2", "oof_isotonic_v2"]
+    calibration_observations: int = Field(ge=1)
+    calibration_effective_observations: Decimal = Field(gt=0)
     calibration_successes: int = Field(ge=0)
+    calibrated_probability: Decimal = Field(ge=0, le=1)
+    probability_lower_bound: Decimal = Field(ge=0, le=1)
+    probability_upper_bound: Decimal = Field(ge=0, le=1)
+    brier_score: Decimal = Field(ge=0, le=1)
+    log_loss: Decimal = Field(ge=0)
+    expected_calibration_error: Decimal = Field(ge=0, le=1)
+    calibration_slice_identity: str
+    probability_definition: Literal["target_before_stop_after_costs"]
+    selective_threshold: Decimal = Field(ge=0, le=1)
+    selective_coverage: Decimal = Field(gt=0, le=1)
     expected_edge: Decimal = Field(ge=0)
     expected_cost: Decimal = Field(ge=0)
     uncertainty: Decimal = Field(ge=0)
+    lower_expected_net_edge: Decimal
     model_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     robustness_evidence: dict[str, object]
 
@@ -95,6 +108,14 @@ class SealedComponent(LiveMonitorModel):
             raise ValueError("strategy version is required")
         if self.calibration_successes > self.calibration_observations:
             raise ValueError("calibration successes cannot exceed observations")
+        if self.calibration_effective_observations > self.calibration_observations:
+            raise ValueError("effective calibration observations cannot exceed observations")
+        if not self.probability_lower_bound <= self.calibrated_probability <= self.probability_upper_bound:
+            raise ValueError("calibrated probability must lie inside its confidence interval")
+        if not self.calibration_slice_identity.strip():
+            raise ValueError("calibration slice identity is required")
+        if self.lower_expected_net_edge > self.expected_edge - self.expected_cost:
+            raise ValueError("lower expected net edge cannot exceed mean edge after costs")
         receipt_payload = self.robustness_evidence.get("receipt_payload")
         receipt_hash = self.robustness_evidence.get("receipt_hash")
         evidence_hash = self.robustness_evidence.get("evidence_hash")
@@ -231,16 +252,15 @@ def evaluate_sealed_cohort(
     calibrated_mass = sum((item.weight for item in active), Decimal(0))
     probability = (
         sum(
-            (
-                item.weight * Decimal(item.calibration_successes + 1) / Decimal(item.calibration_observations + 2)
-                for item in active
-            ),
+            (item.weight * item.calibrated_probability for item in active),
             Decimal(0),
         )
         / calibrated_mass
         if calibrated_mass
         else Decimal("0.5")
     )
+    probability_lower_bound = min((item.probability_lower_bound for item in active), default=Decimal(0))
+    probability_upper_bound = max((item.probability_upper_bound for item in active), default=Decimal(1))
     gross_edge = (
         sum((item.weight * item.expected_edge for item in active), Decimal(0)) / calibrated_mass
         if calibrated_mass
@@ -258,10 +278,43 @@ def evaluate_sealed_cohort(
         if calibrated_mass
         else Decimal(0)
     )
-    expected_net_edge = gross_edge - estimated_cost - uncertainty
+    modeled_net_edge = gross_edge - estimated_cost - uncertainty
+    reported_lower_net_edge = (
+        sum((item.weight * item.lower_expected_net_edge for item in active), Decimal(0)) / calibrated_mass
+        if calibrated_mass
+        else Decimal(0)
+    )
+    expected_net_edge = min(modeled_net_edge, reported_lower_net_edge)
+    minimum_effective_observations = min(
+        (item.calibration_effective_observations for item in active), default=Decimal(0)
+    )
+    minimum_observations = min((item.calibration_observations for item in active), default=0)
+    brier_score = (
+        sum((item.weight * item.brier_score for item in active), Decimal(0)) / calibrated_mass
+        if calibrated_mass
+        else None
+    )
+    calibration_error = (
+        sum((item.weight * item.expected_calibration_error for item in active), Decimal(0)) / calibrated_mass
+        if calibrated_mass
+        else None
+    )
+    selective_threshold = max((item.selective_threshold for item in active), default=Decimal(1))
+    selective_coverage = min((item.selective_coverage for item in active), default=Decimal(0))
+    promotion_grade = bool(active) and all(
+        item.calibration_method in PROMOTION_GRADE_CALIBRATION_METHODS for item in active
+    )
+    if active and minimum_effective_observations < Decimal(100):
+        reasons.append("minimum_effective_calibration_sample")
+        promotion_grade = False
+    economic_components_valid = bool(active) and all(item.lower_expected_net_edge > 0 for item in active)
+    if active and (expected_net_edge <= 0 or not economic_components_valid):
+        reasons.append("nonpositive_lower_net_edge")
+    if active and probability < selective_threshold:
+        reasons.append("selective_threshold")
     unique_reasons = tuple(dict.fromkeys(reasons))
-    calibrated = bool(active) and len(active) == len(cohort.components)
-    authenticated = calibrated and expected_net_edge > 0
+    calibrated = promotion_grade and len(active) == len(cohort.components)
+    authenticated = calibrated and economic_components_valid and expected_net_edge > 0
     return EligibilityEvidence(
         cohort_id=cohort.cohort_id,
         dataset_hash=cohort.dataset_hash,
@@ -284,6 +337,26 @@ def evaluate_sealed_cohort(
         economic_evidence_status="authenticated" if authenticated else "unavailable",
         direction=live_direction,
         probability=probability,
+        probability_lower_bound=probability_lower_bound,
+        probability_upper_bound=probability_upper_bound,
+        calibration_method=(
+            active[0].calibration_method
+            if active and len({item.calibration_method for item in active}) == 1
+            else "ensemble_oof_v2"
+            if active
+            else "unavailable"
+        ),
+        calibration_observations=minimum_observations,
+        calibration_effective_observations=minimum_effective_observations,
+        brier_score=brier_score,
+        expected_calibration_error=calibration_error,
+        selective_threshold=selective_threshold,
+        selective_coverage=selective_coverage,
+        probability_definition=(
+            active[0].probability_definition
+            if active and len({item.probability_definition for item in active}) == 1
+            else "unavailable"
+        ),
         vote_margin=vote_margin,
         expected_net_edge=expected_net_edge if authenticated else Decimal(0),
         breadth=breadth,
@@ -624,7 +697,7 @@ def load_sealed_cohorts(database: Database, specs: Sequence[StrategySpec]) -> tu
                 live_model.get("calibration_status") != "calibrated"
                 or live_model.get("economic_evidence_status") != "authenticated"
                 or not isinstance(calibration, dict)
-                or calibration.get("method") != "development_only_beta_binomial_v1"
+                or calibration.get("method") not in PROMOTION_GRADE_CALIBRATION_METHODS
                 or calibration_hash != canonical_hash(calibration)
             ):
                 valid = False
@@ -639,10 +712,22 @@ def load_sealed_cohorts(database: Database, specs: Sequence[StrategySpec]) -> tu
                         causal_audit_passed=metrics.get("causal_audit_passed") is True,
                         calibration_method=calibration["method"],
                         calibration_observations=int(calibration["observations"]),
+                        calibration_effective_observations=Decimal(str(calibration["effective_observations"])),
                         calibration_successes=int(calibration["successes"]),
+                        calibrated_probability=Decimal(str(calibration["probability"])),
+                        probability_lower_bound=Decimal(str(calibration["confidence_low"])),
+                        probability_upper_bound=Decimal(str(calibration["confidence_high"])),
+                        brier_score=Decimal(str(calibration["brier_score"])),
+                        log_loss=Decimal(str(calibration["log_loss"])),
+                        expected_calibration_error=Decimal(str(calibration["expected_calibration_error"])),
+                        calibration_slice_identity=str(calibration["slice_identity"]),
+                        probability_definition=str(calibration["probability_definition"]),
+                        selective_threshold=Decimal(str(calibration["selective_threshold"])),
+                        selective_coverage=Decimal(str(calibration["selective_coverage"])),
                         expected_edge=Decimal(str(live_model["expected_edge"])),
                         expected_cost=Decimal(str(live_model["expected_cost"])),
                         uncertainty=Decimal(str(live_model["uncertainty"])),
+                        lower_expected_net_edge=Decimal(str(calibration["lower_expected_net_edge"])),
                         model_hash=canonical_hash(live_model),
                         robustness_evidence=robustness,
                     )

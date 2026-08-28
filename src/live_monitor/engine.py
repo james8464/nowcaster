@@ -67,6 +67,16 @@ class EligibilityEvidence(LiveMonitorModel):
     economic_evidence_status: str
     direction: Direction
     probability: Decimal = Field(ge=0, le=1)
+    probability_lower_bound: Decimal = Field(default=Decimal(0), ge=0, le=1)
+    probability_upper_bound: Decimal = Field(default=Decimal(1), ge=0, le=1)
+    calibration_method: str = "unavailable"
+    calibration_observations: int = Field(default=0, ge=0)
+    calibration_effective_observations: Decimal = Field(default=Decimal(0), ge=0)
+    brier_score: Decimal | None = Field(default=None, ge=0, le=1)
+    expected_calibration_error: Decimal | None = Field(default=None, ge=0, le=1)
+    selective_threshold: Decimal = Field(default=Decimal(1), ge=0, le=1)
+    selective_coverage: Decimal = Field(default=Decimal(0), ge=0, le=1)
+    probability_definition: str = "unavailable"
     vote_margin: Decimal = Field(ge=0, le=1)
     expected_net_edge: Decimal
     empirical_levels: EmpiricalLevelEvidence | None = None
@@ -75,6 +85,14 @@ class EligibilityEvidence(LiveMonitorModel):
     shortable: bool
     easy_to_borrow: bool
     reasons: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def calibration_bounds_are_coherent(self) -> EligibilityEvidence:
+        if not self.probability_lower_bound <= self.probability <= self.probability_upper_bound:
+            raise ValueError("probability must lie inside its calibration interval")
+        if self.calibration_effective_observations > self.calibration_observations:
+            raise ValueError("effective calibration observations cannot exceed raw observations")
+        return self
 
 
 class MonitorDecision(LiveMonitorModel):
@@ -102,6 +120,9 @@ def evaluate_alert_eligibility(
     minimum_probability: Decimal = Decimal("0.55"),
     minimum_vote_margin: Decimal = Decimal("0.20"),
     minimum_breadth: int = 2,
+    minimum_effective_calibration_observations: Decimal = Decimal("100"),
+    maximum_brier_score: Decimal = Decimal("0.25"),
+    maximum_calibration_error: Decimal = Decimal("0.10"),
 ) -> MonitorDecision:
     reasons = list(evidence.reasons)
     if evidence.mode not in {"frozen", "paper"}:
@@ -112,6 +133,21 @@ def evaluate_alert_eligibility(
         reasons.append("no_repaint_required")
     if evidence.calibration_status != "calibrated":
         reasons.append("calibration_required")
+    if evidence.calibration_method not in {
+        "oof_beta_v2",
+        "oof_sigmoid_v2",
+        "oof_isotonic_v2",
+        "ensemble_oof_v2",
+    }:
+        reasons.append("promotion_grade_calibration_required")
+    if evidence.calibration_effective_observations < minimum_effective_calibration_observations:
+        reasons.append("minimum_effective_calibration_sample")
+    if evidence.probability_definition != "target_before_stop_after_costs":
+        reasons.append("probability_definition_required")
+    if evidence.brier_score is None or evidence.brier_score > maximum_brier_score:
+        reasons.append("brier_quality")
+    if evidence.expected_calibration_error is None or evidence.expected_calibration_error > maximum_calibration_error:
+        reasons.append("calibration_error")
     if evidence.economic_evidence_status != "authenticated":
         reasons.append("economic_evidence_required")
     if (evidence.provider, evidence.feed, evidence.symbol) != (quote.provider, quote.feed, quote.symbol):
@@ -124,6 +160,10 @@ def evaluate_alert_eligibility(
         reasons.append("stale_quote")
     if evidence.probability < minimum_probability:
         reasons.append("probability_calibration")
+    if evidence.probability_lower_bound < minimum_probability:
+        reasons.append("probability_lower_bound")
+    if evidence.probability < evidence.selective_threshold or evidence.selective_coverage <= 0:
+        reasons.append("selective_threshold")
     if evidence.vote_margin < minimum_vote_margin:
         reasons.append("vote_margin")
     if evidence.breadth < minimum_breadth:

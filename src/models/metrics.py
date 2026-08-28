@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
+from dataclasses import asdict
 
 import numpy as np
 import pandas as pd
+
+from src.models.calibration import calibration_report
 
 
 def evaluate_forecasts(predictions: pd.DataFrame) -> dict[str, float | int]:
@@ -31,3 +35,10 @@ def evaluate_forecasts(predictions: pd.DataFrame) -> dict[str, float | int]:
         "mape": float((errors[valid_mape].abs() / actual[valid_mape].abs()).mean()) if valid_mape.any() else math.nan,
         "directional_accuracy": directional,
     }
+
+
+def evaluate_probability_forecasts(
+    probabilities: Sequence[float], outcomes: Sequence[int], *, slice_identity: str = "global"
+) -> dict[str, float | int | str]:
+    """Return literal probability-quality metrics without inventing missing evidence."""
+    return asdict(calibration_report(probabilities, outcomes, slice_identity=slice_identity))
