@@ -70,8 +70,8 @@
       "symbol": "BTCUSDT"
     }
   ],
-  "code_hash": "a71c3a5b3ef7dfb7de10a721523a3ae8c383d8a9f9aa862f7a7e451283b81575",
-  "config_hash": "8afd6301c0d057d1ee9ea9593eca077f1a4ba04c5564685ed56615df596767f3",
+  "code_hash": "5601efff668b872def24dec9579c6de8b3100d7e5dcb398413538605d49af07a",
+  "config_hash": "7f4a6fdcdea900fb578033c35dd8978be7f5cf96edc90063eeaab718c99e26ac",
   "cutoff": "2026-08-20T00:00:00Z",
   "data_quality": {
     "coverage_gap_count": 0,
@@ -112,10 +112,10 @@
       "minimum": 100.31495666503906
     }
   },
-  "dataset_hash": "a62830917a55b973413e43658ba45a1713a4db8df311e6fc48219755aaf585c3",
+  "dataset_hash": "74b4419166a532bddedd5cf31a206ef5b5832eb5a8bda8531432599bea158757",
   "datasets": [
     {
-      "dataset_hash": "977298a46f0f3db8229fab66a97ce3b1285bbafc00c45deb292c6dffd896c453",
+      "dataset_hash": "ea5f7b87b972ad9d25e584cdf967127a4a77acb3662041664fcedca0e45749e3",
       "end": "2026-08-20T00:00:00Z",
       "interval": "5m",
       "row_count": 110,
@@ -123,7 +123,7 @@
       "symbol": "BTCUSDT"
     },
     {
-      "dataset_hash": "019a74ccb3946b96546c4e123438ee0d976f830f1d8eeb4fbeef8f4134fb25c6",
+      "dataset_hash": "bfef130e10f913a761dd004c2f1d3a1db5b9f58b5feda2eb01c5d405b1b7065d",
       "end": "2026-08-20T00:00:00Z",
       "interval": "15m",
       "row_count": 110,
@@ -131,7 +131,7 @@
       "symbol": "BTCUSDT"
     },
     {
-      "dataset_hash": "d4d08ddb2910924d41096f636ab51c029c57025d6551db05970e8d5f7fed3f8c",
+      "dataset_hash": "2b17d34017b9eb5021f38cdfbbe4984c02778a03a94d1b27c28cb2b94a687068",
       "end": "2026-08-20T00:00:00Z",
       "interval": "1h",
       "row_count": 110,
@@ -148,9 +148,9 @@
   },
   "fixture_manifest_hash": "ef896c03b6aeda8852c84ecd3a997802a61610ad2e33c7a2c4d7ee0e5e618297",
   "learning_benchmark": {
-    "evaluated_candidates": 2,
-    "reason": "observed 2 trial ledger rows",
-    "status": "completed"
+    "evaluated_candidates": 0,
+    "reason": "insufficient finalized development history for nested learning validation",
+    "status": "unavailable"
   },
   "limitations": [
     "Deterministic demo bars test the pipeline; they are not live evidence.",
@@ -159,15 +159,15 @@
   ],
   "profile": "ci",
   "provider_mapping": {
-    "BTC-USD": "BTCUSDT",
-    "ETH-USD": "ETHUSDT"
+    "BTCUSDT": "BTCUSDT",
+    "ETHUSDT": "ETHUSDT"
   },
   "schema_version": 1,
-  "semantic_snapshot_hash": "d4ec57fddcbef3c754eb7e536d729cb206614f03ae60d724f7acdf2758be8985",
+  "semantic_snapshot_hash": "6032a7e5c4b6d9e98dae9ab7749b04b113479c8b951dcbd71d287b44c0c98e04",
   "snapshot_counts": {
     "causal_audits": 36,
-    "ensemble_components": 15,
-    "learning_runs": 1,
+    "ensemble_components": 36,
+    "learning_runs": 0,
     "strategies": 36
   },
   "source": "deterministic generated fixture; never substituted for live provider history",

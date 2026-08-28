@@ -237,7 +237,7 @@ private func strategyLabFixtureWithDuplicateContext() throws -> NowcasterSnapsho
 }
 
 @Test func learningProgressExplainsBudgetRuleBoundaryAndAudit() throws {
-    let run = try #require(try strategyLabFixture().learningRuns.first)
+    let run = try syntheticLearningRunFixture()
     let presentation = LearningRunPresentation(run: run)
 
     #expect(presentation.progressValue == run.progress)

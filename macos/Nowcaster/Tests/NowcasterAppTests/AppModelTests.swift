@@ -183,7 +183,7 @@ private final class ExportFailureRunner: EngineRunning, @unchecked Sendable {
     #expect(model.isRunningJob)
     #expect(model.activeJobProgress?.value == 0.4)
     #expect(model.activeJobProgress?.message == "Evaluated 8 bounded candidates")
-    let run = try #require(model.snapshot?.learningRuns.first)
+    let run = try syntheticLearningRunFixture()
     let live = LearningProgressPresentation(run: LearningRunPresentation(run: run), live: model.activeJobProgress)
     #expect(live.value == 0.4)
     #expect(live.title == "Evaluated 8 bounded candidates")
