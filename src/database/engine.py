@@ -11,7 +11,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from src.database.schema import NATURAL_KEYS, TABLES, metadata, schema_versions
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 class Database:
@@ -34,6 +34,9 @@ class Database:
                 "source_available_at": "TIMESTAMP WITH TIME ZONE",
                 "observed_at": "TIMESTAMP WITH TIME ZONE",
                 "vintage_fidelity": "VARCHAR",
+                "quote_volume": "DOUBLE",
+                "taker_buy_base_volume": "DOUBLE",
+                "taker_buy_quote_volume": "DOUBLE",
             }
             for name, sql_type in migrations.items():
                 if name not in columns:

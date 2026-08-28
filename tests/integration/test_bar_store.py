@@ -36,6 +36,9 @@ def _bar(
         volume=1_000.0,
         vwap=100.25,
         trade_count=25,
+        quote_volume=100_250.0,
+        taker_buy_base_volume=400.0,
+        taker_buy_quote_volume=40_100.0,
         payload_hash=payload_hash,
     )
 
@@ -76,6 +79,16 @@ def test_append_is_idempotent_and_as_of_selects_only_the_revision_available_then
         {"revision": 2, "close": 100.75, "payload_hash": "b" * 64}
     ]
     assert repository.database.scalar("SELECT count(*) FROM market_bars") == 2
+
+
+def test_append_round_trips_documented_order_flow_fields(repository) -> None:
+    repository.append([_bar(0, available_minute=6, close=100.5, payload_hash="a" * 64)])
+
+    stored = repository.bars_as_of(_query(), datetime(2026, 8, 22, 10, 7, tzinfo=UTC)).iloc[0]
+
+    assert stored.quote_volume == 100_250.0
+    assert stored.taker_buy_base_volume == 400.0
+    assert stored.taker_buy_quote_volume == 40_100.0
 
 
 def test_adapter_refetch_revision_is_not_visible_before_its_retrieval(repository) -> None:

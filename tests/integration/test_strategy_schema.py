@@ -77,7 +77,7 @@ def test_fresh_database_initialization_creates_timestamped_strategy_tables(tmp_p
     database.initialize()
 
     _assert_timestamped_strategy_schema(database)
-    assert database.schema_version() == 6
+    assert database.schema_version() == 7
 
 
 def test_legacy_database_migrates_idempotently_without_altering_daily_table(tmp_path):
@@ -90,8 +90,8 @@ def test_legacy_database_migrates_idempotently_without_altering_daily_table(tmp_
 
     _assert_timestamped_strategy_schema(database)
     assert "legacy_daily_prices" in database.table_names()
-    assert database.schema_version() == 6
-    assert database.scalar("SELECT count(*) FROM schema_versions WHERE version = 6") == 1
+    assert database.schema_version() == 7
+    assert database.scalar("SELECT count(*) FROM schema_versions WHERE version = 7") == 1
 
 
 def test_v2_market_bar_table_migrates_observation_provenance_idempotently(tmp_path) -> None:
@@ -107,8 +107,15 @@ def test_v2_market_bar_table_migrates_observation_provenance_idempotently(tmp_pa
     database.initialize()
 
     columns = {column["name"] for column in inspect(database.engine).get_columns("market_bars")}
-    assert {"source_available_at", "observed_at", "vintage_fidelity"} <= columns
-    assert database.schema_version() == 6
+    assert {
+        "source_available_at",
+        "observed_at",
+        "vintage_fidelity",
+        "quote_volume",
+        "taker_buy_base_volume",
+        "taker_buy_quote_volume",
+    } <= columns
+    assert database.schema_version() == 7
 
 
 def test_ensemble_weights_reject_negative_database_weights(tmp_path):

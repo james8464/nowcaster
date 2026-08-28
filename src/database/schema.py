@@ -477,6 +477,9 @@ market_bars = Table(
     Column("volume", Float, nullable=False),
     Column("vwap", Float),
     Column("trade_count", Integer),
+    Column("quote_volume", Float),
+    Column("taker_buy_base_volume", Float),
+    Column("taker_buy_quote_volume", Float),
     Column("payload_hash", String, nullable=False),
     *common_columns(),
     UniqueConstraint(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from sqlalchemy import inspect
 from sqlalchemy.exc import IntegrityError
 
 from src.database.engine import Database
@@ -28,6 +29,9 @@ def test_database_initialization_creates_required_tables(tmp_path):
 
     names = set(database.table_names())
     assert {"companies", "financials_quarterly", "features_quarterly", "forecasts", "backtest_results"} <= names
+    bar_columns = {column["name"] for column in inspect(database.engine).get_columns("market_bars")}
+    assert {"quote_volume", "taker_buy_base_volume", "taker_buy_quote_volume"} <= bar_columns
+    assert database.schema_version() == 7
 
 
 def test_upsert_is_idempotent_for_natural_key(tmp_path):

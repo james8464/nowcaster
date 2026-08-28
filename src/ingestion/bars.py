@@ -125,6 +125,9 @@ class MarketBar(BaseModel):
     volume: float = Field(ge=0)
     vwap: float | None = None
     trade_count: int | None = Field(default=None, ge=0)
+    quote_volume: float | None = Field(default=None, ge=0)
+    taker_buy_base_volume: float | None = Field(default=None, ge=0)
+    taker_buy_quote_volume: float | None = Field(default=None, ge=0)
     payload_hash: str = Field(min_length=64, max_length=64)
 
     @field_validator("provider", "feed")

@@ -115,6 +115,9 @@ class BinanceBarProvider:
                         volume=float(raw[5]),
                         vwap=None,
                         trade_count=int(raw[8]),
+                        quote_volume=float(raw[7]),
+                        taker_buy_base_volume=float(raw[9]),
+                        taker_buy_quote_volume=float(raw[10]),
                         payload_hash=canonical_hash(raw),
                     )
                 )

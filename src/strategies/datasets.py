@@ -206,6 +206,9 @@ class BarRepository:
                 "source_available_at": self._iso(row.source_available_at),
                 "observed_at": self._iso(row.observed_at),
                 "vintage_fidelity": row.vintage_fidelity,
+                "quote_volume": row.quote_volume,
+                "taker_buy_base_volume": row.taker_buy_base_volume,
+                "taker_buy_quote_volume": row.taker_buy_quote_volume,
                 "payload_hash": row.payload_hash,
             }
             for row in frame.itertuples(index=False)
@@ -308,6 +311,9 @@ class BarRepository:
             "volume": bar.volume,
             "vwap": bar.vwap,
             "trade_count": bar.trade_count,
+            "quote_volume": bar.quote_volume,
+            "taker_buy_base_volume": bar.taker_buy_base_volume,
+            "taker_buy_quote_volume": bar.taker_buy_quote_volume,
             "payload_hash": bar.payload_hash,
             "source": bar.provider,
             "source_version": bar.payload_hash,

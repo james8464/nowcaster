@@ -50,6 +50,9 @@ def test_binance_normalizes_utc_rejects_open_bar_and_hashes_complete_payload():
     assert bar.close_timestamp == datetime(2026, 8, 22, 10, 5, tzinfo=UTC)
     assert bar.available_at == datetime(2026, 8, 22, 10, 7, tzinfo=UTC)
     assert bar.trade_count == 321
+    assert bar.quote_volume == 800_500.125
+    assert bar.taker_buy_base_volume == 6.1
+    assert bar.taker_buy_quote_volume == 390_210.5
     assert bar.payload_hash == "5ecaf0e14ec23613558771976a2b3832bb3b16cd7afb7ed807334f27ec0371ec"
 
 
