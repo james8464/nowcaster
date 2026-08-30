@@ -159,6 +159,11 @@ class AssetEligibilityEvidence:
     input_hash: str
     as_of: datetime
     data_through: datetime
+    provider: str
+    feed: str
+    venue: str
+    product: str
+    asset_class: str
     profile: AssetProfileName
     symbol: str
     interval: BarInterval
@@ -322,6 +327,11 @@ def evaluate_asset_eligibility(
         input_hash=inputs.input_hash,
         as_of=inputs.as_of,
         data_through=inputs.data_through,
+        provider=inputs.provider,
+        feed=inputs.feed,
+        venue=inputs.venue,
+        product=inputs.product,
+        asset_class=inputs.asset_class,
         profile=inputs.profile,
         symbol=inputs.symbol,
         interval=inputs.interval,

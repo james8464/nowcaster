@@ -11,7 +11,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from src.database.schema import NATURAL_KEYS, TABLES, metadata, schema_versions
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 
 class Database:
