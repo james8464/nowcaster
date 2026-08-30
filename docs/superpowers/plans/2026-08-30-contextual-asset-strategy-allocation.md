@@ -1021,7 +1021,7 @@ git grep -n -I -E '(API_KEY|SECRET_KEY|BEGIN (RSA|OPENSSH|EC) PRIVATE KEY)' -- '
 
 Expected: only intended files, no whitespace errors, and no credentials.
 
-- [ ] **Step 10: Commit documentation and final wiring**
+- [x] **Step 10: Commit documentation and final wiring**
 
 ```bash
 git add README.md docs tests/integration/test_contextual_service.py tests/integration/test_full_strategy_research.py

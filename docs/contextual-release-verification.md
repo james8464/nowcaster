@@ -15,9 +15,9 @@ Final review tightened historical cohort authentication, timestamp integrity, sh
 | Complete Python regression suite | 948 tests passed in 12 minutes 28 seconds |
 | Focused contextual suite | 81 tests passed |
 | Python formatting, static checks and whitespace | Passed; 316 Python files checked |
-| Native tests | 83 Swift Testing cases and 1 XCTest passed |
+| Native tests | 84 Swift Testing cases and 1 XCTest passed |
 | Native release build | Passed |
-| Deterministic research generation | Passed |
+| Deterministic research generation | Passed; post-commit regeneration produced no fixture differences |
 | Python/native research fixture parity | Passed |
 | Live-monitor safety target | 110 Python tests, 12 native tests and recorded replay passed |
 | Packaged notification engine | Live Bitcoin/Ether quotes, clean shutdown and recorded replay passed |
@@ -42,6 +42,10 @@ The full packaged-engine check then caught a persistence defect: real exchange u
 Failure injection also exposed blocked stdin shutdown and unobserved control-task failures. Private controls now use bounded cancellable pipe reads; bootstrap reading cannot swallow an early shutdown command. Internal failures emit a sanitized terminal event and exit nonzero even with stdin still open. Shutdown discards an already-queued market event and closes the producer before disposing the database. Native supervision allows a bounded three-minute cold start while retaining its 45-second health timeout after readiness. The complete suite is rerun after these changes; interrupted earlier runs are not counted as passes.
 
 The final packaged app helper received fresh `BTCUSDT` and `ETHUSDT` quotes on 31 August 2026 local time, with approximately 135 ms from provider timestamp to receipt in this short observation. It reported zero qualified cohorts, issued no entry notification, accepted shutdown and exited successfully without diagnostics. This is a bounded connectivity smoke test, not a latency guarantee or a forward-trading trial. A low-battery hibernation interrupted an earlier test run; the affected startup test and the entire live-monitor target passed after wake-up.
+
+## Native toolchain compatibility
+
+The [previous GitHub native build](https://github.com/james8464/nowcaster/actions/runs/33208597850) exposed an Xcode 16.2 concurrency error in notification settings. Notification authorization now projects a Boolean inside Apple's callback instead of passing the older SDK's non-sendable settings object across actors. The allowed authorization states are unchanged, and no concurrency warning is suppressed. The added authorization regression and the complete native suite pass locally; the repository's CI remains the check against its pinned older toolchain.
 
 ## Remaining external limitations
 

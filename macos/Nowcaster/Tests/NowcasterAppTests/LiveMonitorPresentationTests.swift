@@ -1,7 +1,15 @@
 import Foundation
 import Testing
+import UserNotifications
 
 @testable import NowcasterApp
+
+@Test func liveNotificationAuthorizationProjectsOnlyAnAllowedBoolean() {
+    #expect(NotificationAuthorizationPolicy.permitsDelivery(.authorized))
+    #expect(NotificationAuthorizationPolicy.permitsDelivery(.provisional))
+    #expect(!NotificationAuthorizationPolicy.permitsDelivery(.denied))
+    #expect(!NotificationAuthorizationPolicy.permitsDelivery(.notDetermined))
+}
 
 @Test func liveMonitorColdStartGraceDoesNotRelaxReadyHeartbeatSupervision() {
     let lastEvent = Date(timeIntervalSince1970: 1_000)

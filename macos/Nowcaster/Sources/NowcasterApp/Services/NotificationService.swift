@@ -2,6 +2,12 @@ import AppKit
 import Foundation
 import UserNotifications
 
+enum NotificationAuthorizationPolicy {
+    static func permitsDelivery(_ status: UNAuthorizationStatus) -> Bool {
+        status == .authorized || status == .provisional
+    }
+}
+
 enum LiveNotificationCategory: String, CaseIterable, Sendable {
     case entry, target, stop, close, health
 }
@@ -55,10 +61,15 @@ final class NotificationService {
             return false
         }
         let center = UNUserNotificationCenter.current()
-        let settings = await center.notificationSettings()
-        guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else {
-            return false
+        let isAuthorized: Bool = await withCheckedContinuation { continuation in
+            center.getNotificationSettings { @Sendable settings in
+                // Older SDKs do not mark settings Sendable; only the Boolean crosses actors.
+                continuation.resume(
+                    returning: NotificationAuthorizationPolicy.permitsDelivery(settings.authorizationStatus)
+                )
+            }
         }
+        guard isAuthorized else { return false }
         let content = UNMutableNotificationContent()
         content.title = candidate.title
         content.body = "Open Nowcaster to review the setup and risk levels."
