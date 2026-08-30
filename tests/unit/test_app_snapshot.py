@@ -6,7 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from src.app_snapshot import models as snapshot_models
-from src.app_snapshot.models import AppSnapshot, ResearchSignalSnapshot, SnapshotMetadata
+from src.app_snapshot.models import AppSnapshot, InstrumentSnapshot, ResearchSignalSnapshot, SnapshotMetadata
 from src.app_snapshot.writer import write_snapshot_atomic
 
 
@@ -89,6 +89,43 @@ def test_signal_accuracy_evidence_is_optional_bounded_and_backward_compatible() 
         )
     with pytest.raises(ValidationError, match="effective"):
         ResearchSignalSnapshot.model_validate({**rich.model_dump(), "calibration_effective_observations": 421})
+
+
+def test_contextual_snapshot_fields_are_optional_finite_and_normalized() -> None:
+    legacy = InstrumentSnapshot(
+        instrument_id="BTCUSDT",
+        symbol="BTCUSDT",
+        display_name="Bitcoin",
+        asset_class="crypto",
+    )
+    assert legacy.eligibility_state is None
+    assert legacy.regime_probabilities is None
+
+    probabilities = {
+        "trend_normal": 0.5,
+        "trend_elevated_volatility": 0.2,
+        "range_liquid": 0.2,
+        "stressed_or_illiquid": 0.1,
+    }
+    rich = InstrumentSnapshot.model_validate(
+        {
+            **legacy.model_dump(),
+            "asset_profile": "crypto_major_spot",
+            "eligibility_state": "watch",
+            "eligibility_reasons": ["observed_depth_required"],
+            "eligibility_quality": 0.75,
+            "regime_probabilities": probabilities,
+            "posterior_uncertainty": 0.4,
+            "portfolio_selected": False,
+            "research_size_ceiling": 0.0,
+            "contextual_drift_status": "stable",
+        }
+    )
+    assert sum(rich.regime_probabilities.values()) == pytest.approx(1.0)
+    with pytest.raises(ValidationError, match="regime"):
+        InstrumentSnapshot.model_validate({**rich.model_dump(), "regime_probabilities": {"trend_normal": 0.9}})
+    with pytest.raises(ValidationError):
+        InstrumentSnapshot.model_validate({**rich.model_dump(), "research_size_ceiling": 1.1})
 
 
 def _snapshot_model(name: str):

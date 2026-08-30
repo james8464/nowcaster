@@ -170,6 +170,13 @@ class AssetEligibilityEvidence:
     direction: StrategyDirection
     liquidity_grade: LiquidityGrade
     source_event_watermark: str
+    coverage: float | None = None
+    spread_bps: float | None = None
+    depth_notional: float | None = None
+    estimated_price_impact_bps: float | None = None
+    participation_rate: float | None = None
+    median_notional_volume: float | None = None
+    realized_volatility: float | None = None
 
     @property
     def evidence_hash(self) -> str:
@@ -186,15 +193,9 @@ def _quality_score(inputs: EligibilityInputs, policy: ProfilePolicy) -> float:
     coverage = min(inputs.coverage / max(policy.minimum_coverage, 1e-12), 1.0)
     freshness = max(1.0 - age_seconds / policy.maximum_data_age_seconds, 0.0)
     volume = min(inputs.median_notional_volume / policy.minimum_median_notional_volume, 1.0)
-    spread = (
-        max(1.0 - inputs.spread_bps / policy.maximum_spread_bps, 0.0)
-        if inputs.spread_bps is not None
-        else 0.5
-    )
+    spread = max(1.0 - inputs.spread_bps / policy.maximum_spread_bps, 0.0) if inputs.spread_bps is not None else 0.5
     depth = (
-        min(inputs.depth_notional / policy.minimum_depth_notional, 1.0)
-        if inputs.depth_notional is not None
-        else 0.5
+        min(inputs.depth_notional / policy.minimum_depth_notional, 1.0) if inputs.depth_notional is not None else 0.5
     )
     impact = (
         max(1.0 - inputs.estimated_price_impact_bps / policy.maximum_price_impact_bps, 0.0)
@@ -228,9 +229,7 @@ def evaluate_asset_eligibility(
         structural.append("calendar_not_supported")
     if inputs.direction not in policy.allowed_directions:
         structural.append("direction_not_supported")
-    if inputs.listing_at > inputs.as_of or (
-        inputs.delisting_at is not None and inputs.as_of >= inputs.delisting_at
-    ):
+    if inputs.listing_at > inputs.as_of or (inputs.delisting_at is not None and inputs.as_of >= inputs.delisting_at):
         structural.append("outside_listing_interval")
     if inputs.trading_status != "active":
         structural.append("instrument_not_active")
@@ -248,9 +247,7 @@ def evaluate_asset_eligibility(
     if inputs.direction is StrategyDirection.SHORT:
         if not inputs.shortable or inputs.short_mechanism == "none":
             structural.append("short_mechanism_unavailable")
-        elif inputs.short_mechanism == "borrow" and (
-            not inputs.borrow_applicable or inputs.borrow_fee_bps is None
-        ):
+        elif inputs.short_mechanism == "borrow" and (not inputs.borrow_applicable or inputs.borrow_fee_bps is None):
             structural.append("borrow_evidence_required")
         elif inputs.short_mechanism == "derivative" and (
             not inputs.funding_applicable or inputs.funding_rate_bps is None
@@ -282,11 +279,7 @@ def evaluate_asset_eligibility(
         hard_liquidity.append("price_impact_limit")
     if inputs.participation_rate > policy.maximum_participation_rate:
         hard_liquidity.append("participation_limit")
-    if not (
-        policy.minimum_realized_volatility
-        <= inputs.realized_volatility
-        <= policy.maximum_realized_volatility
-    ):
+    if not (policy.minimum_realized_volatility <= inputs.realized_volatility <= policy.maximum_realized_volatility):
         hard_liquidity.append("realized_volatility_range")
 
     if policy.require_observed_spread and inputs.spread_bps is None:
@@ -338,6 +331,13 @@ def evaluate_asset_eligibility(
         direction=inputs.direction,
         liquidity_grade=inputs.liquidity_grade,
         source_event_watermark=inputs.source_event_watermark,
+        coverage=inputs.coverage,
+        spread_bps=inputs.spread_bps,
+        depth_notional=inputs.depth_notional,
+        estimated_price_impact_bps=inputs.estimated_price_impact_bps,
+        participation_rate=inputs.participation_rate,
+        median_notional_volume=inputs.median_notional_volume,
+        realized_volatility=inputs.realized_volatility,
     )
 
 
@@ -363,9 +363,7 @@ def strategy_is_applicable(
         return False
     if interval is not None and BarInterval(interval) not in spec.intervals:
         return False
-    if direction is StrategyDirection.SHORT and (
-        not instrument.shortable or instrument.short_mechanism == "none"
-    ):
+    if direction is StrategyDirection.SHORT and (not instrument.shortable or instrument.short_mechanism == "none"):
         return False
     if spec.family is StrategyFamily.SESSION:
         if spec.strategy_id not in profile.session_strategy_ids:
@@ -476,9 +474,7 @@ def eligibility_inputs_from_bars(
         "last_open": last_open.isoformat(),
         "last_available": pd.Timestamp(visible.iloc[-1]["available_at"]).isoformat(),
         "last_revision": int(visible.iloc[-1]["revision"]),
-        "last_payload_hash": (
-            str(visible.iloc[-1]["payload_hash"]) if "payload_hash" in visible else None
-        ),
+        "last_payload_hash": (str(visible.iloc[-1]["payload_hash"]) if "payload_hash" in visible else None),
     }
     participation = research_size_notional / median_notional if median_notional > 0 else math.inf
     return EligibilityInputs(

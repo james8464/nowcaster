@@ -571,6 +571,16 @@ class ContextualResearchService:
         direction: StrategyDirection,
     ) -> dict[str, object]:
         assert instrument.profile is not None
+        symbol_rows = assembly.frame.loc[assembly.frame["symbol"].astype(str) == instrument.symbol]
+        strategy_versions: dict[str, str] = {}
+        for strategy_id, rows in symbol_rows.groupby("strategy_id", sort=True):
+            versions = {
+                str(payload["strategy_version"])
+                for payload in rows["evidence"]
+                if isinstance(payload, dict) and payload.get("strategy_version")
+            }
+            if len(versions) == 1:
+                strategy_versions[str(strategy_id)] = next(iter(versions))
         key = StrategyContextKey(
             dataset_hash=assembly.dataset_hash,
             protocol_hash=assembly.protocol_hash,
@@ -601,6 +611,7 @@ class ContextualResearchService:
             "interval": request.interval.value,
             "direction": direction.value,
             "mode": request.mode.value,
+            "strategy_versions": strategy_versions,
             "effective_at": request.as_of,
         }
 
@@ -679,6 +690,12 @@ class ContextualResearchService:
                     for strategy_id in strategy_ids
                 }
                 context = self._allocation_context(request, assembly, instrument, direction)
+                context["eligibility_id"] = eligibility[(symbol, direction)].evidence_id
+                context["eligibility_policy_hash"] = eligibility[(symbol, direction)].policy_hash
+                context["hierarchy_hash"] = hierarchy.evidence_hash
+                context["blended_estimates"] = {
+                    strategy_id: asdict(estimate) for strategy_id, estimate in blended.items()
+                }
                 families = {strategy_id: self._specs[strategy_id].family for strategy_id in strategy_ids}
                 applicable = {
                     strategy_id: strategy_is_applicable(
@@ -780,6 +797,17 @@ class ContextualResearchService:
             request.as_of,
         )
         selected_by_hash = {item.opportunity.decision_hash: item for item in portfolio.selected}
+        ranked_opportunities = sorted(
+            opportunities,
+            key=lambda item: (
+                -item.lower_net_edge,
+                -item.liquidity_quality,
+                -item.probability_lower,
+                item.decision_time,
+                item.decision_hash,
+            ),
+        )
+        portfolio_ranks = {item.decision_hash: rank for rank, item in enumerate(ranked_opportunities, start=1)}
         for opportunity in opportunities:
             selected = selected_by_hash.get(opportunity.decision_hash)
             exclusion_keys = (
@@ -801,6 +829,11 @@ class ContextualResearchService:
                     "status": "selected" if selected is not None else "excluded",
                     "selected": selected is not None,
                     "weight": selected.weight if selected is not None else 0.0,
+                    "portfolio_rank": portfolio_ranks[opportunity.decision_hash],
+                    "research_size_ceiling": selected.size_evidence.ceiling if selected is not None else 0.0,
+                    "size_evidence": asdict(selected.size_evidence) if selected is not None else None,
+                    "portfolio_covariance_hash": portfolio.covariance_hash,
+                    "portfolio_cash_weight": portfolio.cash_weight,
                     "exclusion_reasons": reasons or (() if selected is not None else ("not_selected",)),
                     "opportunity": asdict(opportunity),
                 }

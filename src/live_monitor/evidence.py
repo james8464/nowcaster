@@ -806,17 +806,16 @@ def load_contextual_live_evidence(
             if expected_context_hash != context_hash:
                 continue
             covariance_record = allocation_record.get("covariance") if isinstance(allocation_record, dict) else None
-            covariance_id = str(covariance_record.get("evidence_hash")) if isinstance(covariance_record, dict) else ""
+            covariance_hash = str(covariance_record.get("evidence_hash")) if isinstance(covariance_record, dict) else ""
             covariance = database.frame(
-                "select * from contextual_covariances where covariance_id = :covariance_id "
-                "and context_hash = :context_hash and dataset_hash = :dataset_hash "
-                "and protocol_hash = :protocol_hash and effective_at <= :now order by effective_at desc limit 1",
+                "select * from contextual_covariances where context_hash = :context_hash "
+                "and dataset_hash = :dataset_hash and protocol_hash = :protocol_hash "
+                "and effective_at = :effective_at order by created_at desc limit 1",
                 {
-                    "covariance_id": covariance_id,
                     "context_hash": context_hash,
                     "dataset_hash": str(latest.iloc[0]["dataset_hash"]),
                     "protocol_hash": protocol_hash,
-                    "now": now,
+                    "effective_at": latest_at.to_pydatetime(),
                 },
             )
             if covariance.empty:
@@ -826,6 +825,7 @@ def load_contextual_live_evidence(
                 str(covariance_row["status"]) != "estimated"
                 or not isinstance(covariance_row["evidence"], dict)
                 or canonical_hash(covariance_row["evidence"]) != str(covariance_row["content_hash"])
+                or covariance_row["evidence"].get("covariance", {}).get("evidence_hash") != covariance_hash
             ):
                 continue
 
@@ -883,7 +883,7 @@ def load_contextual_live_evidence(
             profile = next(iter(profiles))
             expected_decision_hash = canonical_hash(
                 {
-                    "allocation_id": allocation_id,
+                    "allocation_id": allocation_record["allocation_id"],
                     "context_hash": context_hash,
                     "as_of": latest_at.to_pydatetime(),
                 }

@@ -323,7 +323,13 @@ class ContextualRepository:
             raise ValueError(f"covariance context missing fields: {', '.join(missing)}")
         payload = _json_payload({"covariance": covariance, "context": context})
         return {
-            "covariance_id": covariance.evidence_hash,
+            "covariance_id": canonical_hash(
+                {
+                    "covariance_hash": covariance.evidence_hash,
+                    "context_hash": str(context["context_hash"]),
+                    "effective_at": _utc_datetime(context["effective_at"], "effective_at"),
+                }
+            ),
             "content_hash": canonical_hash(payload),
             "context_hash": str(context["context_hash"]),
             "dataset_hash": str(context["dataset_hash"]),
@@ -370,13 +376,16 @@ class ContextualRepository:
         if missing:
             raise ValueError(f"allocation context missing fields: {', '.join(missing)}")
         payload = _json_payload({"allocation": allocation, "context": context})
+        scoped_allocation_id = canonical_hash(
+            {"allocation_id": allocation.allocation_id, "context_hash": str(context["context_hash"])}
+        )
         rows = []
         for weight in allocation.weight_evidence:
-            identity = canonical_hash({"allocation_id": allocation.allocation_id, "strategy_id": weight.strategy_id})
+            identity = canonical_hash({"allocation_id": scoped_allocation_id, "strategy_id": weight.strategy_id})
             row = {
                 "contextual_weight_id": identity,
                 "content_hash": canonical_hash({"payload": payload, "strategy_id": weight.strategy_id}),
-                "allocation_id": allocation.allocation_id,
+                "allocation_id": scoped_allocation_id,
                 "context_hash": str(context["context_hash"]),
                 "dataset_hash": str(context["dataset_hash"]),
                 "protocol_hash": str(context["protocol_hash"]),

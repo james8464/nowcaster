@@ -13,6 +13,7 @@ from src.app_snapshot.writer import write_snapshot_atomic
 from src.cli import app
 from src.config.settings import Settings
 from src.database.engine import Database
+from tests.integration.test_contextual_service import contextual_service
 
 
 def test_demo_database_exports_a_populated_native_snapshot(tmp_path, demo_database):
@@ -57,6 +58,121 @@ def test_export_app_snapshot_cli_emits_structured_completion(tmp_path, demo_data
     assert result.exit_code == 0
     assert json.loads(result.output)["schema_version"] == 5
     assert AppSnapshot.model_validate_json(output.read_text()).overview.company_count == 3
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        "update contextual_weights set content_hash = 'corrupted'",
+        "update contextual_covariances set status = 'invalid'",
+        "update asset_eligibility_evidence set quality_score = 1.0",
+    ],
+)
+def test_snapshot_projects_only_complete_authenticated_contextual_evidence(tmp_path, corruption: str) -> None:
+    from sqlalchemy import text
+
+    from src.contextual.service import ContextualRunRequest
+    from src.strategies.types import BarInterval, StrategyMode
+
+    service, database, as_of = contextual_service(tmp_path)
+    service.evaluate_contexts(
+        ContextualRunRequest(
+            symbols=("BTCUSDT",),
+            provider="binance",
+            feed="spot",
+            interval=BarInterval.FIVE_MINUTES,
+            mode=StrategyMode.PAPER,
+            as_of=as_of,
+        )
+    )
+
+    snapshot = build_app_snapshot(database, service.settings)
+
+    bitcoin = next(item for item in snapshot.instruments if item.symbol == "BTCUSDT")
+    assert bitcoin.asset_profile == "crypto_major_spot"
+    assert bitcoin.eligibility_state == "blocked"
+    assert sum(bitcoin.regime_probabilities.values()) == pytest.approx(1.0)
+    assert bitcoin.portfolio_selected is False
+    signal = next(item for item in snapshot.signals if item.context_hash is not None)
+    assert signal.signal_id == database.scalar("select decision_hash from portfolio_research_decisions")
+    assert signal.posture == "abstain"
+    assert signal.research_size_ceiling == 0.0
+
+    with database.engine.begin() as connection:
+        connection.execute(text(corruption))
+    corrupted = build_app_snapshot(database, service.settings)
+    bitcoin = next(item for item in corrupted.instruments if item.symbol == "BTCUSDT")
+    assert bitcoin.eligibility_state is None
+    assert not any(item.context_hash is not None for item in corrupted.signals)
+
+
+def test_contextual_strategy_projection_requires_exact_version_and_preserves_legacy_weights(tmp_path) -> None:
+    from src.contextual.service import ContextualRunRequest
+    from src.strategies.types import BarInterval, StrategyMode
+
+    service, database, as_of = contextual_service(tmp_path)
+    service.evaluate_contexts(
+        ContextualRunRequest(
+            symbols=("BTCUSDT",),
+            provider="binance",
+            feed="spot",
+            interval=BarInterval.FIVE_MINUTES,
+            mode=StrategyMode.PAPER,
+            as_of=as_of,
+        )
+    )
+    for version in ("1.0.0-contextual", "2.0.0-unrelated"):
+        common = {
+            "strategy_run_id": version,
+            "dataset_hash": "d" * 64,
+            "strategy_id": "rsi_reversal",
+            "strategy_version": version,
+            "family": "mean_reversion",
+            "symbol": "BTCUSDT",
+            "interval": "5m",
+            "mode": "paper",
+            "source": "test",
+            "source_version": "1",
+            "created_at": as_of,
+        }
+        database.insert(
+            "strategy_runs",
+            [
+                {
+                    **common,
+                    "run_timestamp": as_of,
+                    "parameters": {},
+                    "status": "evaluated",
+                    "metrics": {},
+                    "started_at": as_of,
+                    "ended_at": as_of,
+                }
+            ],
+        )
+        database.insert(
+            "ensemble_weights",
+            [
+                {
+                    **common,
+                    "weight_id": version,
+                    "effective_at": as_of,
+                    "weight": 0.25,
+                    "evidence": {"coverage_manifest": {"provider": "binance", "feed": "spot"}},
+                }
+            ],
+        )
+
+    snapshot = build_app_snapshot(database, service.settings)
+
+    for items in (snapshot.strategies, snapshot.ensemble_components):
+        exact = next(item for item in items if item.version == "1.0.0-contextual")
+        unrelated = next(item for item in items if item.version == "2.0.0-unrelated")
+        assert exact.weight == unrelated.weight == 0.25
+        assert exact.context_hash is not None
+        assert exact.local_weight + exact.parent_weight == pytest.approx(1.0)
+        assert 0 <= exact.final_weight <= 0.35
+        assert exact.portfolio_selected is False  # Strategy influence is not an executable portfolio position.
+        assert unrelated.context_hash is None
 
 
 def _empty_snapshot_database(tmp_path) -> tuple[Settings, Database]:

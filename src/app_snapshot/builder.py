@@ -16,6 +16,7 @@ from src.app_snapshot.models import (
     BrokerPositionSnapshot,
     BrokerStatusSnapshot,
     CausalAuditSnapshot,
+    ContextualSnapshotFields,
     DatasetCoverageSnapshot,
     DatasetGapSnapshot,
     DeepResearchResourceSnapshot,
@@ -41,11 +42,12 @@ from src.app_snapshot.models import (
     StrategySnapshot,
 )
 from src.config.settings import Settings
+from src.contextual.types import AssetProfileName, MarketRegime, StrategyContextKey, StrategyDirection
 from src.database.engine import Database
 from src.ingestion.bars import INTERVAL_DURATION
 from src.reporting.summary import research_statistics
 from src.strategies.calendars import calendar_for
-from src.strategies.types import BarInterval, canonical_hash
+from src.strategies.types import BarInterval, StrategyMode, canonical_hash
 from src.utils.provenance import git_commit
 
 
@@ -229,6 +231,400 @@ def _execution_projection(database: Database) -> dict[str, Any]:
     }
 
 
+def _authenticated_contextual_record(
+    database: Database,
+    statement: str,
+    parameters: dict[str, Any],
+) -> dict[str, Any] | None:
+    frame = database.frame(statement, parameters)
+    if frame.empty:
+        return None
+    row = frame.iloc[0].to_dict()
+    payload = row.get("evidence")
+    if not isinstance(payload, dict) or canonical_hash(payload) != str(row.get("content_hash", "")):
+        return None
+    mirrored_fields = (
+        "dataset_hash",
+        "protocol_hash",
+        "provider",
+        "feed",
+        "symbol",
+        "interval",
+        "direction",
+        "profile",
+        "context_hash",
+        "selection_id",
+        "decision_hash",
+        "status",
+        "state",
+        "selected",
+        "weight",
+        "policy_hash",
+        "probabilities",
+        "quality_score",
+    )
+    for source in (payload, payload.get("context"), payload.get("covariance")):
+        if not isinstance(source, dict):
+            continue
+        for name in mirrored_fields:
+            if name not in source or name not in row:
+                continue
+            expected, observed = source[name], row[name]
+            if isinstance(expected, (float, int)) and not isinstance(expected, bool):
+                if _finite(observed) is None or not math.isclose(
+                    float(expected), float(observed), rel_tol=1e-6, abs_tol=1e-7
+                ):
+                    return None
+            elif expected != observed:
+                return None
+        for name in ("effective_at", "decision_timestamp", "as_of"):
+            column = "effective_at" if name == "as_of" else name
+            if name in source and column in row and _python_datetime(source[name]) != _python_datetime(row[column]):
+                return None
+    return row
+
+
+def _contextual_projection(database: Database) -> dict[str, Any]:
+    """Project only the latest complete, internally authenticated contextual cohorts."""
+
+    projection: dict[str, Any] = {"instruments": {}, "signals": [], "components": {}}
+    weights = database.frame(
+        "select * from contextual_weights where effective_at <= :now "
+        "order by effective_at desc, context_hash, strategy_id limit 20000",
+        {"now": datetime.now(UTC)},
+    )
+    if weights.empty:
+        return projection
+    weights["effective_at"] = pd.to_datetime(weights["effective_at"], utc=True)
+    weights["_mode"] = weights["evidence"].map(
+        lambda value: (
+            str(value.get("context", {}).get("mode", ""))
+            if isinstance(value, dict) and isinstance(value.get("context"), dict)
+            else ""
+        )
+    )
+    scopes = weights.groupby(["provider", "feed", "symbol", "interval", "direction", "_mode"], sort=True)
+    complete_count = 0
+    for _scope, scoped in scopes:
+        if complete_count >= 200:
+            break
+        latest_at = scoped["effective_at"].max()
+        latest = scoped.loc[scoped["effective_at"] == latest_at]
+        if latest["allocation_id"].nunique() != 1 or latest["context_hash"].nunique() != 1:
+            continue
+        first = latest.iloc[0]
+        payload = first["evidence"]
+        if not isinstance(payload, dict):
+            continue
+        context = payload.get("context")
+        allocation = payload.get("allocation")
+        if not isinstance(context, dict) or not isinstance(allocation, dict):
+            continue
+        if not all(
+            isinstance(row.evidence, dict)
+            and row.evidence == payload
+            and canonical_hash({"payload": row.evidence, "strategy_id": str(row.strategy_id)}) == str(row.content_hash)
+            for row in latest.itertuples(index=False)
+        ):
+            continue
+        try:
+            key = StrategyContextKey(
+                dataset_hash=str(context["dataset_hash"]),
+                protocol_hash=str(context["protocol_hash"]),
+                provider=str(context["provider"]),
+                feed=str(context["feed"]),
+                venue=str(context["venue"]),
+                product=str(context["product"]),
+                asset_class=str(context["asset_class"]),
+                profile=AssetProfileName(str(context["profile"])),
+                symbol=str(context["symbol"]),
+                interval=BarInterval(str(context["interval"])),
+                direction=StrategyDirection(str(context["direction"])),
+                regime=None,
+                mode=StrategyMode(str(context["mode"])),
+            )
+            expected_weights = {str(name): float(value) for name, value in allocation["weights"].items()}
+            observed_weights = {str(row.strategy_id): float(row.weight) for row in latest.itertuples(index=False)}
+            scoped_allocation_id = canonical_hash(
+                {"allocation_id": str(allocation["allocation_id"]), "context_hash": key.context_hash}
+            )
+            mirrors = {
+                "dataset_hash": key.dataset_hash,
+                "protocol_hash": key.protocol_hash,
+                "provider": key.provider,
+                "feed": key.feed,
+                "venue": key.venue,
+                "product": key.product,
+                "profile": key.profile.value,
+                "symbol": key.symbol,
+                "interval": key.interval.value,
+                "direction": key.direction.value,
+            }
+            if (
+                key.context_hash != str(first["context_hash"])
+                or scoped_allocation_id != str(first["allocation_id"])
+                or set(expected_weights) != set(observed_weights)
+                or len(latest) != len(expected_weights)
+                or any(not latest[name].astype(str).eq(value).all() for name, value in mirrors.items())
+                or any(
+                    not math.isfinite(value)
+                    or not 0 <= value <= 1
+                    or not math.isclose(value, observed_weights[name], rel_tol=1e-6, abs_tol=1e-7)
+                    for name, value in expected_weights.items()
+                )
+            ):
+                continue
+        except (KeyError, TypeError, ValueError):
+            continue
+        effective_at = latest_at.to_pydatetime()
+        parameters = {
+            "context_hash": key.context_hash,
+            "dataset_hash": key.dataset_hash,
+            "protocol_hash": key.protocol_hash,
+            "provider": key.provider,
+            "feed": key.feed,
+            "symbol": key.symbol,
+            "interval": key.interval.value,
+            "direction": key.direction.value,
+            "effective_at": effective_at,
+        }
+        covariance = _authenticated_contextual_record(
+            database,
+            "select * from contextual_covariances where context_hash = :context_hash "
+            "and dataset_hash = :dataset_hash and protocol_hash = :protocol_hash "
+            "and effective_at = :effective_at order by created_at desc limit 1",
+            parameters,
+        )
+        eligibility = _authenticated_contextual_record(
+            database,
+            "select * from asset_eligibility_evidence where provider = :provider and feed = :feed "
+            "and symbol = :symbol and interval = :interval and direction = :direction "
+            "and effective_at = :effective_at order by created_at desc limit 1",
+            parameters,
+        )
+        posterior = _authenticated_contextual_record(
+            database,
+            "select * from regime_posteriors where dataset_hash = :dataset_hash and protocol_hash = :protocol_hash "
+            "and provider = :provider and feed = :feed and symbol = :symbol and interval = :interval "
+            "and decision_timestamp = :effective_at order by created_at desc limit 1",
+            parameters,
+        )
+        portfolio = _authenticated_contextual_record(
+            database,
+            "select * from portfolio_research_decisions where context_hash = :context_hash "
+            "and symbol = :symbol and direction = :direction and effective_at = :effective_at "
+            "order by created_at desc limit 1",
+            parameters,
+        )
+        if any(item is None for item in (covariance, eligibility, posterior, portfolio)):
+            continue
+        assert covariance is not None and eligibility is not None and posterior is not None and portfolio is not None
+        expected_decision_hash = canonical_hash(
+            {"allocation_id": allocation["allocation_id"], "context_hash": key.context_hash, "as_of": effective_at}
+        )
+        covariance_payload = covariance["evidence"].get("covariance")
+        if (
+            not isinstance(covariance_payload, dict)
+            or covariance_payload.get("evidence_hash") != allocation.get("covariance", {}).get("evidence_hash")
+            or str(eligibility["eligibility_id"]) != str(context.get("eligibility_id", ""))
+            or str(eligibility["eligibility_id"]) != str(eligibility["evidence"].get("evidence_id", ""))
+            or str(eligibility["policy_hash"]) != str(context.get("eligibility_policy_hash", ""))
+            or str(eligibility["profile"]) != key.profile.value
+            or str(posterior["profile"]) != key.profile.value
+            or str(portfolio["decision_hash"]) != expected_decision_hash
+        ):
+            continue
+        blended = context.get("blended_estimates")
+        if (
+            not isinstance(blended, dict)
+            or set(blended) != set(expected_weights)
+            or any(
+                not isinstance(record, dict) or len(record.get("component_estimate_ids", ())) != 4
+                for record in blended.values()
+            )
+        ):
+            continue
+        estimate_frame = database.frame(
+            "select * from contextual_estimates where dataset_hash = :dataset_hash and protocol_hash = :protocol_hash "
+            "and provider = :provider and feed = :feed and symbol = :symbol and interval = :interval "
+            "and direction = :direction and effective_at <= :effective_at",
+            parameters,
+        )
+        estimates = {
+            str(row.estimate_id): row.evidence
+            for row in estimate_frame.itertuples(index=False)
+            if isinstance(row.evidence, dict) and canonical_hash(row.evidence) == str(row.content_hash)
+        }
+        required_estimates = {
+            str(identity)
+            for record in blended.values()
+            if isinstance(record, dict)
+            for identity in record.get("component_estimate_ids", ())
+        }
+        if not required_estimates or not required_estimates <= set(estimates):
+            continue
+        if any(
+            _finite(estimates[identity].get("alpha")) is None
+            or not 0 <= float(estimates[identity]["alpha"]) <= 1
+            or _finite(estimates[identity].get("effective_observations")) is None
+            or float(estimates[identity]["effective_observations"]) < 0
+            for identity in required_estimates
+        ):
+            continue
+        drift = _authenticated_contextual_record(
+            database,
+            "select * from contextual_drift_events where context_hash = :context_hash "
+            "and effective_at <= :effective_at order by effective_at desc, created_at desc limit 1",
+            parameters,
+        )
+        probability_values = posterior["evidence"].get("probabilities")
+        if not isinstance(probability_values, dict):
+            continue
+        try:
+            probabilities = {str(name): float(value) for name, value in probability_values.items()}
+        except (TypeError, ValueError):
+            continue
+        if set(probabilities) != {regime.value for regime in MarketRegime} or any(
+            not math.isfinite(value) or not 0 <= value <= 1 for value in probabilities.values()
+        ):
+            continue
+        positive_mass = np.asarray([value for value in probabilities.values() if value > 0], dtype=float)
+        entropy = float(-np.sum(positive_mass * np.log(positive_mass)) / math.log(4.0))
+        eligibility_payload = eligibility["evidence"]
+        portfolio_payload = portfolio["evidence"]
+        opportunity = portfolio_payload.get("opportunity", {})
+        if not isinstance(opportunity, dict):
+            continue
+        reasons = [str(value)[:1_000] for value in eligibility_payload.get("reasons", ())][:64]
+        conflicts = [str(value)[:1_000] for value in portfolio["exclusion_reasons"]][:64]
+        selected = bool(portfolio["selected"]) and str(portfolio["status"]) == "selected"
+        common: dict[str, Any] = {
+            "asset_profile": key.profile.value,
+            "eligibility_state": str(eligibility["state"]),
+            "eligibility_reasons": reasons,
+            "eligibility_quality": float(eligibility_payload["quality_score"]),
+            "eligibility_hash": str(eligibility["eligibility_id"]),
+            "context_hash": key.context_hash,
+            "contextual_dataset_hash": key.dataset_hash,
+            "contextual_policy_hash": str(eligibility["policy_hash"]),
+            "contextual_effective_at": effective_at,
+            "contextual_direction": key.direction.value,
+            "contextual_provider": key.provider,
+            "contextual_feed": key.feed,
+            "contextual_interval": key.interval.value,
+            "contextual_mode": key.mode.value,
+            "spread_bps": _finite(eligibility_payload.get("spread_bps")),
+            "depth_notional": _finite(eligibility_payload.get("depth_notional")),
+            "estimated_price_impact_bps": _finite(eligibility_payload.get("estimated_price_impact_bps")),
+            "liquidity_capacity_weight": _finite(opportunity.get("liquidity_capacity_weight")),
+            "market_coverage_ratio": _finite(eligibility_payload.get("coverage")),
+            "regime_probabilities": probabilities,
+            "posterior_uncertainty": min(max(entropy, 0.0), 1.0),
+            "effective_strategy_count": _finite(allocation.get("effective_strategy_count")),
+            "covariance_status": str(covariance["status"]),
+            "portfolio_rank": _optional_int(portfolio_payload.get("portfolio_rank")),
+            "portfolio_selected": selected,
+            "portfolio_selection_id": str(portfolio["selection_id"]),
+            "portfolio_decision_hash": str(portfolio["decision_hash"]),
+            "research_size_ceiling": _finite(portfolio_payload.get("research_size_ceiling")) if selected else 0.0,
+            "portfolio_conflicts": conflicts,
+            "contextual_drift_status": str(drift["status"]) if drift is not None else "unavailable",
+            "contextual_evidence_hash": canonical_hash(
+                {
+                    "context_hash": key.context_hash,
+                    "weights": sorted(
+                        (str(row.contextual_weight_id), str(row.content_hash)) for row in latest.itertuples()
+                    ),
+                    "covariance": covariance["content_hash"],
+                    "eligibility": eligibility["content_hash"],
+                    "posterior": posterior["content_hash"],
+                    "portfolio": portfolio["content_hash"],
+                    "estimates": sorted(required_estimates),
+                    "drift": drift["content_hash"] if drift is not None else None,
+                }
+            ),
+        }
+        try:
+            ContextualSnapshotFields.model_validate(common)
+        except ValueError:
+            continue
+        source_dataset = str(context.get("source_dataset_hash", key.dataset_hash))
+        versions = context.get("strategy_versions", {})
+        component_updates: dict[tuple[str, ...], dict[str, Any]] = {}
+        for strategy_id, weight in expected_weights.items():
+            record = blended[strategy_id]
+            if not isinstance(record, dict) or len(record.get("component_estimate_ids", ())) != 4:
+                component_updates = {}
+                break
+            component_ids = tuple(str(value) for value in record["component_estimate_ids"])
+            ordered_probabilities = [probabilities[regime.value] for regime in MarketRegime]
+            local_share = sum(
+                mass * float(estimates[identity]["alpha"])
+                for mass, identity in zip(ordered_probabilities, component_ids, strict=True)
+            )
+            effective_observations = sum(
+                mass * float(estimates[identity]["effective_observations"])
+                for mass, identity in zip(ordered_probabilities, component_ids, strict=True)
+            )
+            version = str(versions.get(strategy_id, "")) if isinstance(versions, dict) else ""
+            if version:
+                component_key = (source_dataset, strategy_id, version, key.symbol, key.interval.value, key.mode.value)
+                component_updates[component_key] = {
+                    **common,
+                    "local_weight": local_share,
+                    "parent_weight": 1.0 - local_share,
+                    "final_weight": weight,
+                    "effective_observations": effective_observations,
+                }
+        for component_key, updates in component_updates.items():
+            existing_component = projection["components"].get(component_key)
+            if component_key in projection["components"] and (
+                existing_component is None or existing_component["context_hash"] != updates["context_hash"]
+            ):
+                projection["components"][component_key] = None
+            else:
+                projection["components"][component_key] = updates
+        existing = projection["instruments"].get(key.symbol)
+        if existing is None or (
+            effective_at,
+            selected,
+            key.direction is StrategyDirection.LONG,
+        ) > (
+            existing["contextual_effective_at"],
+            existing["portfolio_selected"],
+            existing["contextual_direction"] == "long",
+        ):
+            projection["instruments"][key.symbol] = common
+        projection["signals"].append(
+            ResearchSignalSnapshot(
+                signal_id=str(portfolio["decision_hash"]),
+                instrument_id=key.symbol,
+                asset_class=key.asset_class,
+                decision_date=effective_at.date(),
+                horizon=f"{key.interval.value} contextual allocation",
+                posture=f"{key.direction.value}_research" if selected else "abstain",
+                eligibility="research_only",
+                strength=_finite(opportunity.get("lower_net_edge")),
+                catalyst="Finalized liquidity, regime, and strategy evidence",
+                invalidation="Context changes, data becomes stale, drift appears, or portfolio limits fail",
+                evidence_summary=f"Contextual {key.mode.value} research · {covariance['status']} covariance",
+                reasons=list(
+                    dict.fromkeys([*reasons, *conflicts, "Fresh sealed and forward readiness remain required"])
+                ),
+                provider=key.provider,
+                feed=key.feed,
+                venue=key.venue,
+                product=key.product,
+                lower_net_edge=_finite(opportunity.get("lower_net_edge")),
+                regime=max(probabilities, key=probabilities.get),
+                drift_status=common["contextual_drift_status"],
+                **common,
+            )
+        )
+        complete_count += 1
+    return projection
+
+
 def _metadata(database: Database, settings: Settings) -> SnapshotMetadata:
     latest = database.frame(
         "select mode, ended_at from pipeline_runs where status = 'success' order by ended_at desc limit 1"
@@ -256,7 +652,7 @@ def _metadata(database: Database, settings: Settings) -> SnapshotMetadata:
     )
 
 
-def _instruments(database: Database) -> list[InstrumentSnapshot]:
+def _instruments(database: Database, settings: Settings) -> list[InstrumentSnapshot]:
     companies = database.frame("select company_id, ticker, name from companies order by ticker")
     configured = database.frame(
         "select instrument_id, symbol, name, asset_class from instruments where enabled = true order by symbol"
@@ -268,9 +664,16 @@ def _instruments(database: Database) -> list[InstrumentSnapshot]:
         str(row.ticker): (str(row.company_id), str(row.name), "equity") for row in companies.itertuples(index=False)
     }
     configured_lookup = {
-        str(row.symbol): (str(row.instrument_id), str(row.name), str(row.asset_class))
-        for row in configured.itertuples(index=False)
+        item.symbol: (item.symbol, item.name, item.asset_class)
+        for item in settings.instruments.instruments
+        if item.enabled
     }
+    configured_lookup.update(
+        {
+            str(row.symbol): (str(row.instrument_id), str(row.name), str(row.asset_class))
+            for row in configured.itertuples(index=False)
+        }
+    )
     instrument_lookup = {**company_lookup, **configured_lookup}
     instruments: list[InstrumentSnapshot] = []
     for symbol, group in prices.groupby("symbol", sort=True):
@@ -317,7 +720,26 @@ def _instruments(database: Database) -> list[InstrumentSnapshot]:
                 price_history=history,
             )
         )
-    return instruments
+    observed_symbols = {item.symbol for item in instruments}
+    for symbol, (instrument_id, name, asset_class) in instrument_lookup.items():
+        if symbol in observed_symbols:
+            continue
+        bars = database.frame(
+            "select close, close_timestamp from market_bars where symbol = :symbol and finalized = true "
+            "and available_at <= :now order by close_timestamp desc, available_at desc, revision desc limit 1",
+            {"symbol": symbol, "now": datetime.now(UTC)},
+        )
+        instruments.append(
+            InstrumentSnapshot(
+                instrument_id=instrument_id,
+                symbol=symbol,
+                display_name=name,
+                asset_class=asset_class,
+                last_price=_finite(bars.iloc[0]["close"]) if not bars.empty else None,
+                freshness_date=_python_date(bars.iloc[0]["close_timestamp"]) if not bars.empty else None,
+            )
+        )
+    return sorted(instruments, key=lambda item: item.symbol)
 
 
 def _earnings(database: Database) -> list[EarningsSnapshot]:
@@ -1477,11 +1899,49 @@ def _deep_research_runs(database: Database) -> list[DeepResearchRunSnapshot]:
 
 def build_app_snapshot(database: Database, settings: Settings) -> AppSnapshot:
     statistics = research_statistics(database)
-    instruments = _instruments(database)
+    contextual = _contextual_projection(database)
+    instruments = _instruments(database, settings)
+    instruments = [
+        InstrumentSnapshot.model_validate(
+            {**instrument.model_dump(), **contextual["instruments"].get(instrument.symbol, {})}
+        )
+        for instrument in instruments
+    ]
+    instrument_ids = {item.symbol: item.instrument_id for item in instruments}
     earnings = _earnings(database)
     signals = _signals(database)
+    signals.extend(
+        ResearchSignalSnapshot.model_validate(
+            {**signal.model_dump(), "instrument_id": instrument_ids.get(signal.instrument_id, signal.instrument_id)}
+        )
+        for signal in contextual["signals"]
+    )
+    signals.sort(
+        key=lambda signal: (signal.decision_date, signal.confidence_score or 0, signal.signal_id), reverse=True
+    )
     quality_issues = _quality_issues(database)
     causal_audits = _causal_audits(database)
+    strategies = _strategies(database, causal_audits)
+    ensemble_components = _ensemble_components(database)
+
+    def contextual_updates(item: StrategySnapshot | EnsembleComponentSnapshot) -> dict[str, Any]:
+        identity = (item.dataset_hash, item.strategy_id, item.version, item.symbol, item.interval, item.mode)
+        updates = contextual["components"].get(identity) or {}
+        if (
+            isinstance(item, EnsembleComponentSnapshot)
+            and updates
+            and (item.provider != updates["contextual_provider"] or item.feed != updates["contextual_feed"])
+        ):
+            return {}
+        return updates
+
+    strategies = [
+        StrategySnapshot.model_validate({**item.model_dump(), **contextual_updates(item)}) for item in strategies
+    ]
+    ensemble_components = [
+        EnsembleComponentSnapshot.model_validate({**item.model_dump(), **contextual_updates(item)})
+        for item in ensemble_components
+    ]
     overview = OverviewSnapshot(
         company_count=int(statistics["companies"] or 0),
         instrument_count=len(instruments),
@@ -1505,8 +1965,8 @@ def build_app_snapshot(database: Database, settings: Settings) -> AppSnapshot:
         backtests=_backtests(database, statistics),
         quality_issues=quality_issues,
         pipeline_runs=_pipeline_runs(database),
-        strategies=_strategies(database, causal_audits),
-        ensemble_components=_ensemble_components(database),
+        strategies=strategies,
+        ensemble_components=ensemble_components,
         dataset_coverage=_dataset_coverage(database),
         learning_runs=_learning_runs(database, causal_audits),
         deep_research_runs=_deep_research_runs(database),

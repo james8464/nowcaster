@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -82,6 +83,7 @@ def seed_contextual_market(database: Database, *, count: int = 160) -> datetime:
                     "direction": "long",
                     "mode": "paper",
                     "strategy_id": strategy_id,
+                    "strategy_version": "1.0.0-contextual",
                     "decision_timestamp": bar.open_timestamp,
                     "outcome_available_at": bar.available_at,
                     "gross_return": gross,
@@ -217,3 +219,40 @@ def test_contextual_learning_reserves_all_trials_and_keeps_the_champion_shadow(
     repeated = service.learn_contextual(request, evaluation_budget=4, seed=42)
     assert repeated.global_trial_id == result.global_trial_id
     assert database.scalar("select count(*) from contextual_learning_trials") == 4
+
+
+def test_contextual_covariance_receipts_are_scoped_to_the_exact_evaluation_time(tmp_path: Path) -> None:
+    service, database, as_of = contextual_service(tmp_path)
+    request = ContextualRunRequest(
+        symbols=("BTCUSDT",),
+        provider="binance",
+        feed="spot",
+        interval=BarInterval.FIVE_MINUTES,
+        mode=StrategyMode.PAPER,
+        as_of=as_of,
+    )
+    service.evaluate_contexts(request)
+    service.evaluate_contexts(replace(request, as_of=as_of + timedelta(seconds=1)))
+
+    assert database.scalar("select count(*) from contextual_covariances") == 2
+
+
+def test_identical_math_allocations_remain_distinct_across_asset_contexts(tmp_path: Path) -> None:
+    service, database, as_of = contextual_service(tmp_path)
+    result = service.evaluate_contexts(
+        ContextualRunRequest(
+            symbols=("BTCUSDT",),
+            provider="binance",
+            feed="spot",
+            interval=BarInterval.FIVE_MINUTES,
+            mode=StrategyMode.PAPER,
+            as_of=as_of,
+        )
+    )
+    allocation = result.allocations["BTCUSDT:long"]
+    context = database.frame("select evidence from contextual_weights limit 1").iloc[0]["evidence"]["context"]
+    other_context = {**context, "context_hash": "e" * 64, "symbol": "ETHUSDT"}
+
+    service.repository.append_allocation(allocation, other_context)
+
+    assert database.scalar("select count(*) from contextual_weights") == 2 * len(STRATEGIES)

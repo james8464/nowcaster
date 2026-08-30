@@ -112,7 +112,75 @@ class PricePoint(SnapshotModel):
     volume: float | None = None
 
 
-class InstrumentSnapshot(SnapshotModel):
+class ContextualSnapshotFields(SnapshotModel):
+    """Optional contextual evidence shared by schema-v5 native projections."""
+
+    asset_profile: str | None = None
+    eligibility_state: Literal["eligible", "watch", "blocked"] | None = None
+    eligibility_reasons: list[str] | None = Field(default=None, max_length=64)
+    eligibility_quality: float | None = Field(default=None, ge=0, le=1)
+    eligibility_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    context_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    contextual_dataset_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    contextual_policy_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    contextual_effective_at: UTCInstant | None = None
+    contextual_direction: Literal["long", "short"] | None = None
+    contextual_provider: str | None = None
+    contextual_feed: str | None = None
+    contextual_interval: str | None = None
+    contextual_mode: str | None = None
+    spread_bps: float | None = Field(default=None, ge=0)
+    depth_notional: float | None = Field(default=None, ge=0)
+    estimated_price_impact_bps: float | None = Field(default=None, ge=0)
+    liquidity_capacity_weight: float | None = Field(default=None, ge=0, le=1)
+    market_coverage_ratio: float | None = Field(default=None, ge=0, le=1)
+    regime_probabilities: dict[str, float] | None = Field(default=None, max_length=4)
+    posterior_uncertainty: float | None = Field(default=None, ge=0, le=1)
+    local_weight: float | None = Field(default=None, ge=0, le=1)
+    parent_weight: float | None = Field(default=None, ge=0, le=1)
+    final_weight: float | None = Field(default=None, ge=0, le=1)
+    effective_observations: float | None = Field(default=None, ge=0)
+    effective_strategy_count: float | None = Field(default=None, ge=0)
+    covariance_status: Literal["estimated", "insufficient", "invalid"] | None = None
+    portfolio_rank: int | None = Field(default=None, ge=1)
+    portfolio_selected: bool | None = None
+    portfolio_selection_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    portfolio_decision_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    research_size_ceiling: float | None = Field(default=None, ge=0, le=1)
+    portfolio_conflicts: list[str] | None = Field(default=None, max_length=64)
+    contextual_drift_status: Literal["stable", "warning", "confirmed", "unavailable"] | None = None
+    contextual_evidence_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+    @model_validator(mode="after")
+    def contextual_evidence_is_bounded(self) -> ContextualSnapshotFields:
+        if self.regime_probabilities is not None:
+            expected = {
+                "trend_normal",
+                "trend_elevated_volatility",
+                "range_liquid",
+                "stressed_or_illiquid",
+            }
+            if (
+                set(self.regime_probabilities) != expected
+                or any(value < 0 or value > 1 for value in self.regime_probabilities.values())
+                or not math.isclose(sum(self.regime_probabilities.values()), 1.0, rel_tol=0, abs_tol=1e-8)
+            ):
+                raise ValueError("contextual regime probabilities must use normalized four-state mass")
+        if (
+            self.local_weight is not None
+            and self.parent_weight is not None
+            and not math.isclose(self.local_weight + self.parent_weight, 1.0, rel_tol=0, abs_tol=1e-8)
+        ):
+            raise ValueError("local and parent evidence influence must sum to one")
+        if self.portfolio_selected is True and self.eligibility_state != "eligible":
+            raise ValueError("a selected contextual opportunity must be eligible")
+        for values in (self.eligibility_reasons, self.portfolio_conflicts):
+            if values is not None and any(len(value.encode("utf-8")) > 1_000 for value in values):
+                raise ValueError("contextual reason exceeds the maximum byte length")
+        return self
+
+
+class InstrumentSnapshot(ContextualSnapshotFields):
     instrument_id: str
     symbol: str
     display_name: str
@@ -144,7 +212,7 @@ class EarningsSnapshot(SnapshotModel):
     confidence_score: float | None = None
 
 
-class ResearchSignalSnapshot(SnapshotModel):
+class ResearchSignalSnapshot(ContextualSnapshotFields):
     signal_id: str
     instrument_id: str
     asset_class: str
@@ -266,7 +334,7 @@ class PipelineRunSnapshot(SnapshotModel):
     error_summary: str | None = None
 
 
-class StrategySnapshot(SnapshotModel):
+class StrategySnapshot(ContextualSnapshotFields):
     strategy_id: str
     version: str
     family: str
@@ -289,7 +357,7 @@ class StrategySnapshot(SnapshotModel):
     latest_run_at: UTCInstant | None = None
 
 
-class EnsembleComponentSnapshot(SnapshotModel):
+class EnsembleComponentSnapshot(ContextualSnapshotFields):
     strategy_id: str
     version: str
     family: str
