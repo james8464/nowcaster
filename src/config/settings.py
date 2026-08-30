@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 from collections.abc import Mapping
 from pathlib import Path
@@ -10,6 +11,7 @@ import yaml
 from dotenv import load_dotenv
 from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, field_validator, model_validator
 
+from src.contextual.types import AssetProfileName, ContextLevel, StrategyDirection
 from src.strategies.types import StrategyFamily, StrategySpec
 from src.trading.risk import RiskPolicy
 
@@ -17,6 +19,24 @@ ImmutableFamilyWeightCaps = Annotated[
     Mapping[StrategyFamily, float],
     PlainSerializer(
         lambda value: {family.value: cap for family, cap in value.items()},
+        return_type=dict[str, float],
+        when_used="always",
+    ),
+]
+
+ImmutableProfilePolicies = Annotated[
+    Mapping[AssetProfileName, "ProfilePolicy"],
+    PlainSerializer(
+        lambda value: {profile.value: policy for profile, policy in value.items()},
+        return_type=dict[str, "ProfilePolicy"],
+        when_used="always",
+    ),
+]
+
+ImmutableHierarchyStrengths = Annotated[
+    Mapping[ContextLevel, float],
+    PlainSerializer(
+        lambda value: {level.value: strength for level, strength in value.items()},
         return_type=dict[str, float],
         when_used="always",
     ),
@@ -102,6 +122,7 @@ class InstrumentConfig(BaseModel):
     provider: str = "composite"
     feed: str = "daily"
     product: Literal["composite", "equity", "spot", "margin", "perpetual"] = "composite"
+    profile: AssetProfileName | None = None
     shortable: bool = False
     short_mechanism: Literal["none", "borrow", "derivative"] = "none"
     funding_applicable: bool = False
@@ -187,6 +208,197 @@ class StrategiesConfig(BaseModel):
         return tuple(spec for spec in self.strategies if spec.enabled)
 
 
+class ProfilePolicy(BaseModel):
+    """Structural and point-in-time execution limits for one asset profile."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    asset_classes: tuple[Literal["equity", "crypto"], ...]
+    products: tuple[Literal["equity", "spot", "margin", "perpetual"], ...]
+    trading_calendars: tuple[str, ...]
+    allowed_directions: tuple[StrategyDirection, ...]
+    allowed_families: tuple[StrategyFamily, ...]
+    session_strategy_ids: tuple[str, ...] = ()
+    minimum_cross_sectional_peers: int = Field(default=2, ge=2)
+    minimum_history_bars: int = Field(gt=0)
+    minimum_coverage: float = Field(ge=0, le=1)
+    maximum_data_age_seconds: int = Field(gt=0)
+    minimum_median_notional_volume: float = Field(gt=0)
+    maximum_spread_bps: float = Field(gt=0)
+    minimum_depth_notional: float = Field(gt=0)
+    maximum_price_impact_bps: float = Field(gt=0)
+    maximum_participation_rate: float = Field(gt=0, le=1)
+    minimum_realized_volatility: float = Field(ge=0)
+    maximum_realized_volatility: float = Field(gt=0)
+    require_observed_spread: bool = True
+    require_observed_depth: bool = True
+    require_observed_impact: bool = True
+
+    @field_validator(
+        "asset_classes",
+        "products",
+        "trading_calendars",
+        "allowed_directions",
+        "allowed_families",
+    )
+    @classmethod
+    def nonempty_unique_values(cls, value: tuple[Any, ...]) -> tuple[Any, ...]:
+        if not value:
+            raise ValueError("profile policy collections cannot be empty")
+        if len(value) != len(set(value)):
+            raise ValueError("profile policy collections must contain unique values")
+        if any(isinstance(item, str) and not item.strip() for item in value):
+            raise ValueError("profile policy values cannot be blank")
+        return value
+
+    @field_validator("session_strategy_ids")
+    @classmethod
+    def unique_session_strategies(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        normalized = tuple(item.strip() for item in value)
+        if any(not item for item in normalized) or len(normalized) != len(set(normalized)):
+            raise ValueError("session strategy IDs must be nonblank and unique")
+        return normalized
+
+    @field_validator(
+        "minimum_coverage",
+        "minimum_median_notional_volume",
+        "maximum_spread_bps",
+        "minimum_depth_notional",
+        "maximum_price_impact_bps",
+        "maximum_participation_rate",
+        "minimum_realized_volatility",
+        "maximum_realized_volatility",
+    )
+    @classmethod
+    def finite_thresholds(cls, value: float) -> float:
+        if not math.isfinite(value):
+            raise ValueError("profile policy thresholds must be finite")
+        return value
+
+    @model_validator(mode="after")
+    def coherent_volatility_range(self) -> ProfilePolicy:
+        if self.minimum_realized_volatility >= self.maximum_realized_volatility:
+            raise ValueError("minimum realized volatility must be below maximum realized volatility")
+        return self
+
+
+class AllocationPolicyConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    minimum_effective_strategies: int = Field(default=4, ge=2)
+    maximum_strategy_weight: float = Field(default=0.25, gt=0, le=1)
+    minimum_covariance_overlap: int = Field(default=100, ge=20)
+    risk_penalty: float = Field(default=4.0, gt=0)
+    turnover_penalty: float = Field(default=0.5, ge=0)
+    prior_penalty: float = Field(default=0.5, ge=0)
+    family_weight_caps: ImmutableFamilyWeightCaps
+
+    @field_validator(
+        "maximum_strategy_weight",
+        "risk_penalty",
+        "turnover_penalty",
+        "prior_penalty",
+    )
+    @classmethod
+    def finite_allocation_values(cls, value: float) -> float:
+        if not math.isfinite(value):
+            raise ValueError("allocation values must be finite")
+        return value
+
+    @field_validator("family_weight_caps")
+    @classmethod
+    def immutable_family_caps(cls, value: Mapping[StrategyFamily, float]) -> Mapping[StrategyFamily, float]:
+        if not value or any(not math.isfinite(cap) or cap <= 0 or cap > 1 for cap in value.values()):
+            raise ValueError("family weight caps must be finite and in (0, 1]")
+        return MappingProxyType(dict(value))
+
+    @model_validator(mode="after")
+    def enforce_effective_breadth(self) -> AllocationPolicyConfig:
+        reciprocal_breadth = 1.0 / self.minimum_effective_strategies
+        if self.maximum_strategy_weight > reciprocal_breadth + 1e-12:
+            raise ValueError("maximum strategy weight exceeds reciprocal effective breadth")
+        if any(self.maximum_strategy_weight > cap for cap in self.family_weight_caps.values()):
+            raise ValueError("maximum strategy weight must not exceed family caps")
+        return self
+
+
+class PortfolioSelectionPolicyConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    maximum_candidates: int = Field(default=20, ge=1, le=200)
+    maximum_opportunities: int = Field(default=5, ge=1, le=20)
+    maximum_gross_exposure: float = Field(default=0.50, gt=0, le=1)
+    maximum_net_exposure: float = Field(default=0.30, gt=0, le=1)
+    maximum_asset_weight: float = Field(default=0.10, gt=0, le=1)
+    maximum_asset_class_weight: float = Field(default=0.30, gt=0, le=1)
+    maximum_sector_weight: float = Field(default=0.20, gt=0, le=1)
+    maximum_correlation: float = Field(default=0.75, ge=0, lt=1)
+    minimum_research_weight: float = Field(default=0.0025, gt=0, le=1)
+    kelly_fraction: float = Field(default=0.10, gt=0, le=0.25)
+    volatility_target: float = Field(default=0.10, gt=0, le=1)
+
+    @field_validator(
+        "maximum_gross_exposure",
+        "maximum_net_exposure",
+        "maximum_asset_weight",
+        "maximum_asset_class_weight",
+        "maximum_sector_weight",
+        "maximum_correlation",
+        "minimum_research_weight",
+        "kelly_fraction",
+        "volatility_target",
+    )
+    @classmethod
+    def finite_portfolio_values(cls, value: float) -> float:
+        if not math.isfinite(value):
+            raise ValueError("portfolio limits must be finite")
+        return value
+
+    @model_validator(mode="after")
+    def coherent_portfolio_limits(self) -> PortfolioSelectionPolicyConfig:
+        if self.maximum_net_exposure > self.maximum_gross_exposure:
+            raise ValueError("maximum net exposure cannot exceed maximum gross exposure")
+        if self.maximum_asset_weight > self.maximum_gross_exposure:
+            raise ValueError("maximum asset weight cannot exceed maximum gross exposure")
+        if self.maximum_opportunities > self.maximum_candidates:
+            raise ValueError("maximum opportunities cannot exceed maximum candidates")
+        return self
+
+
+class AssetSelectionConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    maximum_candidate_universe: int = Field(default=200, ge=1, le=1_000)
+    profiles: ImmutableProfilePolicies
+    hierarchy_prior_strengths: ImmutableHierarchyStrengths
+    allocation: AllocationPolicyConfig
+    portfolio: PortfolioSelectionPolicyConfig
+
+    @field_validator("profiles")
+    @classmethod
+    def complete_immutable_profiles(
+        cls, value: Mapping[AssetProfileName, ProfilePolicy]
+    ) -> Mapping[AssetProfileName, ProfilePolicy]:
+        missing = set(AssetProfileName) - set(value)
+        if missing:
+            names = ", ".join(sorted(item.value for item in missing))
+            raise ValueError(f"missing asset profile policies: {names}")
+        return MappingProxyType(dict(value))
+
+    @field_validator("hierarchy_prior_strengths")
+    @classmethod
+    def complete_immutable_hierarchy(
+        cls, value: Mapping[ContextLevel, float]
+    ) -> Mapping[ContextLevel, float]:
+        missing = set(ContextLevel) - set(value)
+        if missing:
+            names = ", ".join(sorted(item.value for item in missing))
+            raise ValueError(f"missing hierarchy prior strengths: {names}")
+        if any(not math.isfinite(item) or item <= 0 for item in value.values()):
+            raise ValueError("hierarchy prior strengths must be finite and positive")
+        return MappingProxyType(dict(value))
+
+
 class TradingConfig(BaseModel):
     """Fail-closed broker session configuration; live mode is introduced only by the gated pilot plan."""
 
@@ -258,8 +470,25 @@ class Settings(BaseModel):
     features: FeatureConfig
     instruments: InstrumentsConfig = InstrumentsConfig()
     strategies: StrategiesConfig = StrategiesConfig()
+    asset_selection: AssetSelectionConfig | None = None
     trading: TradingConfig = TradingConfig()
     deep_research: DeepResearchConfig = DeepResearchConfig()
+
+    @model_validator(mode="after")
+    def contextual_profiles_match_instruments(self) -> Settings:
+        if self.asset_selection is None:
+            return self
+        for instrument in self.instruments.instruments:
+            if instrument.profile is None:
+                continue
+            policy = self.asset_selection.profiles[instrument.profile]
+            if instrument.asset_class not in policy.asset_classes:
+                raise ValueError(f"{instrument.symbol} profile does not support asset class")
+            if instrument.product not in policy.products:
+                raise ValueError(f"{instrument.symbol} profile does not support product")
+            if instrument.trading_calendar not in policy.trading_calendars:
+                raise ValueError(f"{instrument.symbol} profile does not support trading calendar")
+        return self
 
     @classmethod
     def load(cls, project_root: Path | None = None, *, mode: str | None = None) -> Settings:
@@ -274,6 +503,7 @@ class Settings(BaseModel):
                 return yaml.safe_load(handle) or {}
 
         selected_mode = mode or os.getenv("NOWCASTER_MODE", "live")
+        asset_selection_payload = read_yaml("asset_selection.yaml", required=False)
         default_database = root / "data" / "nowcaster.duckdb"
         return cls(
             project_root=root,
@@ -288,6 +518,9 @@ class Settings(BaseModel):
             features=FeatureConfig.model_validate(read_yaml("features.yaml")),
             instruments=InstrumentsConfig.model_validate(read_yaml("instruments.yaml", required=False)),
             strategies=StrategiesConfig.model_validate(read_yaml("strategies.yaml", required=False)),
+            asset_selection=(
+                AssetSelectionConfig.model_validate(asset_selection_payload) if asset_selection_payload else None
+            ),
             trading=TradingConfig.model_validate(read_yaml("trading.yaml", required=False)),
             deep_research=DeepResearchConfig.model_validate(read_yaml("deep_research.yaml", required=False)),
         )

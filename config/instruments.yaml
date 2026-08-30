@@ -7,6 +7,7 @@ instruments:
     provider: binance
     feed: spot
     product: spot
+    profile: crypto_major_spot
     shortable: false
     short_mechanism: none
     funding_applicable: false
@@ -28,6 +29,7 @@ instruments:
     provider: binance
     feed: spot
     product: spot
+    profile: crypto_major_spot
     shortable: false
     short_mechanism: none
     funding_applicable: false

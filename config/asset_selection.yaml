@@ -1,0 +1,124 @@
+maximum_candidate_universe: 200
+
+hierarchy_prior_strengths:
+  global: 1000
+  asset_class: 500
+  profile: 250
+  asset: 100
+  asset_regime: 50
+
+allocation:
+  minimum_effective_strategies: 4
+  maximum_strategy_weight: 0.25
+  minimum_covariance_overlap: 100
+  risk_penalty: 4.0
+  turnover_penalty: 0.5
+  prior_penalty: 0.5
+  family_weight_caps:
+    trend: 0.50
+    mean_reversion: 0.50
+    volatility_volume: 0.40
+    session: 0.30
+    relative_value: 0.30
+
+portfolio:
+  maximum_candidates: 20
+  maximum_opportunities: 5
+  maximum_gross_exposure: 0.50
+  maximum_net_exposure: 0.30
+  maximum_asset_weight: 0.10
+  maximum_asset_class_weight: 0.30
+  maximum_sector_weight: 0.20
+  maximum_correlation: 0.75
+  minimum_research_weight: 0.0025
+  kelly_fraction: 0.10
+  volatility_target: 0.10
+
+profiles:
+  us_liquid_equity:
+    asset_classes: [equity]
+    products: [equity]
+    trading_calendars: [XNYS, XNAS]
+    allowed_directions: [long, short]
+    allowed_families: [trend, mean_reversion, volatility_volume, session, relative_value]
+    session_strategy_ids: [opening_range_breakout, vwap_reversion]
+    minimum_cross_sectional_peers: 5
+    minimum_history_bars: 500
+    minimum_coverage: 0.99
+    maximum_data_age_seconds: 30
+    minimum_median_notional_volume: 20000000
+    maximum_spread_bps: 8
+    minimum_depth_notional: 100000
+    maximum_price_impact_bps: 10
+    maximum_participation_rate: 0.01
+    minimum_realized_volatility: 0.0001
+    maximum_realized_volatility: 0.12
+    require_observed_spread: true
+    require_observed_depth: true
+    require_observed_impact: true
+
+  us_broad_etf:
+    asset_classes: [equity]
+    products: [equity]
+    trading_calendars: [XNYS, XNAS]
+    allowed_directions: [long, short]
+    allowed_families: [trend, mean_reversion, volatility_volume, session, relative_value]
+    session_strategy_ids: [opening_range_breakout, vwap_reversion]
+    minimum_cross_sectional_peers: 3
+    minimum_history_bars: 500
+    minimum_coverage: 0.99
+    maximum_data_age_seconds: 30
+    minimum_median_notional_volume: 50000000
+    maximum_spread_bps: 5
+    minimum_depth_notional: 250000
+    maximum_price_impact_bps: 8
+    maximum_participation_rate: 0.01
+    minimum_realized_volatility: 0.00005
+    maximum_realized_volatility: 0.10
+    require_observed_spread: true
+    require_observed_depth: true
+    require_observed_impact: true
+
+  crypto_major_spot:
+    asset_classes: [crypto]
+    products: [spot]
+    trading_calendars: [24x7]
+    allowed_directions: [long]
+    allowed_families: [trend, mean_reversion, volatility_volume, session, relative_value]
+    session_strategy_ids: []
+    minimum_cross_sectional_peers: 2
+    minimum_history_bars: 1000
+    minimum_coverage: 0.995
+    maximum_data_age_seconds: 15
+    minimum_median_notional_volume: 10000000
+    maximum_spread_bps: 10
+    minimum_depth_notional: 100000
+    maximum_price_impact_bps: 12
+    maximum_participation_rate: 0.005
+    minimum_realized_volatility: 0.0001
+    maximum_realized_volatility: 0.20
+    require_observed_spread: true
+    require_observed_depth: true
+    require_observed_impact: true
+
+  crypto_liquid_derivative:
+    asset_classes: [crypto]
+    products: [perpetual]
+    trading_calendars: [24x7]
+    allowed_directions: [long, short]
+    allowed_families: [trend, mean_reversion, volatility_volume, session, relative_value]
+    session_strategy_ids: []
+    minimum_cross_sectional_peers: 2
+    minimum_history_bars: 1500
+    minimum_coverage: 0.995
+    maximum_data_age_seconds: 10
+    minimum_median_notional_volume: 25000000
+    maximum_spread_bps: 8
+    minimum_depth_notional: 250000
+    maximum_price_impact_bps: 10
+    maximum_participation_rate: 0.005
+    minimum_realized_volatility: 0.0001
+    maximum_realized_volatility: 0.25
+    require_observed_spread: true
+    require_observed_depth: true
+    require_observed_impact: true
