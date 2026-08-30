@@ -21,6 +21,7 @@ EXPECTED_TABLES = {
     "contextual_weights",
     "portfolio_research_decisions",
     "contextual_learning_trials",
+    "contextual_learning_trial_events",
     "contextual_drift_events",
 }
 
@@ -92,53 +93,81 @@ def test_repository_appends_remaining_contextual_evidence_types(tmp_path) -> Non
         "interval": "5m",
     }
 
-    assert repository.append_regime_posterior(
-        {
-            **context,
-            "model_hash": "model-v1",
-            "decision_timestamp": NOW,
-            "feature_through": NOW,
-            "training_through": NOW,
-            "status": "fitted",
-            "probabilities": {
-                "trend_normal": 0.4,
-                "trend_elevated_volatility": 0.2,
-                "range_liquid": 0.3,
-                "stressed_or_illiquid": 0.1,
-            },
-        }
-    ) == 1
-    assert repository.append_portfolio_decision(
-        {
-            "selection_id": "selection-v1",
-            "decision_hash": "decision-v1",
-            "context_hash": "context-v1",
-            "symbol": "BTCUSDT",
-            "direction": "long",
-            "effective_at": NOW,
-            "status": "selected",
-            "selected": True,
-            "weight": 0.05,
-            "exclusion_reasons": [],
-        }
-    ) == 1
-    assert repository.append_learning_trial(
-        {
-            "global_trial_id": "trial-v1",
-            "dataset_hash": "dataset-v1",
-            "protocol_hash": "protocol-v1",
-            "candidate_hash": "candidate-v1",
-            "ordinal": 1,
-            "evaluated_at": NOW,
-            "status": "succeeded",
-            "definition": {"risk_penalty": 4.0},
-        }
-    ) == 1
-    assert repository.append_drift_event(
-        {
-            "context_hash": "context-v1",
-            "effective_at": NOW,
-            "status": "warning",
-            "reason": "calibration_shift",
-        }
-    ) == 1
+    assert (
+        repository.append_regime_posterior(
+            {
+                **context,
+                "model_hash": "model-v1",
+                "decision_timestamp": NOW,
+                "feature_through": NOW,
+                "training_through": NOW,
+                "status": "fitted",
+                "probabilities": {
+                    "trend_normal": 0.4,
+                    "trend_elevated_volatility": 0.2,
+                    "range_liquid": 0.3,
+                    "stressed_or_illiquid": 0.1,
+                },
+            }
+        )
+        == 1
+    )
+    assert (
+        repository.append_portfolio_decision(
+            {
+                "selection_id": "selection-v1",
+                "decision_hash": "decision-v1",
+                "context_hash": "context-v1",
+                "symbol": "BTCUSDT",
+                "direction": "long",
+                "effective_at": NOW,
+                "status": "selected",
+                "selected": True,
+                "weight": 0.05,
+                "exclusion_reasons": [],
+            }
+        )
+        == 1
+    )
+    assert (
+        repository.append_learning_trial(
+            {
+                "global_trial_id": "trial-v1",
+                "dataset_hash": "dataset-v1",
+                "protocol_hash": "protocol-v1",
+                "candidate_hash": "candidate-v1",
+                "ordinal": 1,
+                "evaluated_at": NOW,
+                "status": "succeeded",
+                "definition": {"risk_penalty": 4.0},
+            }
+        )
+        == 1
+    )
+    assert (
+        repository.append_drift_event(
+            {
+                "context_hash": "context-v1",
+                "effective_at": NOW,
+                "status": "warning",
+                "reason": "calibration_shift",
+            }
+        )
+        == 1
+    )
+
+
+def test_contextual_trial_events_require_an_immutable_reservation(tmp_path) -> None:
+    database = Database.from_url(f"duckdb:///{tmp_path / 'trial-events.duckdb'}")
+    database.initialize()
+    repository = ContextualRepository(database, clock=lambda: NOW)
+
+    with pytest.raises(ValueError, match="reserved"):
+        repository.append_learning_trial_event(
+            {
+                "global_trial_id": "unreserved",
+                "status": "failed",
+                "rung": 1,
+                "evaluated_at": NOW,
+            }
+        )

@@ -1503,6 +1503,21 @@ contextual_learning_trials = Table(
     CheckConstraint("ordinal >= 1", name="ck_contextual_trial_ordinal"),
 )
 
+contextual_learning_trial_events = Table(
+    "contextual_learning_trial_events",
+    metadata,
+    Column("trial_event_id", String, primary_key=True),
+    Column("content_hash", String, nullable=False),
+    Column("global_trial_id", String, nullable=False),
+    Column("status", String, nullable=False),
+    Column("rung", Integer, nullable=False),
+    Column("evaluated_at", DateTime(timezone=True), nullable=False),
+    Column("fitness", Float),
+    Column("evidence", JSON, nullable=False),
+    *common_columns(),
+    CheckConstraint("rung >= 0", name="ck_contextual_trial_event_rung"),
+)
+
 contextual_drift_events = Table(
     "contextual_drift_events",
     metadata,
@@ -1626,5 +1641,6 @@ NATURAL_KEYS: dict[str, tuple[str, ...]] = {
     "contextual_weights": ("contextual_weight_id",),
     "portfolio_research_decisions": ("portfolio_decision_id",),
     "contextual_learning_trials": ("contextual_trial_id",),
+    "contextual_learning_trial_events": ("trial_event_id",),
     "contextual_drift_events": ("drift_event_id",),
 }

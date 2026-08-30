@@ -182,16 +182,11 @@ class ContextualRepository:
         gross_return = float(outcome["gross_return"])
         modeled_cost = float(outcome["modeled_cost"])
         net_return = float(outcome["net_return"])
-        if (
-            not all(math.isfinite(value) for value in (gross_return, modeled_cost, net_return))
-            or modeled_cost < 0
-        ):
+        if not all(math.isfinite(value) for value in (gross_return, modeled_cost, net_return)) or modeled_cost < 0:
             raise ValueError("contextual returns and costs must be finite with nonnegative costs")
         if not math.isclose(gross_return - modeled_cost, net_return, rel_tol=0, abs_tol=1e-12):
             raise ValueError("contextual net return must equal gross return less modeled cost")
-        probabilities = {
-            str(key): float(value) for key, value in dict(outcome["regime_probabilities"]).items()
-        }
+        probabilities = {str(key): float(value) for key, value in dict(outcome["regime_probabilities"]).items()}
         if (
             len(probabilities) != 4
             or any(not math.isfinite(value) or value < 0 or value > 1 for value in probabilities.values())
@@ -377,9 +372,7 @@ class ContextualRepository:
         payload = _json_payload({"allocation": allocation, "context": context})
         rows = []
         for weight in allocation.weight_evidence:
-            identity = canonical_hash(
-                {"allocation_id": allocation.allocation_id, "strategy_id": weight.strategy_id}
-            )
+            identity = canonical_hash({"allocation_id": allocation.allocation_id, "strategy_id": weight.strategy_id})
             row = {
                 "contextual_weight_id": identity,
                 "content_hash": canonical_hash({"payload": payload, "strategy_id": weight.strategy_id}),
@@ -430,9 +423,7 @@ class ContextualRepository:
         decision = _utc_datetime(record["decision_timestamp"], "decision_timestamp")
         feature_through = _utc_datetime(record["feature_through"], "feature_through")
         training_value = record.get("training_through")
-        training_through = (
-            _utc_datetime(training_value, "training_through") if training_value is not None else None
-        )
+        training_through = _utc_datetime(training_value, "training_through") if training_value is not None else None
         if feature_through > decision or (training_through is not None and training_through > decision):
             raise ValueError("regime evidence cannot follow its decision timestamp")
         probabilities = {str(key): float(value) for key, value in dict(record["probabilities"]).items()}
@@ -606,6 +597,46 @@ class ContextualRepository:
             **self._common(),
         }
         return self._append_rows("contextual_drift_events", "drift_event_id", (row,))
+
+    def append_learning_trial_event(self, record: Mapping[str, Any]) -> int:
+        """Append an outcome event without mutating the pre-evaluation trial reservation."""
+
+        required = {"global_trial_id", "status", "rung", "evaluated_at"}
+        missing = sorted(required - set(record))
+        if missing:
+            raise ValueError(f"contextual trial event missing fields: {', '.join(missing)}")
+        global_trial_id = str(record["global_trial_id"])
+        if not self.database.scalar(
+            "select count(*) from contextual_learning_trials where global_trial_id = :identity",
+            {"identity": global_trial_id},
+        ):
+            raise ValueError("contextual trial must be reserved before appending evaluation events")
+        status = str(record["status"])
+        if status not in {"duplicate", "succeeded", "failed", "interrupted", "halved", "shadow"}:
+            raise ValueError("contextual trial event status is invalid")
+        rung = int(record["rung"])
+        if rung < 0:
+            raise ValueError("contextual trial event rung cannot be negative")
+        evaluated_at = _utc_datetime(record["evaluated_at"], "evaluated_at")
+        fitness = record.get("fitness")
+        if fitness is not None and not math.isfinite(float(fitness)):
+            raise ValueError("contextual trial event fitness must be finite")
+        payload = _json_payload(record)
+        content_hash = canonical_hash(payload)
+        row = {
+            "trial_event_id": canonical_hash(
+                {"global_trial_id": global_trial_id, "status": status, "rung": rung, "content_hash": content_hash}
+            ),
+            "content_hash": content_hash,
+            "global_trial_id": global_trial_id,
+            "status": status,
+            "rung": rung,
+            "evaluated_at": evaluated_at,
+            "fitness": float(fitness) if fitness is not None else None,
+            "evidence": payload,
+            **self._common(),
+        }
+        return self._append_rows("contextual_learning_trial_events", "trial_event_id", (row,))
 
 
 __all__ = ["ContextualRepository"]

@@ -34,9 +34,18 @@ from src.contextual.portfolio import (
 )
 from src.contextual.regimes import causal_regime_features, fit_regime_model, predict_regime_posteriors
 from src.contextual.repository import ContextualRepository
-from src.contextual.types import EligibilityState, StrategyContextKey, StrategyDirection
+from src.contextual.types import ContextLevel, EligibilityState, StrategyContextKey, StrategyDirection
 from src.database.engine import Database
+from src.deep_research.contracts import ChampionChallengerTransition
 from src.ingestion.bars import INTERVAL_DURATION
+from src.learning.search import (
+    ContextualCandidate,
+    ContextualCandidateEvaluation,
+    ContextualLearningExperiment,
+    ContextualSearchSpace,
+    evaluate_contextual_candidate,
+    generate_contextual_candidates,
+)
 from src.strategies.types import BarInterval, StrategyMode, canonical_hash
 
 EventSink = Callable[["ContextualProgress"], None]
@@ -113,6 +122,10 @@ class ContextualLearningResult:
     status: Literal["shadow"]
     evaluation_budget: int
     seed: int
+    trial_count: int = 0
+    candidate_hash: str | None = None
+    fitness: float | None = None
+    shadow_cohort_hash: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -500,6 +513,13 @@ class ContextualResearchService:
             selected[column] = selected["regime_probabilities"].map(
                 lambda value, regime=regime: float(value[regime.value])
             )
+        selected["eligibility_quality"] = selected["evidence"].map(
+            lambda value: (
+                float(value.get("eligibility_evidence", {}).get("quality_score", 0.0))
+                if isinstance(value, dict) and isinstance(value.get("eligibility_evidence"), dict)
+                else 0.0
+            )
+        )
         known = set(self._specs)
         selected = selected.loc[selected["strategy_id"].astype(str).isin(known)].copy()
         if selected.empty:
@@ -952,37 +972,211 @@ class ContextualResearchService:
         *,
         evaluation_budget: int,
         seed: int,
+        sink: EventSink | None = None,
     ) -> ContextualLearningResult:
         if not 1 <= evaluation_budget <= 100_000:
             raise ValueError("contextual evaluation budget must be in [1, 100000]")
+        self._validate_request(request)
         assembly = self._outcomes(request)
-        definition = {
-            "status": "shadow",
-            "policy": self.config.model_dump(mode="json"),
-            "evaluation_budget": evaluation_budget,
-            "seed": seed,
-        }
-        candidate_hash = canonical_hash(definition)
-        trial_id = canonical_hash(
+        timestamps = tuple(sorted(assembly.frame["decision_timestamp"].unique()))
+        if len(timestamps) < 90:
+            raise ValueError("contextual learning requires at least 90 resolved development timestamps")
+        sealed_start = pd.Timestamp(timestamps[int(len(timestamps) * 0.80)]).to_pydatetime()
+        development = assembly.frame.loc[
+            (assembly.frame["decision_timestamp"] < sealed_start)
+            & (assembly.frame["outcome_available_at"] < sealed_start)
+        ].copy()
+        development_as_of = development["outcome_available_at"].max().to_pydatetime()
+        baseline = ContextualCandidate(
+            global_prior_strength=self.config.hierarchy_prior_strengths[ContextLevel.GLOBAL],
+            asset_class_prior_strength=self.config.hierarchy_prior_strengths[ContextLevel.ASSET_CLASS],
+            profile_prior_strength=self.config.hierarchy_prior_strengths[ContextLevel.PROFILE],
+            asset_prior_strength=self.config.hierarchy_prior_strengths[ContextLevel.ASSET],
+            asset_regime_prior_strength=self.config.hierarchy_prior_strengths[ContextLevel.ASSET_REGIME],
+            risk_penalty=self.config.allocation.risk_penalty,
+            turnover_penalty=self.config.allocation.turnover_penalty,
+            prior_penalty=self.config.allocation.prior_penalty,
+            maximum_correlation=self.config.portfolio.maximum_correlation,
+            kelly_fraction=self.config.portfolio.kelly_fraction,
+        )
+        space = ContextualSearchSpace.conservative(baseline)
+        candidates = generate_contextual_candidates(space, seed=seed, budget=evaluation_budget)
+        protocol_hash = canonical_hash(
             {
+                "contextual_search_version": 1,
                 "dataset_hash": assembly.dataset_hash,
-                "protocol_hash": assembly.protocol_hash,
-                "candidate_hash": candidate_hash,
+                "source_protocol_hash": assembly.protocol_hash,
+                "source_datasets": dict(assembly.source_datasets),
+                "search_space": dict(space.grids),
+                "baseline": baseline.definition,
+                "sealed_final_start": sealed_start,
+                "development_data_through": development_as_of,
+                "seed": seed,
             }
         )
-        self.repository.append_learning_trial(
+        experiment = ContextualLearningExperiment(
+            dataset_hash=assembly.dataset_hash,
+            protocol_hash=protocol_hash,
+            as_of=development_as_of,
+            sealed_final_start=sealed_start,
+            outer_validation_blocks=3,
+            minimum_train_timestamps=40,
+            minimum_validation_timestamps=10,
+        )
+        identities: dict[str, str] = {}
+        for ordinal, candidate in enumerate(candidates, start=1):
+            identity = candidate.global_trial_id(assembly.dataset_hash, protocol_hash, ordinal)
+            identities[candidate.candidate_hash] = identity
+            definition = {
+                "candidate": candidate.definition,
+                "candidate_hash": candidate.candidate_hash,
+                "source_protocol_hash": assembly.protocol_hash,
+                "source_datasets": dict(assembly.source_datasets),
+                "development_data_through": development_as_of.isoformat(),
+                "sealed_final_start": sealed_start.isoformat(),
+                "state": "shadow",
+            }
+            existing = self.database.frame(
+                "select content_hash, evidence, definition from contextual_learning_trials "
+                "where global_trial_id = :identity",
+                {"identity": identity},
+            )
+            if not existing.empty:
+                row = existing.iloc[0]
+                if canonical_hash(row["evidence"]) != str(row["content_hash"]) or row["definition"] != definition:
+                    raise ValueError("persisted contextual trial conflicts with its immutable search definition")
+                self.repository.append_learning_trial_event(
+                    {
+                        "global_trial_id": identity,
+                        "status": "duplicate",
+                        "rung": 0,
+                        "evaluated_at": datetime.now(UTC),
+                        "candidate_hash": candidate.candidate_hash,
+                    }
+                )
+                continue
+            self.repository.append_learning_trial(
+                {
+                    "global_trial_id": identity,
+                    "dataset_hash": assembly.dataset_hash,
+                    "protocol_hash": protocol_hash,
+                    "candidate_hash": candidate.candidate_hash,
+                    "ordinal": ordinal,
+                    "evaluated_at": datetime.now(UTC),
+                    "status": "generated",
+                    "definition": definition,
+                }
+            )
+        self._emit(sink, "hierarchy", f"reserved {len(candidates)} globally identified contextual trials")
+
+        survivors = list(candidates)
+        results: dict[str, ContextualCandidateEvaluation] = {}
+        for rung in (1, 2, 3):
+            successful: list[ContextualCandidate] = []
+            for candidate in survivors:
+                identity = identities[candidate.candidate_hash]
+                try:
+                    result = evaluate_contextual_candidate(
+                        candidate,
+                        development,
+                        replace(experiment, outer_validation_blocks=rung),
+                    )
+                except (KeyboardInterrupt, SystemExit):
+                    self.repository.append_learning_trial_event(
+                        {
+                            "global_trial_id": identity,
+                            "status": "interrupted",
+                            "rung": rung,
+                            "evaluated_at": datetime.now(UTC),
+                            "candidate_hash": candidate.candidate_hash,
+                        }
+                    )
+                    raise
+                except Exception as error:
+                    self.repository.append_learning_trial_event(
+                        {
+                            "global_trial_id": identity,
+                            "status": "failed",
+                            "rung": rung,
+                            "evaluated_at": datetime.now(UTC),
+                            "candidate_hash": candidate.candidate_hash,
+                            "error_summary": f"{type(error).__name__}: {error}"[:1_000],
+                        }
+                    )
+                    continue
+                results[candidate.candidate_hash] = result
+                successful.append(candidate)
+                self.repository.append_learning_trial_event(
+                    {
+                        "global_trial_id": identity,
+                        "status": "succeeded",
+                        "rung": rung,
+                        "evaluated_at": datetime.now(UTC),
+                        "candidate_hash": candidate.candidate_hash,
+                        "fitness": result.fitness,
+                        "result": asdict(result),
+                        "state": "shadow",
+                    }
+                )
+            ranked = sorted(
+                successful,
+                key=lambda item: (-results[item.candidate_hash].fitness, item.candidate_hash),
+            )
+            if rung < 3:
+                keep = max((len(ranked) + 1) // 2, 1)
+                for candidate in ranked[keep:]:
+                    self.repository.append_learning_trial_event(
+                        {
+                            "global_trial_id": identities[candidate.candidate_hash],
+                            "status": "halved",
+                            "rung": rung,
+                            "evaluated_at": datetime.now(UTC),
+                            "candidate_hash": candidate.candidate_hash,
+                            "fitness": results[candidate.candidate_hash].fitness,
+                        }
+                    )
+                survivors = ranked[:keep]
+            else:
+                survivors = ranked
+            self._emit(sink, "allocation", f"completed contextual search rung {rung}; {len(survivors)} survivors")
+            if not survivors:
+                break
+        if not survivors:
+            raise ValueError(
+                "no contextual candidate completed chronological validation; attempted trials were retained"
+            )
+        champion = survivors[0]
+        best = results[champion.candidate_hash]
+        transition = ChampionChallengerTransition.start_shadow(
+            challenger_hash=champion.candidate_hash,
+            incumbent_hash=None,
+            protocol_hash=protocol_hash,
+            transitioned_at=datetime.now(UTC),
+        )
+        champion_identity = identities[champion.candidate_hash]
+        self.repository.append_learning_trial_event(
             {
-                "global_trial_id": trial_id,
-                "dataset_hash": assembly.dataset_hash,
-                "protocol_hash": assembly.protocol_hash,
-                "candidate_hash": candidate_hash,
-                "ordinal": 1,
-                "evaluated_at": request.as_of,
+                "global_trial_id": champion_identity,
                 "status": "shadow",
-                "definition": definition,
+                "rung": 3,
+                "evaluated_at": transition.transitioned_at,
+                "candidate_hash": champion.candidate_hash,
+                "fitness": best.fitness,
+                "result": asdict(best),
+                "transition": transition.as_record(),
             }
         )
-        return ContextualLearningResult(trial_id, "shadow", evaluation_budget, seed)
+        self._emit(sink, "portfolio", "contextual champion remains shadow; fresh forward evidence is required")
+        return ContextualLearningResult(
+            global_trial_id=champion_identity,
+            status="shadow",
+            evaluation_budget=evaluation_budget,
+            seed=seed,
+            trial_count=len(candidates),
+            candidate_hash=champion.candidate_hash,
+            fitness=best.fitness,
+            shadow_cohort_hash=transition.shadow_cohort_hash,
+        )
 
 
 __all__ = [

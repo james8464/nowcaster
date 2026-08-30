@@ -4,13 +4,16 @@ import math
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
 from sqlalchemy import text
 
+import src.contextual.service as contextual_service_module
 from src.config.settings import Settings
 from src.contextual.repository import ContextualRepository
 from src.contextual.service import ContextualResearchService, ContextualRunRequest
 from src.database.engine import Database
 from src.ingestion.bars import MarketBar
+from src.learning.search import global_learning_trial_count
 from src.live_monitor.evidence import SealedCohort, load_contextual_live_evidence
 from src.strategies.datasets import BarRepository
 from src.strategies.types import BarInterval, StrategyMode, canonical_hash
@@ -23,7 +26,7 @@ STRATEGIES = (
     "bollinger_keltner_squeeze",
 )
 DATASET_HASH = "d" * 64
-PROTOCOL_HASH = "p" * 64
+PROTOCOL_HASH = "a" * 64
 
 
 def seed_contextual_market(database: Database, *, count: int = 160) -> datetime:
@@ -170,3 +173,47 @@ def test_live_loader_requires_one_authenticated_exact_contextual_cohort(tmp_path
     with database.engine.begin() as connection:
         connection.execute(text("update contextual_weights set content_hash = 'tampered'"))
     assert load_contextual_live_evidence(database, (live_cohort,), now=as_of) == {}
+
+
+def test_contextual_learning_reserves_all_trials_and_keeps_the_champion_shadow(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, database, as_of = contextual_service(tmp_path)
+    evaluator = contextual_service_module.evaluate_contextual_candidate
+
+    def assert_reserved_before_evaluation(*args, **kwargs):
+        assert database.scalar("select count(*) from contextual_learning_trials") == 4
+        return evaluator(*args, **kwargs)
+
+    monkeypatch.setattr(contextual_service_module, "evaluate_contextual_candidate", assert_reserved_before_evaluation)
+    request = ContextualRunRequest(
+        symbols=("BTCUSDT",),
+        provider="binance",
+        feed="spot",
+        interval=BarInterval.FIVE_MINUTES,
+        mode=StrategyMode.PAPER,
+        as_of=as_of,
+    )
+
+    result = service.learn_contextual(request, evaluation_budget=4, seed=42)
+
+    assert result.status == "shadow"
+    assert result.trial_count == 4
+    assert result.shadow_cohort_hash
+    assert database.scalar("select count(*) from contextual_learning_trials") == 4
+    assert database.scalar("select count(*) from contextual_learning_trial_events") >= 4
+    assert database.scalar("select count(*) from readiness_receipts") == 0
+    assert database.scalar("select count(*) from contextual_learning_trials where status = 'generated'") == 4
+    assert (
+        global_learning_trial_count(
+            database,
+            dataset_hash=DATASET_HASH,
+            search_family="contextual_policy_search",
+        )
+        == 4
+    )
+
+    repeated = service.learn_contextual(request, evaluation_budget=4, seed=42)
+    assert repeated.global_trial_id == result.global_trial_id
+    assert database.scalar("select count(*) from contextual_learning_trials") == 4

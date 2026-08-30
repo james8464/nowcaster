@@ -57,6 +57,24 @@ def global_trial_identity(
     )
 
 
+def contextual_trial_identity(
+    *,
+    dataset_hash: str,
+    protocol_hash: str,
+    candidate_hash: str,
+    attempt_ordinal: int = 0,
+) -> str:
+    """Identify one bounded contextual-policy evaluation across sessions and restarts."""
+
+    return global_trial_identity(
+        search_family="contextual_policy_search",
+        dataset_hash=dataset_hash,
+        protocol_hash=protocol_hash,
+        candidate_hash=candidate_hash,
+        attempt_ordinal=attempt_ordinal,
+    )
+
+
 class RunState(StrEnum):
     RUNNING = "running"
     PAUSED = "paused"

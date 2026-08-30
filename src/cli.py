@@ -602,6 +602,7 @@ def strategy_learn_contextual(
             request,
             evaluation_budget=evaluation_budget,
             seed=seed,
+            sink=_emit_contextual_progress,
         )
 
     _run_contextual_stage("learn_contextual", execute)

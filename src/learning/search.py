@@ -5,8 +5,10 @@ import math
 import random
 import statistics
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
+from itertools import product
+from types import MappingProxyType
 from typing import Literal
 
 import numpy as np
@@ -15,14 +17,268 @@ import pandas as pd
 from src.backtest.execution import ExecutionAssumptions
 from src.backtest.intraday import RiskLimits, run_intraday_backtest
 from src.backtest.metrics import calculate_backtest_metrics
+from src.backtest.robustness import effective_sample_size
 from src.database.engine import Database
-from src.deep_research.contracts import global_trial_identity
+from src.deep_research.contracts import contextual_trial_identity, global_trial_identity
 from src.learning.grammar import RuleNode, semantic_dedupe
 from src.strategies.types import BarInterval, StrategyMode, canonical_hash
 from src.strategies.validation import WalkForwardFold
 
 TrialStatus = Literal["succeeded", "failed", "invalid", "budget_stop"]
 RuleState = Literal["shadow", "paper", "active", "retired"]
+
+_CONTEXTUAL_REGIME_COLUMNS = (
+    "regime_trend_normal",
+    "regime_trend_elevated_volatility",
+    "regime_range_liquid",
+    "regime_stressed_or_illiquid",
+)
+_CONTEXTUAL_CANDIDATE_FIELDS = (
+    "profile_threshold_multiplier",
+    "long_holding_horizon_bars",
+    "short_holding_horizon_bars",
+    "regime_uncertainty_penalty",
+    "global_prior_strength",
+    "asset_class_prior_strength",
+    "profile_prior_strength",
+    "asset_prior_strength",
+    "asset_regime_prior_strength",
+    "risk_penalty",
+    "turnover_penalty",
+    "prior_penalty",
+    "minimum_lower_edge",
+    "maximum_correlation",
+    "kelly_fraction",
+    "minimum_liquidity_quality",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ContextualCandidate:
+    """Closed, code-free policy searched by contextual learning."""
+
+    profile_threshold_multiplier: float = 1.0
+    long_holding_horizon_bars: int = 1
+    short_holding_horizon_bars: int = 1
+    regime_uncertainty_penalty: float = 1.0
+    global_prior_strength: float = 1_000.0
+    asset_class_prior_strength: float = 500.0
+    profile_prior_strength: float = 250.0
+    asset_prior_strength: float = 100.0
+    asset_regime_prior_strength: float = 50.0
+    risk_penalty: float = 4.0
+    turnover_penalty: float = 0.5
+    prior_penalty: float = 0.5
+    minimum_lower_edge: float = 0.0
+    maximum_correlation: float = 0.75
+    kelly_fraction: float = 0.10
+    minimum_liquidity_quality: float = 0.80
+
+    def __post_init__(self) -> None:
+        integer_values = (self.long_holding_horizon_bars, self.short_holding_horizon_bars)
+        if any(isinstance(value, bool) or not isinstance(value, int) for value in integer_values):
+            raise ValueError("contextual holding horizons must be integers")
+        numeric = tuple(float(getattr(self, name)) for name in _CONTEXTUAL_CANDIDATE_FIELDS)
+        if any(not math.isfinite(value) for value in numeric):
+            raise ValueError("contextual candidate values must be finite")
+        bounds = {
+            "profile_threshold_multiplier": (0.75, 1.50),
+            "long_holding_horizon_bars": (1, 24),
+            "short_holding_horizon_bars": (1, 24),
+            "regime_uncertainty_penalty": (0.0, 4.0),
+            "global_prior_strength": (100.0, 5_000.0),
+            "asset_class_prior_strength": (50.0, 2_500.0),
+            "profile_prior_strength": (25.0, 1_250.0),
+            "asset_prior_strength": (10.0, 500.0),
+            "asset_regime_prior_strength": (5.0, 250.0),
+            "risk_penalty": (0.25, 25.0),
+            "turnover_penalty": (0.0, 10.0),
+            "prior_penalty": (0.0, 10.0),
+            "minimum_lower_edge": (0.0, 0.02),
+            "maximum_correlation": (0.25, 0.95),
+            "kelly_fraction": (0.01, 0.25),
+            "minimum_liquidity_quality": (0.50, 1.0),
+        }
+        for name, (lower, upper) in bounds.items():
+            value = float(getattr(self, name))
+            if not lower <= value <= upper:
+                raise ValueError(f"contextual candidate {name} must be in [{lower}, {upper}]")
+        priors = (
+            self.global_prior_strength,
+            self.asset_class_prior_strength,
+            self.profile_prior_strength,
+            self.asset_prior_strength,
+            self.asset_regime_prior_strength,
+        )
+        if any(left < right for left, right in zip(priors[:-1], priors[1:], strict=True)):
+            raise ValueError("contextual prior strengths must decrease toward specific cells")
+
+    @classmethod
+    def defaults(cls) -> ContextualCandidate:
+        return cls()
+
+    @property
+    def definition(self) -> dict[str, float | int]:
+        return {name: getattr(self, name) for name in _CONTEXTUAL_CANDIDATE_FIELDS}
+
+    @property
+    def candidate_hash(self) -> str:
+        return canonical_hash({"contextual_candidate_version": 1, **self.definition})
+
+    def global_trial_id(self, dataset_hash: str, protocol_hash: str, attempt_ordinal: int = 0) -> str:
+        return contextual_trial_identity(
+            dataset_hash=dataset_hash,
+            protocol_hash=protocol_hash,
+            candidate_hash=self.candidate_hash,
+            attempt_ordinal=attempt_ordinal,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ContextualSearchSpace:
+    baseline: ContextualCandidate
+    profile_threshold_multipliers: tuple[float, ...]
+    long_holding_horizons: tuple[int, ...]
+    short_holding_horizons: tuple[int, ...]
+    regime_uncertainty_penalties: tuple[float, ...]
+    global_prior_strengths: tuple[float, ...]
+    asset_class_prior_strengths: tuple[float, ...]
+    profile_prior_strengths: tuple[float, ...]
+    asset_prior_strengths: tuple[float, ...]
+    asset_regime_prior_strengths: tuple[float, ...]
+    risk_penalties: tuple[float, ...]
+    turnover_penalties: tuple[float, ...]
+    prior_penalties: tuple[float, ...]
+    minimum_lower_edges: tuple[float, ...]
+    maximum_correlations: tuple[float, ...]
+    kelly_fractions: tuple[float, ...]
+    minimum_liquidity_qualities: tuple[float, ...]
+
+    def __post_init__(self) -> None:
+        grids = self.grids
+        if any(not values for values in grids.values()):
+            raise ValueError("contextual search grids cannot be empty")
+        for field_name, values in grids.items():
+            if len(values) != len(set(values)):
+                raise ValueError(f"contextual search grid {field_name} must be unique")
+            for value in values:
+                try:
+                    replace(self.baseline, **{field_name: value})
+                except ValueError as error:
+                    raise ValueError(f"invalid contextual search value for {field_name}") from error
+
+    @property
+    def grids(self) -> MappingProxyType[str, tuple[float | int, ...]]:
+        return MappingProxyType(
+            {
+                "profile_threshold_multiplier": self.profile_threshold_multipliers,
+                "long_holding_horizon_bars": self.long_holding_horizons,
+                "short_holding_horizon_bars": self.short_holding_horizons,
+                "regime_uncertainty_penalty": self.regime_uncertainty_penalties,
+                "global_prior_strength": self.global_prior_strengths,
+                "asset_class_prior_strength": self.asset_class_prior_strengths,
+                "profile_prior_strength": self.profile_prior_strengths,
+                "asset_prior_strength": self.asset_prior_strengths,
+                "asset_regime_prior_strength": self.asset_regime_prior_strengths,
+                "risk_penalty": self.risk_penalties,
+                "turnover_penalty": self.turnover_penalties,
+                "prior_penalty": self.prior_penalties,
+                "minimum_lower_edge": self.minimum_lower_edges,
+                "maximum_correlation": self.maximum_correlations,
+                "kelly_fraction": self.kelly_fractions,
+                "minimum_liquidity_quality": self.minimum_liquidity_qualities,
+            }
+        )
+
+    @classmethod
+    def conservative(cls, baseline: ContextualCandidate | None = None) -> ContextualSearchSpace:
+        base = baseline or ContextualCandidate.defaults()
+
+        def values(*items: float | int) -> tuple:
+            return tuple(dict.fromkeys(items))
+
+        return cls(
+            baseline=base,
+            profile_threshold_multipliers=values(base.profile_threshold_multiplier, 0.90, 1.10),
+            long_holding_horizons=values(base.long_holding_horizon_bars, 2, 3, 6),
+            short_holding_horizons=values(base.short_holding_horizon_bars, 2, 3, 6),
+            regime_uncertainty_penalties=values(base.regime_uncertainty_penalty, 0.50, 1.50, 2.0),
+            global_prior_strengths=values(base.global_prior_strength, 500.0, 1_500.0),
+            asset_class_prior_strengths=values(base.asset_class_prior_strength, 250.0, 750.0),
+            profile_prior_strengths=values(base.profile_prior_strength, 125.0, 375.0),
+            asset_prior_strengths=values(base.asset_prior_strength, 50.0, 150.0),
+            asset_regime_prior_strengths=values(base.asset_regime_prior_strength, 25.0, 75.0),
+            risk_penalties=values(base.risk_penalty, 2.0, 8.0),
+            turnover_penalties=values(base.turnover_penalty, 0.25, 1.0),
+            prior_penalties=values(base.prior_penalty, 0.25, 1.0),
+            minimum_lower_edges=values(base.minimum_lower_edge, 0.00025, 0.0005),
+            maximum_correlations=values(base.maximum_correlation, 0.60, 0.85),
+            kelly_fractions=values(base.kelly_fraction, 0.05, 0.15),
+            minimum_liquidity_qualities=values(base.minimum_liquidity_quality, 0.75, 0.90),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ContextualLearningExperiment:
+    dataset_hash: str
+    protocol_hash: str
+    as_of: datetime
+    sealed_final_start: datetime
+    outer_validation_blocks: int = 3
+    minimum_train_timestamps: int = 40
+    minimum_validation_timestamps: int = 10
+    drawdown_penalty: float = 0.50
+    turnover_fitness_penalty: float = 0.05
+    instability_penalty: float = 0.25
+    fragmentation_penalty: float = 0.05
+    complexity_penalty: float = 0.005
+    concentration_penalty: float = 0.10
+
+    def __post_init__(self) -> None:
+        for name in ("dataset_hash", "protocol_hash"):
+            value = str(getattr(self, name)).strip().lower()
+            if len(value) != 64 or any(character not in "0123456789abcdef" for character in value):
+                raise ValueError(f"contextual experiment {name} must be a lowercase SHA-256 digest")
+            object.__setattr__(self, name, value)
+        _explicit_utc(self.as_of, "contextual experiment as_of")
+        _explicit_utc(self.sealed_final_start, "contextual experiment sealed_final_start")
+        if self.as_of >= self.sealed_final_start:
+            raise ValueError("contextual development boundary must precede the sealed final start")
+        if not 1 <= self.outer_validation_blocks <= 10:
+            raise ValueError("contextual outer validation block count must be in [1, 10]")
+        if self.minimum_train_timestamps < 20 or self.minimum_validation_timestamps < 5:
+            raise ValueError("contextual chronological folds are too small")
+        penalties = (
+            self.drawdown_penalty,
+            self.turnover_fitness_penalty,
+            self.instability_penalty,
+            self.fragmentation_penalty,
+            self.complexity_penalty,
+            self.concentration_penalty,
+        )
+        if any(not math.isfinite(value) or value < 0 for value in penalties):
+            raise ValueError("contextual fitness penalties must be finite and nonnegative")
+
+
+@dataclass(frozen=True, slots=True)
+class ContextualFoldMetrics:
+    net_sharpe: float
+    maximum_drawdown: float
+    turnover: float
+    concentration: float
+    fragmentation: float
+    observations: int
+
+
+@dataclass(frozen=True, slots=True)
+class ContextualCandidateEvaluation:
+    candidate_hash: str
+    status: Literal["succeeded"]
+    state: Literal["shadow"]
+    fold_metrics: tuple[ContextualFoldMetrics, ...]
+    fitness: float
+    observations: int
+    evidence_hash: str
 
 
 def _explicit_utc(value: datetime, name: str) -> datetime:
@@ -260,6 +516,411 @@ def calculate_fitness(
         - penalties.turnover * statistics.median(turnovers)
         - penalties.instability * instability
         - penalties.complexity * mdl_cost
+    )
+
+
+def generate_contextual_candidates(
+    search_space: ContextualSearchSpace,
+    *,
+    seed: int,
+    budget: int,
+) -> tuple[ContextualCandidate, ...]:
+    """Generate baseline, one-at-a-time neighbours, then seeded combinations."""
+
+    if isinstance(seed, bool) or not isinstance(seed, int):
+        raise ValueError("contextual search seed must be an integer")
+    if isinstance(budget, bool) or not isinstance(budget, int) or not 1 <= budget <= 100_000:
+        raise ValueError("contextual search budget must be in [1, 100000]")
+    candidates: list[ContextualCandidate] = []
+    seen: set[str] = set()
+
+    def add(candidate: ContextualCandidate) -> None:
+        if candidate.candidate_hash not in seen and len(candidates) < budget:
+            seen.add(candidate.candidate_hash)
+            candidates.append(candidate)
+
+    add(search_space.baseline)
+    for field_name, values in search_space.grids.items():
+        for value in values:
+            try:
+                add(replace(search_space.baseline, **{field_name: value}))
+            except ValueError:
+                continue
+            if len(candidates) == budget:
+                return tuple(candidates)
+
+    generator = random.Random(seed)
+    fields = tuple(search_space.grids)
+    maximum_random_attempts = max(2_000, budget * 100)
+    for _ in range(maximum_random_attempts):
+        values = {name: generator.choice(search_space.grids[name]) for name in fields}
+        try:
+            add(replace(search_space.baseline, **values))
+        except ValueError:
+            continue
+        if len(candidates) == budget:
+            return tuple(candidates)
+
+    grids = tuple(search_space.grids[name] for name in fields)
+    for combination in product(*grids):
+        try:
+            add(replace(search_space.baseline, **dict(zip(fields, combination, strict=True))))
+        except ValueError:
+            continue
+        if len(candidates) == budget:
+            break
+    return tuple(candidates)
+
+
+def _contextual_learning_frame(
+    outcomes: pd.DataFrame,
+    experiment: ContextualLearningExperiment,
+) -> pd.DataFrame:
+    forbidden = sorted(
+        str(column)
+        for column in outcomes.columns
+        if str(column).lower().startswith("final_") or "sealed" in str(column).lower()
+    )
+    if forbidden:
+        raise ValueError(f"sealed or final evidence is forbidden during contextual search: {forbidden}")
+    required = {
+        "outcome_id",
+        "strategy_id",
+        "symbol",
+        "asset_class",
+        "profile",
+        "direction",
+        "decision_timestamp",
+        "outcome_available_at",
+        "net_return",
+        "eligibility_quality",
+        *_CONTEXTUAL_REGIME_COLUMNS,
+    }
+    missing = sorted(required - set(outcomes.columns))
+    if missing:
+        raise ValueError(f"contextual learning evidence is missing columns: {missing}")
+    if outcomes.empty:
+        raise ValueError("contextual learning requires resolved outcomes")
+    frame = outcomes.loc[:, sorted(required)].copy()
+    if frame["outcome_id"].astype(str).duplicated().any():
+        raise ValueError("contextual learning outcome identities must be unique")
+    for column in ("decision_timestamp", "outcome_available_at"):
+        timestamps = []
+        for value in frame[column]:
+            timestamp = pd.Timestamp(value)
+            if pd.isna(timestamp) or timestamp.tzinfo is None or str(timestamp.tz) != "UTC":
+                raise ValueError(f"contextual {column} must contain explicit UTC timestamps")
+            timestamps.append(timestamp.tz_convert("UTC"))
+        frame[column] = pd.Series(timestamps, index=frame.index, dtype="datetime64[ns, UTC]")
+    if (frame["decision_timestamp"] >= pd.Timestamp(experiment.sealed_final_start)).any():
+        raise ValueError("sealed contextual rows are forbidden during search")
+    if (frame["decision_timestamp"] > pd.Timestamp(experiment.as_of)).any():
+        raise ValueError("contextual decisions are not available at the learning boundary")
+    if (frame["outcome_available_at"] > pd.Timestamp(experiment.as_of)).any():
+        raise ValueError("contextual outcomes are not available at the learning boundary")
+    if (frame["outcome_available_at"] <= frame["decision_timestamp"]).any():
+        raise ValueError("contextual outcomes must resolve strictly after their decisions")
+    text_columns = ("outcome_id", "strategy_id", "symbol", "asset_class", "profile", "direction")
+    if any(frame[column].astype(str).str.strip().eq("").any() for column in text_columns):
+        raise ValueError("contextual learning identity fields cannot be blank")
+    frame["symbol"] = frame["symbol"].astype(str).str.upper()
+    if not frame["direction"].astype(str).isin({"long", "short"}).all():
+        raise ValueError("contextual learning direction must be long or short")
+    numeric_columns = ("net_return", "eligibility_quality", *_CONTEXTUAL_REGIME_COLUMNS)
+    numeric = frame.loc[:, numeric_columns].apply(pd.to_numeric, errors="coerce").astype(float)
+    if not np.isfinite(numeric.to_numpy()).all():
+        raise ValueError("contextual learning values must be finite")
+    frame.loc[:, numeric_columns] = numeric
+    if not frame["eligibility_quality"].between(0, 1).all():
+        raise ValueError("contextual eligibility quality must be in [0, 1]")
+    probabilities = frame.loc[:, _CONTEXTUAL_REGIME_COLUMNS].to_numpy(dtype=float)
+    if (
+        (probabilities < 0).any()
+        or (probabilities > 1).any()
+        or not np.allclose(probabilities.sum(axis=1), 1.0, rtol=0, atol=1e-8)
+    ):
+        raise ValueError("contextual regime probabilities must be normalized")
+    return frame.sort_values(
+        ["decision_timestamp", "symbol", "direction", "strategy_id", "outcome_id"],
+        kind="stable",
+    ).reset_index(drop=True)
+
+
+def _contextual_outer_folds(
+    frame: pd.DataFrame,
+    experiment: ContextualLearningExperiment,
+) -> tuple[tuple[pd.DataFrame, pd.DataFrame], ...]:
+    timestamps = tuple(sorted(frame["decision_timestamp"].unique()))
+    needed = experiment.minimum_train_timestamps + (
+        experiment.outer_validation_blocks * experiment.minimum_validation_timestamps
+    )
+    if len(timestamps) < needed:
+        raise ValueError("contextual learning has insufficient timestamps for chronological outer folds")
+    remaining = len(timestamps) - experiment.minimum_train_timestamps
+    block_size = remaining // experiment.outer_validation_blocks
+    folds = []
+    for fold_index in range(experiment.outer_validation_blocks):
+        start = experiment.minimum_train_timestamps + fold_index * block_size
+        end = len(timestamps) if fold_index == experiment.outer_validation_blocks - 1 else start + block_size
+        validation_times = timestamps[start:end]
+        if len(validation_times) < experiment.minimum_validation_timestamps:
+            raise ValueError("contextual validation block is below its minimum timestamp count")
+        validation_start = pd.Timestamp(validation_times[0])
+        train = frame.loc[
+            (frame["decision_timestamp"] < validation_start) & (frame["outcome_available_at"] <= validation_start)
+        ].copy()
+        validation = frame.loc[frame["decision_timestamp"].isin(validation_times)].copy()
+        if train["decision_timestamp"].nunique() < experiment.minimum_train_timestamps:
+            raise ValueError("contextual training outcomes are unavailable before validation")
+        if train["outcome_available_at"].max() > validation["decision_timestamp"].min():
+            raise ValueError("contextual outer fold violates outcome availability chronology")
+        folds.append((train, validation))
+    return tuple(folds)
+
+
+def _soft_stats(values: np.ndarray, weights: np.ndarray) -> tuple[float, float, float]:
+    mass = float(weights.sum())
+    if mass <= 0:
+        return 0.0, 0.0, 0.0
+    mean = float(np.dot(values, weights) / mass)
+    variance = float(np.dot(np.square(values - mean), weights) / mass)
+    squared_mass = float(np.square(weights).sum())
+    effective = mass * mass / squared_mass if squared_mass > 0 else 0.0
+    if len(values):
+        effective = min(effective, effective_sample_size(values))
+    return mean, max(variance, 0.0), effective
+
+
+def _contextual_leaf_estimate(
+    train: pd.DataFrame,
+    row: pd.Series,
+    regime_column: str,
+    candidate: ContextualCandidate,
+) -> tuple[float, float, float]:
+    strategy = str(row["strategy_id"])
+    direction = str(row["direction"])
+    values = train["net_return"].to_numpy(dtype=float)
+
+    def shrink(
+        mask: pd.Series,
+        weights: np.ndarray,
+        parent_mean: float,
+        parent_uncertainty: float,
+        strength: float,
+    ) -> tuple[float, float, float]:
+        selected = mask.to_numpy(dtype=bool)
+        local_mean, variance, effective = _soft_stats(values[selected], weights[selected])
+        if effective <= 0:
+            return parent_mean, max(parent_uncertainty, 0.0), variance
+        alpha = effective / (effective + strength)
+        mean = alpha * local_mean + (1.0 - alpha) * parent_mean
+        sampling = math.sqrt(variance / max(effective, 1.0))
+        uncertainty = alpha * sampling + (1.0 - alpha) * parent_uncertainty
+        return mean, max(uncertainty, 0.0), variance
+
+    unit = np.ones(len(train), dtype=float)
+    strategy_mask = (train["strategy_id"].astype(str) == strategy) & (train["direction"].astype(str) == direction)
+    mean, uncertainty, variance = shrink(
+        strategy_mask,
+        unit,
+        0.0,
+        0.0,
+        candidate.global_prior_strength,
+    )
+    levels = (
+        ("asset_class", candidate.asset_class_prior_strength),
+        ("profile", candidate.profile_prior_strength),
+        ("symbol", candidate.asset_prior_strength),
+    )
+    mask = strategy_mask.copy()
+    for column, strength in levels:
+        mask &= train[column].astype(str) == str(row[column])
+        mean, uncertainty, variance = shrink(mask, unit, mean, uncertainty, strength)
+    regime_weights = train[regime_column].to_numpy(dtype=float)
+    mean, uncertainty, variance = shrink(
+        mask,
+        regime_weights,
+        mean,
+        uncertainty,
+        candidate.asset_regime_prior_strength,
+    )
+    return mean - 1.6448536269514722 * uncertainty, uncertainty, max(variance, 1e-12)
+
+
+def _maximum_drawdown(returns: Sequence[float]) -> float:
+    if not returns:
+        return 0.0
+    equity = np.cumprod(1.0 + np.asarray(returns, dtype=float))
+    peaks = np.maximum.accumulate(np.concatenate(([1.0], equity)))[1:]
+    return float(abs(np.min(equity / peaks - 1.0)))
+
+
+def _evaluate_contextual_fold(
+    candidate: ContextualCandidate,
+    train: pd.DataFrame,
+    validation: pd.DataFrame,
+) -> ContextualFoldMetrics:
+    strategy_returns = train.pivot_table(
+        index="decision_timestamp",
+        columns="strategy_id",
+        values="net_return",
+        aggfunc="mean",
+    )
+    correlations = strategy_returns.corr(min_periods=5)
+    previous: dict[tuple[str, str], dict[str, float]] = {}
+    returns_by_direction: dict[str, list[float]] = {"long": [], "short": []}
+    turnovers: list[float] = []
+    concentrations: list[float] = []
+    contexts: set[tuple[str, str, str]] = set()
+    leaf_cache: dict[tuple[str, ...], tuple[float, float, float]] = {}
+    quality_threshold = min(
+        candidate.minimum_liquidity_quality * candidate.profile_threshold_multiplier,
+        1.0,
+    )
+    grouped = validation.groupby(["decision_timestamp", "symbol", "direction"], sort=True)
+    for (_decision, symbol, direction), group in grouped:
+        direction = str(direction)
+        contexts.add((str(group.iloc[0]["profile"]), str(symbol), direction))
+        if float(group["eligibility_quality"].min()) < quality_threshold:
+            returns_by_direction[direction].append(0.0)
+            continue
+        posterior = group.iloc[0].loc[list(_CONTEXTUAL_REGIME_COLUMNS)].to_numpy(dtype=float)
+        positive_mass = posterior[posterior > 0]
+        entropy = float(-np.sum(positive_mass * np.log(positive_mass)) / math.log(4.0))
+        estimates: dict[str, tuple[float, float]] = {}
+        for _, row in group.iterrows():
+            lower = 0.0
+            uncertainty = 0.0
+            variance = 0.0
+            for probability, regime_column in zip(posterior, _CONTEXTUAL_REGIME_COLUMNS, strict=True):
+                leaf_key = (
+                    str(row["strategy_id"]),
+                    str(row["direction"]),
+                    str(row["asset_class"]),
+                    str(row["profile"]),
+                    str(row["symbol"]),
+                    regime_column,
+                )
+                if leaf_key not in leaf_cache:
+                    leaf_cache[leaf_key] = _contextual_leaf_estimate(train, row, regime_column, candidate)
+                regime_lower, regime_uncertainty, regime_variance = leaf_cache[leaf_key]
+                lower += float(probability) * regime_lower
+                uncertainty += float(probability) * regime_uncertainty
+                variance += float(probability) * regime_variance
+            adjusted = lower - candidate.regime_uncertainty_penalty * entropy * uncertainty
+            if adjusted >= candidate.minimum_lower_edge:
+                estimates[str(row["strategy_id"])] = (adjusted, max(variance, 1e-12))
+        ranked = sorted(estimates, key=lambda key: (-estimates[key][0], key))
+        selected: list[str] = []
+        for strategy_id in ranked:
+            if any(
+                other in correlations.index
+                and strategy_id in correlations.columns
+                and pd.notna(correlations.loc[other, strategy_id])
+                and abs(float(correlations.loc[other, strategy_id])) > candidate.maximum_correlation
+                for other in selected
+            ):
+                continue
+            selected.append(strategy_id)
+        if not selected:
+            returns_by_direction[direction].append(0.0)
+            continue
+        raw = {
+            strategy_id: estimates[strategy_id][0] / (candidate.risk_penalty * estimates[strategy_id][1] + 1e-12)
+            for strategy_id in selected
+        }
+        raw_total = sum(raw.values())
+        if raw_total <= 0:
+            returns_by_direction[direction].append(0.0)
+            continue
+        target = {key: value / raw_total for key, value in raw.items()}
+        equal = 1.0 / len(target)
+        target = {
+            key: (value + candidate.prior_penalty * equal) / (1.0 + candidate.prior_penalty)
+            for key, value in target.items()
+        }
+        context_key = (str(symbol), direction)
+        prior_weights = previous.get(context_key, {})
+        smooth = 1.0 / (1.0 + candidate.turnover_penalty)
+        universe = set(target) | set(prior_weights)
+        weights = {
+            key: smooth * target.get(key, 0.0) + (1.0 - smooth) * prior_weights.get(key, 0.0) for key in universe
+        }
+        weight_total = sum(weights.values())
+        weights = {key: value / weight_total for key, value in weights.items()} if weight_total > 0 else {}
+        turnover = sum(abs(weights.get(key, 0.0) - prior_weights.get(key, 0.0)) for key in universe)
+        previous[context_key] = weights
+        expected_edge = sum(weights[key] * estimates[key][0] for key in weights if key in estimates)
+        variance = sum(weights[key] * weights[key] * estimates[key][1] for key in weights if key in estimates)
+        exposure = min(
+            candidate.kelly_fraction * max(expected_edge, 0.0) / max(candidate.risk_penalty * variance, 1e-12),
+            0.25 / math.sqrt(candidate.risk_penalty),
+        )
+        realized = group.set_index("strategy_id")["net_return"].astype(float).to_dict()
+        portfolio_return = exposure * sum(weights[key] * realized.get(key, 0.0) for key in weights)
+        returns_by_direction[direction].append(float(portfolio_return))
+        turnovers.append(turnover * exposure)
+        concentrations.append(sum(value * value for value in weights.values()) * exposure)
+
+    sampled_returns: list[float] = []
+    for direction, values in returns_by_direction.items():
+        horizon = candidate.long_holding_horizon_bars if direction == "long" else candidate.short_holding_horizon_bars
+        sampled_returns.extend(sum(values[index : index + horizon]) for index in range(0, len(values), horizon))
+    returns = np.asarray(sampled_returns, dtype=float)
+    standard_deviation = float(returns.std(ddof=1)) if len(returns) > 1 else 0.0
+    sharpe = float(returns.mean() / standard_deviation * math.sqrt(len(returns))) if standard_deviation > 0 else 0.0
+    return ContextualFoldMetrics(
+        net_sharpe=sharpe,
+        maximum_drawdown=_maximum_drawdown(sampled_returns),
+        turnover=float(np.mean(turnovers)) if turnovers else 0.0,
+        concentration=float(np.mean(concentrations)) if concentrations else 0.0,
+        fragmentation=min(len(contexts) / max(validation["decision_timestamp"].nunique(), 1), 1.0),
+        observations=len(sampled_returns),
+    )
+
+
+def evaluate_contextual_candidate(
+    candidate: ContextualCandidate,
+    outcomes: pd.DataFrame,
+    experiment: ContextualLearningExperiment,
+) -> ContextualCandidateEvaluation:
+    """Evaluate one closed policy on expanding, strictly chronological outer blocks."""
+
+    frame = _contextual_learning_frame(outcomes, experiment)
+    folds = tuple(
+        _evaluate_contextual_fold(candidate, train, validation)
+        for train, validation in _contextual_outer_folds(frame, experiment)
+    )
+    sharpes = [item.net_sharpe for item in folds]
+    baseline = ContextualCandidate.defaults()
+    complexity = sum(getattr(candidate, name) != getattr(baseline, name) for name in _CONTEXTUAL_CANDIDATE_FIELDS)
+    fitness = float(
+        statistics.median(sharpes)
+        - experiment.drawdown_penalty * statistics.median(item.maximum_drawdown for item in folds)
+        - experiment.turnover_fitness_penalty * statistics.median(item.turnover for item in folds)
+        - experiment.instability_penalty * (statistics.pstdev(sharpes) if len(sharpes) > 1 else 0.0)
+        - experiment.fragmentation_penalty * statistics.median(item.fragmentation for item in folds)
+        - experiment.concentration_penalty * statistics.median(item.concentration for item in folds)
+        - experiment.complexity_penalty * complexity
+    )
+    evidence = {
+        "candidate_hash": candidate.candidate_hash,
+        "dataset_hash": experiment.dataset_hash,
+        "protocol_hash": experiment.protocol_hash,
+        "as_of": experiment.as_of,
+        "sealed_final_start": experiment.sealed_final_start,
+        "fold_metrics": tuple(asdict(item) for item in folds),
+        "fitness": fitness,
+        "state": "shadow",
+    }
+    return ContextualCandidateEvaluation(
+        candidate_hash=candidate.candidate_hash,
+        status="succeeded",
+        state="shadow",
+        fold_metrics=folds,
+        fitness=fitness,
+        observations=sum(item.observations for item in folds),
+        evidence_hash=canonical_hash(evidence),
     )
 
 
@@ -1186,6 +1847,15 @@ def global_learning_trial_count(database: Database, *, dataset_hash: str, search
     family = search_family.strip().lower()
     if not family:
         raise ValueError("search_family must not be empty")
+    if family == "contextual_policy_search":
+        return int(
+            database.scalar(
+                "select count(distinct global_trial_id) from contextual_learning_trials "
+                "where dataset_hash = :dataset_hash",
+                {"dataset_hash": dataset_hash},
+            )
+            or 0
+        )
     frame = database.frame(
         "select global_trial_id, candidate from learning_trials where dataset_hash = :dataset_hash",
         {"dataset_hash": dataset_hash},
@@ -1201,6 +1871,11 @@ def global_learning_trial_count(database: Database, *, dataset_hash: str, search
 
 
 __all__ = [
+    "ContextualCandidate",
+    "ContextualCandidateEvaluation",
+    "ContextualFoldMetrics",
+    "ContextualLearningExperiment",
+    "ContextualSearchSpace",
     "FitnessPenalties",
     "FoldMetrics",
     "LearningExperiment",
@@ -1209,5 +1884,7 @@ __all__ = [
     "RuleCandidate",
     "calculate_fitness",
     "discover_rules",
+    "evaluate_contextual_candidate",
+    "generate_contextual_candidates",
     "global_learning_trial_count",
 ]
