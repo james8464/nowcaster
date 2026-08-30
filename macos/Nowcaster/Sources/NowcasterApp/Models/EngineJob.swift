@@ -186,6 +186,8 @@ enum EngineJob: Sendable, Equatable {
     case rebuildAll
     case fullBacktest
     case evaluateStrategies(strategyIDs: [String], mode: StrategyRunMode, asset: StrategyAssetContext)
+    case contextualResearch(symbols: [String], mode: StrategyRunMode = .paper, asset: StrategyAssetContext)
+    case contextualLearning(symbols: [String], mode: StrategyRunMode = .paper, asset: StrategyAssetContext, budget: Int)
     case learn(assetID: String, interval: String, budget: Int)
     case deepResearch(DeepResearchRequest)
     case exportSnapshot(databaseURL: String?)
@@ -195,6 +197,8 @@ enum EngineJob: Sendable, Equatable {
         case .rebuildAll: "Rebuild all research"
         case .fullBacktest: "Run full backtest"
         case .evaluateStrategies: "Evaluate selected strategies"
+        case .contextualResearch: "Assess contextual opportunities"
+        case .contextualLearning: "Learn contextual strategy weights"
         case .learn: "Run bounded learning"
         case .deepResearch: "Run Deep Research"
         case .exportSnapshot: "Export app snapshot"
@@ -206,6 +210,8 @@ enum EngineJob: Sendable, Equatable {
         case .rebuildAll: "rebuild_all"
         case .fullBacktest: "full_backtest"
         case .evaluateStrategies: "evaluate"
+        case .contextualResearch: "evaluate_contexts"
+        case .contextualLearning: "learn_contextual"
         case .learn: "learn"
         case .deepResearch: "deep_research"
         case .exportSnapshot: "export"
@@ -217,6 +223,8 @@ enum EngineJob: Sendable, Equatable {
         case .rebuildAll, .fullBacktest:
             .exportSnapshot(databaseURL: nil)
         case let .evaluateStrategies(_, _, asset):
+            .exportSnapshot(databaseURL: asset.databaseURL)
+        case let .contextualResearch(_, _, asset), let .contextualLearning(_, _, asset, _):
             .exportSnapshot(databaseURL: asset.databaseURL)
         case .learn:
             .exportSnapshot(databaseURL: configuration.strategyAsset?.databaseURL)
@@ -246,6 +254,14 @@ enum EngineJob: Sendable, Equatable {
                 command += ["--strategy-id", strategyID]
             }
             command += strategyArguments(asset: asset, mode: mode)
+        case let .contextualResearch(symbols, mode, asset):
+            command = ["strategy", "evaluate-contexts"]
+            command += try contextualArguments(symbols: symbols, mode: mode, asset: asset)
+        case let .contextualLearning(symbols, mode, asset, budget):
+            guard (1 ... 100).contains(budget) else { throw EngineJobError.invalidBudget(budget) }
+            command = ["strategy", "learn-contextual"]
+            command += try contextualArguments(symbols: symbols, mode: mode, asset: asset)
+            command += ["--evaluation-budget", String(budget), "--seed", "42"]
         case let .learn(assetID, rawInterval, budget):
             let assetID = assetID.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !assetID.isEmpty else { throw EngineJobError.invalidAsset(assetID) }
@@ -322,6 +338,24 @@ enum EngineJob: Sendable, Equatable {
         guard !asset.feed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !asset.symbol.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else { throw EngineJobError.invalidAsset(asset.symbol) }
+    }
+
+    private func contextualArguments(symbols: [String], mode: StrategyRunMode, asset: StrategyAssetContext) throws -> [String] {
+        try validate(asset: asset)
+        let normalized = Set(symbols.map { $0.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() }).sorted()
+        let allowed = Set("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-/_")
+        guard !normalized.isEmpty, normalized.count <= 200,
+              normalized.allSatisfy({ !$0.isEmpty && $0.count <= 32 && $0.allSatisfy { allowed.contains($0) } })
+        else { throw EngineJobError.invalidAsset("Choose 1–200 distinct market symbols.") }
+        var arguments = [
+            "--symbols", normalized.joined(separator: ","),
+            "--provider", asset.provider.rawValue, "--feed", asset.feed,
+            "--interval", asset.interval.rawValue, "--mode", mode.rawValue,
+            "--as-of", ISO8601DateFormatter().string(from: Date()),
+        ]
+        if let databaseURL = asset.databaseURL { arguments += ["--database-url", databaseURL] }
+        if let csvURL = asset.csvURL { arguments += ["--csv-path", csvURL.path] }
+        return arguments
     }
 
     private func validate(request: DeepResearchRequest) throws {

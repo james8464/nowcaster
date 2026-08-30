@@ -265,7 +265,43 @@ struct PricePoint: Decodable, Identifiable, Sendable {
     var id: Date { date }
 }
 
-struct InstrumentSnapshot: Decodable, Identifiable, Sendable {
+struct InstrumentSnapshot: Decodable, Identifiable, ContextualEvidenceProviding {
+    var assetProfile: String? = nil
+    var eligibilityState: AssetEligibilityState? = nil
+    var eligibilityReasons: [String]? = nil
+    var eligibilityQuality: Double? = nil
+    var eligibilityHash: String? = nil
+    var contextHash: String? = nil
+    var contextualDatasetHash: String? = nil
+    var contextualPolicyHash: String? = nil
+    var contextualEffectiveAt: Date? = nil
+    var contextualDirection: String? = nil
+    var contextualProvider: String? = nil
+    var contextualFeed: String? = nil
+    var contextualInterval: String? = nil
+    var contextualMode: String? = nil
+    var spreadBps: Double? = nil
+    var depthNotional: Double? = nil
+    var estimatedPriceImpactBps: Double? = nil
+    var liquidityCapacityWeight: Double? = nil
+    var marketCoverageRatio: Double? = nil
+    var regimeProbabilities: [String: Double]? = nil
+    var posteriorUncertainty: Double? = nil
+    var localWeight: Double? = nil
+    var parentWeight: Double? = nil
+    var finalWeight: Double? = nil
+    var effectiveObservations: Double? = nil
+    var effectiveStrategyCount: Double? = nil
+    var covarianceStatus: String? = nil
+    var portfolioRank: Int? = nil
+    var portfolioSelected: Bool? = nil
+    var portfolioSelectionId: String? = nil
+    var portfolioDecisionHash: String? = nil
+    var researchSizeCeiling: Double? = nil
+    var portfolioConflicts: [String]? = nil
+    var contextualDriftStatus: String? = nil
+    var contextualEvidenceHash: String? = nil
+
     let instrumentId: String
     let symbol: String
     let displayName: String
@@ -301,7 +337,43 @@ struct EarningsSnapshot: Decodable, Identifiable, Sendable {
     var id: String { forecastId }
 }
 
-struct ResearchSignalSnapshot: Decodable, Identifiable, Sendable {
+struct ResearchSignalSnapshot: Decodable, Identifiable, ContextualEvidenceProviding {
+    var assetProfile: String? = nil
+    var eligibilityState: AssetEligibilityState? = nil
+    var eligibilityReasons: [String]? = nil
+    var eligibilityQuality: Double? = nil
+    var eligibilityHash: String? = nil
+    var contextHash: String? = nil
+    var contextualDatasetHash: String? = nil
+    var contextualPolicyHash: String? = nil
+    var contextualEffectiveAt: Date? = nil
+    var contextualDirection: String? = nil
+    var contextualProvider: String? = nil
+    var contextualFeed: String? = nil
+    var contextualInterval: String? = nil
+    var contextualMode: String? = nil
+    var spreadBps: Double? = nil
+    var depthNotional: Double? = nil
+    var estimatedPriceImpactBps: Double? = nil
+    var liquidityCapacityWeight: Double? = nil
+    var marketCoverageRatio: Double? = nil
+    var regimeProbabilities: [String: Double]? = nil
+    var posteriorUncertainty: Double? = nil
+    var localWeight: Double? = nil
+    var parentWeight: Double? = nil
+    var finalWeight: Double? = nil
+    var effectiveObservations: Double? = nil
+    var effectiveStrategyCount: Double? = nil
+    var covarianceStatus: String? = nil
+    var portfolioRank: Int? = nil
+    var portfolioSelected: Bool? = nil
+    var portfolioSelectionId: String? = nil
+    var portfolioDecisionHash: String? = nil
+    var researchSizeCeiling: Double? = nil
+    var portfolioConflicts: [String]? = nil
+    var contextualDriftStatus: String? = nil
+    var contextualEvidenceHash: String? = nil
+
     let signalId: String
     let instrumentId: String
     let assetClass: AssetClass
@@ -513,7 +585,43 @@ enum NoRepaintBadge: String, Codable, Sendable {
     case notAudited = "not_audited"
 }
 
-struct StrategySnapshot: Decodable, Identifiable, Sendable {
+struct StrategySnapshot: Decodable, Identifiable, ContextualEvidenceProviding {
+    var assetProfile: String? = nil
+    var eligibilityState: AssetEligibilityState? = nil
+    var eligibilityReasons: [String]? = nil
+    var eligibilityQuality: Double? = nil
+    var eligibilityHash: String? = nil
+    var contextHash: String? = nil
+    var contextualDatasetHash: String? = nil
+    var contextualPolicyHash: String? = nil
+    var contextualEffectiveAt: Date? = nil
+    var contextualDirection: String? = nil
+    var contextualProvider: String? = nil
+    var contextualFeed: String? = nil
+    var contextualInterval: String? = nil
+    var contextualMode: String? = nil
+    var spreadBps: Double? = nil
+    var depthNotional: Double? = nil
+    var estimatedPriceImpactBps: Double? = nil
+    var liquidityCapacityWeight: Double? = nil
+    var marketCoverageRatio: Double? = nil
+    var regimeProbabilities: [String: Double]? = nil
+    var posteriorUncertainty: Double? = nil
+    var localWeight: Double? = nil
+    var parentWeight: Double? = nil
+    var finalWeight: Double? = nil
+    var effectiveObservations: Double? = nil
+    var effectiveStrategyCount: Double? = nil
+    var covarianceStatus: String? = nil
+    var portfolioRank: Int? = nil
+    var portfolioSelected: Bool? = nil
+    var portfolioSelectionId: String? = nil
+    var portfolioDecisionHash: String? = nil
+    var researchSizeCeiling: Double? = nil
+    var portfolioConflicts: [String]? = nil
+    var contextualDriftStatus: String? = nil
+    var contextualEvidenceHash: String? = nil
+
     let strategyId: String
     let version: String
     let family: String
@@ -540,7 +648,43 @@ struct StrategySnapshot: Decodable, Identifiable, Sendable {
     }
 }
 
-struct EnsembleComponentSnapshot: Decodable, Identifiable, Sendable {
+struct EnsembleComponentSnapshot: Decodable, Identifiable, ContextualEvidenceProviding {
+    var assetProfile: String? = nil
+    var eligibilityState: AssetEligibilityState? = nil
+    var eligibilityReasons: [String]? = nil
+    var eligibilityQuality: Double? = nil
+    var eligibilityHash: String? = nil
+    var contextHash: String? = nil
+    var contextualDatasetHash: String? = nil
+    var contextualPolicyHash: String? = nil
+    var contextualEffectiveAt: Date? = nil
+    var contextualDirection: String? = nil
+    var contextualProvider: String? = nil
+    var contextualFeed: String? = nil
+    var contextualInterval: String? = nil
+    var contextualMode: String? = nil
+    var spreadBps: Double? = nil
+    var depthNotional: Double? = nil
+    var estimatedPriceImpactBps: Double? = nil
+    var liquidityCapacityWeight: Double? = nil
+    var marketCoverageRatio: Double? = nil
+    var regimeProbabilities: [String: Double]? = nil
+    var posteriorUncertainty: Double? = nil
+    var localWeight: Double? = nil
+    var parentWeight: Double? = nil
+    var finalWeight: Double? = nil
+    var effectiveObservations: Double? = nil
+    var effectiveStrategyCount: Double? = nil
+    var covarianceStatus: String? = nil
+    var portfolioRank: Int? = nil
+    var portfolioSelected: Bool? = nil
+    var portfolioSelectionId: String? = nil
+    var portfolioDecisionHash: String? = nil
+    var researchSizeCeiling: Double? = nil
+    var portfolioConflicts: [String]? = nil
+    var contextualDriftStatus: String? = nil
+    var contextualEvidenceHash: String? = nil
+
     let strategyId: String
     let version: String
     let family: String
@@ -729,6 +873,10 @@ extension NowcasterSnapshot {
                 && run.updatedAt >= run.startedAt && run.failedGates.count <= 100
         }) else { throw SnapshotValidationError.invalidResearchEvidence("deep research bounds") }
         var evidenceNodes = 0
+        for item in instruments { try item.validateContextualEvidence() }
+        for item in signals { try item.validateContextualEvidence() }
+        for item in strategies { try item.validateContextualEvidence() }
+        for item in ensembleComponents { try item.validateContextualEvidence() }
         for component in ensembleComponents {
             try validateEvidence(component.evidence, nodes: &evidenceNodes, depth: 0)
         }

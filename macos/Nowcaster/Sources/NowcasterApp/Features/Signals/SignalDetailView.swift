@@ -53,6 +53,7 @@ struct SignalDetailView: View {
                 if hasAccuracyEvidence {
                     accuracyEvidence
                 }
+                ContextualEvidenceView(evidence: signal, title: "Why this asset now")
                 detailSection("Evidence", text: signal.evidenceSummary, systemImage: "doc.text.magnifyingglass")
                 detailSection("Catalyst", text: signal.catalyst, systemImage: "bolt")
                 detailSection("Invalidation", text: signal.invalidation, systemImage: "xmark.circle")

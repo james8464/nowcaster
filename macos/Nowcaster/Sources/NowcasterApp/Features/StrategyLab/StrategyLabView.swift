@@ -37,6 +37,8 @@ enum StrategyLabAccessibility {
     static let evaluateButton = "strategyLab.evaluate"
     static let learnButton = "strategyLab.learn"
     static let deepResearchButton = "strategyLab.deepResearch"
+    static let contextualResearchButton = "strategyLab.contextualResearch"
+    static let contextualLearningButton = "strategyLab.contextualLearning"
     static let deepResearchStartButton = "strategyLab.deepResearch.start"
     static let deepResearchWorkspace = "strategyLab.deepResearch.workspace"
     static let exportButton = "strategyLab.export"
@@ -264,10 +266,24 @@ struct StrategyLabView: View {
 
     private var presentation: StrategyLabPresentation { StrategyLabPresentation(snapshot: snapshot) }
     private var selectedResearchContext: SelectedStrategyResearchContext? { model.selectedResearchContext }
+    private var contextualSymbols: [String] {
+        guard let context = selectedResearchContext else { return [] }
+        if context.asset.provider == .csv { return [context.asset.symbol] }
+        let compatible = snapshot.datasetCoverage.filter {
+            $0.provider == context.asset.provider.rawValue && $0.feed == context.asset.feed
+                && $0.interval == context.asset.interval.rawValue
+        }.map(\.symbol)
+        let sourceSymbols = Set(snapshot.strategies.filter {
+            $0.mode == context.mode.rawValue && $0.interval == context.asset.interval.rawValue
+        }.map(\.symbol))
+        return Set(compatible.filter { sourceSymbols.contains($0) } + [context.asset.symbol]).sorted()
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             actionBar
+            Divider()
+            contextualActionBar
             Divider()
             if presentation.strategies.isEmpty {
                 EmptyStateView(
@@ -298,6 +314,50 @@ struct StrategyLabView: View {
                 DeepResearchConfigurationView(model: model, settings: settings, context: context)
             }
         }
+    }
+
+    private var contextualActionBar: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) {
+                contextualButtons
+                Text(contextualScopeTitle).font(.caption).foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                contextualButtons
+                Text(contextualScopeTitle).font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 10)
+    }
+
+    private var contextualScopeTitle: String {
+        contextualSymbols.isEmpty
+            ? "Select strategy evidence to assess compatible markets."
+            : "\(contextualSymbols.joined(separator: ", ")) · research only · no orders"
+    }
+
+    private var contextualButtons: some View {
+        HStack(spacing: 8) {
+            Button("Assess Markets", systemImage: "line.3.horizontal.decrease.circle") {
+                guard let context = selectedResearchContext else { return }
+                let job = EngineJob.contextualResearch(symbols: contextualSymbols, mode: context.mode, asset: context.asset)
+                Task { await model.run(job, configuration: settings.configuration) }
+            }
+            .accessibilityIdentifier(StrategyLabAccessibility.contextualResearchButton)
+            .help("Screen configured assets, estimate market conditions, and assess portfolio-compatible strategy influence.")
+            Button("Learn Weights", systemImage: "slider.horizontal.3") {
+                guard let context = selectedResearchContext else { return }
+                let job = EngineJob.contextualLearning(
+                    symbols: contextualSymbols, mode: context.mode, asset: context.asset, budget: learningBudget
+                )
+                Task { await model.run(job, configuration: settings.configuration) }
+            }
+            .accessibilityIdentifier(StrategyLabAccessibility.contextualLearningButton)
+            .help("Test up to \(learningBudget) bounded weighting policies. Every attempt is recorded; winners remain unapproved shadow candidates.")
+        }
+        .disabled(model.isRunningJob || selectedResearchContext == nil || contextualSymbols.isEmpty)
     }
 
     private var actionBar: some View {

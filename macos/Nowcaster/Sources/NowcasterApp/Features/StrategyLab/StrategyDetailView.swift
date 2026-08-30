@@ -97,6 +97,7 @@ struct StrategyDetailView: View {
                 }
 
                 coverage
+                ContextualEvidenceView(evidence: presentation.strategy, title: "Asset-specific strategy influence")
 
                 if !presentation.warnings.isEmpty {
                     GroupBox("Warnings") {

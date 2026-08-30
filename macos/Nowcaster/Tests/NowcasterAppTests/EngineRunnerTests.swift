@@ -49,6 +49,36 @@ private let learningConfiguration = EngineConfiguration(
     strategyAsset: csvContext
 )
 
+@Test func contextualJobBuildsBoundedUniverseInvocationAndExportsTheSameDatabase() throws {
+    let job = EngineJob.contextualResearch(symbols: ["ETHUSDT", " btcusdt ", "BTCUSDT"], asset: csvContext)
+    let invocation = try job.invocation(configuration: fixtureConfiguration)
+    #expect(invocation.arguments.contains("evaluate-contexts"))
+    #expect(invocation.arguments.contains("BTCUSDT,ETHUSDT"))
+    #expect(invocation.arguments.contains("--as-of"))
+    #expect(invocation.arguments.contains("--database-url"))
+    #expect(!invocation.arguments.contains(where: { $0 == "sh" || $0 == "-c" }))
+    #expect(job.followUpExport(configuration: fixtureConfiguration) == .exportSnapshot(databaseURL: csvContext.databaseURL))
+    #expect(throws: EngineJobError.self) {
+        try EngineJob.contextualResearch(symbols: [], asset: csvContext).invocation(configuration: fixtureConfiguration)
+    }
+    #expect(throws: EngineJobError.self) {
+        try EngineJob.contextualResearch(symbols: ["BTCUSDT,OTHER"], asset: csvContext).invocation(configuration: fixtureConfiguration)
+    }
+}
+
+@Test func contextualLearningUsesABoundedBudgetAndTheExplicitSourceMode() throws {
+    let invocation = try EngineJob.contextualLearning(
+        symbols: ["BTCUSDT"], mode: .paper, asset: csvContext, budget: 20
+    ).invocation(configuration: fixtureConfiguration)
+    #expect(invocation.arguments.contains("learn-contextual"))
+    #expect(invocation.arguments.contains("paper"))
+    #expect(invocation.arguments.contains("--evaluation-budget"))
+    #expect(throws: EngineJobError.self) {
+        try EngineJob.contextualLearning(symbols: ["BTCUSDT"], asset: csvContext, budget: 101)
+            .invocation(configuration: fixtureConfiguration)
+    }
+}
+
 @Test func legacyEngineArgumentsNeverUseAShell() throws {
     let invocation = try EngineJob.fullBacktest.invocation(configuration: fixtureConfiguration)
     #expect(invocation.executableURL.lastPathComponent == "python3")

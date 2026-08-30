@@ -68,6 +68,7 @@ struct InstrumentDetailView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 4)
                 }
+                ContextualEvidenceView(evidence: instrument)
             }
             .padding(24)
             .frame(maxWidth: 760, alignment: .leading)
