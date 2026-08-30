@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 import os
 import secrets
@@ -12,12 +13,20 @@ import typer
 
 from src.app_snapshot import build_app_snapshot, write_snapshot_atomic
 from src.config.settings import Settings
+from src.contextual.service import (
+    ContextualProgress,
+    ContextualResearchService,
+    ContextualRunRequest,
+)
 from src.database.engine import Database
 from src.demo import DEMO_STAGES, demo_pipeline, live_pipeline, run_demo
+from src.ingestion.bars import INTERVAL_DURATION, BarRequest
+from src.ingestion.csv_bars import CSVBarProvider
 from src.live_monitor.command import parse_bootstrap, replay_events, run_live
 from src.live_monitor.evidence import load_sealed_cohorts, select_monitor_cohorts
 from src.reporting.research_report import generate_research_report
 from src.research import run_full_strategy_research
+from src.strategies.datasets import BarRepository
 from src.strategies.pipeline import (
     BarProviderName,
     DeepResearchOptions,
@@ -404,6 +413,198 @@ def _run_strategy_stage(stage: str, operation: Callable[[Callable[[PipelineEvent
         _emit_strategy_event(PipelineEvent(event="error", stage=stage, progress=1, message=outcome.message))
         raise typer.Exit(code=1)
     _emit_strategy_event(PipelineEvent(event="complete", stage=stage, progress=1, message=outcome.message))
+
+
+def _contextual_request(
+    symbols: str,
+    provider: str,
+    feed: str,
+    interval: str,
+    mode: str,
+    as_of: str,
+) -> ContextualRunRequest:
+    try:
+        timestamp = datetime.fromisoformat(as_of.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ValueError("as_of must be an ISO-8601 UTC timestamp") from error
+    if timestamp.tzinfo is None or timestamp.utcoffset() != timedelta(0):
+        raise ValueError("as_of must be an explicit UTC timestamp")
+    timestamp = timestamp.astimezone(UTC).replace(tzinfo=UTC)
+    return ContextualRunRequest(
+        symbols=tuple(item.strip().upper() for item in symbols.split(",") if item.strip()),
+        provider=provider,
+        feed=feed,
+        interval=BarInterval(interval),
+        mode=StrategyMode(mode),
+        as_of=timestamp,
+    )
+
+
+def _import_contextual_csv(
+    database: Database,
+    request: ContextualRunRequest,
+    csv_path: Path | None,
+) -> None:
+    if csv_path is None:
+        return
+    if request.provider != BarProviderName.CSV.value or len(request.symbols) != 1:
+        raise ValueError("a CSV contextual source requires provider=csv and exactly one symbol")
+    with csv_path.open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        timestamps = [
+            datetime.fromisoformat(str(row["timestamp"]).replace("Z", "+00:00"))
+            for row in reader
+            if row.get("timestamp")
+        ]
+    if not timestamps:
+        raise ValueError("contextual CSV contains no timestamped bars")
+    if any(item.tzinfo is None or item.utcoffset() != timedelta(0) for item in timestamps):
+        raise ValueError("contextual CSV timestamps must be explicit UTC")
+    start = min(item.astimezone(UTC).replace(tzinfo=UTC) for item in timestamps)
+    end = max(item.astimezone(UTC).replace(tzinfo=UTC) for item in timestamps) + INTERVAL_DURATION[request.interval]
+    provider = CSVBarProvider(csv_path, provider=request.provider, feed=request.feed)
+    bars = provider.fetch(
+        BarRequest(
+            symbol=request.symbols[0],
+            interval=request.interval,
+            start=start,
+            end=end,
+            feed=request.feed,
+        )
+    )
+    BarRepository(database).append(bars)
+
+
+def _contextual_service(
+    project_root: Path,
+    database_url: str | None,
+    request: ContextualRunRequest,
+    csv_path: Path | None,
+) -> ContextualResearchService:
+    settings = _load_settings(project_root, database_url, "demo")
+    database = Database.from_url(settings.database_url)
+    database.initialize()
+    _import_contextual_csv(database, request, csv_path)
+    return ContextualResearchService(database, settings)
+
+
+def _emit_contextual_progress(event: ContextualProgress) -> None:
+    _emit_strategy_event(
+        PipelineEvent(
+            event="progress",
+            stage=event.stage,
+            progress=event.progress,
+            message=event.message,
+        )
+    )
+
+
+def _run_contextual_stage(stage: str, operation: Callable[[], object]) -> None:
+    _emit_strategy_event(PipelineEvent(event="started", stage=stage, progress=0, message=f"{stage} started"))
+    try:
+        operation()
+    except Exception as error:
+        _emit_strategy_event(
+            PipelineEvent(event="error", stage=stage, progress=1, message=f"{type(error).__name__}: {error}")
+        )
+        raise typer.Exit(code=1) from error
+    _emit_strategy_event(PipelineEvent(event="complete", stage=stage, progress=1, message=f"{stage} completed"))
+
+
+@strategy_app.command("screen-universe")
+def strategy_screen_universe(
+    project_root: Annotated[Path, typer.Option(exists=True, file_okay=False)] = DEFAULT_PROJECT_ROOT,
+    database_url: Annotated[str | None, typer.Option()] = None,
+    symbols: Annotated[str, typer.Option()] = "BTCUSDT,ETHUSDT",
+    provider: Annotated[str, typer.Option()] = BarProviderName.BINANCE.value,
+    feed: Annotated[str, typer.Option()] = "spot",
+    interval: Annotated[str, typer.Option()] = BarInterval.FIVE_MINUTES.value,
+    mode: Annotated[str, typer.Option()] = StrategyMode.PAPER.value,
+    as_of: Annotated[str, typer.Option()] = "2026-01-02T00:00:00Z",
+    csv_path: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
+) -> None:
+    """Screen configured assets with point-in-time execution and regime evidence."""
+    request = _contextual_request(symbols, provider, feed, interval, mode, as_of)
+
+    def execute() -> object:
+        return _contextual_service(project_root, database_url, request, csv_path).screen_universe(
+            request, _emit_contextual_progress
+        )
+
+    _run_contextual_stage("screen_universe", execute)
+
+
+@strategy_app.command("evaluate-contexts")
+def strategy_evaluate_contexts(
+    project_root: Annotated[Path, typer.Option(exists=True, file_okay=False)] = DEFAULT_PROJECT_ROOT,
+    database_url: Annotated[str | None, typer.Option()] = None,
+    symbols: Annotated[str, typer.Option()] = "BTCUSDT,ETHUSDT",
+    provider: Annotated[str, typer.Option()] = BarProviderName.BINANCE.value,
+    feed: Annotated[str, typer.Option()] = "spot",
+    interval: Annotated[str, typer.Option()] = BarInterval.FIVE_MINUTES.value,
+    mode: Annotated[str, typer.Option()] = StrategyMode.PAPER.value,
+    as_of: Annotated[str, typer.Option()] = "2026-01-02T00:00:00Z",
+    csv_path: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
+) -> None:
+    """Fit contextual estimates and produce a cash-safe research portfolio."""
+    request = _contextual_request(symbols, provider, feed, interval, mode, as_of)
+
+    def execute() -> object:
+        return _contextual_service(project_root, database_url, request, csv_path).evaluate_contexts(
+            request, _emit_contextual_progress
+        )
+
+    _run_contextual_stage("evaluate_contexts", execute)
+
+
+@strategy_app.command("backtest-portfolio")
+def strategy_backtest_portfolio(
+    project_root: Annotated[Path, typer.Option(exists=True, file_okay=False)] = DEFAULT_PROJECT_ROOT,
+    database_url: Annotated[str | None, typer.Option()] = None,
+    symbols: Annotated[str, typer.Option()] = "BTCUSDT,ETHUSDT",
+    provider: Annotated[str, typer.Option()] = BarProviderName.BINANCE.value,
+    feed: Annotated[str, typer.Option()] = "spot",
+    interval: Annotated[str, typer.Option()] = BarInterval.FIVE_MINUTES.value,
+    mode: Annotated[str, typer.Option()] = StrategyMode.PAPER.value,
+    as_of: Annotated[str, typer.Option()] = "2026-01-02T00:00:00Z",
+    csv_path: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
+) -> None:
+    """Repeat the full contextual path inside chronological outer folds."""
+    request = _contextual_request(symbols, provider, feed, interval, mode, as_of)
+
+    def execute() -> object:
+        return _contextual_service(project_root, database_url, request, csv_path).backtest_portfolio(
+            request, _emit_contextual_progress
+        )
+
+    _run_contextual_stage("backtest_portfolio", execute)
+
+
+@strategy_app.command("learn-contextual")
+def strategy_learn_contextual(
+    project_root: Annotated[Path, typer.Option(exists=True, file_okay=False)] = DEFAULT_PROJECT_ROOT,
+    database_url: Annotated[str | None, typer.Option()] = None,
+    symbols: Annotated[str, typer.Option()] = "BTCUSDT,ETHUSDT",
+    provider: Annotated[str, typer.Option()] = BarProviderName.BINANCE.value,
+    feed: Annotated[str, typer.Option()] = "spot",
+    interval: Annotated[str, typer.Option()] = BarInterval.FIVE_MINUTES.value,
+    mode: Annotated[str, typer.Option()] = StrategyMode.WALK_FORWARD_LEARNING.value,
+    as_of: Annotated[str, typer.Option()] = "2026-01-02T00:00:00Z",
+    evaluation_budget: Annotated[int, typer.Option(min=1, max=100_000)] = 20,
+    seed: Annotated[int, typer.Option()] = 42,
+    csv_path: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
+) -> None:
+    """Register a bounded contextual challenger in shadow research state."""
+    request = _contextual_request(symbols, provider, feed, interval, mode, as_of)
+
+    def execute() -> object:
+        return _contextual_service(project_root, database_url, request, csv_path).learn_contextual(
+            request,
+            evaluation_budget=evaluation_budget,
+            seed=seed,
+        )
+
+    _run_contextual_stage("learn_contextual", execute)
 
 
 @strategy_app.command("ingest")
