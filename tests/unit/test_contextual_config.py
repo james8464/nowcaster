@@ -85,3 +85,8 @@ def test_asset_policy_requires_all_profiles_and_safe_effective_breadth() -> None
     payload["allocation"]["maximum_strategy_weight"] = 0.26
     with pytest.raises(ValueError, match="reciprocal effective breadth"):
         AssetSelectionConfig.model_validate(payload)
+
+    payload = settings.asset_selection.model_dump(mode="python")
+    payload["portfolio"]["maximum_family_weight"] = 0.60
+    with pytest.raises(ValueError, match="concentration caps cannot exceed maximum gross exposure"):
+        AssetSelectionConfig.model_validate(payload)

@@ -330,6 +330,7 @@ class PortfolioSelectionPolicyConfig(BaseModel):
     maximum_gross_exposure: float = Field(default=0.50, gt=0, le=1)
     maximum_net_exposure: float = Field(default=0.30, gt=0, le=1)
     maximum_asset_weight: float = Field(default=0.10, gt=0, le=1)
+    maximum_family_weight: float = Field(default=0.20, gt=0, le=1)
     maximum_asset_class_weight: float = Field(default=0.30, gt=0, le=1)
     maximum_sector_weight: float = Field(default=0.20, gt=0, le=1)
     maximum_correlation: float = Field(default=0.75, ge=0, lt=1)
@@ -341,6 +342,7 @@ class PortfolioSelectionPolicyConfig(BaseModel):
         "maximum_gross_exposure",
         "maximum_net_exposure",
         "maximum_asset_weight",
+        "maximum_family_weight",
         "maximum_asset_class_weight",
         "maximum_sector_weight",
         "maximum_correlation",
@@ -358,8 +360,16 @@ class PortfolioSelectionPolicyConfig(BaseModel):
     def coherent_portfolio_limits(self) -> PortfolioSelectionPolicyConfig:
         if self.maximum_net_exposure > self.maximum_gross_exposure:
             raise ValueError("maximum net exposure cannot exceed maximum gross exposure")
-        if self.maximum_asset_weight > self.maximum_gross_exposure:
-            raise ValueError("maximum asset weight cannot exceed maximum gross exposure")
+        concentration_caps = (
+            self.maximum_asset_weight,
+            self.maximum_family_weight,
+            self.maximum_asset_class_weight,
+            self.maximum_sector_weight,
+        )
+        if any(cap > self.maximum_gross_exposure for cap in concentration_caps):
+            raise ValueError("concentration caps cannot exceed maximum gross exposure")
+        if self.minimum_research_weight > self.maximum_asset_weight:
+            raise ValueError("minimum research weight cannot exceed maximum asset weight")
         if self.maximum_opportunities > self.maximum_candidates:
             raise ValueError("maximum opportunities cannot exceed maximum candidates")
         return self

@@ -27,6 +27,7 @@ portfolio:
   maximum_gross_exposure: 0.50
   maximum_net_exposure: 0.30
   maximum_asset_weight: 0.10
+  maximum_family_weight: 0.20
   maximum_asset_class_weight: 0.30
   maximum_sector_weight: 0.20
   maximum_correlation: 0.75
