@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-30-contextual-asset-strategy-allocation-design.md`
 
+**Completion:** All 14 implementation tasks are complete, locally verified and published to `main`. See [release verification](../../contextual-release-verification.md) for the evidence and the outstanding external visual-inspection, distribution-signing and market-validation limitations.
+
 **Release audit clarification (30–31 August 2026):** Tasks 1–13 are implemented. Task 14 adds exact cost/direction accounting, publication-time and mirror authentication, a non-publishing historical replay, shared-capital learning, fresh verified depth, and persistent drift/expiry checks. Real packaged-market verification additionally required current Binance permission handling, verified bundled TLS roots, a preserving schema-14 migration for exchange sequence IDs, cancellable private input and supervised shutdown. The contextual portfolio replay is explicitly retrospective fixed-policy walk-forward research, not an independent sealed/nested-optimization result. Search considers only holding horizons backed by actual execution outcomes. No evidence threshold was lowered to make fixtures pass.
 
 ## Global Constraints
@@ -1028,7 +1030,7 @@ git add README.md docs tests/integration/test_contextual_service.py tests/integr
 git commit -m "docs: explain contextual strategy research"
 ```
 
-- [ ] **Step 11: Push verified commits**
+- [x] **Step 11: Push verified commits**
 
 Run: `git push origin main`
 

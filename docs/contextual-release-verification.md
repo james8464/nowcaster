@@ -2,6 +2,8 @@
 
 Verification started 30 August 2026 and continued on 31 August. This record covers the contextual asset-selection and strategy-weighting implementation, not proof that any strategy will make money.
 
+The verified implementation was uploaded to the repository's `main` branch at [53e351b](https://github.com/james8464/nowcaster/commit/53e351b246d68437ae1cfe0e2e11df836305d97f); local and remote commit identifiers matched after publication. The complete native suite also passed after the fast-forward integration into the main checkout. Subsequent documentation-only commits record completion without changing the tested engine.
+
 ## What is implemented
 
 The native Mac app can assess its configured markets, explain eligibility and market conditions, show asset-specific strategy influence, and run bounded contextual learning. The engine uses partially pooled estimates, covariance-aware weights, portfolio constraints and an explicit cash option. Research challengers remain in shadow state and cannot replace a qualified live model automatically.
