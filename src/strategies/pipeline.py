@@ -25,6 +25,10 @@ from src.backtest.costs import CostAssumptions
 from src.backtest.execution import ExecutionAssumptions
 from src.backtest.intraday import RiskLimits, run_intraday_backtest
 from src.config.settings import Settings
+from src.contextual.eligibility import eligibility_inputs_from_bars, evaluate_asset_eligibility
+from src.contextual.regimes import causal_regime_features, fit_regime_model, predict_regime_posteriors
+from src.contextual.repository import ContextualRepository
+from src.contextual.types import MarketRegime, StrategyContextKey, StrategyDirection
 from src.database.engine import Database
 from src.database.schema import NATURAL_KEYS, TABLES, causal_audits, dataset_coverage_requests, strategy_runs
 from src.deep_research.candidates import CandidateSearchSpace, generate_candidates
@@ -268,6 +272,59 @@ class EvaluationBatch:
     resolved_outcomes: pd.DataFrame
 
 
+def causal_regime_evidence_frame(
+    bars: pd.DataFrame,
+    *,
+    refit_interval: int = 50,
+    minimum_train: int = 80,
+) -> pd.DataFrame:
+    """Infer each row's regime from a model fitted strictly before that row's block.
+
+    Reusing a frozen fit for a short chronological block keeps evaluation bounded while
+    preserving prefix invariance: appending later bars cannot change earlier evidence.
+    """
+
+    if refit_interval < 1:
+        raise ValueError("regime refit interval must be positive")
+    if minimum_train < 40:
+        raise ValueError("minimum regime training rows must be at least 40")
+    features = causal_regime_features(bars).reset_index(drop=True)
+    records: list[dict[str, Any]] = []
+    for block_start in range(0, len(features), refit_interval):
+        block_end = min(block_start + refit_interval, len(features))
+        fit = fit_regime_model(features.iloc[:block_start].copy(), minimum_train=minimum_train)
+        target = features.iloc[block_start:block_end].copy()
+        posterior = predict_regime_posteriors(fit, target)
+        for offset, probabilities in enumerate(posterior.probabilities):
+            row_index = block_start + offset
+            probability_map = {
+                regime.value: float(probabilities[index]) for index, regime in enumerate(posterior.regimes)
+            }
+            available_at = pd.Timestamp(features.iloc[row_index]["available_at"])
+            row_hash = canonical_hash(
+                {
+                    "model_hash": fit.model_hash,
+                    "source_row": int(features.iloc[row_index]["source_row"]),
+                    "available_at": available_at.to_pydatetime(),
+                    "probabilities": probability_map,
+                }
+            )
+            records.append(
+                {
+                    "source_row": int(features.iloc[row_index]["source_row"]),
+                    "available_at": available_at,
+                    "feature_through": available_at,
+                    "training_through": fit.training_through,
+                    "model_hash": fit.model_hash,
+                    "status": fit.status,
+                    "posterior_hash": row_hash,
+                    "regime_probabilities": probability_map,
+                    **probability_map,
+                }
+            )
+    return pd.DataFrame.from_records(records)
+
+
 @dataclass(frozen=True, slots=True)
 class SealedResearchSnapshot:
     query: BarQuery
@@ -293,6 +350,35 @@ _RESOLVED_OUTCOME_DTYPES: tuple[tuple[str, str], ...] = (
     ("symbol", "string"),
     ("interval", "string"),
     ("mode", "string"),
+)
+
+_CONTEXTUAL_OUTCOME_DTYPES: tuple[tuple[str, str], ...] = (
+    ("contextual_ready", "bool"),
+    ("protocol_hash", "string"),
+    ("code_hash", "string"),
+    ("config_hash", "string"),
+    ("provider", "string"),
+    ("feed", "string"),
+    ("venue", "string"),
+    ("product", "string"),
+    ("asset_class", "string"),
+    ("profile", "string"),
+    ("direction", "string"),
+    ("context_hash", "string"),
+    ("eligibility_evidence_id", "string"),
+    ("eligibility_state", "string"),
+    ("eligibility_policy_hash", "string"),
+    ("eligibility_input_hash", "string"),
+    ("eligibility_evidence", "object"),
+    ("regime_model_hash", "string"),
+    ("regime_status", "string"),
+    ("regime_posterior_hash", "string"),
+    ("regime_feature_through", "datetime64[ns, UTC]"),
+    ("regime_training_through", "datetime64[ns, UTC]"),
+    ("regime_probabilities", "object"),
+    ("gross_return", "float64"),
+    ("modeled_cost", "float64"),
+    ("net_return", "float64"),
 )
 
 
@@ -1476,6 +1562,51 @@ class StrategyPipeline:
             or len({item.get("cohort_effective_at") for item in metrics}) != 1
         ):
             return ()
+        contextual_counts = {item.get("contextual_outcome_count") for item in metrics}
+        contextual_hashes = {item.get("contextual_outcome_index_hash") for item in metrics}
+        contextual_protocols = {item.get("contextual_protocol_hash") for item in metrics}
+        if (
+            len(contextual_counts) != 1
+            or len(contextual_hashes) != 1
+            or len(contextual_protocols) != 1
+            or not isinstance(next(iter(contextual_counts)), int)
+            or not isinstance(next(iter(contextual_hashes)), str)
+        ):
+            return ()
+        contextual_count = int(next(iter(contextual_counts)))
+        contextual_index_hash = str(next(iter(contextual_hashes)))
+        contextual_protocol = next(iter(contextual_protocols))
+        if contextual_count == 0:
+            if contextual_protocol is not None or contextual_index_hash != canonical_hash([]):
+                return ()
+        else:
+            if not isinstance(contextual_protocol, str) or not contextual_protocol:
+                return ()
+            contextual = self.database.frame(
+                "select outcome_id, content_hash, strategy_id from contextual_outcomes "
+                "where dataset_hash = :dataset_hash and protocol_hash = :protocol_hash "
+                "and symbol = :symbol and interval = :interval and mode = :mode",
+                {
+                    "dataset_hash": dataset_hash,
+                    "protocol_hash": contextual_protocol,
+                    "symbol": scope.symbol,
+                    "interval": scope.interval.value,
+                    "mode": scope.mode.value,
+                },
+            )
+            contextual = contextual.loc[contextual["strategy_id"].astype(str).isin(expected)]
+            contextual_index = sorted(
+                (
+                    {
+                        "outcome_id": str(row.outcome_id),
+                        "content_hash": str(row.content_hash),
+                    }
+                    for row in contextual.itertuples(index=False)
+                ),
+                key=lambda item: item["outcome_id"],
+            )
+            if len(contextual_index) != contextual_count or canonical_hash(contextual_index) != contextual_index_hash:
+                return ()
         by_strategy = {str(row.strategy_id): str(row.strategy_run_id) for row in matches.itertuples(index=False)}
         return tuple(by_strategy[item.spec.strategy_id] for item in registered)
 
@@ -1645,6 +1776,12 @@ class StrategyPipeline:
             )
         )
         resolved_outcomes = self._resolved_outcomes(bars, raw_components, evaluations, boundary)
+        resolved_outcomes = self._contextualize_resolved_outcomes(
+            scope,
+            manifest,
+            bars,
+            resolved_outcomes,
+        )
         ensemble_decision = generate_current_decision(
             evaluations,
             resolved_outcomes,
@@ -1770,6 +1907,178 @@ class StrategyPipeline:
             return pd.DataFrame({name: pd.Series(dtype=dtype) for name, dtype in _RESOLVED_OUTCOME_DTYPES})
         return pd.DataFrame(rows)
 
+    def _contextualize_resolved_outcomes(
+        self,
+        scope: StrategyScope,
+        manifest: DatasetManifest,
+        bars: pd.DataFrame,
+        outcomes: pd.DataFrame,
+    ) -> pd.DataFrame:
+        """Attach only point-in-time context to resolved component outcomes."""
+
+        result = outcomes.copy()
+        for name, dtype in _CONTEXTUAL_OUTCOME_DTYPES:
+            if name in result:
+                continue
+            if dtype == "bool":
+                result[name] = False
+            elif dtype == "float64":
+                result[name] = np.nan
+            elif dtype.startswith("datetime64"):
+                result[name] = pd.Series(pd.NaT, index=result.index, dtype=dtype)
+            elif dtype == "object":
+                result[name] = pd.Series([None] * len(result), index=result.index, dtype="object")
+            else:
+                result[name] = pd.Series(pd.NA, index=result.index, dtype=dtype)
+        result["contextual_ready"] = False
+        settings = getattr(self, "_settings", None)
+        if result.empty or settings is None or settings.asset_selection is None:
+            return result
+        configured = tuple(
+            item
+            for item in settings.instruments.instruments
+            if item.enabled and item.symbol == scope.symbol and item.profile is not None
+        )
+        if len(configured) != 1:
+            return result
+        instrument = configured[0].model_copy(
+            update={
+                "provider": scope.provider.value,
+                "feed": scope.feed,
+            }
+        )
+        assert instrument.profile is not None
+        profile = settings.asset_selection.profiles[instrument.profile]
+        policy_hash = canonical_hash(
+            {
+                "profile": instrument.profile.value,
+                "policy": profile.model_dump(mode="json"),
+            }
+        )
+        protocol_hash = canonical_hash(
+            {
+                "contextual_outcome_protocol": 1,
+                "validation_policy": _validation_config_record(self.validation_config),
+                "execution_policy": _execution_assumptions_record(self.execution_assumptions),
+                "ensemble_policy": _ensemble_config_record(self.ensemble_config),
+                "asset_selection": settings.asset_selection.model_dump(mode="json"),
+            }
+        )
+        config_hash = canonical_hash(settings.config_hash_payload())
+        try:
+            code_hash = git_commit(Path(__file__).resolve().parents[2])
+        except Exception:
+            code_hash = canonical_hash({"contextual_runtime": "source_revision_unavailable_v1"})
+
+        regime = causal_regime_evidence_frame(bars)
+        regime_available = pd.to_datetime(regime["available_at"], utc=True)
+        eligibility_cache: dict[tuple[pd.Timestamp, StrategyDirection], Any] = {}
+        context_rows: list[dict[str, Any] | None] = []
+        for row in result.itertuples(index=False):
+            signal = int(row.signal)
+            if signal == 0:
+                context_rows.append(None)
+                continue
+            direction = StrategyDirection.LONG if signal > 0 else StrategyDirection.SHORT
+            decision_timestamp = pd.Timestamp(row.decision_timestamp)
+            visible_regime = regime.index[regime_available <= decision_timestamp]
+            if len(visible_regime) == 0:
+                context_rows.append(None)
+                continue
+            regime_row = regime.loc[visible_regime[-1]]
+            cache_key = (decision_timestamp, direction)
+            evidence = eligibility_cache.get(cache_key)
+            if evidence is None:
+                eligibility_inputs = eligibility_inputs_from_bars(
+                    bars,
+                    as_of=decision_timestamp.to_pydatetime(),
+                    instrument=instrument,
+                    interval=scope.interval,
+                    direction=direction,
+                )
+                evidence = evaluate_asset_eligibility(eligibility_inputs, profile, policy_hash)
+                eligibility_cache[cache_key] = evidence
+            probabilities = {
+                market_regime.value: float(regime_row[market_regime.value]) for market_regime in MarketRegime
+            }
+            gross_return = float(row.realized_return) * (1.0 if direction is StrategyDirection.LONG else -1.0)
+            modeled_cost = float(row.cost)
+            context_key = StrategyContextKey(
+                dataset_hash=manifest.dataset_hash,
+                protocol_hash=protocol_hash,
+                provider=scope.provider.value,
+                feed=scope.feed,
+                venue=instrument.venue,
+                product=instrument.product,
+                asset_class=instrument.asset_class,
+                profile=instrument.profile,
+                symbol=scope.symbol,
+                interval=scope.interval,
+                direction=direction,
+                regime=None,
+                mode=scope.mode,
+            )
+            context_rows.append(
+                {
+                    "contextual_ready": True,
+                    "protocol_hash": protocol_hash,
+                    "code_hash": code_hash,
+                    "config_hash": config_hash,
+                    "provider": scope.provider.value,
+                    "feed": scope.feed,
+                    "venue": instrument.venue,
+                    "product": instrument.product,
+                    "asset_class": instrument.asset_class,
+                    "profile": instrument.profile.value,
+                    "direction": direction.value,
+                    "context_hash": context_key.context_hash,
+                    "eligibility_evidence_id": evidence.evidence_id,
+                    "eligibility_state": evidence.state.value,
+                    "eligibility_policy_hash": evidence.policy_hash,
+                    "eligibility_input_hash": evidence.input_hash,
+                    "eligibility_evidence": asdict(evidence),
+                    "regime_model_hash": str(regime_row["model_hash"]),
+                    "regime_status": str(regime_row["status"]),
+                    "regime_posterior_hash": str(regime_row["posterior_hash"]),
+                    "regime_feature_through": pd.Timestamp(regime_row["feature_through"]),
+                    "regime_training_through": (
+                        pd.Timestamp(regime_row["training_through"])
+                        if pd.notna(regime_row["training_through"])
+                        else None
+                    ),
+                    "regime_probabilities": probabilities,
+                    "gross_return": gross_return,
+                    "modeled_cost": modeled_cost,
+                    "net_return": gross_return - modeled_cost,
+                }
+            )
+        for index, context in enumerate(context_rows):
+            if context is None:
+                continue
+            for name, value in context.items():
+                result.at[result.index[index], name] = value
+        return result
+
+    def _contextual_rows_for_batch(
+        self,
+        batch: EvaluationBatch,
+        *,
+        created_at: datetime,
+    ) -> list[dict[str, Any]]:
+        if "contextual_ready" not in batch.resolved_outcomes:
+            return []
+        source = batch.resolved_outcomes.loc[batch.resolved_outcomes["contextual_ready"].fillna(False).astype(bool)]
+        repository = ContextualRepository(self.database, clock=lambda: created_at)
+        rows: list[dict[str, Any]] = []
+        ordered = source.sort_values(["outcome_available_at", "decision_timestamp", "strategy_id"], kind="stable")
+        for row in ordered.itertuples(index=False):
+            payload = row._asdict()
+            for key, value in tuple(payload.items()):
+                if value is pd.NaT or (isinstance(value, (datetime, pd.Timestamp)) and pd.isna(value)):
+                    payload[key] = None
+            rows.append(repository.row_for_outcome(payload))
+        return rows
+
     def _raw_validation_context(self, bars: pd.DataFrame) -> tuple[pd.Series, pd.Series, FinalBoundary]:
         ordered = bars.sort_values("open_timestamp", kind="stable").reset_index(drop=True)
         chronology = pd.to_datetime(ordered["close_timestamp"].iloc[:-1], utc=True).reset_index(drop=True)
@@ -1885,6 +2194,20 @@ class StrategyPipeline:
             registered.spec.strategy_id: (run_id, run_timestamp) for registered, run_id, run_timestamp in run_contexts
         }
         cohort_effective_at = max(run_timestamp for _, _, run_timestamp in run_contexts)
+        contextual_rows = self._contextual_rows_for_batch(batch, created_at=cohort_effective_at)
+        contextual_index = sorted(
+            (
+                {
+                    "outcome_id": str(row["outcome_id"]),
+                    "content_hash": str(row["content_hash"]),
+                }
+                for row in contextual_rows
+            ),
+            key=lambda item: item["outcome_id"],
+        )
+        contextual_protocols = sorted({str(row["protocol_hash"]) for row in contextual_rows})
+        if len(contextual_protocols) > 1:
+            raise ValueError("one evaluation cohort cannot publish mixed contextual protocols")
         cohort_metrics = {
             "cohort_id": cohort_id,
             "cohort_generation": cohort_generation,
@@ -1896,6 +2219,10 @@ class StrategyPipeline:
             "execution_policy_hash": canonical_hash(cohort["execution_policy"]),
             "validation_policy_hash": cohort["validation_policy_hash"],
             "coverage_manifest": cohort["coverage_manifest"],
+            "contextual_outcome_count": len(contextual_rows),
+            "contextual_outcome_index_hash": canonical_hash(contextual_index),
+            "contextual_protocol_hash": contextual_protocols[0] if contextual_protocols else None,
+            "contextual_status": "published" if contextual_rows else "unavailable",
         }
         outcome_records = [
             {
@@ -1964,6 +2291,12 @@ class StrategyPipeline:
                     }
                 )
             self._insert_missing(connection, "ensemble_weights", weight_rows)
+            self._insert_authenticated_missing(
+                connection,
+                "contextual_outcomes",
+                "outcome_id",
+                contextual_rows,
+            )
 
     def _evaluation_cohort_is_complete(
         self,
@@ -1975,6 +2308,7 @@ class StrategyPipeline:
     ) -> bool:
         run_ids = tuple(run_id for _registered, run_id, _timestamp in run_contexts)
         components = {item.registered.spec.strategy_id: item for item in batch.components}
+        contextual_expectations: list[tuple[int, str, str | None]] = []
         runs = self.database.frame(
             "select strategy_run_id, strategy_id, status, metrics from strategy_runs "
             "where dataset_hash = :dataset_hash",
@@ -1994,6 +2328,21 @@ class StrategyPipeline:
                 or metrics.get("cohort_decision_hash") != batch.ensemble_decision.decision_hash
             ):
                 return False
+            if not isinstance(metrics.get("contextual_outcome_count"), int) or not isinstance(
+                metrics.get("contextual_outcome_index_hash"), str
+            ):
+                return False
+            contextual_expectations.append(
+                (
+                    int(metrics["contextual_outcome_count"]),
+                    str(metrics["contextual_outcome_index_hash"]),
+                    (
+                        str(metrics["contextual_protocol_hash"])
+                        if metrics.get("contextual_protocol_hash") is not None
+                        else None
+                    ),
+                )
+            )
             component = components.get(registered.spec.strategy_id)
             if component is None:
                 return False
@@ -2036,7 +2385,45 @@ class StrategyPipeline:
                 {"audit_id": audit_id},
             ):
                 return False
-        return True
+        if len(set(contextual_expectations)) != 1:
+            return False
+        expected_rows = self._contextual_rows_for_batch(
+            batch,
+            created_at=max(timestamp for _registered, _run_id, timestamp in run_contexts),
+        )
+        expected_index = sorted(
+            (
+                {
+                    "outcome_id": str(row["outcome_id"]),
+                    "content_hash": str(row["content_hash"]),
+                }
+                for row in expected_rows
+            ),
+            key=lambda item: item["outcome_id"],
+        )
+        expected_protocols = {str(row["protocol_hash"]) for row in expected_rows}
+        expected_protocol = next(iter(expected_protocols)) if len(expected_protocols) == 1 else None
+        metric_count, metric_hash, metric_protocol = contextual_expectations[0]
+        if (
+            metric_count != len(expected_index)
+            or metric_hash != canonical_hash(expected_index)
+            or metric_protocol != expected_protocol
+        ):
+            return False
+        if not expected_index:
+            return True
+        persisted = self.database.frame(
+            "select outcome_id, content_hash from contextual_outcomes "
+            "where dataset_hash = :dataset_hash and symbol = :symbol and interval = :interval and mode = :mode",
+            {
+                "dataset_hash": dataset_hash,
+                "symbol": scope.symbol,
+                "interval": scope.interval.value,
+                "mode": scope.mode.value,
+            },
+        )
+        actual_by_id = {str(row.outcome_id): str(row.content_hash) for row in persisted.itertuples(index=False)}
+        return all(actual_by_id.get(item["outcome_id"]) == item["content_hash"] for item in expected_index)
 
     def _persist_evaluation(
         self,
@@ -2198,6 +2585,23 @@ class StrategyPipeline:
             exists = connection.execute(select(table.c[keys[0]]).where(*conditions)).first()
             if exists is None:
                 connection.execute(insert(table).values(**row))
+
+    @staticmethod
+    def _insert_authenticated_missing(
+        connection: Any,
+        table_name: str,
+        identity_column: str,
+        rows: Sequence[Mapping[str, Any]],
+    ) -> None:
+        table = TABLES[table_name]
+        for row in rows:
+            stored_hash = connection.execute(
+                select(table.c.content_hash).where(table.c[identity_column] == row[identity_column])
+            ).scalar_one_or_none()
+            if stored_hash is None:
+                connection.execute(insert(table).values(**row))
+            elif str(stored_hash) != str(row["content_hash"]):
+                raise ValueError(f"{table_name} identity collision has a conflicting content hash")
 
     @staticmethod
     def _persisted_evidence_id(

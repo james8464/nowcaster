@@ -172,3 +172,22 @@ def test_later_available_revision_of_a_historical_peer_bar_does_not_repaint_pair
     )
 
     assert audit.passed, audit.reason
+
+
+def test_contextual_regime_evidence_is_unchanged_by_future_market_rows():
+    from src.strategies.pipeline import causal_regime_evidence_frame
+
+    count = 240
+    cutoff = 200
+    positions = np.arange(count, dtype=float)
+    bars = _bars("PRIMARY", 100 + positions * 0.03 + np.sin(positions / 7) * 1.5)
+    before = causal_regime_evidence_frame(bars.iloc[:cutoff].copy(), refit_interval=25)
+
+    mutated = bars.copy()
+    mutated.loc[cutoff:, "close"] *= 3
+    mutated.loc[cutoff:, "high"] = mutated.loc[cutoff:, "close"] + 2
+    mutated.loc[cutoff:, "low"] = mutated.loc[cutoff:, "close"] - 2
+    mutated.loc[cutoff:, "volume"] *= 100
+    after = causal_regime_evidence_frame(mutated, refit_interval=25).iloc[:cutoff]
+
+    pd.testing.assert_frame_equal(before.reset_index(drop=True), after.reset_index(drop=True))
