@@ -46,9 +46,12 @@ final class NotificationService {
             UNNotificationCategory(identifier: $0.rawValue, actions: [], intentIdentifiers: [], options: [])
         }
         center.setNotificationCategories(Set(categories))
-        return (try? await center.requestAuthorization(
-            options: [.alert, .sound, .badge, .providesAppNotificationSettings]
-        )) ?? false
+        return await withCheckedContinuation { continuation in
+            // Keep the older SDK's non-sendable notification center on this actor.
+            center.requestAuthorization(options: [.alert, .sound, .badge, .providesAppNotificationSettings]) { @Sendable granted, error in
+                continuation.resume(returning: granted && error == nil)
+            }
+        }
     }
 
     func deliver(
@@ -76,11 +79,10 @@ final class NotificationService {
         content.sound = .default
         content.categoryIdentifier = candidate.category.rawValue
         content.userInfo = ["event_id": candidate.id]
-        do {
-            try await center.add(UNNotificationRequest(identifier: candidate.id, content: content, trigger: nil))
-            return true
-        } catch {
-            return false
+        return await withCheckedContinuation { continuation in
+            center.add(UNNotificationRequest(identifier: candidate.id, content: content, trigger: nil)) { @Sendable error in
+                continuation.resume(returning: error == nil)
+            }
         }
     }
 }

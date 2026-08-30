@@ -2,7 +2,7 @@
 
 Verification started 30 August 2026 and continued on 31 August. This record covers the contextual asset-selection and strategy-weighting implementation, not proof that any strategy will make money.
 
-The verified implementation was uploaded to the repository's `main` branch at [53e351b](https://github.com/james8464/nowcaster/commit/53e351b246d68437ae1cfe0e2e11df836305d97f); local and remote commit identifiers matched after publication. The complete native suite also passed after the fast-forward integration into the main checkout. Subsequent documentation-only commits record completion without changing the tested engine.
+The locally verified implementation was uploaded to the repository's `main` branch at [53e351b](https://github.com/james8464/nowcaster/commit/53e351b246d68437ae1cfe0e2e11df836305d97f); local and remote commit identifiers matched after publication. The complete native suite also passed after the fast-forward integration into the main checkout. Follow-up toolchain checks and compatibility fixes are recorded below; they do not change the tested trading calculations.
 
 ## What is implemented
 
@@ -47,7 +47,7 @@ The final packaged app helper received fresh `BTCUSDT` and `ETHUSDT` quotes on 3
 
 ## Native toolchain compatibility
 
-The [previous GitHub native build](https://github.com/james8464/nowcaster/actions/runs/33208597850) exposed an Xcode 16.2 concurrency error in notification settings. Notification authorization now projects a Boolean inside Apple's callback instead of passing the older SDK's non-sendable settings object across actors. The allowed authorization states are unchanged, and no concurrency warning is suppressed. The added authorization regression and the complete native suite pass locally; the repository's CI remains the check against its pinned older toolchain.
+The [previous GitHub native build](https://github.com/james8464/nowcaster/actions/runs/33208597850) exposed an Xcode 16.2 concurrency error in notification settings. The [publication build](https://github.com/james8464/nowcaster/actions/runs/33342719093) then exposed the same boundary for permission requests. Settings, permission requests and notification submission now project only Boolean results inside Apple's callbacks; the older SDK's non-sendable center, settings and request objects do not cross actors. Allowed authorization states and failure behavior are unchanged, and no concurrency warning is suppressed. The added authorization regression and the complete native suite pass locally; the repository's CI remains the check against its pinned older toolchain.
 
 ## Remaining external limitations
 
