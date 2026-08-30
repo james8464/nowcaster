@@ -41,7 +41,7 @@ profiles:
     trading_calendars: [XNYS, XNAS]
     allowed_directions: [long, short]
     allowed_families: [trend, mean_reversion, volatility_volume, session, relative_value]
-    session_strategy_ids: [opening_range_breakout, vwap_reversion]
+    session_strategy_ids: [opening_range_breakout]
     minimum_cross_sectional_peers: 5
     minimum_history_bars: 500
     minimum_coverage: 0.99
@@ -63,7 +63,7 @@ profiles:
     trading_calendars: [XNYS, XNAS]
     allowed_directions: [long, short]
     allowed_families: [trend, mean_reversion, volatility_volume, session, relative_value]
-    session_strategy_ids: [opening_range_breakout, vwap_reversion]
+    session_strategy_ids: [opening_range_breakout, etf_last_half_hour_momentum]
     minimum_cross_sectional_peers: 3
     minimum_history_bars: 500
     minimum_coverage: 0.99
@@ -85,7 +85,7 @@ profiles:
     trading_calendars: [24x7]
     allowed_directions: [long]
     allowed_families: [trend, mean_reversion, volatility_volume, session, relative_value]
-    session_strategy_ids: []
+    session_strategy_ids: [bitcoin_active_session_momentum]
     minimum_cross_sectional_peers: 2
     minimum_history_bars: 1000
     minimum_coverage: 0.995
@@ -107,7 +107,7 @@ profiles:
     trading_calendars: [24x7]
     allowed_directions: [long, short]
     allowed_families: [trend, mean_reversion, volatility_volume, session, relative_value]
-    session_strategy_ids: []
+    session_strategy_ids: [bitcoin_active_session_momentum]
     minimum_cross_sectional_peers: 2
     minimum_history_bars: 1500
     minimum_coverage: 0.995
