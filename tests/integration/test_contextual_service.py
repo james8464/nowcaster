@@ -4,11 +4,14 @@ import math
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from sqlalchemy import text
+
 from src.config.settings import Settings
 from src.contextual.repository import ContextualRepository
 from src.contextual.service import ContextualResearchService, ContextualRunRequest
 from src.database.engine import Database
 from src.ingestion.bars import MarketBar
+from src.live_monitor.evidence import SealedCohort, load_contextual_live_evidence
 from src.strategies.datasets import BarRepository
 from src.strategies.types import BarInterval, StrategyMode, canonical_hash
 
@@ -19,6 +22,8 @@ STRATEGIES = (
     "rsi_reversal",
     "bollinger_keltner_squeeze",
 )
+DATASET_HASH = "d" * 64
+PROTOCOL_HASH = "p" * 64
 
 
 def seed_contextual_market(database: Database, *, count: int = 160) -> datetime:
@@ -58,8 +63,8 @@ def seed_contextual_market(database: Database, *, count: int = 160) -> datetime:
             cost = 0.0001
             outcomes.append(
                 {
-                    "dataset_hash": "dataset-v1",
-                    "protocol_hash": "protocol-v1",
+                    "dataset_hash": DATASET_HASH,
+                    "protocol_hash": PROTOCOL_HASH,
                     "code_hash": "code-v1",
                     "config_hash": "config-v1",
                     "source_decision_hash": canonical_hash([strategy_id, index]),
@@ -130,3 +135,38 @@ def test_evaluate_contexts_emits_ordered_stages_and_persists_cash_safe_result(
     assert database.scalar("select count(*) from contextual_estimates") > 0
     assert database.scalar("select count(*) from contextual_weights") == len(STRATEGIES)
     assert database.scalar("select count(*) from portfolio_research_decisions") == 1
+
+
+def test_live_loader_requires_one_authenticated_exact_contextual_cohort(tmp_path: Path) -> None:
+    service, database, as_of = contextual_service(tmp_path)
+    request = ContextualRunRequest(
+        symbols=("BTCUSDT",),
+        provider="binance",
+        feed="spot",
+        interval=BarInterval.FIVE_MINUTES,
+        mode=StrategyMode.PAPER,
+        as_of=as_of,
+    )
+    service.evaluate_contexts(request)
+    live_cohort = SealedCohort.model_construct(
+        cohort_id="c" * 64,
+        provider="binance",
+        feed="spot",
+        dataset_hash=DATASET_HASH,
+        symbol="BTCUSDT",
+        interval="5m",
+        mode="paper",
+        cost_buffer_multiplier=1,
+        components=(),
+    )
+
+    loaded = load_contextual_live_evidence(database, (live_cohort,), now=as_of)
+
+    envelope = loaded[("binance", "spot", "BTCUSDT", "5m", "long")]
+    assert envelope.context_hash
+    assert envelope.drift_status == "stable"
+    assert envelope.portfolio_selected is False
+
+    with database.engine.begin() as connection:
+        connection.execute(text("update contextual_weights set content_hash = 'tampered'"))
+    assert load_contextual_live_evidence(database, (live_cohort,), now=as_of) == {}

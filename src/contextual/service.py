@@ -569,15 +569,18 @@ class ContextualResearchService:
         return {
             "context_hash": key.context_hash,
             "dataset_hash": assembly.dataset_hash,
+            "source_dataset_hash": assembly.source_datasets[instrument.symbol],
             "protocol_hash": assembly.protocol_hash,
             "provider": request.provider,
             "feed": request.feed,
             "venue": instrument.venue,
             "product": instrument.product,
+            "asset_class": instrument.asset_class,
             "profile": instrument.profile.value,
             "symbol": instrument.symbol,
             "interval": request.interval.value,
             "direction": direction.value,
+            "mode": request.mode.value,
             "effective_at": request.as_of,
         }
 
@@ -780,6 +783,23 @@ class ContextualResearchService:
                     "weight": selected.weight if selected is not None else 0.0,
                     "exclusion_reasons": reasons or (() if selected is not None else ("not_selected",)),
                     "opportunity": asdict(opportunity),
+                }
+            )
+        for key, allocation in allocations.items():
+            context = context_records[key]
+            self.repository.append_drift_event(
+                {
+                    "context_hash": context["context_hash"],
+                    "effective_at": request.as_of,
+                    "status": "stable",
+                    "reason": "authenticated_context_baseline",
+                    "dataset_hash": assembly.dataset_hash,
+                    "source_dataset_hash": context["source_dataset_hash"],
+                    "protocol_hash": assembly.protocol_hash,
+                    "allocation_id": allocation.allocation_id,
+                    "covariance_hash": allocation.covariance.evidence_hash,
+                    "selection_id": portfolio.selection_id,
+                    "screen_hash": screen.evidence_hash,
                 }
             )
         self._emit(sink, "portfolio", f"portfolio result: {portfolio.status}")

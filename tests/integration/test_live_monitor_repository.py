@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+import pytest
+
 from src.database.engine import Database
 from src.live_monitor.lifecycle import AlertLifecycle
 from src.live_monitor.repository import LiveMonitorRepository
@@ -217,6 +219,26 @@ def test_repository_records_complete_live_audit_ledger(tmp_path) -> None:
     assert store.scalar("select count(*) from monitor_finalized_bars") == 1
     assert store.scalar("select count(*) from monitor_decisions") == 1
     assert store.scalar("select count(*) from monitor_health_events") == 1
+
+
+def test_repository_rejects_actionable_decision_without_contextual_authentication(tmp_path) -> None:
+    store = database(tmp_path)
+    repository = LiveMonitorRepository(store, clock=lambda: NOW)
+    repository.start_session("session-1", config_hash="c" * 64, cohort_hash="d" * 64)
+
+    with pytest.raises(ValueError, match="contextual"):
+        repository.record_decision(
+            "session-1",
+            {
+                "provider": "alpaca",
+                "feed": "iex",
+                "symbol": "AAPL",
+                "interval": "5m",
+                "decision_time": NOW.isoformat(),
+                "status": "long",
+                "reasons": [],
+            },
+        )
 
 
 def test_repository_persists_normalized_market_events_idempotently(tmp_path) -> None:

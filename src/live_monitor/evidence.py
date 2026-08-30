@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Sequence
-from datetime import UTC, datetime
+from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Literal
 
@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 from pydantic import Field, model_validator
 
+from src.contextual.types import AssetProfileName, StrategyContextKey, StrategyDirection
 from src.database.engine import Database
 from src.live_monitor.engine import EligibilityEvidence
 from src.live_monitor.types import BarIntervalValue, Direction, LiveMonitorModel, MarketBar, MarketQuote
@@ -20,7 +21,7 @@ from src.models.drift import (
     StreamingDriftMonitor,
 )
 from src.strategies.library import StrategyContext, generate_signals
-from src.strategies.types import StrategySpec, canonical_hash
+from src.strategies.types import BarInterval, StrategyMode, StrategySpec, canonical_hash
 
 EMPTY_COHORT_HASH = "0" * 64
 REQUIRED_READINESS_GATES = frozenset(
@@ -52,6 +53,9 @@ LIVE_ALERT_POLICY = {
     "minimum_breadth": 2,
     "equity_session": "XNYS_regular_only",
     "equity_shortability": "shortable_and_easy_to_borrow",
+    "contextual_cohort_binding": "exact_source_dataset_context_policy",
+    "contextual_drift_maximum_age_hours": 24,
+    "contextual_portfolio_selection": "required",
 }
 PROMOTION_GRADE_CALIBRATION_METHODS = frozenset({"oof_beta_v2", "oof_sigmoid_v2", "oof_isotonic_v2"})
 
@@ -152,6 +156,71 @@ class SealedCohort(LiveMonitorModel):
     @property
     def evidence_hash(self) -> str:
         return canonical_hash(self.model_dump(mode="json"))
+
+
+class ContextualLiveEvidence(LiveMonitorModel):
+    """Immutable contextual allocation envelope attached to one live direction."""
+
+    dataset_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    provider: str
+    feed: str
+    symbol: str
+    interval: BarIntervalValue
+    direction: Direction
+    asset_profile: str
+    eligibility_state: Literal["eligible", "watch", "blocked"]
+    eligibility_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    context_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    policy_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    regime_probabilities: dict[str, Decimal]
+    drift_status: Literal["stable", "warning", "confirmed", "unavailable"]
+    covariance_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    weight_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    portfolio_selection_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    portfolio_decision_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    portfolio_selected: bool
+
+    @model_validator(mode="after")
+    def normalized_regime_vector(self) -> ContextualLiveEvidence:
+        expected = {
+            "trend_normal",
+            "trend_elevated_volatility",
+            "range_liquid",
+            "stressed_or_illiquid",
+        }
+        if (
+            set(self.regime_probabilities) != expected
+            or any(value < 0 or value > 1 for value in self.regime_probabilities.values())
+            or sum(self.regime_probabilities.values()) != Decimal(1)
+        ):
+            raise ValueError("contextual live regimes must contain normalized fixed-taxonomy mass")
+        return self
+
+    def eligibility_updates(self, cohort_id: str) -> dict[str, object]:
+        cohort_hash = canonical_hash(
+            {
+                "cohort_id": cohort_id,
+                "dataset_hash": self.dataset_hash,
+                "context_hash": self.context_hash,
+                "policy_hash": self.policy_hash,
+            }
+        )
+        payload: dict[str, object] = {
+            "asset_profile": self.asset_profile,
+            "contextual_eligibility_state": self.eligibility_state,
+            "contextual_eligibility_hash": self.eligibility_hash,
+            "context_hash": self.context_hash,
+            "contextual_policy_hash": self.policy_hash,
+            "contextual_cohort_hash": cohort_hash,
+            "regime_probabilities": {key: str(value) for key, value in sorted(self.regime_probabilities.items())},
+            "contextual_drift_status": self.drift_status,
+            "contextual_covariance_hash": self.covariance_hash,
+            "contextual_weight_hash": self.weight_hash,
+            "portfolio_selection_id": self.portfolio_selection_id,
+            "portfolio_decision_hash": self.portfolio_decision_hash,
+            "portfolio_selected": self.portfolio_selected,
+        }
+        return {**payload, "contextual_evidence_hash": canonical_hash(payload)}
 
 
 def _bar_frame(bars: tuple[MarketBar, ...]) -> pd.DataFrame:
@@ -380,10 +449,12 @@ class SealedCohortResolver:
         cohorts: Sequence[SealedCohort],
         *,
         asset_metadata: dict[tuple[str, str], tuple[bool, bool]] | None = None,
+        contextual_evidence: Mapping[tuple[str, str, str, BarIntervalValue, str], ContextualLiveEvidence] | None = None,
         drift_policy: DriftPolicy = DEFAULT_DRIFT_POLICY,
     ):
         self._cohorts = {(item.provider, item.feed, item.symbol, item.interval): item for item in cohorts}
         self._asset_metadata = asset_metadata or {}
+        self._contextual_evidence = dict(contextual_evidence or {})
         self._drift_policy = drift_policy
         self._drift_monitors = {key: StreamingDriftMonitor(drift_policy) for key in self._cohorts}
 
@@ -406,15 +477,19 @@ class SealedCohortResolver:
             values["feature_distribution"] = float(bars[-1].close / bars[-2].close - Decimal(1))
         report = self._drift_monitors[(quote.provider, quote.feed, quote.symbol, interval)].update(values)
         score = report.maximum_standardized_shift
-        return evidence.model_copy(
-            update={
-                "drift_status": report.status,
-                "drift_score": Decimal(str(score)) if score is not None else None,
-                "drift_policy_hash": report.policy_hash,
-                "drift_evidence_hash": report.evidence_hash,
-                "drift_confirmed_metrics": report.confirmed_metrics,
-            }
+        updates: dict[str, object] = {
+            "drift_status": report.status,
+            "drift_score": Decimal(str(score)) if score is not None else None,
+            "drift_policy_hash": report.policy_hash,
+            "drift_evidence_hash": report.evidence_hash,
+            "drift_confirmed_metrics": report.confirmed_metrics,
+        }
+        contextual = self._contextual_evidence.get(
+            (quote.provider, quote.feed, quote.symbol, interval, evidence.direction.value)
         )
+        if contextual is not None and contextual.dataset_hash == evidence.dataset_hash:
+            updates.update(contextual.eligibility_updates(evidence.cohort_id))
+        return evidence.model_copy(update=updates)
 
 
 def selected_cohort_hash(cohorts: Sequence[SealedCohort]) -> str:
@@ -645,6 +720,236 @@ def load_active_readiness_receipt(
     )
 
 
+def load_contextual_live_evidence(
+    database: Database,
+    cohorts: Sequence[SealedCohort],
+    *,
+    now: datetime,
+) -> dict[tuple[str, str, str, BarIntervalValue, str], ContextualLiveEvidence]:
+    """Load only complete authenticated contextual allocations for selected live cohorts."""
+
+    if now.tzinfo is not UTC:
+        raise ValueError("contextual live evidence requires an explicit UTC timestamp")
+    result: dict[tuple[str, str, str, BarIntervalValue, str], ContextualLiveEvidence] = {}
+    for cohort in cohorts:
+        weights = database.frame(
+            "select * from contextual_weights where provider = :provider "
+            "and feed = :feed and symbol = :symbol and interval = :interval and effective_at <= :now "
+            "order by effective_at desc, allocation_id, strategy_id",
+            {
+                "provider": cohort.provider,
+                "feed": cohort.feed,
+                "symbol": cohort.symbol,
+                "interval": cohort.interval,
+                "now": now,
+            },
+        )
+        if weights.empty:
+            continue
+        weights["effective_at"] = pd.to_datetime(weights["effective_at"], utc=True)
+        for direction, directional in weights.groupby("direction", sort=True):
+            latest_at = directional["effective_at"].max()
+            latest = directional.loc[directional["effective_at"] == latest_at]
+            if now - latest_at.to_pydatetime() > timedelta(
+                hours=int(LIVE_ALERT_POLICY["contextual_drift_maximum_age_hours"])
+            ):
+                continue
+            allocation_ids = set(latest["allocation_id"].astype(str))
+            context_hashes = set(latest["context_hash"].astype(str))
+            protocols = set(latest["protocol_hash"].astype(str))
+            profiles = set(latest["profile"].astype(str))
+            if any(len(values) != 1 for values in (allocation_ids, context_hashes, protocols, profiles)):
+                continue
+            if not all(
+                isinstance(row.evidence, dict)
+                and canonical_hash({"payload": row.evidence, "strategy_id": str(row.strategy_id)})
+                == str(row.content_hash)
+                for row in latest.itertuples(index=False)
+            ):
+                continue
+            context_hash = next(iter(context_hashes))
+            protocol_hash = next(iter(protocols))
+            allocation_id = next(iter(allocation_ids))
+            weight_index = sorted(
+                (str(row.contextual_weight_id), str(row.content_hash)) for row in latest.itertuples(index=False)
+            )
+            weight_hash = canonical_hash(weight_index)
+
+            allocation_payload = latest.iloc[0]["evidence"]
+            allocation_record = allocation_payload.get("allocation") if isinstance(allocation_payload, dict) else None
+            allocation_context = allocation_payload.get("context") if isinstance(allocation_payload, dict) else None
+            source_dataset_hash = (
+                str(allocation_context.get("source_dataset_hash"))
+                if isinstance(allocation_context, dict) and allocation_context.get("source_dataset_hash")
+                else next(iter(set(latest["dataset_hash"].astype(str))))
+            )
+            if source_dataset_hash != cohort.dataset_hash:
+                continue
+            try:
+                expected_context_hash = StrategyContextKey(
+                    dataset_hash=str(allocation_context["dataset_hash"]),
+                    protocol_hash=str(allocation_context["protocol_hash"]),
+                    provider=str(allocation_context["provider"]),
+                    feed=str(allocation_context["feed"]),
+                    venue=str(allocation_context["venue"]),
+                    product=str(allocation_context["product"]),
+                    asset_class=str(allocation_context["asset_class"]),
+                    profile=AssetProfileName(str(allocation_context["profile"])),
+                    symbol=str(allocation_context["symbol"]),
+                    interval=BarInterval(str(allocation_context["interval"])),
+                    direction=StrategyDirection(str(allocation_context["direction"])),
+                    regime=None,
+                    mode=StrategyMode(str(allocation_context["mode"])),
+                ).context_hash
+            except (KeyError, TypeError, ValueError):
+                continue
+            if expected_context_hash != context_hash:
+                continue
+            covariance_record = allocation_record.get("covariance") if isinstance(allocation_record, dict) else None
+            covariance_id = str(covariance_record.get("evidence_hash")) if isinstance(covariance_record, dict) else ""
+            covariance = database.frame(
+                "select * from contextual_covariances where covariance_id = :covariance_id "
+                "and context_hash = :context_hash and dataset_hash = :dataset_hash "
+                "and protocol_hash = :protocol_hash and effective_at <= :now order by effective_at desc limit 1",
+                {
+                    "covariance_id": covariance_id,
+                    "context_hash": context_hash,
+                    "dataset_hash": str(latest.iloc[0]["dataset_hash"]),
+                    "protocol_hash": protocol_hash,
+                    "now": now,
+                },
+            )
+            if covariance.empty:
+                continue
+            covariance_row = covariance.iloc[0]
+            if (
+                str(covariance_row["status"]) != "estimated"
+                or not isinstance(covariance_row["evidence"], dict)
+                or canonical_hash(covariance_row["evidence"]) != str(covariance_row["content_hash"])
+            ):
+                continue
+
+            eligibility = database.frame(
+                "select * from asset_eligibility_evidence where provider = :provider and feed = :feed "
+                "and symbol = :symbol and interval = :interval and direction = :direction "
+                "and effective_at = :effective_at order by created_at desc limit 1",
+                {
+                    "provider": cohort.provider,
+                    "feed": cohort.feed,
+                    "symbol": cohort.symbol,
+                    "interval": cohort.interval,
+                    "direction": str(direction),
+                    "effective_at": latest_at.to_pydatetime(),
+                },
+            )
+            posterior = database.frame(
+                "select * from regime_posteriors where dataset_hash = :dataset_hash and protocol_hash = :protocol_hash "
+                "and provider = :provider and feed = :feed and symbol = :symbol and interval = :interval "
+                "and decision_timestamp = :effective_at order by created_at desc limit 1",
+                {
+                    "dataset_hash": str(latest.iloc[0]["dataset_hash"]),
+                    "protocol_hash": protocol_hash,
+                    "provider": cohort.provider,
+                    "feed": cohort.feed,
+                    "symbol": cohort.symbol,
+                    "interval": cohort.interval,
+                    "effective_at": latest_at.to_pydatetime(),
+                },
+            )
+            portfolio = database.frame(
+                "select * from portfolio_research_decisions where context_hash = :context_hash "
+                "and symbol = :symbol and direction = :direction and effective_at = :effective_at "
+                "order by created_at desc limit 1",
+                {
+                    "context_hash": context_hash,
+                    "symbol": cohort.symbol,
+                    "direction": str(direction),
+                    "effective_at": latest_at.to_pydatetime(),
+                },
+            )
+            if eligibility.empty or posterior.empty or portfolio.empty:
+                continue
+            eligibility_row = eligibility.iloc[0]
+            posterior_row = posterior.iloc[0]
+            portfolio_row = portfolio.iloc[0]
+            authenticated = (
+                isinstance(eligibility_row["evidence"], dict)
+                and canonical_hash(eligibility_row["evidence"]) == str(eligibility_row["content_hash"])
+                and isinstance(posterior_row["evidence"], dict)
+                and canonical_hash(posterior_row["evidence"]) == str(posterior_row["content_hash"])
+                and isinstance(portfolio_row["evidence"], dict)
+                and canonical_hash(portfolio_row["evidence"]) == str(portfolio_row["content_hash"])
+            )
+            profile = next(iter(profiles))
+            expected_decision_hash = canonical_hash(
+                {
+                    "allocation_id": allocation_id,
+                    "context_hash": context_hash,
+                    "as_of": latest_at.to_pydatetime(),
+                }
+            )
+            if (
+                not authenticated
+                or str(eligibility_row["profile"]) != profile
+                or str(posterior_row["profile"]) != profile
+                or str(posterior_row["status"]) != "fitted"
+                or str(portfolio_row["decision_hash"]) != expected_decision_hash
+            ):
+                continue
+            drift = database.frame(
+                "select status, content_hash, evidence from contextual_drift_events "
+                "where context_hash = :context_hash and effective_at = :effective_at "
+                "order by created_at desc limit 1",
+                {"context_hash": context_hash, "effective_at": latest_at.to_pydatetime()},
+            )
+            drift_status = "unavailable"
+            if not drift.empty:
+                drift_row = drift.iloc[0]
+                if isinstance(drift_row["evidence"], dict) and canonical_hash(drift_row["evidence"]) == str(
+                    drift_row["content_hash"]
+                ):
+                    drift_status = str(drift_row["status"])
+            raw_probabilities = {key: Decimal(str(value)) for key, value in posterior_row["probabilities"].items()}
+            probability_total = sum(raw_probabilities.values())
+            if probability_total <= 0:
+                continue
+            normalized_probabilities: dict[str, Decimal] = {}
+            regime_keys = sorted(raw_probabilities)
+            for regime_key in regime_keys[:-1]:
+                normalized_probabilities[regime_key] = raw_probabilities[regime_key] / probability_total
+            normalized_probabilities[regime_keys[-1]] = Decimal(1) - sum(normalized_probabilities.values())
+            try:
+                envelope = ContextualLiveEvidence(
+                    dataset_hash=cohort.dataset_hash,
+                    provider=cohort.provider,
+                    feed=cohort.feed,
+                    symbol=cohort.symbol,
+                    interval=cohort.interval,
+                    direction=Direction(str(direction)),
+                    asset_profile=profile,
+                    eligibility_state=str(eligibility_row["state"]),
+                    eligibility_hash=str(eligibility_row["eligibility_id"]),
+                    context_hash=context_hash,
+                    policy_hash=str(eligibility_row["policy_hash"]),
+                    regime_probabilities=normalized_probabilities,
+                    drift_status=drift_status,
+                    covariance_hash=str(covariance_row["content_hash"]),
+                    weight_hash=weight_hash,
+                    portfolio_selection_id=str(portfolio_row["selection_id"]),
+                    portfolio_decision_hash=str(portfolio_row["decision_hash"]),
+                    portfolio_selected=(
+                        bool(portfolio_row["selected"])
+                        and str(portfolio_row["status"]) == "selected"
+                        and allocation_id == str(latest.iloc[0]["allocation_id"])
+                    ),
+                )
+            except (KeyError, TypeError, ValueError):
+                continue
+            key = (cohort.provider, cohort.feed, cohort.symbol, cohort.interval, str(direction))
+            result[key] = envelope
+    return result
+
+
 def load_sealed_cohorts(database: Database, specs: Sequence[StrategySpec]) -> tuple[SealedCohort, ...]:
     """Load only the newest complete, actionable, internally consistent evidence cohorts."""
     weights = database.frame(
@@ -846,12 +1151,14 @@ def load_decision_history(
 
 
 __all__ = [
+    "ContextualLiveEvidence",
     "SealedCohort",
     "SealedCohortResolver",
     "SealedComponent",
     "evaluate_sealed_cohort",
     "load_decision_history",
     "load_active_readiness_receipt",
+    "load_contextual_live_evidence",
     "load_sealed_cohorts",
     "selected_cohort_hash",
     "select_monitor_cohorts",

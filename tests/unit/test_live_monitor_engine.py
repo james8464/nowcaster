@@ -9,6 +9,7 @@ from src.live_monitor.command import parse_control
 from src.live_monitor.engine import EligibilityEvidence, LiveMonitorEngine, evaluate_alert_eligibility
 from src.live_monitor.types import Direction, MarketBar, MarketQuote, MonitorHealth, ProviderHealthEvent
 from src.models.drift import DEFAULT_DRIFT_POLICY_HASH
+from src.strategies.types import canonical_hash
 
 NOW = datetime(2026, 8, 26, 14, 0, tzinfo=UTC)
 
@@ -49,7 +50,55 @@ def evidence(**updates) -> EligibilityEvidence:
         "easy_to_borrow": True,
         "reasons": (),
     }
+    contextual = {
+        "asset_profile": "us_liquid_equity",
+        "contextual_eligibility_state": "eligible",
+        "contextual_eligibility_hash": "1" * 64,
+        "context_hash": "2" * 64,
+        "contextual_policy_hash": "3" * 64,
+        "regime_probabilities": {
+            "trend_normal": "0.4",
+            "trend_elevated_volatility": "0.2",
+            "range_liquid": "0.3",
+            "stressed_or_illiquid": "0.1",
+        },
+        "contextual_drift_status": "stable",
+        "contextual_covariance_hash": "5" * 64,
+        "contextual_weight_hash": "6" * 64,
+        "portfolio_selection_id": "7" * 64,
+        "portfolio_decision_hash": "8" * 64,
+        "portfolio_selected": True,
+    }
+    values.update(contextual)
     values.update(updates)
+    values["contextual_cohort_hash"] = canonical_hash(
+        {
+            "cohort_id": values.get("cohort_id", "0" * 64),
+            "dataset_hash": values.get("dataset_hash", "0" * 64),
+            "context_hash": values["context_hash"],
+            "policy_hash": values["contextual_policy_hash"],
+        }
+    )
+    contextual_keys = (
+        "asset_profile",
+        "contextual_eligibility_state",
+        "contextual_eligibility_hash",
+        "context_hash",
+        "contextual_policy_hash",
+        "contextual_cohort_hash",
+        "regime_probabilities",
+        "contextual_drift_status",
+        "contextual_covariance_hash",
+        "contextual_weight_hash",
+        "portfolio_selection_id",
+        "portfolio_decision_hash",
+        "portfolio_selected",
+    )
+    authenticated = {key: values[key] for key in contextual_keys}
+    authenticated["regime_probabilities"] = {
+        key: str(value) for key, value in sorted(authenticated["regime_probabilities"].items())
+    }
+    values["contextual_evidence_hash"] = canonical_hash(authenticated)
     return EligibilityEvidence(**values)
 
 
@@ -100,6 +149,46 @@ def test_eligibility_passes_only_complete_matching_fresh_evidence() -> None:
     assert decision.status == "long"
     assert decision.reasons == ()
     assert decision.confidence == Decimal("0.68")
+
+
+def test_live_alert_requires_eligible_context_and_portfolio_selection() -> None:
+    decision = evaluate_alert_eligibility(
+        evidence(portfolio_selected=False),
+        quote(),
+        health=MonitorHealth.HEALTHY,
+        now=NOW + timedelta(seconds=5),
+    )
+    assert decision.status == "abstain"
+    assert "portfolio_selection_required" in decision.reasons
+
+
+def test_legacy_live_evidence_remains_decodable_but_abstains() -> None:
+    legacy = evidence().model_copy(
+        update={
+            "asset_profile": None,
+            "contextual_eligibility_state": None,
+            "contextual_eligibility_hash": None,
+            "context_hash": None,
+            "contextual_policy_hash": None,
+            "contextual_cohort_hash": None,
+            "regime_probabilities": None,
+            "contextual_drift_status": None,
+            "contextual_covariance_hash": None,
+            "contextual_weight_hash": None,
+            "portfolio_selection_id": None,
+            "portfolio_decision_hash": None,
+            "portfolio_selected": None,
+            "contextual_evidence_hash": None,
+        }
+    )
+    decision = evaluate_alert_eligibility(
+        legacy,
+        quote(),
+        health=MonitorHealth.HEALTHY,
+        now=NOW + timedelta(seconds=5),
+    )
+    assert decision.status == "abstain"
+    assert "contextual_evidence_required" in decision.reasons
 
 
 def test_eligibility_abstains_for_each_fail_closed_boundary() -> None:

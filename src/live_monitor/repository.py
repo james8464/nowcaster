@@ -208,6 +208,19 @@ class LiveMonitorRepository:
         return True
 
     def record_decision(self, session_id: str, payload: dict[str, Any]) -> bool:
+        status = str(payload.get("status", ""))
+        contextual_hash = payload.get("contextual_evidence_hash")
+        contextual_payload = payload.get("contextual_evidence")
+        if status in {"long", "short"} and (
+            not isinstance(contextual_hash, str)
+            or not isinstance(contextual_payload, dict)
+            or canonical_hash(contextual_payload) != contextual_hash
+        ):
+            raise ValueError("actionable monitor decisions require authenticated contextual evidence")
+        if isinstance(contextual_hash, str) and (
+            not isinstance(contextual_payload, dict) or canonical_hash(contextual_payload) != contextual_hash
+        ):
+            raise ValueError("monitor contextual evidence hash mismatch")
         identity = canonical_hash((session_id, payload))
         table = TABLES["monitor_decisions"]
         with self.database.engine.begin() as connection:

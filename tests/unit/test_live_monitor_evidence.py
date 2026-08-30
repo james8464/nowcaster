@@ -8,6 +8,7 @@ import pandas as pd
 from src.database.engine import Database
 from src.live_monitor.evidence import (
     REQUIRED_READINESS_GATES,
+    ContextualLiveEvidence,
     SealedCohort,
     SealedCohortResolver,
     SealedComponent,
@@ -204,6 +205,46 @@ def test_live_evidence_recalculates_only_current_causal_component_signals() -> N
     assert evidence.calibration_status == "calibrated"
     assert evidence.economic_evidence_status == "authenticated"
     assert evidence.data_through == bars()[-1].end
+
+
+def test_sealed_resolver_attaches_exact_contextual_portfolio_evidence() -> None:
+    contextual = ContextualLiveEvidence(
+        dataset_hash="d" * 64,
+        provider="alpaca",
+        feed="iex",
+        symbol="AAPL",
+        interval="5m",
+        direction=Direction.LONG,
+        asset_profile="us_liquid_equity",
+        eligibility_state="eligible",
+        eligibility_hash="1" * 64,
+        context_hash="2" * 64,
+        policy_hash="3" * 64,
+        regime_probabilities={
+            "trend_normal": Decimal("0.4"),
+            "trend_elevated_volatility": Decimal("0.2"),
+            "range_liquid": Decimal("0.3"),
+            "stressed_or_illiquid": Decimal("0.1"),
+        },
+        drift_status="stable",
+        covariance_hash="5" * 64,
+        weight_hash="6" * 64,
+        portfolio_selection_id="7" * 64,
+        portfolio_decision_hash="8" * 64,
+        portfolio_selected=True,
+    )
+    resolver = SealedCohortResolver(
+        (cohort(),),
+        asset_metadata={("alpaca", "AAPL"): (True, True)},
+        contextual_evidence={("alpaca", "iex", "AAPL", "5m", "long"): contextual},
+    )
+
+    evidence = resolver(bars(), quote())
+
+    assert evidence is not None
+    assert evidence.asset_profile == "us_liquid_equity"
+    assert evidence.portfolio_selected is True
+    assert evidence.contextual_authentication_valid()
 
 
 def test_sealed_resolver_warms_then_attaches_stable_multimetric_drift_evidence() -> None:

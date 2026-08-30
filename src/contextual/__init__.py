@@ -18,6 +18,12 @@ _SERVICE_EXPORTS = {
     "ContextualRunResult",
     "UniverseScreenResult",
 }
+_ONLINE_EXPORTS = {
+    "ContextualOnlineState",
+    "SoftRegimeOutcome",
+    "attribute_soft_regime_outcome",
+    "replay_contextual_outcomes",
+}
 
 
 def __getattr__(name: str):
@@ -25,6 +31,10 @@ def __getattr__(name: str):
         from src.contextual import service
 
         return getattr(service, name)
+    if name in _ONLINE_EXPORTS:
+        from src.contextual import online
+
+        return getattr(online, name)
     raise AttributeError(name)
 
 
@@ -42,4 +52,8 @@ __all__ = [
     "ContextualRunRequest",
     "ContextualRunResult",
     "UniverseScreenResult",
+    "ContextualOnlineState",
+    "SoftRegimeOutcome",
+    "attribute_soft_regime_outcome",
+    "replay_contextual_outcomes",
 ]

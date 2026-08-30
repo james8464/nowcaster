@@ -91,6 +91,20 @@ class EligibilityEvidence(LiveMonitorModel):
     shortable: bool
     easy_to_borrow: bool
     reasons: tuple[str, ...] = ()
+    asset_profile: str | None = None
+    contextual_eligibility_state: Literal["eligible", "watch", "blocked"] | None = None
+    contextual_eligibility_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    context_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    contextual_policy_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    contextual_cohort_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    regime_probabilities: dict[str, Decimal] | None = None
+    contextual_drift_status: Literal["stable", "warning", "confirmed", "unavailable"] | None = None
+    contextual_covariance_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    contextual_weight_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    portfolio_selection_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    portfolio_decision_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    portfolio_selected: bool | None = None
+    contextual_evidence_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
     @model_validator(mode="after")
     def calibration_bounds_are_coherent(self) -> EligibilityEvidence:
@@ -98,7 +112,66 @@ class EligibilityEvidence(LiveMonitorModel):
             raise ValueError("probability must lie inside its calibration interval")
         if self.calibration_effective_observations > self.calibration_observations:
             raise ValueError("effective calibration observations cannot exceed raw observations")
+        fields = self.contextual_payload()
+        supplied = tuple(value is not None for value in fields.values())
+        if not any(supplied) and self.contextual_evidence_hash is None:
+            return self
+        if not all(supplied) or self.contextual_evidence_hash is None:
+            raise ValueError("contextual live evidence must be complete when present")
+        assert self.regime_probabilities is not None
+        expected_regimes = {
+            "trend_normal",
+            "trend_elevated_volatility",
+            "range_liquid",
+            "stressed_or_illiquid",
+        }
+        if (
+            set(self.regime_probabilities) != expected_regimes
+            or any(value < 0 or value > 1 for value in self.regime_probabilities.values())
+            or sum(self.regime_probabilities.values()) != Decimal(1)
+        ):
+            raise ValueError("contextual regime probabilities must be a normalized four-state vector")
+        if not self.contextual_authentication_valid():
+            raise ValueError("contextual live evidence authentication failed")
         return self
+
+    def contextual_payload(self) -> dict[str, object | None]:
+        probabilities = (
+            {key: str(value) for key, value in sorted(self.regime_probabilities.items())}
+            if self.regime_probabilities is not None
+            else None
+        )
+        return {
+            "asset_profile": self.asset_profile,
+            "contextual_eligibility_state": self.contextual_eligibility_state,
+            "contextual_eligibility_hash": self.contextual_eligibility_hash,
+            "context_hash": self.context_hash,
+            "contextual_policy_hash": self.contextual_policy_hash,
+            "contextual_cohort_hash": self.contextual_cohort_hash,
+            "regime_probabilities": probabilities,
+            "contextual_drift_status": self.contextual_drift_status,
+            "contextual_covariance_hash": self.contextual_covariance_hash,
+            "contextual_weight_hash": self.contextual_weight_hash,
+            "portfolio_selection_id": self.portfolio_selection_id,
+            "portfolio_decision_hash": self.portfolio_decision_hash,
+            "portfolio_selected": self.portfolio_selected,
+        }
+
+    def contextual_authentication_valid(self) -> bool:
+        payload = self.contextual_payload()
+        if not all(value is not None for value in payload.values()) or self.contextual_evidence_hash is None:
+            return False
+        expected_cohort = canonical_hash(
+            {
+                "cohort_id": self.cohort_id,
+                "dataset_hash": self.dataset_hash,
+                "context_hash": self.context_hash,
+                "policy_hash": self.contextual_policy_hash,
+            }
+        )
+        return (
+            self.contextual_cohort_hash == expected_cohort and canonical_hash(payload) == self.contextual_evidence_hash
+        )
 
 
 class MonitorDecision(LiveMonitorModel):
@@ -131,6 +204,30 @@ def evaluate_alert_eligibility(
     maximum_calibration_error: Decimal = Decimal("0.10"),
 ) -> MonitorDecision:
     reasons = list(evidence.reasons)
+    if evidence.contextual_evidence_hash is None:
+        reasons.append("contextual_evidence_required")
+    elif not evidence.contextual_authentication_valid():
+        reasons.append("contextual_evidence_mismatch")
+    else:
+        if evidence.contextual_eligibility_state != "eligible":
+            reasons.append("contextual_asset_not_eligible")
+        if evidence.contextual_drift_status == "confirmed":
+            reasons.append("contextual_material_drift")
+        elif evidence.contextual_drift_status == "warning":
+            reasons.append("contextual_drift_warning")
+        elif evidence.contextual_drift_status != "stable":
+            reasons.append("contextual_drift_evidence_required")
+        if evidence.contextual_covariance_hash in {None, "0" * 64}:
+            reasons.append("contextual_covariance_required")
+        if evidence.contextual_weight_hash in {None, "0" * 64}:
+            reasons.append("contextual_weight_required")
+        if evidence.portfolio_selected is not True:
+            reasons.append("portfolio_selection_required")
+        if evidence.portfolio_selection_id in {None, "0" * 64} or evidence.portfolio_decision_hash in {
+            None,
+            "0" * 64,
+        }:
+            reasons.append("portfolio_evidence_required")
     if evidence.mode not in {"frozen", "paper"}:
         reasons.append("qualified_mode_required")
     if not evidence.promoted:
@@ -525,6 +622,8 @@ class LiveMonitorEngine:
             "drift_policy_hash": evidence.drift_policy_hash,
             "drift_evidence_hash": evidence.drift_evidence_hash,
             "drift_confirmed_metrics": evidence.drift_confirmed_metrics,
+            "contextual_evidence_hash": evidence.contextual_evidence_hash,
+            "contextual_evidence": evidence.contextual_payload(),
             **decision.model_dump(mode="json"),
         }
         result.append(self.emit("decision", payload, emitted_at=now))

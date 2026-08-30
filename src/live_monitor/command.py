@@ -16,6 +16,7 @@ from src.live_monitor.engine import LiveMonitorEngine
 from src.live_monitor.evidence import (
     SealedCohortResolver,
     load_active_readiness_receipt,
+    load_contextual_live_evidence,
     load_decision_history,
     load_sealed_cohorts,
     select_monitor_cohorts,
@@ -370,6 +371,11 @@ async def run_live(bootstrap: MonitorBootstrap, *, control_stream: TextIO | None
         binance_metadata = await asyncio.to_thread(load_binance_symbol_metadata, bootstrap.crypto)
         metadata.update({("binance", symbol): item for symbol, item in binance_metadata.items()})
     repository = LiveMonitorRepository(database)
+    contextual_live_evidence = load_contextual_live_evidence(
+        database,
+        selected,
+        now=datetime.now(UTC),
+    )
     repository.start_session(
         bootstrap.session_id,
         config_hash=bootstrap.config_hash,
@@ -395,6 +401,7 @@ async def run_live(bootstrap: MonitorBootstrap, *, control_stream: TextIO | None
             SealedCohortResolver(
                 selected,
                 asset_metadata={key: (value.shortable, value.easy_to_borrow) for key, value in metadata.items()},
+                contextual_evidence=contextual_live_evidence,
             )
             if selected
             else None
