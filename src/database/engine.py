@@ -6,12 +6,12 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
-from sqlalchemy import Engine, create_engine, insert, inspect, select, text
+from sqlalchemy import BigInteger, Engine, create_engine, insert, inspect, select, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from src.database.schema import NATURAL_KEYS, TABLES, metadata, schema_versions
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 
 class Database:
@@ -29,6 +29,15 @@ class Database:
     def initialize(self) -> None:
         metadata.create_all(self.engine)
         with self.engine.begin() as connection:
+            if connection.dialect.name == "duckdb":
+                sequence_type = next(
+                    column["type"]
+                    for column in inspect(connection).get_columns("live_market_events")
+                    if column["name"] == "sequence"
+                )
+                if not isinstance(sequence_type, BigInteger):
+                    # Preserve ledger payloads while accommodating real exchange update IDs.
+                    connection.execute(text("ALTER TABLE live_market_events ALTER COLUMN sequence TYPE BIGINT"))
             columns = {column["name"] for column in inspect(connection).get_columns("market_bars")}
             migrations = {
                 "source_available_at": "TIMESTAMP WITH TIME ZONE",

@@ -151,10 +151,7 @@ def research_size_ceiling(
         )
 
     raw_kelly = max(
-        (
-            opportunity.probability_lower * opportunity.payoff_lower
-            - (1.0 - opportunity.probability_lower)
-        )
+        (opportunity.probability_lower * opportunity.payoff_lower - (1.0 - opportunity.probability_lower))
         / opportunity.payoff_lower,
         0.0,
     )
@@ -298,9 +295,7 @@ def select_portfolio_opportunities(
         existing = seen_symbol.get(opportunity.symbol)
         if existing is not None:
             reasons.append(
-                "conflicting_direction"
-                if existing.direction is not opportunity.direction
-                else "duplicate_risk_window"
+                "conflicting_direction" if existing.direction is not opportunity.direction else "duplicate_risk_window"
             )
         if reasons:
             exclusions[_exclusion_key(opportunity, exclusions)] = tuple(dict.fromkeys(reasons))
@@ -362,21 +357,15 @@ def select_portfolio_opportunities(
     constraints: list[dict[str, object]] = [
         {
             "type": "ineq",
-            "fun": lambda weights: policy.maximum_gross_exposure
-            - current_gross
-            - float(weights.sum()),
+            "fun": lambda weights: policy.maximum_gross_exposure - current_gross - float(weights.sum()),
         },
         {
             "type": "ineq",
-            "fun": lambda weights: policy.maximum_net_exposure
-            - current_net
-            - float(signs @ weights),
+            "fun": lambda weights: policy.maximum_net_exposure - current_net - float(signs @ weights),
         },
         {
             "type": "ineq",
-            "fun": lambda weights: policy.maximum_net_exposure
-            + current_net
-            + float(signs @ weights),
+            "fun": lambda weights: policy.maximum_net_exposure + current_net + float(signs @ weights),
         },
     ]
     for attribute, cap in (
@@ -440,8 +429,7 @@ def select_portfolio_opportunities(
 
     gross = sum(item.weight for item in selected)
     net = sum(
-        item.weight if item.opportunity.direction is StrategyDirection.LONG else -item.weight
-        for item in selected
+        item.weight if item.opportunity.direction is StrategyDirection.LONG else -item.weight for item in selected
     )
     tolerance = 1e-8
     if (

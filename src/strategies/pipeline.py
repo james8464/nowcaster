@@ -68,7 +68,7 @@ from src.strategies.validation import (
     select_final_boundary,
     validation_policy_hash,
 )
-from src.utils.provenance import git_commit
+from src.utils.provenance import git_commit, research_source_hash
 
 
 class BarProviderName(StrEnum):
@@ -1489,6 +1489,25 @@ class StrategyPipeline:
             scope.mode.value,
         )
 
+    def _contextual_research_identity(self) -> dict[str, str] | None:
+        settings = getattr(self, "_settings", None)
+        if settings is None or settings.asset_selection is None:
+            return None
+        config_hash = canonical_hash(settings.research_config_hash_payload())
+        code_hash = research_source_hash(Path(__file__).resolve().parents[2])
+        protocol_hash = canonical_hash(
+            {
+                "contextual_outcome_protocol": 2,
+                "code_hash": code_hash,
+                "config_hash": config_hash,
+                "validation_policy": _validation_config_record(self.validation_config),
+                "execution_policy": _execution_assumptions_record(self.execution_assumptions),
+                "ensemble_policy": _ensemble_config_record(self.ensemble_config),
+                "asset_selection": settings.asset_selection.model_dump(mode="json"),
+            }
+        )
+        return {"code_hash": code_hash, "config_hash": config_hash, "protocol_hash": protocol_hash}
+
     def _cohort_payload(
         self,
         scope: StrategyScope,
@@ -1496,7 +1515,7 @@ class StrategyPipeline:
         dataset_hash: str,
         as_of: datetime,
     ) -> dict[str, Any]:
-        return {
+        payload = {
             "schema_version": 1,
             "dataset_hash": dataset_hash,
             "symbol": scope.symbol,
@@ -1518,6 +1537,10 @@ class StrategyPipeline:
             "validation_policy": _validation_config_record(self.validation_config),
             "validation_policy_hash": validation_policy_hash(self.validation_config),
         }
+        contextual_identity = self._contextual_research_identity()
+        if contextual_identity is not None:
+            payload["contextual_research"] = contextual_identity
+        return payload
 
     def _cached_cohort(
         self,
@@ -1955,21 +1978,11 @@ class StrategyPipeline:
                 "policy": profile.model_dump(mode="json"),
             }
         )
-        protocol_hash = canonical_hash(
-            {
-                "contextual_outcome_protocol": 1,
-                "validation_policy": _validation_config_record(self.validation_config),
-                "execution_policy": _execution_assumptions_record(self.execution_assumptions),
-                "ensemble_policy": _ensemble_config_record(self.ensemble_config),
-                "asset_selection": settings.asset_selection.model_dump(mode="json"),
-            }
+        identity = self._contextual_research_identity()
+        assert identity is not None
+        code_hash, config_hash, protocol_hash = (
+            identity[name] for name in ("code_hash", "config_hash", "protocol_hash")
         )
-        config_hash = canonical_hash(settings.config_hash_payload())
-        try:
-            code_hash = git_commit(Path(__file__).resolve().parents[2])
-        except Exception:
-            code_hash = canonical_hash({"contextual_runtime": "source_revision_unavailable_v1"})
-
         regime = causal_regime_evidence_frame(bars)
         regime_available = pd.to_datetime(regime["available_at"], utc=True)
         eligibility_cache: dict[tuple[pd.Timestamp, StrategyDirection], Any] = {}
@@ -2050,6 +2063,7 @@ class StrategyPipeline:
                     "gross_return": gross_return,
                     "modeled_cost": modeled_cost,
                     "net_return": gross_return - modeled_cost,
+                    "holding_horizon_bars": 1,
                 }
             )
         for index, context in enumerate(context_rows):

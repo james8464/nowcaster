@@ -76,9 +76,7 @@ def test_spot_short_and_wide_spread_fail_closed() -> None:
     assert settings.asset_selection is not None
     policy_hash = "a" * 64
 
-    short = evaluate_asset_eligibility(
-        _eligible_inputs(direction=StrategyDirection.SHORT), policy, policy_hash
-    )
+    short = evaluate_asset_eligibility(_eligible_inputs(direction=StrategyDirection.SHORT), policy, policy_hash)
     wide = evaluate_asset_eligibility(_eligible_inputs(spread_bps=11.0), policy, policy_hash)
 
     assert short.state is EligibilityState.BLOCKED
@@ -117,9 +115,7 @@ def test_session_specialist_is_inapplicable_to_continuous_crypto() -> None:
     )
 
     crypto_session = next(
-        item
-        for item in settings.strategies.strategies
-        if item.strategy_id == "bitcoin_active_session_momentum"
+        item for item in settings.strategies.strategies if item.strategy_id == "bitcoin_active_session_momentum"
     )
     assert strategy_is_applicable(
         crypto_session,

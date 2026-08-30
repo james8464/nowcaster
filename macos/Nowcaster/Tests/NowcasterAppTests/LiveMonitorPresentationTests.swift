@@ -3,6 +3,14 @@ import Testing
 
 @testable import NowcasterApp
 
+@Test func liveMonitorColdStartGraceDoesNotRelaxReadyHeartbeatSupervision() {
+    let lastEvent = Date(timeIntervalSince1970: 1_000)
+    #expect(!LiveMonitorSupervision.shouldRestart(lastEventAt: lastEvent, now: lastEvent.addingTimeInterval(60), hasReceivedReady: false))
+    #expect(LiveMonitorSupervision.shouldRestart(lastEventAt: lastEvent, now: lastEvent.addingTimeInterval(181), hasReceivedReady: false))
+    #expect(!LiveMonitorSupervision.shouldRestart(lastEventAt: lastEvent, now: lastEvent.addingTimeInterval(45), hasReceivedReady: true))
+    #expect(LiveMonitorSupervision.shouldRestart(lastEventAt: lastEvent, now: lastEvent.addingTimeInterval(46), hasReceivedReady: true))
+}
+
 @Test func liveMonitorHealthUsesTextAndSymbolsRatherThanColorAlone() {
     #expect(LiveMonitorStatus.healthy.label == "Monitoring")
     #expect(LiveMonitorStatus.healthy.symbol == "checkmark.circle.fill")

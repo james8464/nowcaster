@@ -29,17 +29,20 @@ The engine never evaluates an unfinished candle. Finalized one-minute bars are c
 5. Fresh, continuous, healthy quote and bar data with sufficient vote margin and confidence. Entry levels use the first eligible provider quote after the decision bar became available.
 6. Feasible spread, volatility, entry, stop, and reward-to-risk geometry during the regular exchange session for US equities.
 7. For an Alpaca equity short, current read-only broker metadata must confirm that the asset is shortable and easy to borrow.
+8. Complete, unexpired contextual evidence must match the exact source batch, strategy members and versions, mode, protocol, source outcome index, eligibility and portfolio decision. These are additional vetoes, not permission to replace the sealed voting model with a newly optimized one.
 
 If any check fails, the app displays **Abstain** and its reasons. Zero qualified cohorts is a safe connected state: quotes and health remain visible, but entry alerts are impossible. The monitor does not substitute another provider, lower a threshold, extrapolate a probability, or infer across a missing bar.
 
 Streaming drift checks compare current feature distributions, predictions, calibration residuals, observed costs, latency, and net edge with the sealed reference. Warming or warning status blocks new entries. Confirmed drift invalidates the readiness receipt, so restarting the app cannot clear the condition.
 
-After a disconnect, pending pre-gap decisions are discarded and quotes cannot silently restore health. A gap of at most 60 one-minute bars is repaired from the provider's read-only historical endpoint and accepted only if every minute is present. Larger or incomplete gaps fail closed and require a new contiguous live window. Any stop or target first observed in repaired data is labelled **delayed observation**; the app never turns a repaired historical bar into a retrospective entry.
+The running monitor reloads contextual evidence on each decision and checks expiry at that decision's processing time. Drift observed after an allocation still blocks it, including drift recorded at exactly the refresh timestamp. An ordinary research refresh cannot remove warning or confirmed quarantine; changed research needs its own governed evidence cycle.
+
+After a disconnect, pending pre-gap decisions are discarded and quotes cannot silently restore health. A gap of at most 1,000 expected one-minute bars is repaired from the provider's read-only historical endpoint and accepted only if every minute is present. Larger or incomplete gaps fail closed and require a new contiguous live window. Any stop or target first observed in repaired data is labelled **delayed observation**; the app never turns a repaired historical bar into a retrospective entry.
 
 ## Data connections
 
 - **Alpaca** supplies US equity quotes and finalized minute bars. A read-only metadata request validates each symbol, price precision, tradability, and borrow status. Add paper/data credentials in Nowcaster Settings; credentials remain in macOS Keychain and enter the engine through private standard input, never command-line arguments.
-- **Binance Spot** supplies public trades, best bid/ask, depth updates, and finalized one-minute klines for symbols such as `BTCUSDT`; read-only exchange metadata validates symbol status and tick size. The configured spot product is not shortable. A short hypothesis is therefore ineligible for execution on that product; margin or derivatives would require a separate instrument, cost model, data history, and validation cohort.
+- **Binance Spot** supplies public trades, timestamped ticker bid/ask, depth updates, and finalized one-minute klines for symbols such as `BTCUSDT`; read-only exchange metadata validates symbol status, tick/lot size and notional limits. At most one bounded 100-level REST order-book snapshot is requested per new finalized minute and symbol. Only a verified full snapshot, a matching fresh quote and valid size rules can support the contextual hypothetical order-size/impact check. A missing book is not zero impact. The configured spot product is not shortable. A short hypothesis is therefore ineligible for execution on that product; margin or derivatives would require a separate instrument, cost model, data history, and validation cohort.
 
 Provider and feed identity are part of the evidence. Alpaca IEX research cannot authorize a SIP alert, and Binance evidence is never spliced with another crypto venue.
 
@@ -86,8 +89,11 @@ Lock-screen notifications never include prices, account identifiers, credentials
 - **Awaiting post-finalization quote** — the confirming bar closed, but no causally eligible quote has arrived yet.
 - **Readiness receipt required** — refresh research/forward evidence and create a current receipt for the exact unchanged cohort; the app will not reuse a receipt from another snapshot.
 - **Warm-up incomplete** — the matching local history is shorter than a strategy's indicator lookback.
+- **Starting the engine** — a cold launch has a bounded three-minute startup allowance. Once ready, missing health events still trigger supervision after 45 seconds. Startup time never qualifies a strategy or permits an entry.
+- **Internal monitor failure** — the engine reports a sanitized error and stops. A failed data write or control action cannot leave a seemingly healthy process waiting indefinitely for input; shutdown also discards pending market events.
 - **Provider/feed mismatch** — research again on the exact feed you intend to monitor; do not merge feeds.
 - **Risk/reward infeasible** — the spread, volatility, stop distance, or supported targets do not justify an alert.
+- **Contextual evidence missing, stale or mismatched** — run **Assess Markets** on the exact research feed and mode while its data is available. Inspect missing depth/rules, incomplete strategy evidence and portfolio exclusions. A successful backtest alone cannot clear these checks.
 - **No notification appears** — confirm macOS System Settings → Notifications → Nowcaster, then keep the app in the background; foreground events remain visible in the Live Monitor list instead of duplicating a system banner.
 
 For reproducible protocol verification without credentials or network access, run `make verify-live-monitor` or `make replay-live-monitor`.

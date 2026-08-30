@@ -121,7 +121,10 @@ def test_contextual_strategy_projection_requires_exact_version_and_preserves_leg
             as_of=as_of,
         )
     )
-    for version in ("1.0.0-contextual", "2.0.0-unrelated"):
+    exact_version = next(
+        spec.deterministic_version for spec in service.settings.strategies.enabled if spec.strategy_id == "rsi_reversal"
+    )
+    for version in (exact_version, "2.0.0-unrelated"):
         common = {
             "strategy_run_id": version,
             "dataset_hash": "d" * 64,
@@ -165,7 +168,7 @@ def test_contextual_strategy_projection_requires_exact_version_and_preserves_leg
     snapshot = build_app_snapshot(database, service.settings)
 
     for items in (snapshot.strategies, snapshot.ensemble_components):
-        exact = next(item for item in items if item.version == "1.0.0-contextual")
+        exact = next(item for item in items if item.version == exact_version)
         unrelated = next(item for item in items if item.version == "2.0.0-unrelated")
         assert exact.weight == unrelated.weight == 0.25
         assert exact.context_hash is not None

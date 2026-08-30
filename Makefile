@@ -90,7 +90,7 @@ replay-live-monitor:
 	$(VENV)/bin/python -c 'import json; print(json.dumps({"schema_version": 1, "session_id": "deterministic-replay", "database_url": "duckdb:///:memory:", "stock_feed": "iex", "stocks": [], "crypto": ["BTCUSDT"], "decision_interval": "5m", "config_hash": "c" * 64, "cohort_hash": "d" * 64}))' | $(VENV)/bin/python -m src.cli monitor run --replay tests/fixtures/live_monitor/binance_stream.jsonl --replay-provider binance
 
 verify-live-monitor:
-	$(VENV)/bin/pytest -q tests/unit/test_live_monitor_*.py tests/integration/test_live_monitor_*.py tests/unit/test_engine_packaging.py
+	$(VENV)/bin/pytest -q tests/unit/test_live_monitor_*.py tests/integration/test_live_monitor_*.py tests/unit/test_engine_packaging.py tests/unit/test_tls.py
 	cd macos/Nowcaster && swift test --filter LiveMonitor
 	$(MAKE) replay-live-monitor
 

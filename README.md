@@ -93,6 +93,22 @@ The app keeps the last known good snapshot if a refresh fails. Broker credential
 
 Missing evidence is displayed as unavailable; the app does not silently substitute a favorable number.
 
+### Why different assets get different strategies
+
+The **Assess Markets** button in Strategy Lab runs an extra asset-selection and strategy-weighting assessment. Think of it as choosing both the playing field and the tools:
+
+1. **Choose usable markets.** Check history, freshness, trading hours, volume, spread and available order-book depth. The bundled intraday universe is deliberately just Bitcoin and Ether on Binance spot. Adding a symbol does not automatically make it suitable. Spot shorts are not supported.
+2. **Describe current conditions.** A market can be trending calmly, trending with high volatility, moving sideways with good liquidity, or stressed. The app shows a mixture of these possibilities, not a claim to know the future.
+3. **Compare the right past evidence.** Each strategy is evaluated by asset, direction and conditions. When local evidence is thin, it borrows cautiously from the broader asset profile instead of trusting a handful of lucky trades.
+4. **Avoid counting the same idea twice.** Similar indicators and highly correlated assets do not provide independent confirmation. The allocation penalizes duplication, limits concentration and can leave everything in cash.
+5. **Explain the decision.** Markets and signal details show eligibility, market conditions, local versus broader evidence, portfolio conflicts and a research-only size ceiling. That ceiling is not an order or a personal position-size recommendation.
+
+The **Learn Weights** button compares a bounded, recorded set of contextual policies on chronological development data. All assets share one simulated account and timeline; adding a duplicate asset cannot manufacture extra history. A different holding period is tested only when actual execution outcomes for that period exist—the bundled contextual path supplies one-bar outcomes. It never invents a longer trade by adding unrelated returns together.
+
+A winning experiment remains a **shadow hypothesis**. It does not change a live strategy's calibrated voting weights, override readiness checks, or place an order. **Deep Research** remains the separate resource-controlled, multi-generation strategy search.
+
+Backtests use only the data actually ingested and verified. Historical candles do not reconstruct missing historical order books, borrow availability or exchange outages. The contextual portfolio replay stays in cash when tradability cannot be established, rejects incomplete selected execution records, and labels its holdout as retrospective—not independent proof of profitability. No bundled result establishes a dependable day-trading income.
+
 ## What you can explore in the app
 
 - **Today** — a plain overview of the current research snapshot and its warnings.
@@ -114,6 +130,8 @@ A sensible beginner workflow is: start on **Today**, open one signal, read its i
 Build and review historical evidence first, then add comma-separated watchlists in **Settings** and store Alpaca data credentials in Keychain if you monitor stocks. Open **Live Monitor**, grant notification permission, and choose **Start Monitoring**. A five-minute decision is made only after every underlying one-minute bar is finalized.
 
 An alert contains a hypothetical entry range, stop-loss (SL), two take-profit levels (TP1/TP2), and a reason. It is allowed only when a complete promoted strategy cohort from the exact same provider/feed passes causal, no-repaint, sealed calibration/cost/uncertainty, current forward-readiness receipt, breadth, freshness, session, tradability, and risk/reward gates. The receipt is cryptographically bound to the current evidence and policy; changing either locks alerts again. The entry uses the first eligible quote after the confirming bar is final. Otherwise the result is **Abstain**. With zero qualified cohorts, monitoring can remain connected but cannot issue entries.
+
+Contextual checks are an additional restriction: research mode, strategy versions, source batch, policy, complete allocation and portfolio selection must match. The running monitor refreshes this evidence and checks expiry for every decision. Later deterioration blocks new entries; pressing Assess Markets does not erase that warning. Fresh Binance order books and exchange size rules support a stated hypothetical order-size check, including estimated price impact. Missing or stale depth is never replaced with zero impact.
 
 Disconnects clear pending decisions and reset continuity. Bounded gaps of up to 1,000 expected market minutes use exact read-only provider repair; XNYS closed hours are excluded. Incomplete or oversized gaps retain their durable watermark, retry, and stay fail-closed even if transport heartbeats resume. Repaired stop/target crossings are disclosed as delayed observations. Active hypothetical setups and tracked fills are stored independently of the rolling activity feed, recovered only for the exact unchanged provider/feed/cohort/configuration before expiry, and can produce target, stop, expiry, reversal, or close updates.
 
@@ -217,7 +235,7 @@ scripts/            native app build and visual-verification tools
 .github/workflows/  continuous integration and macOS release packaging
 ```
 
-For deeper technical detail, see the [Live Monitor guide](docs/live-monitor.md), [strategy methodology](docs/strategy-methodology.md), [provider guide](docs/data-providers.md), [research results](docs/research-results.md), [architecture](docs/architecture.md), [earnings/daily methodology](docs/methodology.md), [backtest protocol](docs/backtest_protocol.md), [data dictionary](docs/data_dictionary.md), [macOS guide](docs/macos_app.md), [privacy policy](docs/privacy.md), and [verification record](docs/native_verification.md).
+For deeper technical detail, see the [Live Monitor guide](docs/live-monitor.md), [strategy methodology](docs/strategy-methodology.md), [provider guide](docs/data-providers.md), [research results](docs/research-results.md), [architecture](docs/architecture.md), [earnings/daily methodology](docs/methodology.md), [backtest protocol](docs/backtest_protocol.md), [data dictionary](docs/data_dictionary.md), [macOS guide](docs/macos_app.md), [privacy policy](docs/privacy.md), [current contextual verification](docs/contextual-release-verification.md), and [historical native audit](docs/native_verification.md).
 
 ## Data, privacy, and limitations
 

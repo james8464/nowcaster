@@ -228,6 +228,7 @@ class ProfilePolicy(BaseModel):
     minimum_depth_notional: float = Field(gt=0)
     maximum_price_impact_bps: float = Field(gt=0)
     maximum_participation_rate: float = Field(gt=0, le=1)
+    research_probe_notional: float = Field(default=1_000, gt=0, le=1_000_000)
     minimum_realized_volatility: float = Field(ge=0)
     maximum_realized_volatility: float = Field(gt=0)
     require_observed_spread: bool = True
@@ -266,6 +267,7 @@ class ProfilePolicy(BaseModel):
         "minimum_depth_notional",
         "maximum_price_impact_bps",
         "maximum_participation_rate",
+        "research_probe_notional",
         "minimum_realized_volatility",
         "maximum_realized_volatility",
     )
@@ -397,9 +399,7 @@ class AssetSelectionConfig(BaseModel):
 
     @field_validator("hierarchy_prior_strengths")
     @classmethod
-    def complete_immutable_hierarchy(
-        cls, value: Mapping[ContextLevel, float]
-    ) -> Mapping[ContextLevel, float]:
+    def complete_immutable_hierarchy(cls, value: Mapping[ContextLevel, float]) -> Mapping[ContextLevel, float]:
         missing = set(ContextLevel) - set(value)
         if missing:
             names = ", ".join(sorted(item.value for item in missing))
@@ -539,3 +539,9 @@ class Settings(BaseModel):
         return self.model_dump(
             mode="json", exclude={"project_root", "sec_user_agent", "fred_api_key", "alpha_vantage_api_key"}
         )
+
+    def research_config_hash_payload(self) -> dict[str, Any]:
+        """Research identity excludes storage location, not strategy or risk policy."""
+        payload = self.config_hash_payload()
+        payload.pop("database_url", None)
+        return payload

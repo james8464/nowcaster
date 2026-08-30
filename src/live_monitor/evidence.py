@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Mapping, Sequence
+import math
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Literal
@@ -10,6 +11,7 @@ import numpy as np
 import pandas as pd
 from pydantic import Field, model_validator
 
+from src.contextual.authentication import evidence_mirrors_match
 from src.contextual.types import AssetProfileName, StrategyContextKey, StrategyDirection
 from src.database.engine import Database
 from src.live_monitor.engine import EligibilityEvidence
@@ -152,6 +154,8 @@ class SealedCohort(LiveMonitorModel):
     mode: Literal["frozen", "paper"]
     cost_buffer_multiplier: Decimal = Field(gt=0)
     components: tuple[SealedComponent, ...] = Field(min_length=1, max_length=100)
+    contextual_protocol_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    contextual_outcome_index_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
     @property
     def evidence_hash(self) -> str:
@@ -179,9 +183,18 @@ class ContextualLiveEvidence(LiveMonitorModel):
     portfolio_selection_id: str = Field(pattern=r"^[0-9a-f]{64}$")
     portfolio_decision_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     portfolio_selected: bool
+    effective_at: datetime
+    expires_at: datetime
+    sealed_cohort_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
 
     @model_validator(mode="after")
     def normalized_regime_vector(self) -> ContextualLiveEvidence:
+        if (
+            self.effective_at.tzinfo is not UTC
+            or self.expires_at.tzinfo is not UTC
+            or not self.effective_at < self.expires_at <= self.effective_at + timedelta(hours=24)
+        ):
+            raise ValueError("contextual live evidence requires a bounded explicit UTC validity window")
         expected = {
             "trend_normal",
             "trend_elevated_volatility",
@@ -450,11 +463,16 @@ class SealedCohortResolver:
         *,
         asset_metadata: dict[tuple[str, str], tuple[bool, bool]] | None = None,
         contextual_evidence: Mapping[tuple[str, str, str, BarIntervalValue, str], ContextualLiveEvidence] | None = None,
+        contextual_loader: Callable[
+            [datetime], Mapping[tuple[str, str, str, BarIntervalValue, str], ContextualLiveEvidence]
+        ]
+        | None = None,
         drift_policy: DriftPolicy = DEFAULT_DRIFT_POLICY,
     ):
         self._cohorts = {(item.provider, item.feed, item.symbol, item.interval): item for item in cohorts}
         self._asset_metadata = asset_metadata or {}
         self._contextual_evidence = dict(contextual_evidence or {})
+        self._contextual_loader = contextual_loader
         self._drift_policy = drift_policy
         self._drift_monitors = {key: StreamingDriftMonitor(drift_policy) for key in self._cohorts}
 
@@ -484,10 +502,24 @@ class SealedCohortResolver:
             "drift_evidence_hash": report.evidence_hash,
             "drift_confirmed_metrics": report.confirmed_metrics,
         }
-        contextual = self._contextual_evidence.get(
+        decision_at = max(quote.received_at, quote.processed_at or quote.received_at)
+        current_contexts = self._contextual_evidence
+        if self._contextual_loader is not None:
+            try:
+                current_contexts = self._contextual_loader(decision_at)
+            except Exception:
+                current_contexts = {}  # Failed refresh must not reuse a formerly actionable envelope.
+        contextual = current_contexts.get(
             (quote.provider, quote.feed, quote.symbol, interval, evidence.direction.value)
         )
-        if contextual is not None and contextual.dataset_hash == evidence.dataset_hash:
+        if (
+            contextual is not None
+            and contextual.dataset_hash == evidence.dataset_hash
+            and contextual.effective_at <= decision_at < contextual.expires_at
+            and contextual.sealed_cohort_hash == cohort.evidence_hash
+            and (contextual.provider, contextual.feed, contextual.symbol, contextual.interval, contextual.direction)
+            == (quote.provider, quote.feed, quote.symbol, interval, evidence.direction)
+        ):
             updates.update(contextual.eligibility_updates(evidence.cohort_id))
         return evidence.model_copy(update=updates)
 
@@ -760,12 +792,7 @@ def load_contextual_live_evidence(
             profiles = set(latest["profile"].astype(str))
             if any(len(values) != 1 for values in (allocation_ids, context_hashes, protocols, profiles)):
                 continue
-            if not all(
-                isinstance(row.evidence, dict)
-                and canonical_hash({"payload": row.evidence, "strategy_id": str(row.strategy_id)})
-                == str(row.content_hash)
-                for row in latest.itertuples(index=False)
-            ):
+            if not all(evidence_mirrors_match(row, weight_record=True) for row in latest.to_dict("records")):
                 continue
             context_hash = next(iter(context_hashes))
             protocol_hash = next(iter(protocols))
@@ -784,6 +811,48 @@ def load_contextual_live_evidence(
                 else next(iter(set(latest["dataset_hash"].astype(str))))
             )
             if source_dataset_hash != cohort.dataset_hash:
+                continue
+            if not isinstance(allocation_context, dict) or not isinstance(allocation_record, dict):
+                continue
+            members = {item.spec.strategy_id: item.strategy_version for item in cohort.components}
+            source_cohort = allocation_context.get("source_cohort", {})
+            raw_weights = allocation_record.get("weights", {})
+            if (
+                not members
+                or len(members) != len(cohort.components)
+                or any(item.strategy_version != item.spec.deterministic_version for item in cohort.components)
+                or allocation_context.get("mode") != cohort.mode
+                or allocation_context.get("strategy_versions") != members
+                or source_cohort.get("cohort_id") != cohort.cohort_id
+                or source_cohort.get("member_versions") != members
+                or not cohort.contextual_protocol_hash
+                or protocol_hash != cohort.contextual_protocol_hash
+                or source_cohort.get("protocol_hash") != cohort.contextual_protocol_hash
+                or not cohort.contextual_outcome_index_hash
+                or source_cohort.get("outcome_index_hash") != cohort.contextual_outcome_index_hash
+                or set(latest["strategy_id"].astype(str)) != set(raw_weights)
+                or set(raw_weights) != set(members)
+                or len(latest) != len(members)
+                or any(row.evidence != allocation_payload for row in latest.itertuples(index=False))
+                or canonical_hash(
+                    {"allocation_id": allocation_record.get("allocation_id"), "context_hash": context_hash}
+                )
+                != allocation_id
+                or any(not math.isfinite(float(value)) or not 0 <= float(value) <= 1 for value in raw_weights.values())
+                or not math.isclose(
+                    sum(float(value) for value in raw_weights.values())
+                    + float(allocation_record.get("cash_weight", -1)),
+                    1.0,
+                    abs_tol=1e-8,
+                )
+                or any(
+                    not math.isfinite(float(row.weight))
+                    or not math.isclose(
+                        float(row.weight), float(raw_weights[str(row.strategy_id)]), rel_tol=1e-6, abs_tol=1e-7
+                    )
+                    for row in latest.itertuples(index=False)
+                )
+            ):
                 continue
             try:
                 expected_context_hash = StrategyContextKey(
@@ -823,6 +892,7 @@ def load_contextual_live_evidence(
             covariance_row = covariance.iloc[0]
             if (
                 str(covariance_row["status"]) != "estimated"
+                or not evidence_mirrors_match(covariance_row.to_dict())
                 or not isinstance(covariance_row["evidence"], dict)
                 or canonical_hash(covariance_row["evidence"]) != str(covariance_row["content_hash"])
                 or covariance_row["evidence"].get("covariance", {}).get("evidence_hash") != covariance_hash
@@ -890,6 +960,11 @@ def load_contextual_live_evidence(
             )
             if (
                 not authenticated
+                or not all(
+                    evidence_mirrors_match(row.to_dict()) for row in (eligibility_row, posterior_row, portfolio_row)
+                )
+                or allocation_context.get("eligibility_id") != str(eligibility_row["eligibility_id"])
+                or allocation_context.get("eligibility_policy_hash") != str(eligibility_row["policy_hash"])
                 or str(eligibility_row["profile"]) != profile
                 or str(posterior_row["profile"]) != profile
                 or str(posterior_row["status"]) != "fitted"
@@ -897,19 +972,25 @@ def load_contextual_live_evidence(
             ):
                 continue
             drift = database.frame(
-                "select status, content_hash, evidence from contextual_drift_events "
-                "where context_hash = :context_hash and effective_at = :effective_at "
-                "order by created_at desc limit 1",
-                {"context_hash": context_hash, "effective_at": latest_at.to_pydatetime()},
+                "select status, effective_at, content_hash, evidence from contextual_drift_events "
+                "where context_hash = :context_hash and effective_at <= :now "
+                "order by effective_at desc, created_at desc limit 1",
+                {"context_hash": context_hash, "now": now},
             )
             drift_status = "unavailable"
             if not drift.empty:
                 drift_row = drift.iloc[0]
-                if isinstance(drift_row["evidence"], dict) and canonical_hash(drift_row["evidence"]) == str(
-                    drift_row["content_hash"]
+                if (
+                    isinstance(drift_row["evidence"], dict)
+                    and canonical_hash(drift_row["evidence"]) == str(drift_row["content_hash"])
+                    and drift_row["evidence"].get("status") == str(drift_row["status"])
+                    and pd.Timestamp(drift_row["evidence"].get("effective_at"))
+                    == pd.Timestamp(drift_row["effective_at"])
                 ):
                     drift_status = str(drift_row["status"])
-            raw_probabilities = {key: Decimal(str(value)) for key, value in posterior_row["probabilities"].items()}
+            raw_probabilities = {
+                key: Decimal(str(value)) for key, value in posterior_row["evidence"]["probabilities"].items()
+            }
             probability_total = sum(raw_probabilities.values())
             if probability_total <= 0:
                 continue
@@ -942,6 +1023,10 @@ def load_contextual_live_evidence(
                         and str(portfolio_row["status"]) == "selected"
                         and allocation_id == str(latest.iloc[0]["allocation_id"])
                     ),
+                    effective_at=latest_at.to_pydatetime(),
+                    expires_at=latest_at.to_pydatetime()
+                    + timedelta(hours=int(LIVE_ALERT_POLICY["contextual_drift_maximum_age_hours"])),
+                    sealed_cohort_hash=cohort.evidence_hash,
                 )
             except (KeyError, TypeError, ValueError):
                 continue
@@ -1091,6 +1176,8 @@ def load_sealed_cohorts(database: Database, specs: Sequence[StrategySpec]) -> tu
                 mode=str(first.mode),
                 cost_buffer_multiplier=Decimal(str(ensemble_config["cost_buffer_multiplier"])),
                 components=tuple(components),
+                contextual_protocol_hash=metrics.get("contextual_protocol_hash"),
+                contextual_outcome_index_hash=metrics.get("contextual_outcome_index_hash"),
             )
         except (KeyError, TypeError, ValueError):
             continue

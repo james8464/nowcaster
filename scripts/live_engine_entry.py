@@ -7,7 +7,8 @@ import sys
 from multiprocessing import freeze_support
 from pathlib import Path
 
-from src.live_monitor.command import parse_bootstrap, replay_events, run_live
+from src.live_monitor.command import MonitorRuntimeError, parse_bootstrap, replay_events, run_live
+from src.live_monitor.control_input import read_bootstrap_line
 
 
 def parser() -> argparse.ArgumentParser:
@@ -24,13 +25,16 @@ def parser() -> argparse.ArgumentParser:
 def main() -> int:
     arguments = parser().parse_args()
     try:
-        bootstrap = parse_bootstrap(input())
+        bootstrap = parse_bootstrap(read_bootstrap_line(sys.stdin))
         if arguments.replay is not None:
             for event in replay_events(bootstrap, replay=arguments.replay, provider=arguments.replay_provider):
                 print(event.model_dump_json(), flush=True)
         else:
             asyncio.run(run_live(bootstrap, control_stream=sys.stdin))
         return 0
+    except MonitorRuntimeError:
+        print(json.dumps({"event": "monitor_failed"}), file=sys.stderr, flush=True)
+        return 1
     except (EOFError, OSError, ValueError):
         print(json.dumps({"event": "configuration_rejected"}), file=sys.stderr, flush=True)
         return 2

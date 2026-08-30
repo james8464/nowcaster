@@ -1,5 +1,7 @@
 # Native release verification
 
+This is the historical 22 August audit. See [contextual release verification](contextual-release-verification.md) for the newer contextual-allocation build and its remaining limitations.
+
 ## Audited artifact
 
 - Audit date: 22 August 2026

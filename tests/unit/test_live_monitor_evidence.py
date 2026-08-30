@@ -207,8 +207,8 @@ def test_live_evidence_recalculates_only_current_causal_component_signals() -> N
     assert evidence.data_through == bars()[-1].end
 
 
-def test_sealed_resolver_attaches_exact_contextual_portfolio_evidence() -> None:
-    contextual = ContextualLiveEvidence(
+def contextual_envelope():
+    return ContextualLiveEvidence(
         dataset_hash="d" * 64,
         provider="alpaca",
         feed="iex",
@@ -232,7 +232,14 @@ def test_sealed_resolver_attaches_exact_contextual_portfolio_evidence() -> None:
         portfolio_selection_id="7" * 64,
         portfolio_decision_hash="8" * 64,
         portfolio_selected=True,
+        effective_at=NOW,
+        expires_at=NOW + timedelta(hours=1),
+        sealed_cohort_hash=cohort().evidence_hash,
     )
+
+
+def test_sealed_resolver_attaches_exact_contextual_portfolio_evidence() -> None:
+    contextual = contextual_envelope()
     resolver = SealedCohortResolver(
         (cohort(),),
         asset_metadata={("alpaca", "AAPL"): (True, True)},
@@ -245,6 +252,33 @@ def test_sealed_resolver_attaches_exact_contextual_portfolio_evidence() -> None:
     assert evidence.asset_profile == "us_liquid_equity"
     assert evidence.portfolio_selected is True
     assert evidence.contextual_authentication_valid()
+
+
+def test_running_resolver_rechecks_context_expiry_and_exact_cohort_every_decision():
+    contextual = contextual_envelope()
+    resolver = SealedCohortResolver(
+        (cohort(),),
+        contextual_evidence={("alpaca", "iex", "AAPL", "5m", "long"): contextual},
+    )
+    assert resolver(bars(), quote()).portfolio_selected is True
+    expired_quote = quote().model_copy(
+        update={"received_at": contextual.expires_at, "processed_at": contextual.expires_at}
+    )
+    assert resolver(bars(), expired_quote).contextual_evidence_hash is None
+    other = SealedCohortResolver(
+        (cohort(mode="paper"),),
+        contextual_evidence={("alpaca", "iex", "AAPL", "5m", "long"): contextual},
+    )
+    assert other(bars(), quote()).contextual_evidence_hash is None
+
+
+def test_running_resolver_reloads_contextual_drift_without_restarting():
+    contextual = contextual_envelope()
+    current = {("alpaca", "iex", "AAPL", "5m", "long"): contextual}
+    resolver = SealedCohortResolver((cohort(),), contextual_loader=lambda instant: dict(current))
+    assert resolver(bars(), quote()).contextual_drift_status == "stable"
+    current[next(iter(current))] = contextual.model_copy(update={"drift_status": "confirmed"})
+    assert resolver(bars(), quote()).contextual_drift_status == "confirmed"
 
 
 def test_sealed_resolver_warms_then_attaches_stable_multimetric_drift_evidence() -> None:

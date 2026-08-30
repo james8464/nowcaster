@@ -82,10 +82,7 @@ def test_sparse_context_shrinks_to_parent_and_dense_context_moves_local() -> Non
     sparse = build_hierarchical_estimates(_outcomes(2, local_mean=0.02), AS_OF, STRENGTHS)
     dense = build_hierarchical_estimates(_outcomes(500, local_mean=0.02), AS_OF, STRENGTHS)
 
-    assert abs(
-        sparse.leaf("alpha", "AAPL").mean_net_edge
-        - sparse.parent("alpha", "AAPL").mean_net_edge
-    ) < 0.003
+    assert abs(sparse.leaf("alpha", "AAPL").mean_net_edge - sparse.parent("alpha", "AAPL").mean_net_edge) < 0.003
     assert dense.leaf("alpha", "AAPL").mean_net_edge > sparse.leaf("alpha", "AAPL").mean_net_edge
     assert dense.leaf("alpha", "AAPL").alpha > sparse.leaf("alpha", "AAPL").alpha
 
@@ -98,16 +95,14 @@ def test_long_outcomes_never_change_short_estimate() -> None:
     changed = pd.concat(
         [
             frame,
-            pd.DataFrame(
-                _rows(1_000, symbol="AAPL", direction=StrategyDirection.LONG, mean=0.05, start=1_000)
-            ),
+            pd.DataFrame(_rows(1_000, symbol="AAPL", direction=StrategyDirection.LONG, mean=0.05, start=1_000)),
         ],
         ignore_index=True,
     )
 
-    assert original.leaf("alpha", "AAPL", "short") == build_hierarchical_estimates(
-        changed, AS_OF, STRENGTHS
-    ).leaf("alpha", "AAPL", "short")
+    assert original.leaf("alpha", "AAPL", "short") == build_hierarchical_estimates(changed, AS_OF, STRENGTHS).leaf(
+        "alpha", "AAPL", "short"
+    )
 
 
 def test_future_outcome_and_invalid_regime_mass_are_rejected() -> None:

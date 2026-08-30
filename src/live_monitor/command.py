@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
-from contextlib import suppress
+from contextlib import aclosing, suppress
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, f
 
 from src.config.settings import Settings
 from src.database.engine import Database
+from src.live_monitor.control_input import control_lines
 from src.live_monitor.engine import LiveMonitorEngine
 from src.live_monitor.evidence import (
     SealedCohortResolver,
@@ -29,6 +30,7 @@ from src.live_monitor.providers import (
     expected_repair_starts,
     load_alpaca_repair_bars,
     load_alpaca_symbol_metadata,
+    load_binance_depth_snapshot,
     load_binance_repair_bars,
     load_binance_symbol_metadata,
 )
@@ -38,11 +40,16 @@ from src.live_monitor.types import (
     BarIntervalValue,
     MarketBar,
     MarketEvent,
+    MarketStatusEvent,
     MonitorHealth,
     MonitorWireEvent,
     ProviderHealthEvent,
 )
 from src.models.drift import DEFAULT_DRIFT_POLICY_HASH
+
+
+class MonitorRuntimeError(RuntimeError):
+    """Safe terminal boundary; internal exception details never enter the wire protocol."""
 
 
 class MonitorBootstrap(BaseModel):
@@ -146,6 +153,7 @@ async def _merged_live_events(
     metadata: dict[tuple[str, str], ProviderSymbolMetadata],
     stop_event: asyncio.Event | None = None,
     initial_last_bar_end: dict[tuple[str, str, str], datetime] | None = None,
+    capture_verified_depth: bool = False,
 ) -> AsyncIterator[MarketEvent]:
     queue: asyncio.Queue[MarketEvent] = asyncio.Queue(maxsize=1_024)
     last_seen: dict[tuple[str, str], datetime] = {}
@@ -255,6 +263,17 @@ async def _merged_live_events(
                         await queue.put(event)
                         continue
                 last_bar_end[scope] = max(event.end, previous_end or event.end)
+                if (
+                    capture_verified_depth
+                    and event.provider == "binance"
+                    and event.finalized
+                    and not event.repair_verified
+                    and (previous_end is None or event.end > previous_end)
+                ):
+                    # At most one bounded full book per finalized minute/symbol; deltas never stand in for depth.
+                    with suppress(ValueError):
+                        snapshot = await asyncio.to_thread(load_binance_depth_snapshot, event.symbol)
+                        await queue.put(snapshot)
             await queue.put(event)
 
     tasks: list[asyncio.Task[None]] = []
@@ -381,6 +400,26 @@ async def run_live(bootstrap: MonitorBootstrap, *, control_stream: TextIO | None
         config_hash=bootstrap.config_hash,
         cohort_hash=selected_hash,
     )
+    metadata_at = datetime.now(UTC)
+    for (provider, symbol), item in metadata.items():
+        repository.record_market_event(
+            bootstrap.session_id,
+            MarketStatusEvent(
+                provider=provider,
+                feed=bootstrap.stock_feed if provider == "alpaca" else "spot",
+                symbol=symbol,
+                kind="status",
+                status="instrument_rules",
+                provider_time=metadata_at,
+                received_at=metadata_at,
+                details={
+                    "tradable": item.tradable,
+                    "filters": list(item.filters),
+                    "shortable": item.shortable,
+                    "easy_to_borrow": item.easy_to_borrow,
+                },
+            ),
+        )
     drift_invalidator = None
     if readiness is not None:
 
@@ -402,6 +441,7 @@ async def run_live(bootstrap: MonitorBootstrap, *, control_stream: TextIO | None
                 selected,
                 asset_metadata={key: (value.shortable, value.easy_to_borrow) for key, value in metadata.items()},
                 contextual_evidence=contextual_live_evidence,
+                contextual_loader=lambda instant: load_contextual_live_evidence(database, selected, now=instant),
             )
             if selected
             else None
@@ -428,13 +468,13 @@ async def run_live(bootstrap: MonitorBootstrap, *, control_stream: TextIO | None
     for recovered in recovered_setups:
         engine.restore_setup(recovered.plan, state=recovered.state, actual_fill=recovered.actual_fill)
     stop_event = asyncio.Event()
+    control_failure: Exception | None = None
 
-    async def consume_controls() -> None:
+    async def read_controls() -> None:
         if control_stream is None:
             return
-        while not stop_event.is_set():
-            line = await asyncio.to_thread(control_stream.readline)
-            if not line:
+        async for line in control_lines(control_stream):
+            if stop_event.is_set():
                 return
             try:
                 control = parse_control(line)
@@ -468,8 +508,34 @@ async def run_live(bootstrap: MonitorBootstrap, *, control_stream: TextIO | None
                     ),
                     flush=True,
                 )
+        stop_event.set()
+
+    async def consume_controls() -> None:
+        nonlocal control_failure
+        try:
+            await read_controls()
+        except Exception as error:
+            control_failure = error
+            stop_event.set()
 
     control_task = asyncio.create_task(consume_controls())
+    failure_reported = False
+
+    def report_failure() -> None:
+        nonlocal failure_reported
+        if not failure_reported:
+            failure_reported = True
+            print(
+                _emit(
+                    engine.emit(
+                        "fatal_error",
+                        {"reason": "internal_monitor_failure", "status": "failed"},
+                        emitted_at=datetime.now(UTC),
+                    )
+                ),
+                flush=True,
+            )
+
     try:
         print(
             _emit(
@@ -506,15 +572,48 @@ async def run_live(bootstrap: MonitorBootstrap, *, control_stream: TextIO | None
             *(("binance", "spot", symbol) for symbol in bootstrap.crypto),
         }
         watermarks = repository.latest_finalized_ends(scopes)
-        async for event in _merged_live_events(bootstrap, metadata, stop_event, initial_last_bar_end=watermarks):
-            for wire_event in engine.accept_market_event(event):
-                print(_emit(wire_event), flush=True)
+        async with aclosing(
+            _merged_live_events(
+                bootstrap, metadata, stop_event, initial_last_bar_end=watermarks, capture_verified_depth=True
+            )
+        ) as market_events:
+            async for event in market_events:
+                if control_failure is not None:
+                    raise MonitorRuntimeError("monitor control failed")
+                if stop_event.is_set():
+                    break
+                for wire_event in engine.accept_market_event(event):
+                    print(_emit(wire_event), flush=True)
+    except Exception:
+        report_failure()
     finally:
         stop_event.set()
         control_task.cancel()
         await asyncio.gather(control_task, return_exceptions=True)
-        repository.finish_session(bootstrap.session_id, reason="monitor_stopped")
-        database.dispose()
+        if control_failure is not None:
+            report_failure()
+        try:
+            repository.finish_session(
+                bootstrap.session_id,
+                reason="internal_monitor_failure" if failure_reported else "monitor_stopped",
+            )
+        except Exception:
+            report_failure()
+        finally:
+            try:
+                database.dispose()
+            except Exception:
+                report_failure()
+    if failure_reported:
+        raise MonitorRuntimeError("monitor stopped after an internal failure") from None
 
 
-__all__ = ["MonitorBootstrap", "MonitorControl", "parse_bootstrap", "parse_control", "replay_events", "run_live"]
+__all__ = [
+    "MonitorBootstrap",
+    "MonitorControl",
+    "MonitorRuntimeError",
+    "parse_bootstrap",
+    "parse_control",
+    "replay_events",
+    "run_live",
+]

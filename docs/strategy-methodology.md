@@ -46,6 +46,21 @@ Prices round to tick size and quantities to lot size. Zero-volume/halted bars do
 
 Only strategies with eligible evidence can receive positive weight. Scores are shrunk 50% toward equal weight, all weights are nonnegative, each strategy is capped at 25%, and each configured family is capped at 50%. Failed and unavailable strategies may remain visible with zero weight for auditability, but the compact component list excludes them. Online updates use only outcomes whose `outcome_available_at` has passed and preserve the sealed/offline evidence boundary.
 
+## Contextual allocation and asset selection
+
+This is an additional research layer, not a replacement for the sealed live ensemble above. Its identity includes source dataset, protocol, provider/feed, venue/product, asset class/profile, symbol, interval, direction and mode. Database schema 14 stores immutable eligibility, outcomes, posteriors, estimates, covariance, allocations, portfolio decisions, drift and search attempts. It preserves existing ledgers while widening exchange sequence storage to 64 bits. Snapshot schema 5 remains backward compatible through optional fields.
+
+- **Executability:** profile-specific history, session, freshness, volatility, coverage and liquidity gates precede selection. An authenticated full order-book snapshot must agree with the quote, and exchange lot/notional rules must admit the configured hypothetical probe (default 1,000 quote-currency units). Both book sides must support the probe. Depth deltas are not full books; missing evidence blocks eligibility. Rules follow the exchange's [published filters](https://developers.binance.com/en/docs/products/spot/filters).
+- **Regimes:** causal trailing features and chronological fits produce normalized probabilities across four fixed market states. Uncertainty is retained instead of selecting a retrospectively convenient state.
+- **Specialization:** global → asset class → profile → asset → asset/regime estimates use effective samples and partial pooling. Sparse cells revert toward their parent. Long and short evidence stays separate.
+- **Dependence:** synchronized returns feed a regularized covariance estimate, with constrained nonnegative weights, family caps, cash and turnover penalties. The covariance estimator is [Ledoit–Wolf shrinkage](https://scikit-learn.org/stable/modules/generated/sklearn.covariance.LedoitWolf.html). Portfolio correlation, exposure and conservative sizing constraints can exclude a second otherwise-eligible asset.
+- **Causality:** full published outcome indexes are authenticated before slicing a historical prefix. Normal assessment cannot use a cohort published after its decision. Prior weights must predate that decision and their SQL timestamps must match the immutable payload. Same-time outcomes/drift are allowed only when actually available; same-time self-generated weight refreshes are not prior evidence.
+- **Reproducibility:** contextual outcome protocol v2 binds runtime source content and research configuration into both outcome and cohort-cache identities. Moving a database, editing documentation or changing a Git receipt does not change the research. Actual code, strategy and cost-policy changes invalidate its cache. Operational trading identities still retain their database scope.
+- **Learning:** every attempted policy is reserved in the global ledger before scoring. Chronological folds exclude the reserved tail and unresolved labels. Concurrent assets are aggregated for temporal sample statistics. A shared cash account reserves capital until an actual execution resolves, prevents overlapping positions per asset and charges extra allocation costs. Only observed holding horizons are searchable. The score observes closing valuations, not intratrade maximum loss, and cannot authorize promotion by itself.
+- **Live boundary:** contextual evidence is an additional veto on an unchanged, qualified sealed ensemble. Exact members, versions, source cohort, source outcome index, mode and protocol are required. The monitor reloads contextual evidence at every decision, checks its bounded expiry and preserves confirmed drift quarantine across ordinary research refreshes.
+
+The contextual replay is a fixed-policy chronological refit on previously published development outcomes. It evaluates every available decision after a 40-timestamp warm-up; a minimum of 60 timestamps is required. Its last 20% is reported separately as a **retrospective holdout**, not an independent sealed final test. This distinction prevents reused development evidence from being presented as new validation. The [Deflated Sharpe research](https://www.davidhbailey.com/dhbpapers/deflated-sharpe.pdf) explains why the number of attempted strategies matters; no amount of search alone proves an edge.
+
 ## Implemented catalog
 
 No idea is listed here unless it has a static, tested implementation in `src/strategies/library.py`.
@@ -79,7 +94,7 @@ The cited studies motivate hypotheses and validation. They do not authenticate t
 1. Complete provider history and pass every data-quality check.
 2. Freeze code, configuration, dataset hash, cost policy, and cutoff.
 3. Run development and the sealed final test once; publish failures and unavailable scopes.
-4. Export snapshot v2 and inspect warnings, rejected gates, gaps, and zero-weight components.
+4. Export snapshot v5 and inspect warnings, rejected gates, gaps, and zero-weight components.
 5. Run a forward paper account without changing the rule. Record latency, rejected orders, fees, spread, impact, funding/borrow, outages, and data revisions.
 6. Compare forward behavior with the historical assumptions before considering any new research cycle.
 

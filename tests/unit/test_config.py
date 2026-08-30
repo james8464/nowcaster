@@ -49,6 +49,22 @@ def test_checked_in_configuration_is_valid():
     assert settings.universe.companies[1].wikipedia_article == "Nike,_Inc."
 
 
+def test_research_config_identity_ignores_storage_but_preserves_cost_and_strategy_policy(project_root):
+    settings = Settings.load(project_root, mode="test")
+    relocated = settings.model_copy(update={"database_url": "duckdb:///another/research.duckdb"})
+    changed_cost = settings.model_copy(
+        update={"deep_research": settings.deep_research.model_copy(update={"crypto_fee_bps": 12.0})}
+    )
+    changed_strategy = settings.model_copy(
+        update={"model": settings.model.model_copy(update={"random_seed": settings.model.random_seed + 1})}
+    )
+
+    assert settings.config_hash_payload() != relocated.config_hash_payload()
+    assert settings.research_config_hash_payload() == relocated.research_config_hash_payload()
+    assert settings.research_config_hash_payload() != changed_cost.research_config_hash_payload()
+    assert settings.research_config_hash_payload() != changed_strategy.research_config_hash_payload()
+
+
 def test_bundled_crypto_instruments_are_exact_non_shortable_binance_usdt_spot_products() -> None:
     root = Path(__file__).resolve().parents[2]
     settings = Settings.load(root, mode="test")

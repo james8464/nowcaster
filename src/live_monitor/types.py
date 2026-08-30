@@ -214,6 +214,7 @@ class MarketDepth(LiveMonitorModel):
     symbol: str = Field(min_length=1, max_length=32)
     first_update_id: int = Field(ge=0)
     final_update_id: int = Field(ge=0)
+    snapshot_verified: bool = False
     bids: tuple[DepthLevel, ...]
     asks: tuple[DepthLevel, ...]
     provider_time: datetime
@@ -237,6 +238,17 @@ class MarketDepth(LiveMonitorModel):
             raise ValueError("final update id must not precede first update id")
         if self.received_at < self.provider_time or self.processed_at < self.received_at:
             raise ValueError("depth provenance timestamps must be ordered")
+        if self.snapshot_verified:
+            if not self.bids or not self.asks or max(len(self.bids), len(self.asks)) > 1_000:
+                raise ValueError("verified depth must contain bounded two-sided levels")
+            for levels, descending in ((self.bids, True), (self.asks, False)):
+                prices = tuple(level.price for level in levels)
+                if len(prices) != len(set(prices)) or prices != tuple(sorted(prices, reverse=descending)):
+                    raise ValueError("verified depth levels must be unique and price ordered")
+                if any(level.size <= 0 for level in levels):
+                    raise ValueError("verified snapshot levels must have positive size")
+            if self.bids[0].price >= self.asks[0].price:
+                raise ValueError("verified depth cannot be locked or crossed")
         return self
 
     @property

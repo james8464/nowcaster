@@ -22,7 +22,8 @@ from src.database.engine import Database
 from src.demo import DEMO_STAGES, demo_pipeline, live_pipeline, run_demo
 from src.ingestion.bars import INTERVAL_DURATION, BarRequest
 from src.ingestion.csv_bars import CSVBarProvider
-from src.live_monitor.command import parse_bootstrap, replay_events, run_live
+from src.live_monitor.command import MonitorRuntimeError, parse_bootstrap, replay_events, run_live
+from src.live_monitor.control_input import read_bootstrap_line
 from src.live_monitor.evidence import load_sealed_cohorts, select_monitor_cohorts
 from src.reporting.research_report import generate_research_report
 from src.research import run_full_strategy_research
@@ -66,7 +67,7 @@ def monitor_run(
 ) -> None:
     """Read one private bootstrap line from stdin and emit bounded JSONL events."""
     try:
-        bootstrap = parse_bootstrap(typer.get_text_stream("stdin").readline())
+        bootstrap = parse_bootstrap(read_bootstrap_line(typer.get_text_stream("stdin")))
         if replay is not None:
             if replay_provider not in {"alpaca", "binance"}:
                 raise ValueError("unsupported replay provider")
@@ -76,6 +77,9 @@ def monitor_run(
         import asyncio
 
         asyncio.run(run_live(bootstrap, control_stream=typer.get_text_stream("stdin")))
+    except MonitorRuntimeError:
+        typer.echo(json.dumps({"event": "monitor_failed"}), err=True)
+        raise typer.Exit(code=1) from None
     except (ValueError, OSError):
         typer.echo(json.dumps({"event": "configuration_rejected"}), err=True)
         raise typer.Exit(code=2) from None
@@ -569,7 +573,7 @@ def strategy_backtest_portfolio(
     as_of: Annotated[str, typer.Option()] = "2026-01-02T00:00:00Z",
     csv_path: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,
 ) -> None:
-    """Repeat the full contextual path inside chronological outer folds."""
+    """Replay contextual allocations chronologically; research-only, not a sealed test."""
     request = _contextual_request(symbols, provider, feed, interval, mode, as_of)
 
     def execute() -> object:

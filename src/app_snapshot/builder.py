@@ -475,7 +475,7 @@ def _contextual_projection(database: Database) -> dict[str, Any]:
             database,
             "select * from contextual_drift_events where context_hash = :context_hash "
             "and effective_at <= :effective_at order by effective_at desc, created_at desc limit 1",
-            parameters,
+            {**parameters, "effective_at": datetime.now(UTC)},
         )
         probability_values = posterior["evidence"].get("probabilities")
         if not isinstance(probability_values, dict):

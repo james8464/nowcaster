@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -28,9 +29,39 @@ def _configure_contextual_strategy(project_root: Path) -> None:
         )
 
 
+def test_contextual_research_cache_identity_binds_runtime_and_policy_not_storage(
+    project_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _configure_contextual_strategy(project_root)
+    bars = tmp_path / "contextual-cache.csv"
+    _write_bars(bars, 80)
+    pipeline, _database = _csv_pipeline(project_root, "duckdb:///:memory:", bars)
+    scope = _scope("rsi_reversal")
+    registered = pipeline._registered_many(scope)
+    as_of = datetime(2026, 8, 20, tzinfo=UTC)
+
+    def identity():
+        return pipeline._cohort_payload(scope, registered, "a" * 64, as_of)
+
+    original = identity()
+    settings = pipeline._settings
+    pipeline._settings = settings.model_copy(update={"database_url": "duckdb:///relocated.duckdb"})
+    monkeypatch.setattr("src.strategies.pipeline.git_commit", lambda *_args: "f" * 40)
+    assert identity() == original
+
+    pipeline._settings = settings.model_copy(
+        update={"deep_research": settings.deep_research.model_copy(update={"crypto_fee_bps": 12.0})}
+    )
+    assert identity() != original
+    pipeline._settings = settings
+    monkeypatch.setattr("src.strategies.pipeline.research_source_hash", lambda *_args: "e" * 64)
+    assert identity() != original
+
+
 def test_strategy_evaluation_publishes_contextual_outcomes_without_final_rows(
     project_root: Path,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _configure_contextual_strategy(project_root)
     bar_count = 800
@@ -62,6 +93,10 @@ def test_strategy_evaluation_publishes_contextual_outcomes_without_final_rows(
     assert probability_sums.to_numpy() == pytest.approx(1.0)
 
     contextual_hashes = set(rows["content_hash"].astype(str))
+    pipeline._settings = pipeline._settings.model_copy(
+        update={"database_url": "duckdb:///a/different/research-location.duckdb"}
+    )
+    monkeypatch.setattr("src.strategies.pipeline.git_commit", lambda *_args: "f" * 40)
     assert pipeline.evaluate(EvaluationOptions(scope=scope)).status == "reused"
     repeated = database.frame("select content_hash from contextual_outcomes")
     assert set(repeated["content_hash"].astype(str)) == contextual_hashes

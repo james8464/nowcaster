@@ -22,6 +22,8 @@ No random train/test split is used.
 
 ## Execution model
 
+The following five-day holding assumptions describe the older daily-proxy demonstration. The intraday engine uses each strategy's declared execution policy; the contextual replay below has a separate one-bar contract.
+
 - Signal-to-position lag: one bar.
 - Intrabar ambiguity: adverse stop-before-target ordering whenever one bar contains both levels.
 - Crypto holding period: five days, with non-overlapping positions per instrument.
@@ -55,6 +57,16 @@ Deep Research freezes source/feed, dataset hash, chronology, search space, seed,
 A research challenger passes only if it has at least 300 closed trades; positive median walk-forward return and Sharpe after costs; positive doubled-cost return; Deflated Sharpe and block-bootstrap positive-edge probabilities of at least 99%; probability of backtest overfitting no more than 10%; parameter stability of at least 80%; drawdown no more than 10%; profit concentration below 50%; a positive sealed final result; complete causal, provenance, coverage, and execution audits; and a material improvement over the existing research champion. These are rejection filters, not promises of future performance.
 
 Continuous mode is a sequence of finite generations. Work dispatch is bounded to the chosen CPU count while reserving two logical processors, numeric libraries use one thread per process, completed batches are checkpointed in ordinal order, a crash is retried once, and repeated failure is recorded. Pause stops new batches after active work drains; Stop preserves completed evidence. Thermal, memory, disk, sleep, and live-heartbeat pressure also pause before another batch. Resume requires the exact dataset, code, search-space, cost-policy, and protocol identity.
+
+## Contextual portfolio replay contract
+
+`strategy backtest-portfolio` authenticates a complete source cohort, then refits screening, regimes, hierarchical estimates, covariance, weights and selection using only evidence available at each historical decision. It does not write historical live-alert permissions. The local replay carries its own previous weights and ignores future database allocations.
+
+Every resolved decision after the first 40 distinct training timestamps is evaluated. Returns match the exact symbol, direction, strategy and decision time, with a fully resolved one-bar execution horizon. Missing, duplicate or mismatched selected execution evidence invalidates the replay rather than being replaced with the next convenient outcome. Missing point-in-time liquidity keeps the portfolio in cash.
+
+Account returns use the selected portfolio fractions multiplied by the actual strategy weights. Short outcomes already carry their direction and are not inverted again. Gross return, source costs, additional allocation turnover costs, final liquidation and idle cash remain separate. Equity compounds returns; daily chart rows aggregate all intraday observations. Cost sensitivity recomputes the path at 1×, 2× and 3× costs. Intraday decision hashes and accounting are retained in the run's audit record.
+
+The final 20% of replay decisions is a separately reported **retrospective holdout**. This path does not assert nested optimization or an independent sealed test, and always returns research-only readiness. Contextual learning separately withholds its reserved tail, searches only actual execution horizons and records all attempts. Its closed-outcome account cannot measure intratrade drawdown without a price-path replay. Independent forward evidence and all existing live gates remain necessary.
 
 ## Threats that remain
 

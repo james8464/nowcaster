@@ -12,6 +12,7 @@ from pydantic import ValidationError
 
 from src.strategies.types import canonical_hash
 from src.trading.types import TradeUpdate
+from src.utils.tls import verified_client_context
 
 PAPER_STREAM_URL = "wss://paper-api.alpaca.markets/stream"
 MAX_FRAME_BYTES = 1_000_000
@@ -114,7 +115,9 @@ def parse_trade_update(
 async def _default_connector(url: str):
     from websockets.asyncio.client import connect
 
-    return await connect(url, max_size=MAX_FRAME_BYTES, open_timeout=10, ping_interval=20, ping_timeout=20)
+    return await connect(
+        url, ssl=verified_client_context(), max_size=MAX_FRAME_BYTES, open_timeout=10, ping_interval=20, ping_timeout=20
+    )
 
 
 class AlpacaTradeUpdateStream:

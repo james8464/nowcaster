@@ -159,12 +159,10 @@ def causal_regime_features(bars: pd.DataFrame) -> pd.DataFrame:
     result["trend_strength"] = signed_move / total_move.replace(0, np.nan)
     result["realized_volatility_short"] = lagged_return.rolling(12, min_periods=8).std(ddof=1)
     result["realized_volatility_medium"] = lagged_return.rolling(48, min_periods=24).std(ddof=1)
-    result["volatility_percentile"] = result["realized_volatility_short"].rolling(
-        100, min_periods=20
-    ).apply(_last_percentile, raw=True)
-    result["volatility_of_volatility"] = result["realized_volatility_short"].rolling(
-        24, min_periods=12
-    ).std(ddof=1)
+    result["volatility_percentile"] = (
+        result["realized_volatility_short"].rolling(100, min_periods=20).apply(_last_percentile, raw=True)
+    )
+    result["volatility_of_volatility"] = result["realized_volatility_short"].rolling(24, min_periods=12).std(ddof=1)
     volume_median = lagged_volume.rolling(48, min_periods=12).median().replace(0, np.nan)
     result["relative_volume"] = lagged_volume / volume_median
     volume_sum = lagged_volume.rolling(24, min_periods=12).sum().replace(0, np.nan)
@@ -270,15 +268,11 @@ def fit_regime_model(features: pd.DataFrame, *, minimum_train: int = 80) -> Regi
     }
     stressed = (
         (valid["volatility_percentile"] >= thresholds["stressed_volatility_percentile"])
-        | (
-            (valid["relative_spread"] > 0)
-            & (valid["relative_spread"] >= thresholds["stressed_relative_spread"])
-        )
+        | ((valid["relative_spread"] > 0) & (valid["relative_spread"] >= thresholds["stressed_relative_spread"]))
         | (valid["continuity"] < 0.5)
     )
-    trending = (
-        (valid["trend_strength"] >= thresholds["trend_strength"])
-        & (valid["directional_consistency"] >= thresholds["directional_consistency"])
+    trending = (valid["trend_strength"] >= thresholds["trend_strength"]) & (
+        valid["directional_consistency"] >= thresholds["directional_consistency"]
     )
     elevated = valid["realized_volatility_short"] >= thresholds["elevated_volatility"]
     labels = np.full(len(valid), MarketRegime.RANGE_LIQUID.value, dtype=object)
@@ -347,9 +341,7 @@ def predict_regime_posteriors(fit: RegimeFit, features: pd.DataFrame) -> RegimeP
         if fit.scaler is None or fit.classifier is None:
             raise ValueError("fitted regime evidence is missing its authenticated estimator")
         if valid.any():
-            predicted = fit.classifier.predict_proba(
-                fit.scaler.transform(matrix.loc[valid].to_numpy(dtype=float))
-            )
+            predicted = fit.classifier.predict_proba(fit.scaler.transform(matrix.loc[valid].to_numpy(dtype=float)))
             aligned = np.zeros((len(predicted), len(regimes)), dtype=float)
             class_to_column = {regime.value: index for index, regime in enumerate(regimes)}
             for source_column, label in enumerate(fit.classifier.classes_):

@@ -191,7 +191,13 @@ class ContextualSearchSpace:
         )
 
     @classmethod
-    def conservative(cls, baseline: ContextualCandidate | None = None) -> ContextualSearchSpace:
+    def conservative(
+        cls,
+        baseline: ContextualCandidate | None = None,
+        *,
+        long_horizons: tuple[int, ...] = (1,),
+        short_horizons: tuple[int, ...] = (1,),
+    ) -> ContextualSearchSpace:
         base = baseline or ContextualCandidate.defaults()
 
         def values(*items: float | int) -> tuple:
@@ -200,8 +206,8 @@ class ContextualSearchSpace:
         return cls(
             baseline=base,
             profile_threshold_multipliers=values(base.profile_threshold_multiplier, 0.90, 1.10),
-            long_holding_horizons=values(base.long_holding_horizon_bars, 2, 3, 6),
-            short_holding_horizons=values(base.short_holding_horizon_bars, 2, 3, 6),
+            long_holding_horizons=values(*long_horizons),
+            short_holding_horizons=values(*short_horizons),
             regime_uncertainty_penalties=values(base.regime_uncertainty_penalty, 0.50, 1.50, 2.0),
             global_prior_strengths=values(base.global_prior_strength, 500.0, 1_500.0),
             asset_class_prior_strengths=values(base.asset_class_prior_strength, 250.0, 750.0),
@@ -233,6 +239,7 @@ class ContextualLearningExperiment:
     fragmentation_penalty: float = 0.05
     complexity_penalty: float = 0.005
     concentration_penalty: float = 0.10
+    rebalance_cost_rate: float = 0.0017
 
     def __post_init__(self) -> None:
         for name in ("dataset_hash", "protocol_hash"):
@@ -255,6 +262,7 @@ class ContextualLearningExperiment:
             self.fragmentation_penalty,
             self.complexity_penalty,
             self.concentration_penalty,
+            self.rebalance_cost_rate,
         )
         if any(not math.isfinite(value) or value < 0 for value in penalties):
             raise ValueError("contextual fitness penalties must be finite and nonnegative")
@@ -602,6 +610,11 @@ def _contextual_learning_frame(
     if outcomes.empty:
         raise ValueError("contextual learning requires resolved outcomes")
     frame = outcomes.loc[:, sorted(required)].copy()
+    frame["holding_horizon_bars"] = outcomes.get("holding_horizon_bars", 1)
+    horizons = pd.to_numeric(frame["holding_horizon_bars"], errors="coerce")
+    if not horizons.between(1, 24).all() or not horizons.eq(horizons.round()).all():
+        raise ValueError("contextual holding horizon must be an observed integer in [1, 24]")
+    frame["holding_horizon_bars"] = horizons.astype(int)
     if frame["outcome_id"].astype(str).duplicated().any():
         raise ValueError("contextual learning outcome identities must be unique")
     for column in ("decision_timestamp", "outcome_available_at"):
@@ -626,11 +639,15 @@ def _contextual_learning_frame(
     frame["symbol"] = frame["symbol"].astype(str).str.upper()
     if not frame["direction"].astype(str).isin({"long", "short"}).all():
         raise ValueError("contextual learning direction must be long or short")
+    if frame.duplicated(["decision_timestamp", "symbol", "direction", "strategy_id", "holding_horizon_bars"]).any():
+        raise ValueError("contextual execution outcomes must be unique for each decision and horizon")
     numeric_columns = ("net_return", "eligibility_quality", *_CONTEXTUAL_REGIME_COLUMNS)
     numeric = frame.loc[:, numeric_columns].apply(pd.to_numeric, errors="coerce").astype(float)
     if not np.isfinite(numeric.to_numpy()).all():
         raise ValueError("contextual learning values must be finite")
     frame.loc[:, numeric_columns] = numeric
+    if (frame["net_return"] <= -1).any():
+        raise ValueError("contextual execution outcomes must preserve positive unlevered equity")
     if not frame["eligibility_quality"].between(0, 1).all():
         raise ValueError("contextual eligibility quality must be in [0, 1]")
     probabilities = frame.loc[:, _CONTEXTUAL_REGIME_COLUMNS].to_numpy(dtype=float)
@@ -709,7 +726,25 @@ def _contextual_leaf_estimate(
         strength: float,
     ) -> tuple[float, float, float]:
         selected = mask.to_numpy(dtype=bool)
-        local_mean, variance, effective = _soft_stats(values[selected], weights[selected])
+        # Concurrent assets do not constitute independent time observations.
+        temporal = pd.DataFrame(
+            {
+                "time": train.loc[mask, "decision_timestamp"],
+                "value": values[selected],
+                "weight": weights[selected],
+            }
+        )
+        temporal["weighted_value"] = temporal["value"] * temporal["weight"]
+        grouped = temporal.groupby("time").agg(
+            value=("weighted_value", "sum"),
+            mass=("weight", "sum"),
+            weight=("weight", "mean"),
+        )
+        grouped = grouped.loc[grouped["mass"] > 0]
+        local_mean, variance, effective = _soft_stats(
+            (grouped["value"] / grouped["mass"]).to_numpy(),
+            grouped["weight"].to_numpy(),
+        )
         if effective <= 0:
             return parent_mean, max(parent_uncertainty, 0.0), variance
         alpha = effective / (effective + strength)
@@ -755,10 +790,77 @@ def _maximum_drawdown(returns: Sequence[float]) -> float:
     return float(abs(np.min(equity / peaks - 1.0)))
 
 
+@dataclass(frozen=True, slots=True)
+class _ContextualReplayTrade:
+    decision: pd.Timestamp
+    resolved: pd.Timestamp
+    symbol: str
+    direction: str
+    exposure: float
+    net_return: float
+    concentration: float
+    expected_edge: float
+
+
+def _replay_contextual_account(trades, decision_clock, rebalance_cost_rate):
+    """Reserve shared cash until each real execution resolves; never concatenate assets.
+
+    Only closing valuations are available here. Intratrade drawdown still requires a
+    price-path replay and this research score is never a live-readiness receipt.
+    """
+    clock = [pd.Timestamp(value) for value in decision_clock]
+    if not clock:
+        return [], 0.0, 0.0
+    by_time = {}
+    for trade in trades:
+        by_time.setdefault(trade.decision, []).append(trade)
+    pending = []
+    cash = 1.0
+    equities = []
+    turnovers = []
+    concentrations = []
+    end = max((trade.resolved for trade in trades), default=clock[-1])
+    clock.append(max(end, clock[-1] + pd.Timedelta(microseconds=1)))
+    for moment in clock:
+        remaining = []
+        turnover = 0.0
+        prior_equity = cash + sum(stake for _, stake in pending)
+        for trade, stake in pending:
+            if trade.resolved <= moment:
+                cash += stake * (1 + trade.net_return - rebalance_cost_rate)
+                turnover += stake / max(prior_equity, 1e-12)
+            else:
+                remaining.append((trade, stake))
+        pending = remaining
+        equity = cash + sum(stake for _, stake in pending)
+        if equity <= 0:
+            raise ValueError("contextual cost-adjusted replay exhausted account equity")
+        # Decisions are based on the known training edge, never the realized profit.
+        for trade in sorted(
+            by_time.get(moment, ()), key=lambda item: (-item.expected_edge, item.symbol, item.direction)
+        ):
+            if any(open_trade.symbol == trade.symbol for open_trade, _ in pending):
+                continue  # One position per asset, with no overlapping capital reuse.
+            stake = min(equity * trade.exposure, cash / (1 + rebalance_cost_rate))
+            if stake <= 0:
+                continue
+            cash -= stake * (1 + rebalance_cost_rate)
+            turnover += stake / equity
+            pending.append((trade, stake))
+        equities.append(cash + sum(stake for _, stake in pending))
+        turnovers.append(turnover)
+        concentrations.append(sum(stake * trade.concentration for trade, stake in pending) / equity)
+    # The first allocation cost belongs to the first interval, not a hidden warm-up.
+    equities[0] = 1.0
+    returns = [equities[index] / equities[index - 1] - 1 for index in range(1, len(equities))]
+    return returns, sum(turnovers) / len(returns), float(np.mean(concentrations))
+
+
 def _evaluate_contextual_fold(
     candidate: ContextualCandidate,
     train: pd.DataFrame,
     validation: pd.DataFrame,
+    rebalance_cost_rate: float = 0.0017,
 ) -> ContextualFoldMetrics:
     strategy_returns = train.pivot_table(
         index="decision_timestamp",
@@ -768,9 +870,8 @@ def _evaluate_contextual_fold(
     )
     correlations = strategy_returns.corr(min_periods=5)
     previous: dict[tuple[str, str], dict[str, float]] = {}
-    returns_by_direction: dict[str, list[float]] = {"long": [], "short": []}
-    turnovers: list[float] = []
-    concentrations: list[float] = []
+    trades = []
+    capital_slots = max(len(train[["symbol", "direction"]].drop_duplicates()), 1)
     contexts: set[tuple[str, str, str]] = set()
     leaf_cache: dict[tuple[str, ...], tuple[float, float, float]] = {}
     quality_threshold = min(
@@ -778,11 +879,10 @@ def _evaluate_contextual_fold(
         1.0,
     )
     grouped = validation.groupby(["decision_timestamp", "symbol", "direction"], sort=True)
-    for (_decision, symbol, direction), group in grouped:
+    for (decision, symbol, direction), group in grouped:
         direction = str(direction)
         contexts.add((str(group.iloc[0]["profile"]), str(symbol), direction))
         if float(group["eligibility_quality"].min()) < quality_threshold:
-            returns_by_direction[direction].append(0.0)
             continue
         posterior = group.iloc[0].loc[list(_CONTEXTUAL_REGIME_COLUMNS)].to_numpy(dtype=float)
         positive_mass = posterior[posterior > 0]
@@ -823,7 +923,6 @@ def _evaluate_contextual_fold(
                 continue
             selected.append(strategy_id)
         if not selected:
-            returns_by_direction[direction].append(0.0)
             continue
         raw = {
             strategy_id: estimates[strategy_id][0] / (candidate.risk_penalty * estimates[strategy_id][1] + 1e-12)
@@ -831,7 +930,6 @@ def _evaluate_contextual_fold(
         }
         raw_total = sum(raw.values())
         if raw_total <= 0:
-            returns_by_direction[direction].append(0.0)
             continue
         target = {key: value / raw_total for key, value in raw.items()}
         equal = 1.0 / len(target)
@@ -848,7 +946,6 @@ def _evaluate_contextual_fold(
         }
         weight_total = sum(weights.values())
         weights = {key: value / weight_total for key, value in weights.items()} if weight_total > 0 else {}
-        turnover = sum(abs(weights.get(key, 0.0) - prior_weights.get(key, 0.0)) for key in universe)
         previous[context_key] = weights
         expected_edge = sum(weights[key] * estimates[key][0] for key in weights if key in estimates)
         variance = sum(weights[key] * weights[key] * estimates[key][1] for key in weights if key in estimates)
@@ -857,23 +954,34 @@ def _evaluate_contextual_fold(
             0.25 / math.sqrt(candidate.risk_penalty),
         )
         realized = group.set_index("strategy_id")["net_return"].astype(float).to_dict()
-        portfolio_return = exposure * sum(weights[key] * realized.get(key, 0.0) for key in weights)
-        returns_by_direction[direction].append(float(portfolio_return))
-        turnovers.append(turnover * exposure)
-        concentrations.append(sum(value * value for value in weights.values()) * exposure)
+        if any(key not in realized for key, value in weights.items() if value > 0):
+            raise ValueError("contextual validation lacks a weighted strategy execution outcome")
+        trades.append(
+            _ContextualReplayTrade(
+                decision=pd.Timestamp(decision),
+                resolved=pd.Timestamp(group["outcome_available_at"].max()),
+                symbol=str(symbol),
+                direction=direction,
+                exposure=exposure / capital_slots,
+                net_return=sum(weights[key] * realized[key] for key in weights),
+                concentration=sum(value * value for value in weights.values()),
+                expected_edge=expected_edge,
+            )
+        )
 
-    sampled_returns: list[float] = []
-    for direction, values in returns_by_direction.items():
-        horizon = candidate.long_holding_horizon_bars if direction == "long" else candidate.short_holding_horizon_bars
-        sampled_returns.extend(sum(values[index : index + horizon]) for index in range(0, len(values), horizon))
+    sampled_returns, turnover, concentration = _replay_contextual_account(
+        trades,
+        sorted(validation["decision_timestamp"].unique()),
+        rebalance_cost_rate,
+    )
     returns = np.asarray(sampled_returns, dtype=float)
     standard_deviation = float(returns.std(ddof=1)) if len(returns) > 1 else 0.0
     sharpe = float(returns.mean() / standard_deviation * math.sqrt(len(returns))) if standard_deviation > 0 else 0.0
     return ContextualFoldMetrics(
         net_sharpe=sharpe,
         maximum_drawdown=_maximum_drawdown(sampled_returns),
-        turnover=float(np.mean(turnovers)) if turnovers else 0.0,
-        concentration=float(np.mean(concentrations)) if concentrations else 0.0,
+        turnover=turnover,
+        concentration=concentration,
         fragmentation=min(len(contexts) / max(validation["decision_timestamp"].nunique(), 1), 1.0),
         observations=len(sampled_returns),
     )
@@ -887,8 +995,15 @@ def evaluate_contextual_candidate(
     """Evaluate one closed policy on expanding, strictly chronological outer blocks."""
 
     frame = _contextual_learning_frame(outcomes, experiment)
+    selected_horizons = {"long": candidate.long_holding_horizon_bars, "short": candidate.short_holding_horizon_bars}
+    for direction in frame["direction"].unique():
+        if selected_horizons[direction] not in set(frame.loc[frame["direction"] == direction, "holding_horizon_bars"]):
+            raise ValueError(
+                f"no actual execution evidence for {direction} holding horizon {selected_horizons[direction]}"
+            )
+    frame = frame.loc[frame["holding_horizon_bars"] == frame["direction"].map(selected_horizons)].copy()
     folds = tuple(
-        _evaluate_contextual_fold(candidate, train, validation)
+        _evaluate_contextual_fold(candidate, train, validation, experiment.rebalance_cost_rate)
         for train, validation in _contextual_outer_folds(frame, experiment)
     )
     sharpes = [item.net_sharpe for item in folds]
@@ -912,6 +1027,8 @@ def evaluate_contextual_candidate(
         "fold_metrics": tuple(asdict(item) for item in folds),
         "fitness": fitness,
         "state": "shadow",
+        "accounting_version": 2,
+        "rebalance_cost_rate": experiment.rebalance_cost_rate,
     }
     return ContextualCandidateEvaluation(
         candidate_hash=candidate.candidate_hash,

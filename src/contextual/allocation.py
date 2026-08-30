@@ -155,9 +155,7 @@ def estimate_strategy_covariance(
             matrix = (eigenvectors * clipped) @ eigenvectors.T
             matrix = (matrix + matrix.T) / 2.0
             status = "estimated"
-            canonical_matrix = tuple(
-                tuple(_canonical_float(float(value)) for value in row) for row in matrix
-            )
+            canonical_matrix = tuple(tuple(_canonical_float(float(value)) for value in row) for row in matrix)
     shrinkage = float(estimator.shrinkage_)
     payload = {
         "status": status,
@@ -329,10 +327,7 @@ def allocate_contextual_weights(
     initial_unit = min(
         0.5 / len(eligible_indices),
         policy.maximum_strategy_weight,
-        *(
-            float(policy.family_weight_caps[family]) / count
-            for family, count in counts_by_family.items()
-        ),
+        *(float(policy.family_weight_caps[family]) / count for family, count in counts_by_family.items()),
     )
     if initial_unit <= 0:
         return _all_cash(
@@ -358,8 +353,9 @@ def allocate_contextual_weights(
         {"type": "ineq", "fun": lambda weights: 1.0 - float(weights.sum())},
         {
             "type": "ineq",
-            "fun": lambda weights: float(weights.sum()) ** 2
-            - policy.minimum_effective_strategies * float(np.square(weights).sum()),
+            "fun": lambda weights: (
+                float(weights.sum()) ** 2 - policy.minimum_effective_strategies * float(np.square(weights).sum())
+            ),
         },
     ]
     for family in sorted(set(normalized_families.values()), key=lambda item: item.value):
@@ -374,10 +370,7 @@ def allocate_contextual_weights(
                 "fun": lambda weights, indices=indices, cap=cap: cap - float(weights[indices].sum()),
             }
         )
-    bounds = [
-        (0.0, policy.maximum_strategy_weight if eligible[strategy_id] else 0.0)
-        for strategy_id in strategy_ids
-    ]
+    bounds = [(0.0, policy.maximum_strategy_weight if eligible[strategy_id] else 0.0) for strategy_id in strategy_ids]
     result = minimize(
         objective,
         initial,
@@ -428,8 +421,7 @@ def allocate_contextual_weights(
         )
 
     canonical_weights = {
-        strategy_id: _canonical_float(max(float(solved[index]), 0.0))
-        for index, strategy_id in enumerate(strategy_ids)
+        strategy_id: _canonical_float(max(float(solved[index]), 0.0)) for index, strategy_id in enumerate(strategy_ids)
     }
     canonical_vector = np.array([canonical_weights[item] for item in strategy_ids], dtype=float)
     canonical_total = float(canonical_vector.sum())

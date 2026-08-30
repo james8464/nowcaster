@@ -6,7 +6,7 @@ These artifacts demonstrate a research process. They do not promise profit, and 
 
 ## Deterministic CI profile
 
-The committed artifact is `data/research/ci/research-summary.json`, accompanied by a cautious Markdown report and a native-compatible snapshot v2. It uses one BTCUSDT scalar fixture per exercised interval, 110 finalized bars per scope, a fixed `2026-08-20T00:00:00Z` cutoff, and no network or credentials.
+The committed artifact is [research-summary.json](../data/research/ci/research-summary.json), accompanied by a cautious Markdown report and a native-compatible snapshot v5. It uses one BTCUSDT scalar fixture per exercised interval, 110 finalized bars per scope, a fixed `2026-08-20T00:00:00Z` cutoff, and no network or credentials.
 
 Expected outcome after regeneration:
 
@@ -15,24 +15,17 @@ Expected outcome after regeneration:
 - four strategies are explicitly unavailable: the two equity-session rules, paired-context rule, and five-asset cross-sectional rule;
 - failed/unavailable evidence receives no positive ensemble component weight;
 - 36 strategy/symbol/interval audit records pass prefix invariance;
-- the bounded learning benchmark writes exactly two candidate ledger rows;
+- the bounded learning benchmark is explicitly unavailable because this small fixture does not supply enough finalized development history for nested validation; it evaluates zero candidates;
 - 330 logical bars have zero duplicates, zero invalid OHLCV rows, zero coverage gaps, and zero revisions;
 - reruns in fresh databases produce byte-identical compact summaries.
 
 No return or Sharpe from generated fixture bars is reported as financial evidence.
 
-Reproducibility identifiers for the committed run:
-
-| Identifier | SHA-256 / canonical hash |
-|---|---|
-| Code | `0f79745cf6f9393908820f758032864fe468ca1179e72e173a2daaa62092e6e8` |
-| CI configuration | `bdd5db762ac98ad464c552409781a71a944928083061cdc6979240e5bec324cc` |
-| CI aggregate dataset | `f3b7a8131155c59abe7b7c6e03b66af5252e0304f8649f12aa5fa32978b1e34c` |
-| CI semantic snapshot | `e9f0e33867b833d6d769272e7ba9ce1a9bf511133d8294323fa7942a672af18d` |
-| CI summary file | `8a54e46124c7ac4e1b1b70c244e5b90b2cd74f2610ea890971546d5b179dc488` |
-| CI snapshot file | `f73ebad40e812d2de82a41f530ba910f2e844fe526e5b6c4c952ca8cf4cbfaf8` |
+The generated summary is the authoritative record of the current code, configuration, dataset and semantic snapshot hashes. `make verify-research-fixtures` regenerates these artifacts and rejects differences; `make verify-swift-fixture-parity` checks the native fixture against the same research evidence. See the [current release verification](contextual-release-verification.md) for test results and the contextual replay's all-cash result.
 
 ## Exhaustive official Binance attempt on 24 August 2026 UTC
+
+This section preserves the earlier provider-coverage audit and its historical hashes. It is not a rerun of the newer contextual algorithms or evidence of current strategy profitability.
 
 Task 9 ran the unbounded official Binance spot REST profile from the earliest provider boundary through the fixed cutoff `2026-08-24T00:00:00Z`. It attempted all 880 deterministic 30-day chunks: 110 chunks for each of BTCUSDT/ETHUSDT at every configured `5m`, `15m`, `1h`, and `4h` interval. There was no diagnostic chunk cap. All 3,084 raw JSON pages were written outside Git with adjacent SHA-256 checksums; the final replay verified the cache without network access. Of the 880 requested chunks, 736 met exact coverage and 144 were explicitly unavailable because requested bars remained missing.
 

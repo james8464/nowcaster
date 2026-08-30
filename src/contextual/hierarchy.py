@@ -224,9 +224,9 @@ def _validated_outcomes(outcomes: pd.DataFrame, as_of: datetime) -> pd.DataFrame
     if not np.allclose(probabilities.sum(axis=1).to_numpy(), 1.0, atol=1e-9, rtol=0):
         raise ValueError("regime probabilities must sum to one")
     frame.loc[:, numeric_columns] = numeric
-    return frame.sort_values(
-        ["outcome_available_at", "decision_timestamp", "outcome_id"], kind="stable"
-    ).reset_index(drop=True)
+    return frame.sort_values(["outcome_available_at", "decision_timestamp", "outcome_id"], kind="stable").reset_index(
+        drop=True
+    )
 
 
 def _normalized_strengths(prior_strengths: Mapping[ContextLevel | str, float]) -> dict[ContextLevel, float]:
@@ -281,10 +281,7 @@ def _build_estimate(
     parent_uncertainty = parent.uncertainty if parent is not None else 0.0
     alpha = effective / (effective + prior_strength)
     mean = alpha * local_mean + (1.0 - alpha) * parent_mean
-    uncertainty = math.sqrt(
-        alpha**2 * variance / max(effective, 1.0)
-        + (1.0 - alpha) ** 2 * parent_uncertainty**2
-    )
+    uncertainty = math.sqrt(alpha**2 * variance / max(effective, 1.0) + (1.0 - alpha) ** 2 * parent_uncertainty**2)
     lower = min(
         mean - _CONFIDENCE_Z * uncertainty,
         local_lower if local_lower is not None else mean,
@@ -321,9 +318,7 @@ def _build_estimate(
         mode=StrategyMode(str(identity["mode"])),
         direction=StrategyDirection(str(identity["direction"])),
         asset_class=str(identity["asset_class"]) if identity.get("asset_class") is not None else None,
-        profile=(
-            AssetProfileName(str(identity["profile"])) if identity.get("profile") is not None else None
-        ),
+        profile=(AssetProfileName(str(identity["profile"])) if identity.get("profile") is not None else None),
         symbol=str(identity["symbol"]) if identity.get("symbol") is not None else None,
         regime=MarketRegime(str(identity["regime"])) if identity.get("regime") is not None else None,
         parent_estimate_id=parent.estimate_id if parent is not None else None,

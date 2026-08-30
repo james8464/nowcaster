@@ -67,13 +67,13 @@ def test_contextual_repository_is_append_only_and_idempotent(tmp_path) -> None:
     assert database.scalar("select count(*) from asset_eligibility_evidence") == 1
 
 
-def test_schema_v13_initialization_is_idempotent(tmp_path) -> None:
+def test_schema_v14_initialization_is_idempotent(tmp_path) -> None:
     database = Database.from_url(f"duckdb:///{tmp_path / 'migration.duckdb'}")
     database.initialize()
     database.initialize()
 
-    assert database.schema_version() == 13
-    assert database.scalar("select count(*) from schema_versions where version = 13") == 1
+    assert database.schema_version() == 14
+    assert database.scalar("select count(*) from schema_versions where version = 14") == 1
 
 
 def test_repository_appends_remaining_contextual_evidence_types(tmp_path) -> None:

@@ -14,6 +14,8 @@ import pandas as pd
 
 from src.config.settings import InstrumentConfig, Settings
 from src.contextual.allocation import ContextualAllocation, allocate_contextual_weights
+from src.contextual.authentication import evidence_mirrors_match
+from src.contextual.backtest import realize_weighted_outcomes
 from src.contextual.eligibility import (
     AssetEligibilityEvidence,
     eligibility_inputs_from_bars,
@@ -27,6 +29,7 @@ from src.contextual.hierarchy import (
     blend_current_regime,
     build_hierarchical_estimates,
 )
+from src.contextual.market import observed_execution_inputs
 from src.contextual.portfolio import (
     PortfolioSelection,
     ResearchOpportunity,
@@ -46,6 +49,7 @@ from src.learning.search import (
     evaluate_contextual_candidate,
     generate_contextual_candidates,
 )
+from src.live_monitor.types import MarketDepth, MarketQuote, MarketStatusEvent
 from src.strategies.types import BarInterval, StrategyMode, canonical_hash
 
 EventSink = Callable[["ContextualProgress"], None]
@@ -134,6 +138,7 @@ class _OutcomeAssembly:
     dataset_hash: str
     protocol_hash: str
     source_datasets: Mapping[str, str]
+    source_cohorts: Mapping[str, Mapping[str, object]]
 
 
 class ContextualResearchService:
@@ -201,9 +206,10 @@ class ContextualResearchService:
         request: ContextualRunRequest,
         symbol: str,
         event_type: str,
-    ) -> tuple[str, dict[str, object]] | None:
+        maximum_age_seconds: float,
+    ) -> tuple[str, MarketQuote | MarketDepth | MarketStatusEvent] | None:
         frame = self.database.frame(
-            "select event_id, payload from live_market_events where provider = :provider and feed = :feed "
+            "select * from live_market_events where provider = :provider and feed = :feed "
             "and symbol = :symbol and event_type = :event_type and provider_time <= :as_of "
             "and processed_at <= :as_of order by provider_time desc, processed_at desc limit 1",
             {
@@ -216,7 +222,29 @@ class ContextualResearchService:
         )
         if frame.empty or not isinstance(frame.iloc[0]["payload"], dict):
             return None
-        return str(frame.iloc[0]["event_id"]), dict(frame.iloc[0]["payload"])
+        row = frame.iloc[0]
+        payload = row["payload"]
+        if canonical_hash(payload) != str(row["payload_hash"]):
+            return None
+        model = {"quote": MarketQuote, "depth": MarketDepth, "status": MarketStatusEvent}[event_type]
+        try:
+            event = model.model_validate(payload)
+        except (ValueError, TypeError):
+            return None
+        if (
+            (event.provider, event.feed, event.symbol) != (request.provider, request.feed, symbol)
+            or event.event_id != str(row["source_event_id"])
+            or canonical_hash((str(row["session_id"]), event.event_id)) != str(row["event_id"])
+            or any(
+                pd.Timestamp(row[name]) != pd.Timestamp(getattr(event, name))
+                for name in ("provider_time", "received_at", "processed_at")
+            )
+            or event.processed_at is None
+            or event.processed_at > request.as_of
+            or not 0 <= (request.as_of - event.provider_time).total_seconds() <= maximum_age_seconds
+        ):
+            return None
+        return str(row["event_id"]), event
 
     def _eligibility(
         self,
@@ -233,40 +261,31 @@ class ContextualResearchService:
             instrument=instrument,
             interval=request.interval,
             direction=direction,
+            research_size_notional=policy.research_probe_notional,
         )
-        quote = self._latest_live_payload(request, instrument.symbol, "quote")
-        depth = self._latest_live_payload(request, instrument.symbol, "depth")
-        updates: dict[str, object] = {}
-        source_ids: list[str] = [inputs.source_event_watermark]
-        if quote is not None:
-            quote_id, payload = quote
-            bid = float(payload["bid"])
-            ask = float(payload["ask"])
-            midpoint = (bid + ask) / 2.0
-            updates.update(
-                {
-                    "last_price": float(payload["last"]),
-                    "tick_size": float(payload["tick_size"]),
-                    "spread_bps": (ask - bid) / midpoint * 10_000 if midpoint > 0 else None,
-                }
-            )
-            source_ids.append(quote_id)
-        if depth is not None:
-            depth_id, payload = depth
-            levels = tuple(payload.get("bids", ())) + tuple(payload.get("asks", ()))
-            depth_notional = sum(float(item["price"]) * float(item["size"]) for item in levels)
-            updates.update(
-                {
-                    "depth_notional": depth_notional,
-                    "estimated_price_impact_bps": 0.0,
-                }
-            )
-            source_ids.append(depth_id)
-        if quote is not None and depth is not None:
-            updates["liquidity_grade"] = "observed"
-        if updates:
-            updates["source_event_watermark"] = canonical_hash(source_ids)
-            inputs = inputs.model_copy(update=updates)
+        quote = self._latest_live_payload(request, instrument.symbol, "quote", policy.maximum_data_age_seconds)
+        depth = self._latest_live_payload(request, instrument.symbol, "depth", policy.maximum_data_age_seconds)
+        rules = self._latest_live_payload(request, instrument.symbol, "status", 24 * 60 * 60)
+        if quote is not None and depth is not None and rules is not None:
+            try:
+                inputs = observed_execution_inputs(
+                    inputs,
+                    quote[1],
+                    depth[1],
+                    rules[1],
+                    probe_notional=policy.research_probe_notional,
+                )
+            except (ValueError, TypeError, KeyError, ArithmeticError):
+                pass  # Preserve missing-evidence gates; malformed books never supply an optimistic substitute.
+            else:
+                inputs = type(inputs).model_validate(
+                    {
+                        **inputs.model_dump(),
+                        "source_event_watermark": canonical_hash(
+                            [inputs.source_event_watermark, quote[0], depth[0], rules[0]]
+                        ),
+                    }
+                )
         policy_hash = canonical_hash({"profile": instrument.profile.value, "policy": policy.model_dump(mode="json")})
         return evaluate_asset_eligibility(inputs, policy, policy_hash)
 
@@ -338,6 +357,7 @@ class ContextualResearchService:
         sink: EventSink | None,
         *,
         identity: tuple[str, str] | None = None,
+        persist: bool = True,
     ) -> UniverseScreenResult:
         self._validate_request(request)
         bars_by_symbol = {symbol: self._bars(request, symbol) for symbol in request.symbols}
@@ -350,7 +370,8 @@ class ContextualResearchService:
             assert instrument.profile is not None
             for direction in self.config.profiles[instrument.profile].allowed_directions:
                 evidence = self._eligibility(request, instrument, bars_by_symbol[symbol], direction)
-                self.repository.append_eligibility(evidence)
+                if persist:
+                    self.repository.append_eligibility(evidence)
                 eligibility.append(evidence)
         self._emit(sink, "eligibility", f"screened {len(eligibility)} asset-direction contexts")
 
@@ -364,7 +385,8 @@ class ContextualResearchService:
                 dataset_hash,
                 protocol_hash,
             )
-            self.repository.append_regime_posterior(record)
+            if persist:
+                self.repository.append_regime_posterior(record)
             posteriors[symbol] = MappingProxyType(dict(record["probabilities"]))
             posterior_ids.append(str(record["posterior_hash"]))
         self._emit(sink, "regimes", f"inferred {len(posteriors)} causal regime posteriors")
@@ -398,7 +420,7 @@ class ContextualResearchService:
         request: ContextualRunRequest,
     ) -> pd.DataFrame | None:
         runs = self.database.frame(
-            "select dataset_hash, strategy_id, run_timestamp, metrics from strategy_runs "
+            "select dataset_hash, strategy_id, strategy_version, run_timestamp, metrics from strategy_runs "
             "where symbol = :symbol and interval = :interval and mode = :mode and status = 'evaluated'",
             {"symbol": symbol, "interval": request.interval.value, "mode": request.mode.value},
         )
@@ -414,6 +436,9 @@ class ContextualResearchService:
             ],
             dropna=True,
         ):
+            effective = pd.Timestamp(effective_at)
+            if pd.isna(effective) or effective.tzinfo is None or effective > request.as_of:
+                continue
             metrics = tuple(item for item in group["metrics"] if isinstance(item, dict))
             if not metrics:
                 continue
@@ -428,6 +453,25 @@ class ContextualResearchService:
                 or not isinstance(index_hash, str)
                 or not isinstance(protocol, str)
                 or not members
+                or set(group["strategy_id"].astype(str)) != set(members)
+                or any(
+                    str(row.strategy_id) not in self._specs
+                    or str(row.strategy_version) != self._specs[str(row.strategy_id)].deterministic_version
+                    or pd.Timestamp(row.run_timestamp) > effective
+                    for row in group.itertuples(index=False)
+                )
+                or any(
+                    any(
+                        item.get(key) != first.get(key)
+                        for key in (
+                            "cohort_members",
+                            "contextual_outcome_count",
+                            "contextual_outcome_index_hash",
+                            "contextual_protocol_hash",
+                        )
+                    )
+                    for item in metrics
+                )
                 or any(str(item["dataset_hash"]) != dataset for _, item in group.iterrows())
             ):
                 continue
@@ -446,8 +490,23 @@ class ContextualResearchService:
                 ),
                 key=lambda item: item["outcome_id"],
             )
-            if len(index) == count and canonical_hash(index) == index_hash:
-                valid.append((pd.Timestamp(effective_at).to_pydatetime(), selected))
+            if (
+                len(index) == count
+                and canonical_hash(index) == index_hash
+                and not selected.empty
+                and (selected["outcome_available_at"] <= effective).all()
+            ):
+                selected = selected.copy()
+                selected.attrs["source_cohort"] = {
+                    "cohort_id": str(_cohort_id),
+                    "effective_at": effective.isoformat(),
+                    "member_versions": {
+                        str(item["strategy_id"]): str(item["strategy_version"]) for item in first["cohort_members"]
+                    },
+                    "outcome_index_hash": index_hash,
+                    "protocol_hash": protocol,
+                }
+                valid.append((effective.to_pydatetime(), selected))
         if not valid:
             raise ValueError(f"{symbol} has strategy runs but no complete contextual outcome cohort")
         return max(valid, key=lambda item: item[0])[1]
@@ -455,7 +514,7 @@ class ContextualResearchService:
     def _outcomes(self, request: ContextualRunRequest) -> _OutcomeAssembly:
         frame = self.database.frame(
             "select * from contextual_outcomes where provider = :provider and feed = :feed "
-            "and interval = :interval and mode = :mode and outcome_available_at <= :as_of",
+            "and interval = :interval and mode = :mode",
             {
                 "provider": request.provider,
                 "feed": request.feed,
@@ -469,34 +528,60 @@ class ContextualResearchService:
             raise ValueError("no authenticated contextual outcomes are available for this request")
         for column in ("decision_timestamp", "outcome_available_at", "created_at"):
             frame[column] = pd.to_datetime(frame[column], utc=True)
-        authenticated = frame.apply(
-            lambda row: (
-                isinstance(row["evidence"], dict)
-                and canonical_hash(row["evidence"]) == str(row["content_hash"])
-                and str(row["evidence"].get("source_decision_hash")) == str(row["source_decision_hash"])
-            ),
-            axis=1,
-        )
-        if not authenticated.all():
-            raise ValueError("contextual outcome authentication failed")
-
+        # Authenticate the complete published source cohort before taking any historical prefix.
+        # Publication availability and outcome availability are separate clocks.
         selected_by_symbol: dict[str, pd.DataFrame] = {}
         source_datasets: dict[str, str] = {}
+        source_cohorts: dict[str, Mapping[str, object]] = {}
         for symbol in request.symbols:
             candidate = frame.loc[frame["symbol"].astype(str) == symbol].copy()
             if candidate.empty:
                 raise ValueError(f"no contextual outcome cohort is available for {symbol}")
             complete = self._complete_run_context(symbol, candidate, request)
             if complete is None:
+                candidate = candidate.loc[candidate["outcome_available_at"] <= request.as_of]
                 group_scores = []
                 for key, group in candidate.groupby(
                     ["dataset_hash", "protocol_hash", "code_hash", "config_hash"], sort=True
                 ):
                     group_scores.append((group["created_at"].max(), group["outcome_available_at"].max(), key, group))
+                if not group_scores:
+                    raise ValueError(f"no available contextual outcome cohort for {symbol}")
                 complete = max(group_scores, key=lambda item: (item[0], item[1], item[2]))[3]
             selected_by_symbol[symbol] = complete
             source_datasets[symbol] = str(complete.iloc[0]["dataset_hash"])
-        selected = pd.concat(tuple(selected_by_symbol.values()), ignore_index=True)
+            source_cohorts[symbol] = dict(complete.attrs.get("source_cohort", {}))
+        frame = pd.concat(tuple(selected_by_symbol.values()), ignore_index=True)
+        for index, row in frame.iterrows():
+            payload = row["evidence"]
+            try:
+                if not isinstance(payload, dict):
+                    raise ValueError("missing outcome payload")
+                authenticated = self.repository.row_for_outcome(payload)
+                for name, expected in authenticated.items():
+                    if name in {"source", "source_version", "created_at", "evidence"}:
+                        continue
+                    observed = row[name]
+                    if isinstance(expected, datetime):
+                        matches = pd.Timestamp(expected) == pd.Timestamp(observed)
+                    elif isinstance(expected, float):
+                        matches = math.isfinite(float(observed)) and math.isclose(
+                            expected, float(observed), rel_tol=1e-6, abs_tol=1e-9
+                        )
+                    else:
+                        matches = expected == observed
+                    if not matches:
+                        raise ValueError(f"outcome mirror mismatch: {name}")
+                spec = self._specs.get(str(payload["strategy_id"]))
+                if spec is None or payload.get("strategy_version") != spec.deterministic_version:
+                    raise ValueError("outcome strategy version does not match the configured definition")
+            except (ValueError, TypeError, KeyError) as error:
+                raise ValueError("contextual outcome authentication failed") from error
+            # Use the authenticated doubles, not rounded SQL FLOAT mirrors, for reproducible mathematics.
+            for name in ("gross_return", "modeled_cost", "net_return"):
+                frame.at[index, name] = authenticated[name]
+
+        selected = frame.loc[frame["outcome_available_at"] <= request.as_of].copy()
         protocols = set(selected["protocol_hash"].astype(str))
         code_hashes = set(selected["code_hash"].astype(str))
         config_hashes = set(selected["config_hash"].astype(str))
@@ -520,6 +605,7 @@ class ContextualResearchService:
                 else 0.0
             )
         )
+        selected["holding_horizon_bars"] = selected["evidence"].map(lambda value: value.get("holding_horizon_bars", 1))
         known = set(self._specs)
         selected = selected.loc[selected["strategy_id"].astype(str).isin(known)].copy()
         if selected.empty:
@@ -529,6 +615,7 @@ class ContextualResearchService:
             dataset_hash=dataset_hash,
             protocol_hash=next(iter(protocols)),
             source_datasets=MappingProxyType(source_datasets),
+            source_cohorts=MappingProxyType(source_cohorts),
         )
 
     @staticmethod
@@ -542,17 +629,34 @@ class ContextualResearchService:
         returns.index = pd.DatetimeIndex(pd.to_datetime(returns.index, utc=True))
         return returns
 
-    def _previous_weights(self, context_hash: str, strategy_ids: Sequence[str]) -> dict[str, float]:
+    def _previous_weights(self, context_hash: str, strategy_ids: Sequence[str], as_of: datetime) -> dict[str, float]:
         frame = self.database.frame(
-            "select allocation_id, strategy_id, weight, effective_at from contextual_weights "
-            "where context_hash = :context_hash order by effective_at desc",
-            {"context_hash": context_hash},
+            "select * from contextual_weights where context_hash = :context_hash "
+            "and effective_at < :as_of order by effective_at desc",
+            {"context_hash": context_hash, "as_of": as_of},
         )
         if frame.empty:
             return {item: 0.0 for item in strategy_ids}
         latest = frame.iloc[0]["allocation_id"]
         selected = frame.loc[frame["allocation_id"] == latest]
-        observed = {str(row.strategy_id): float(row.weight) for row in selected.itertuples(index=False)}
+        observed: dict[str, float] = {}
+        for row in selected.itertuples(index=False):
+            if (
+                not evidence_mirrors_match(row._asdict(), weight_record=True)
+                or row.evidence != selected.iloc[0]["evidence"]
+                or canonical_hash(
+                    {"allocation_id": row.evidence["allocation"]["allocation_id"], "context_hash": context_hash}
+                )
+                != str(row.allocation_id)
+                or canonical_hash({"allocation_id": str(row.allocation_id), "strategy_id": str(row.strategy_id)})
+                != str(row.contextual_weight_id)
+            ):
+                raise ValueError("prior contextual weight authentication failed")
+            observed[str(row.strategy_id)] = float(row.evidence["allocation"]["weights"][str(row.strategy_id)])
+        if len(observed) != len(selected) or set(observed) != set(
+            selected.iloc[0]["evidence"]["allocation"]["weights"]
+        ):
+            raise ValueError("prior contextual allocation is incomplete")
         return {item: observed.get(item, 0.0) for item in strategy_ids}
 
     @staticmethod
@@ -600,6 +704,7 @@ class ContextualResearchService:
             "context_hash": key.context_hash,
             "dataset_hash": assembly.dataset_hash,
             "source_dataset_hash": assembly.source_datasets[instrument.symbol],
+            "source_cohort": dict(assembly.source_cohorts[instrument.symbol]),
             "protocol_hash": assembly.protocol_hash,
             "provider": request.provider,
             "feed": request.feed,
@@ -645,24 +750,68 @@ class ContextualResearchService:
             series.append(returns)
         return pd.concat(series, axis=1).sort_index(kind="stable")
 
+    def _prior_drift(self, context_hash: str, as_of: datetime) -> tuple[str, str | None]:
+        frame = self.database.frame(
+            "select * from contextual_drift_events where context_hash = :context_hash "
+            "and effective_at <= :as_of order by effective_at desc, created_at desc limit 128",
+            {"context_hash": context_hash, "as_of": as_of},
+        )
+        if frame.empty:
+            return "stable", None
+        candidates = []
+        severity = {"stable": 0, "warning": 1, "unavailable": 2, "confirmed": 3}
+        for row in frame.to_dict("records"):
+            if not evidence_mirrors_match(row):
+                return "unavailable", None
+            payload = row["evidence"]
+            if pd.Timestamp(row["effective_at"]) == as_of and payload.get("reason") in {
+                "authenticated_context_baseline",
+                "prior_drift_quarantine_preserved",
+            }:
+                continue  # Do not consume this same assessment's own idempotent baseline.
+            status = str(row["status"])
+            candidates.append(
+                (severity.get(status, 2), pd.Timestamp(row["effective_at"]), str(row["content_hash"]), status)
+            )
+        if not candidates:
+            return "stable", None
+        _, _, content_hash, status = max(candidates)
+        return status, content_hash
+
     def evaluate_contexts(
         self,
         request: ContextualRunRequest,
         sink: EventSink | None = None,
+        *,
+        _replay_assembly: _OutcomeAssembly | None = None,
+        _replay_previous: Mapping[str, ContextualAllocation] | None = None,
     ) -> ContextualRunResult:
         self._validate_request(request)
-        assembly = self._outcomes(request)
+        persist = _replay_assembly is None
+        assembly = (
+            self._outcomes(request)
+            if persist
+            else replace(
+                _replay_assembly,
+                frame=_replay_assembly.frame.loc[
+                    (_replay_assembly.frame["outcome_available_at"] <= request.as_of)
+                    & (_replay_assembly.frame["decision_timestamp"] < request.as_of)
+                ].copy(),
+            )
+        )
         screen = self._screen(
             request,
             sink,
             identity=(assembly.dataset_hash, assembly.protocol_hash),
+            persist=persist,
         )
         hierarchy = build_hierarchical_estimates(
             assembly.frame,
             request.as_of,
             self.config.hierarchy_prior_strengths,
         )
-        self.repository.append_estimates(hierarchy.estimates, effective_at=request.as_of)
+        if persist:
+            self.repository.append_estimates(hierarchy.estimates, effective_at=request.as_of)
         self._emit(sink, "hierarchy", f"built {len(hierarchy.estimates)} partially pooled estimates")
 
         eligibility = {(item.symbol, item.direction): item for item in screen.eligibility}
@@ -713,7 +862,15 @@ class ContextualResearchService:
                     blended,
                     self._synchronized_returns(directional),
                     self._hierarchical_prior(blended),
-                    self._previous_weights(str(context["context_hash"]), strategy_ids),
+                    (
+                        self._previous_weights(str(context["context_hash"]), strategy_ids, request.as_of)
+                        if persist
+                        else (
+                            dict(_replay_previous[f"{symbol}:{direction.value}"].weights)
+                            if _replay_previous and f"{symbol}:{direction.value}" in _replay_previous
+                            else {}
+                        )
+                    ),
                     families,
                     self.config.allocation,
                     request.as_of,
@@ -723,14 +880,19 @@ class ContextualResearchService:
                 allocations[key] = allocation
                 blended_by_context[key] = MappingProxyType(blended)
                 context_records[key] = context
-                self.repository.append_covariance(allocation.covariance, context)
-                self.repository.append_allocation(allocation, context)
+                if persist:
+                    self.repository.append_covariance(allocation.covariance, context)
+                    self.repository.append_allocation(allocation, context)
         if not allocations:
             raise ValueError("no configured asset-direction context has authenticated strategy outcomes")
         self._emit(sink, "covariance", f"validated {len(allocations)} strategy covariance contexts")
         self._emit(sink, "allocation", f"allocated {len(allocations)} strategy contexts")
 
         opportunities: list[ResearchOpportunity] = []
+        prior_drift = {
+            key: self._prior_drift(str(context["context_hash"]), request.as_of)
+            for key, context in context_records.items()
+        }
         for key, allocation in allocations.items():
             symbol, direction_value = key.split(":", 1)
             direction = StrategyDirection(direction_value)
@@ -776,7 +938,11 @@ class ContextualResearchService:
                     family=self._specs[dominant].family,
                     decision_time=request.as_of,
                     horizon_minutes=max(int(INTERVAL_DURATION[request.interval].total_seconds() // 60), 1),
-                    eligible=evidence.state is EligibilityState.ELIGIBLE and allocation.status == "allocated",
+                    eligible=(
+                        evidence.state is EligibilityState.ELIGIBLE
+                        and allocation.status == "allocated"
+                        and prior_drift[key][0] == "stable"
+                    ),
                     lower_net_edge=float(weighted_lower),
                     liquidity_quality=evidence.quality_score,
                     probability_lower=probability,
@@ -809,6 +975,8 @@ class ContextualResearchService:
         )
         portfolio_ranks = {item.decision_hash: rank for rank, item in enumerate(ranked_opportunities, start=1)}
         for opportunity in opportunities:
+            if not persist:
+                continue
             selected = selected_by_hash.get(opportunity.decision_hash)
             exclusion_keys = (
                 opportunity.symbol,
@@ -839,13 +1007,18 @@ class ContextualResearchService:
                 }
             )
         for key, allocation in allocations.items():
+            if not persist:
+                continue
             context = context_records[key]
             self.repository.append_drift_event(
                 {
                     "context_hash": context["context_hash"],
                     "effective_at": request.as_of,
-                    "status": "stable",
-                    "reason": "authenticated_context_baseline",
+                    "status": prior_drift[key][0],
+                    "reason": "authenticated_context_baseline"
+                    if prior_drift[key][0] == "stable"
+                    else "prior_drift_quarantine_preserved",
+                    "previous_drift_hash": prior_drift[key][1],
                     "dataset_hash": assembly.dataset_hash,
                     "source_dataset_hash": context["source_dataset_hash"],
                     "protocol_hash": assembly.protocol_hash,
@@ -880,97 +1053,172 @@ class ContextualResearchService:
         request: ContextualRunRequest,
         sink: EventSink | None = None,
     ) -> ContextualBacktestResult:
+        # Pin and authenticate the full source once. Every fit below receives only
+        # outcomes resolved by that decision; replay never publishes live receipts.
+        self._validate_request(request)
         assembly = self._outcomes(request)
-        timestamps = tuple(sorted(pd.to_datetime(assembly.frame["outcome_available_at"], utc=True).unique()))
-        if len(timestamps) < 40:
-            raise ValueError("contextual portfolio backtest requires at least 40 resolved timestamps")
-        cutoff_indices = np.linspace(20, len(timestamps) - 2, 8, dtype=int)
-        cutoffs = tuple(pd.Timestamp(timestamps[index]).to_pydatetime() for index in cutoff_indices)
-        net_returns: list[float] = []
-        gross_equity = 1.0
-        net_equity = 1.0
-        curve: list[dict[str, object]] = []
-        for cutoff in cutoffs:
-            fold_request = replace(request, as_of=cutoff)
-            result = self.evaluate_contexts(fold_request)
-            next_rows = assembly.frame.loc[
-                pd.to_datetime(assembly.frame["outcome_available_at"], utc=True) > pd.Timestamp(cutoff)
-            ].sort_values("outcome_available_at", kind="stable")
-            realized = 0.0
+        timestamps = tuple(sorted(assembly.frame["decision_timestamp"].unique()))
+        if len(timestamps) < 60:
+            raise ValueError("contextual portfolio backtest requires at least 60 resolved timestamps")
+        cutoffs = tuple(pd.Timestamp(value).to_pydatetime() for value in timestamps[40:])
+        final_start = cutoffs[int(len(cutoffs) * 0.80)]
+        policy = self.settings.deep_research
+        fee = max(
+            policy.crypto_fee_bps
+            if self._instrument(symbol, request).asset_class == "crypto"
+            else policy.equity_fee_bps
+            for symbol in request.symbols
+        )
+        rebalance_rate = (fee + policy.half_spread_bps + policy.slippage_bps) / 10_000
+        previous_positions = {}
+        previous_allocations = {}
+        gross_equity = net_equity = peak = 1.0
+        periods = []
+        for index, cutoff in enumerate(cutoffs):
+            result = self.evaluate_contexts(
+                replace(request, as_of=cutoff),
+                _replay_assembly=assembly,
+                _replay_previous=previous_allocations,
+            )
+            positions = {}
             for selected in result.portfolio.selected:
-                match = next_rows.loc[next_rows["symbol"].astype(str) == selected.opportunity.symbol]
-                if not match.empty:
-                    sign = 1.0 if selected.opportunity.direction is StrategyDirection.LONG else -1.0
-                    realized += selected.weight * sign * float(match.iloc[0]["net_return"])
-            net_returns.append(realized)
-            gross_equity *= 1.0 + realized
-            net_equity *= 1.0 + realized
-            peak = max((float(item["net_equity"]) for item in curve), default=1.0)
-            curve.append(
+                symbol, direction = selected.opportunity.symbol, selected.opportunity.direction.value
+                allocation = result.allocations[f"{symbol}:{direction}"]
+                for strategy_id, weight in allocation.weights.items():
+                    if weight > 0:
+                        positions[(symbol, direction, strategy_id)] = selected.weight * weight
+            realized = realize_weighted_outcomes(
+                positions,
+                assembly.frame,
+                cutoff,
+                INTERVAL_DURATION[request.interval],
+                previous_positions,
+                rebalance_rate,
+            )
+            # Liquidate at the end, including the cost of returning to cash.
+            closing_turnover = sum(positions.values()) if index == len(cutoffs) - 1 else 0.0
+            costs = realized.costs + closing_turnover * rebalance_rate
+            net_return = realized.gross_return - costs
+            gross_equity *= 1 + realized.gross_return
+            net_equity *= 1 + net_return
+            peak = max(peak, net_equity)
+            periods.append(
                 {
-                    "timestamp": cutoff,
-                    "net_return": realized,
+                    "timestamp": cutoff.isoformat(),
+                    "phase": "retrospective_holdout" if cutoff >= final_start else "walk_forward_development",
+                    "gross_return": realized.gross_return,
+                    "net_return": net_return,
+                    "costs": costs,
+                    "source_costs": realized.source_costs,
+                    "turnover": realized.turnover + closing_turnover,
+                    "gross_exposure": realized.gross_exposure,
                     "gross_equity": gross_equity,
                     "net_equity": net_equity,
-                    "drawdown": net_equity / max(peak, net_equity) - 1.0,
-                    "gross_exposure": result.portfolio.gross_weight,
+                    "drawdown": net_equity / peak - 1,
+                    "decision_hash": result.evidence_hash,
                 }
             )
-        maximum_drawdown = min((float(item["drawdown"]) for item in curve), default=0.0)
-        protocol_hash = canonical_hash(
-            {"contextual_backtest": 1, "source_protocol": assembly.protocol_hash, "folds": cutoffs}
-        )
+            previous_positions = positions
+            previous_allocations = result.allocations
+            if sink is not None:
+                sink(
+                    ContextualProgress(
+                        "portfolio",
+                        (index + 1) / len(cutoffs),
+                        f"replayed {index + 1} of {len(cutoffs)} chronological decisions",
+                    )
+                )
+
+        def metrics(rows, multiplier=1.0):
+            returns = [float(row["gross_return"]) - multiplier * float(row["costs"]) for row in rows]
+            if any(value <= -1 for value in returns):
+                return {"observations": len(rows), "net_return": -1.0, "insolvent": True}
+            return {"observations": len(rows), "net_return": float(np.prod(1 + np.asarray(returns)) - 1)}
+
+        protocol = {
+            "contextual_backtest": 2,
+            "source_protocol": assembly.protocol_hash,
+            "source_datasets": dict(assembly.source_datasets),
+            "policy_hash": canonical_hash(self.config.model_dump(mode="json")),
+            "source_index_hash": canonical_hash(
+                sorted(
+                    assembly.frame[["outcome_id", "content_hash"]].to_dict("records"),
+                    key=lambda row: row["outcome_id"],
+                )
+            ),
+            "warmup_timestamps": 40,
+            "final_start": final_start.isoformat(),
+            "rebalance_cost_rate": rebalance_rate,
+            "holding_horizon_bars": 1,
+            "directional_returns_already_signed": True,
+            "missing_execution_policy": "reject_replay",
+            "period_index_hash": canonical_hash(periods),
+        }
+        protocol_hash = canonical_hash(protocol)
         run_id = canonical_hash({"request": asdict(request), "protocol_hash": protocol_hash})
-        created_at = request.as_of
-        dates: dict[object, dict[str, object]] = {}
-        for item in curve:
-            dates[pd.Timestamp(item["timestamp"]).date()] = item
+        maximum_drawdown = min(float(row["drawdown"]) for row in periods)
+        common = {"source": "contextual_walk_forward", "source_version": "2", "created_at": request.as_of}
+        development = [row for row in periods if row["phase"] == "walk_forward_development"]
+        final = [row for row in periods if row["phase"] == "retrospective_holdout"]
+        self.database.upsert(
+            "backtest_runs",
+            [
+                {
+                    "backtest_run_id": run_id,
+                    "strategy_name": "contextual_portfolio",
+                    "symbol": ",".join(request.symbols),
+                    "asset_class": "multi_asset",
+                    "protocol": {**protocol, "protocol_hash": protocol_hash},
+                    "development_metrics": metrics(development),
+                    "final_test_metrics": {**metrics(final), "independent_sealed_test": False},
+                    "full_metrics": {**metrics(periods), "maximum_drawdown": maximum_drawdown},
+                    "robustness": {
+                        "nested_walk_forward": False,
+                        "walk_forward_refit": True,
+                        "sealed_rows": False,
+                        "replay_only": True,
+                        "policy_frozen": True,
+                        "all_resolved_decisions_after_warmup": True,
+                        "historical_executability_required": True,
+                        "periods": periods,
+                    },
+                    "readiness": "research_only",
+                    "readiness_score": 0.0,
+                    "readiness_reasons": [
+                        "contextual_backtest_does_not_authorize_live_trading",
+                        "retrospective_holdout_is_not_independent_forward_evidence",
+                    ],
+                    "development_start": cutoffs[0].date(),
+                    "development_end": pd.Timestamp(development[-1]["timestamp"]).date(),
+                    "final_test_start": final_start.date(),
+                    "final_test_end": cutoffs[-1].date(),
+                    "status": "completed",
+                    **common,
+                }
+            ],
+        )
+        dates = {}
+        for row in periods:
+            dates.setdefault(pd.Timestamp(row["timestamp"]).date(), []).append(row)
         curve_rows = []
-        for curve_date, item in sorted(dates.items()):
+        for date, rows in sorted(dates.items()):
             curve_rows.append(
                 {
-                    "curve_id": canonical_hash([run_id, curve_date]),
+                    "curve_id": canonical_hash([run_id, date]),
                     "backtest_run_id": run_id,
-                    "curve_date": curve_date,
-                    "phase": "outer_walk_forward",
-                    "gross_return": float(item["net_return"]),
-                    "net_return": float(item["net_return"]),
-                    "gross_equity": float(item["gross_equity"]),
-                    "net_equity": float(item["net_equity"]),
-                    "drawdown": float(item["drawdown"]),
-                    "gross_exposure": float(item["gross_exposure"]),
-                    "turnover": 0.0,
-                    "costs": 0.0,
-                    "source": "contextual_walk_forward",
-                    "source_version": "1",
-                    "created_at": created_at,
+                    "curve_date": date,
+                    "phase": rows[-1]["phase"],
+                    "gross_return": float(np.prod([1 + float(row["gross_return"]) for row in rows]) - 1),
+                    "net_return": metrics(rows)["net_return"],
+                    "gross_equity": rows[-1]["gross_equity"],
+                    "net_equity": rows[-1]["net_equity"],
+                    "drawdown": min(float(row["drawdown"]) for row in rows),
+                    "gross_exposure": float(np.mean([row["gross_exposure"] for row in rows])),
+                    "turnover": sum(float(row["turnover"]) for row in rows),
+                    "costs": sum(float(row["costs"]) for row in rows),
+                    **common,
                 }
             )
-        first_date = pd.Timestamp(cutoffs[0]).date()
-        last_date = pd.Timestamp(cutoffs[-1]).date()
-        run_row = {
-            "backtest_run_id": run_id,
-            "strategy_name": "contextual_portfolio",
-            "symbol": ",".join(request.symbols),
-            "asset_class": "multi_asset",
-            "protocol": {"protocol_hash": protocol_hash, "source_protocol": assembly.protocol_hash},
-            "development_metrics": {"observations": len(net_returns)},
-            "final_test_metrics": {"net_return": sum(net_returns)},
-            "full_metrics": {"net_return": sum(net_returns), "maximum_drawdown": maximum_drawdown},
-            "robustness": {"nested_walk_forward": True, "sealed_rows": True},
-            "readiness": "research_only",
-            "readiness_score": 0.0,
-            "readiness_reasons": ["contextual_backtest_does_not_authorize_live_trading"],
-            "development_start": first_date,
-            "development_end": last_date,
-            "final_test_start": last_date,
-            "final_test_end": last_date,
-            "status": "completed",
-            "source": "contextual_walk_forward",
-            "source_version": "1",
-            "created_at": created_at,
-        }
-        self.database.upsert("backtest_runs", [run_row])
         self.database.upsert("backtest_curve", curve_rows)
         for multiplier in (1.0, 2.0, 3.0):
             self.database.upsert(
@@ -981,22 +1229,18 @@ class ContextualResearchService:
                         "backtest_run_id": run_id,
                         "scenario": f"costs_x{int(multiplier)}",
                         "parameters": {"cost_multiplier": multiplier},
-                        "metrics": {"net_return": sum(net_returns)},
-                        "source": "contextual_walk_forward",
-                        "source_version": "1",
-                        "created_at": created_at,
+                        "metrics": metrics(periods, multiplier),
+                        **common,
                     }
                 ],
             )
-        if sink is not None:
-            self._emit(sink, "portfolio", "completed nested contextual portfolio backtest")
         return ContextualBacktestResult(
             backtest_run_id=run_id,
             protocol_hash=protocol_hash,
-            observations=len(net_returns),
-            net_return=float(sum(net_returns)),
+            observations=len(periods),
+            net_return=metrics(periods)["net_return"],
             maximum_drawdown=maximum_drawdown,
-            status="all_cash" if not any(net_returns) else "completed",
+            status="completed" if any(row["gross_exposure"] > 0 for row in periods) else "all_cash",
         )
 
     def learn_contextual(
@@ -1036,7 +1280,7 @@ class ContextualResearchService:
         candidates = generate_contextual_candidates(space, seed=seed, budget=evaluation_budget)
         protocol_hash = canonical_hash(
             {
-                "contextual_search_version": 1,
+                "contextual_search_version": 2,
                 "dataset_hash": assembly.dataset_hash,
                 "source_protocol_hash": assembly.protocol_hash,
                 "source_datasets": dict(assembly.source_datasets),
@@ -1045,6 +1289,8 @@ class ContextualResearchService:
                 "sealed_final_start": sealed_start,
                 "development_data_through": development_as_of,
                 "seed": seed,
+                "accounting": "shared_cash_closed_execution_outcomes_v2",
+                "rebalance_cost_rate": 0.0017,
             }
         )
         experiment = ContextualLearningExperiment(

@@ -3,6 +3,13 @@ import Observation
 import CryptoKit
 import Darwin
 
+enum LiveMonitorSupervision {
+    static func shouldRestart(lastEventAt: Date, now: Date, hasReceivedReady: Bool) -> Bool {
+        let timeout: TimeInterval = hasReceivedReady ? 45 : 180
+        return now.timeIntervalSince(lastEventAt) > timeout
+    }
+}
+
 enum LiveMonitorHealthAggregation {
     static func aggregate(_ values: some Sequence<LiveMonitorStatus>) -> LiveMonitorStatus {
         let priority: [LiveMonitorStatus] = [.failed, .stale, .reconnecting, .warming, .healthy, .paused, .stopped]
@@ -24,6 +31,7 @@ final class LiveMonitorController {
     @ObservationIgnored private let notifications = NotificationService()
     @ObservationIgnored private var inputHandle: FileHandle?
     @ObservationIgnored private var lastEventAt: Date?
+    @ObservationIgnored private var hasReceivedReady = false
     @ObservationIgnored private var restartConfiguration: LiveMonitorConfiguration?
     @ObservationIgnored private var restartCredentials: BrokerCredentials?
     @ObservationIgnored private var restartCount = 0
@@ -31,7 +39,6 @@ final class LiveMonitorController {
     @ObservationIgnored private var quietEntryNotifications = false
     @ObservationIgnored private var enabledNotificationCategories = Set(LiveNotificationCategory.allCases)
     @ObservationIgnored private var providerStatuses: [String: LiveMonitorStatus] = [:]
-    @ObservationIgnored private let supervisorTimeout: TimeInterval = 45
 
     var isRunning: Bool { process?.isRunning == true }
     var latestEvent: LiveMonitorEvent? { events.last }
@@ -76,6 +83,7 @@ final class LiveMonitorController {
             restartCredentials = credentials
             intentionalStop = false
             lastEventAt = .now
+            hasReceivedReady = false
             status = .warming
             errorMessage = nil
             diagnosticTask = Task.detached(priority: .utility) {
@@ -106,7 +114,7 @@ final class LiveMonitorController {
                     try? await Task.sleep(for: .seconds(5))
                     guard let self, self.isRunning else { return }
                     if let lastEventAt = self.lastEventAt,
-                       Date.now.timeIntervalSince(lastEventAt) > self.supervisorTimeout {
+                       LiveMonitorSupervision.shouldRestart(lastEventAt: lastEventAt, now: .now, hasReceivedReady: self.hasReceivedReady) {
                         self.errorMessage = "The live engine stopped sending health events and will restart."
                         self.process?.terminate()
                         return
@@ -159,7 +167,9 @@ final class LiveMonitorController {
         lastEventAt = .now
         if events.count > 2_000 { events.removeFirst(events.count - 2_000) }
         switch event.type {
-        case .ready: status = LiveMonitorHealthAggregation.aggregate(Array(providerStatuses.values))
+        case .ready:
+            hasReceivedReady = true
+            status = LiveMonitorHealthAggregation.aggregate(Array(providerStatuses.values))
         case .heartbeat:
             updateProviderHealth(with: event)
         case .providerHealth:

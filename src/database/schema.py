@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     CheckConstraint,
     Column,
@@ -1259,7 +1260,7 @@ live_market_events = Table(
     Column("provider_time", DateTime(timezone=True), nullable=False),
     Column("received_at", DateTime(timezone=True), nullable=False),
     Column("processed_at", DateTime(timezone=True), nullable=False),
-    Column("sequence", Integer),
+    Column("sequence", BigInteger),
     Column("payload_hash", String, nullable=False),
     Column("payload", JSON, nullable=False),
     *common_columns(),

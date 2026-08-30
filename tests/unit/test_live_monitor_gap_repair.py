@@ -4,10 +4,12 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+import pytest
+
 from src.live_monitor import command
 from src.live_monitor.command import MonitorBootstrap
 from src.live_monitor.providers import ProviderSymbolMetadata
-from src.live_monitor.types import MarketBar, ProviderHealthEvent
+from src.live_monitor.types import MarketBar, MarketDepth, ProviderHealthEvent
 
 START = datetime(2026, 8, 26, 14, 0, tzinfo=UTC)
 
@@ -92,3 +94,61 @@ def test_failed_gap_repair_retains_watermark_and_retries_before_health_recovers(
         START + timedelta(minutes=3),
         START + timedelta(minutes=4),
     ]
+
+
+@pytest.mark.parametrize("unavailable", [False, True])
+def test_live_stream_captures_one_verified_book_per_new_minute_and_never_fakes_missing_depth(monkeypatch, unavailable):
+    calls = []
+
+    class Adapter:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def stream(self, _url, _symbols):
+            yield _bar(0)
+            yield _bar(0)  # Duplicate/revision must not spend another REST request.
+            yield _bar(1)
+
+    def book(symbol):
+        calls.append(symbol)
+        if unavailable:
+            raise ValueError("book unavailable")
+        return MarketDepth(
+            provider="binance",
+            feed="spot",
+            symbol=symbol,
+            provider_time=START,
+            received_at=START,
+            snapshot_verified=True,
+            first_update_id=10,
+            final_update_id=10,
+            bids=({"price": "99", "size": "100"},),
+            asks=({"price": "101", "size": "100"},),
+        )
+
+    monkeypatch.setattr(command, "BinanceSpotAdapter", Adapter)
+    monkeypatch.setattr(command, "load_binance_depth_snapshot", book)
+    bootstrap = MonitorBootstrap(
+        schema_version=1,
+        session_id="book-test",
+        database_url="duckdb:///:memory:",
+        crypto=("BTCUSDT",),
+        config_hash="c" * 64,
+        cohort_hash="0" * 64,
+    )
+    metadata = {("binance", "BTCUSDT"): ProviderSymbolMetadata("BTCUSDT", Decimal("0.01"), True, True, True)}
+
+    async def collect():
+        events = []
+        stream = command._merged_live_events(bootstrap, metadata, capture_verified_depth=True)
+        async for event in stream:
+            events.append(event)
+            if isinstance(event, MarketBar) and event.start == START + timedelta(minutes=1):
+                break
+        await stream.aclose()
+        return events
+
+    events = asyncio.run(collect())
+    assert len(calls) == 2
+    assert len([item for item in events if isinstance(item, MarketDepth)]) == (0 if unavailable else 2)
+    assert len([item for item in events if isinstance(item, MarketBar)]) == 3

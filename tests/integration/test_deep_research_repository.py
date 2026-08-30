@@ -62,7 +62,7 @@ def test_schema_v5_initializes_idempotently_with_all_research_tables(tmp_path) -
     database, _ = _repository(tmp_path)
     database.initialize()
 
-    assert database.schema_version() == 12
+    assert database.schema_version() == 14
     assert {
         "deep_research_runs",
         "deep_research_trials",

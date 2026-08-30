@@ -39,6 +39,7 @@ from src.strategies.pipeline import (
     StrategyScope,
 )
 from src.strategies.types import BarInterval, StrategyMode, canonical_hash
+from src.utils.provenance import research_source_hash
 
 CI_CUTOFF = datetime(2026, 8, 20, tzinfo=UTC)
 CI_BAR_COUNT = 110
@@ -245,21 +246,11 @@ def _semantic_snapshot_payload(snapshot: Any) -> dict[str, Any]:
 
 
 def _source_hash(root: Path) -> str:
-    paths = [
-        path
-        for relative in ("src", "config")
-        for path in (root / relative).rglob("*")
-        if path.is_file() and "__pycache__" not in path.parts
-    ]
-    paths.extend(root / name for name in ("pyproject.toml", "Makefile") if (root / name).is_file())
-    records = [(path.relative_to(root).as_posix(), path.read_bytes().hex()) for path in sorted(paths)]
-    return canonical_hash(records)
+    return research_source_hash(root)
 
 
 def _research_config_hash(settings: Settings) -> str:
-    payload = settings.config_hash_payload()
-    payload.pop("database_url", None)
-    return canonical_hash(payload)
+    return canonical_hash(settings.research_config_hash_payload())
 
 
 def _data_quality(database: Database, cutoff: datetime, intervals: tuple[BarInterval, ...]) -> dict[str, Any]:

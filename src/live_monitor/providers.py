@@ -24,6 +24,7 @@ from src.live_monitor.types import (
 )
 from src.strategies.calendars import calendar_for
 from src.strategies.types import BarInterval
+from src.utils.tls import verified_client_context
 
 MAXIMUM_MESSAGE_BYTES = 64 * 1024
 MAXIMUM_REPAIR_BARS = 1_000
@@ -40,6 +41,7 @@ class ProviderSymbolMetadata:
     tradable: bool
     shortable: bool
     easy_to_borrow: bool
+    filters: tuple[dict[str, Any], ...] = ()
 
 
 def load_alpaca_symbol_metadata(
@@ -77,6 +79,27 @@ def load_alpaca_symbol_metadata(
             http.close()
 
 
+def _binance_spot_tradable(row: dict[str, Any]) -> bool:
+    """Require venue SPOT support; do not infer extra account permission groups."""
+    if row.get("status") != "TRADING":
+        return False
+    if "isSpotTradingAllowed" in row and row["isSpotTradingAllowed"] is not True:
+        return False
+    if "permissionSets" in row:
+        groups = row["permissionSets"]
+        # Groups are ANDed, permissions within each group are ORed. Flattening
+        # them would accidentally admit symbols needing unknown account rights.
+        return (
+            isinstance(groups, list)
+            and bool(groups)
+            and all(isinstance(group, list) and "SPOT" in group for group in groups)
+        )
+    if row.get("isSpotTradingAllowed") is True:
+        return True
+    legacy = row.get("permissions")
+    return isinstance(legacy, list) and "SPOT" in legacy
+
+
 def load_binance_symbol_metadata(
     symbols: Iterable[str], *, client: httpx.Client | None = None
 ) -> dict[str, ProviderSymbolMetadata]:
@@ -84,7 +107,10 @@ def load_binance_symbol_metadata(
     owned = client is None
     http = client or httpx.Client(timeout=httpx.Timeout(10.0))
     try:
-        response = http.get("https://api.binance.com/api/v3/exchangeInfo", params={"symbols": json.dumps(normalized)})
+        response = http.get(
+            "https://api.binance.com/api/v3/exchangeInfo",
+            params={"symbols": json.dumps(normalized, separators=(",", ":"))},
+        )
         response.raise_for_status()
         payload = response.json()
         rows = payload.get("symbols") if isinstance(payload, dict) else None
@@ -103,15 +129,47 @@ def load_binance_symbol_metadata(
             result[symbol] = ProviderSymbolMetadata(
                 symbol=symbol,
                 tick_size=Decimal(str(price_filter["tickSize"])),
-                tradable=row.get("status") == "TRADING" and "SPOT" in row.get("permissions", ["SPOT"]),
+                tradable=_binance_spot_tradable(row),
                 shortable=False,
                 easy_to_borrow=False,
+                filters=tuple(dict(item) for item in row.get("filters", []) if isinstance(item, dict)),
             )
         if set(result) != set(normalized) or not all(item.tradable for item in result.values()):
             raise ValueError("one or more Binance symbols are not tradable")
         return result
     except (httpx.HTTPError, ValueError, TypeError, KeyError) as error:
         raise ValueError("Binance symbol metadata is unavailable") from error
+    finally:
+        if owned:
+            http.close()
+
+
+def load_binance_depth_snapshot(symbol: str, *, client: httpx.Client | None = None) -> MarketDepth:
+    """Fetch a bounded full book; its conservative timestamp is the request start."""
+    normalized = _symbols((symbol,))[0]
+    owned = client is None
+    http = client or httpx.Client(timeout=httpx.Timeout(10.0))
+    requested_at = datetime.now(UTC)
+    try:
+        response = http.get("https://api.binance.com/api/v3/depth", params={"symbol": normalized, "limit": 100})
+        response.raise_for_status()
+        payload = response.json()
+        received_at = datetime.now(UTC)
+        update_id = int(payload["lastUpdateId"])
+        return MarketDepth(
+            provider="binance",
+            feed="spot",
+            symbol=normalized,
+            first_update_id=update_id,
+            final_update_id=update_id,
+            snapshot_verified=True,
+            bids=_depth_levels(payload["bids"]),
+            asks=_depth_levels(payload["asks"]),
+            provider_time=requested_at,
+            received_at=received_at,
+        )
+    except (httpx.HTTPError, ValueError, TypeError, KeyError) as error:
+        raise ValueError("Binance verified depth snapshot is unavailable") from error
     finally:
         if owned:
             http.close()
@@ -461,7 +519,13 @@ class AlpacaMarketDataAdapter:
         attempt = 0
         while True:
             try:
-                async with connect(url, ping_interval=20, ping_timeout=20, max_size=MAXIMUM_MESSAGE_BYTES) as socket:
+                async with connect(
+                    url,
+                    ssl=verified_client_context(),
+                    ping_interval=20,
+                    ping_timeout=20,
+                    max_size=MAXIMUM_MESSAGE_BYTES,
+                ) as socket:
                     await socket.send(json.dumps(self.authentication(), separators=(",", ":")))
                     await socket.send(json.dumps(subscription, separators=(",", ":")))
                     attempt = 0
@@ -494,7 +558,7 @@ class BinanceSpotAdapter:
             params.extend(
                 (
                     f"{lowered}@aggTrade",
-                    f"{lowered}@bookTicker",
+                    f"{lowered}@ticker",
                     f"{lowered}@depth@100ms",
                     f"{lowered}@kline_1m",
                 )
@@ -526,7 +590,7 @@ class BinanceSpotAdapter:
                 ),
             )
         event_type = item.get("e")
-        if event_type == "bookTicker":
+        if event_type in {"bookTicker", "24hrTicker"}:
             bid = Decimal(str(item["b"]))
             ask = Decimal(str(item["a"]))
             return (
@@ -613,7 +677,13 @@ class BinanceSpotAdapter:
         while True:
             try:
                 connected_at = datetime.now(UTC)
-                async with connect(url, ping_interval=20, ping_timeout=20, max_size=MAXIMUM_MESSAGE_BYTES) as socket:
+                async with connect(
+                    url,
+                    ssl=verified_client_context(),
+                    ping_interval=20,
+                    ping_timeout=20,
+                    max_size=MAXIMUM_MESSAGE_BYTES,
+                ) as socket:
                     await socket.send(json.dumps(subscription, separators=(",", ":")))
                     attempt = 0
                     while not policy.rotation_due(connected_at=connected_at, now=datetime.now(UTC)):
@@ -688,5 +758,6 @@ __all__ = [
     "load_alpaca_symbol_metadata",
     "load_alpaca_repair_bars",
     "load_binance_repair_bars",
+    "load_binance_depth_snapshot",
     "load_binance_symbol_metadata",
 ]

@@ -55,13 +55,16 @@ def test_future_market_rows_cannot_change_prior_eligibility_inputs() -> None:
     changed.loc[100:, "volume"] *= 1_000
     changed.loc[100:, "close"] *= 10
 
-    assert eligibility_inputs_from_bars(
-        changed,
-        as_of=as_of,
-        instrument=instrument,
-        interval=BarInterval.FIVE_MINUTES,
-        direction=StrategyDirection.LONG,
-    ) == prefix
+    assert (
+        eligibility_inputs_from_bars(
+            changed,
+            as_of=as_of,
+            instrument=instrument,
+            interval=BarInterval.FIVE_MINUTES,
+            direction=StrategyDirection.LONG,
+        )
+        == prefix
+    )
 
 
 def test_bar_derived_inputs_reject_mixed_instrument_identity() -> None:

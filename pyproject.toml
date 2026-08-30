@@ -9,6 +9,7 @@ description = "Local research engine for the native Nowcaster macOS app"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
 dependencies = [
+  "certifi>=2026.7.22",
   "duckdb>=1.2",
   "duckdb-engine>=0.17",
   "httpx>=0.28",

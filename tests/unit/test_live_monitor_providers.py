@@ -17,6 +17,7 @@ from src.live_monitor.providers import (
     ReconnectPolicy,
     expected_repair_starts,
     load_alpaca_symbol_metadata,
+    load_binance_depth_snapshot,
     load_binance_repair_bars,
     load_binance_symbol_metadata,
 )
@@ -91,11 +92,11 @@ def test_binance_accepts_only_closed_klines_and_maps_book_ticker() -> None:
         "method": "SUBSCRIBE",
         "params": [
             "btcusdt@aggTrade",
-            "btcusdt@bookTicker",
+            "btcusdt@ticker",
             "btcusdt@depth@100ms",
             "btcusdt@kline_1m",
             "ethusdt@aggTrade",
-            "ethusdt@bookTicker",
+            "ethusdt@ticker",
             "ethusdt@depth@100ms",
             "ethusdt@kline_1m",
         ],
@@ -110,6 +111,16 @@ def test_binance_accepts_only_closed_klines_and_maps_book_ticker() -> None:
     assert len(closed) == 1 and isinstance(closed[0], MarketBar)
     assert closed[0].symbol == "BTCUSDT" and closed[0].feed == "spot"
     assert open_kline == ()
+
+
+def test_binance_timestamped_ticker_supplies_quotes_without_inventing_exchange_time() -> None:
+    quote = BinanceSpotAdapter().decode(
+        '{"e":"24hrTicker","E":1787752810000,"s":"BTCUSDT","b":"64000.10","B":"1.2","a":"64000.20","A":"0.8"}',
+        received_at=NOW,
+    )[0]
+    assert isinstance(quote, MarketQuote)
+    assert quote.provider_time < quote.received_at
+    assert quote.sequence is None
 
 
 def test_decoders_normalize_trades_depth_status_and_corrections() -> None:
@@ -197,7 +208,11 @@ def test_binance_spot_metadata_is_tradable_but_never_claims_shortability() -> No
                         "symbol": "BTCUSDT",
                         "status": "TRADING",
                         "permissions": ["SPOT"],
-                        "filters": [{"filterType": "PRICE_FILTER", "tickSize": "0.01"}],
+                        "filters": [
+                            {"filterType": "PRICE_FILTER", "tickSize": "0.01"},
+                            {"filterType": "LOT_SIZE", "minQty": "0.0001", "maxQty": "10000", "stepSize": "0.0001"},
+                            {"filterType": "MIN_NOTIONAL", "minNotional": "10"},
+                        ],
                     }
                 ]
             },
@@ -209,6 +224,77 @@ def test_binance_spot_metadata_is_tradable_but_never_claims_shortability() -> No
     assert metadata.tradable is True
     assert metadata.shortable is False
     assert metadata.easy_to_borrow is False
+    assert metadata.filters[1]["filterType"] == "LOT_SIZE"
+
+
+def test_binance_metadata_request_uses_the_exchanges_compact_multi_symbol_format():
+    def response(request: httpx.Request) -> httpx.Response:
+        assert request.url.params["symbols"] == '["BTCUSDT","ETHUSDT"]'
+        return httpx.Response(
+            200,
+            json={
+                "symbols": [
+                    {
+                        "symbol": symbol,
+                        "status": "TRADING",
+                        "isSpotTradingAllowed": True,
+                        "filters": [{"filterType": "PRICE_FILTER", "tickSize": "0.01"}],
+                    }
+                    for symbol in ("BTCUSDT", "ETHUSDT")
+                ]
+            },
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(response)) as client:
+        metadata = load_binance_symbol_metadata(("BTCUSDT", "ETHUSDT"), client=client)
+    assert set(metadata) == {"BTCUSDT", "ETHUSDT"}
+
+
+@pytest.mark.parametrize(
+    ("permissions", "allowed"),
+    [
+        ({"isSpotTradingAllowed": True, "permissions": [], "permissionSets": [["SPOT", "MARGIN"]]}, True),
+        ({"permissionSets": [["SPOT", "MARGIN"]]}, True),
+        ({"isSpotTradingAllowed": True}, True),
+        ({"isSpotTradingAllowed": False, "permissions": ["SPOT"]}, False),
+        ({"isSpotTradingAllowed": "true", "permissions": ["SPOT"]}, False),
+        ({"permissionSets": [["SPOT"], ["TRD_GRP_004"]], "isSpotTradingAllowed": True}, False),
+        ({"permissionSets": [["MARGIN"]], "permissions": ["SPOT"]}, False),
+        ({"permissionSets": "SPOT"}, False),
+        ({}, False),
+        ({"isSpotTradingAllowed": True, "status": "HALT"}, False),
+        ({"isSpotTradingAllowed": True, "status": "CANCEL_ONLY"}, False),
+    ],
+)
+def test_binance_current_permission_contract_never_defaults_missing_access_to_spot(permissions, allowed):
+    row = {
+        "symbol": "BTCUSDT",
+        "status": "TRADING",
+        "filters": [{"filterType": "PRICE_FILTER", "tickSize": "0.01"}],
+        **permissions,
+    }
+    with httpx.Client(
+        transport=httpx.MockTransport(lambda _request: httpx.Response(200, json={"symbols": [row]}))
+    ) as client:
+        if allowed:
+            metadata = load_binance_symbol_metadata(("BTCUSDT",), client=client)["BTCUSDT"]
+            assert metadata.tradable and not metadata.shortable
+        else:
+            with pytest.raises(ValueError, match="metadata is unavailable"):
+                load_binance_symbol_metadata(("BTCUSDT",), client=client)
+
+
+def test_binance_rest_depth_is_a_bounded_verified_snapshot_not_a_delta() -> None:
+    def response(request: httpx.Request) -> httpx.Response:
+        assert request.url.params["symbol"] == "BTCUSDT"
+        assert request.url.params["limit"] == "100"
+        return httpx.Response(200, json={"lastUpdateId": 40, "bids": [["99", "100"]], "asks": [["101", "100"]]})
+
+    with httpx.Client(transport=httpx.MockTransport(response)) as client:
+        snapshot = load_binance_depth_snapshot("BTCUSDT", client=client)
+    assert snapshot.snapshot_verified is True
+    assert snapshot.first_update_id == snapshot.final_update_id == 40
+    assert snapshot.provider_time <= snapshot.received_at <= snapshot.processed_at
 
 
 def test_binance_gap_repair_requires_every_bounded_minute() -> None:

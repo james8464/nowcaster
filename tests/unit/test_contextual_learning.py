@@ -149,3 +149,38 @@ def test_contextual_entropy_handles_zero_probability_mass_without_numeric_errors
     with np.errstate(divide="raise", invalid="raise"):
         result = evaluate_contextual_candidate(ContextualCandidate.defaults(), outcomes, _experiment())
     assert math.isfinite(result.fitness)
+
+
+def test_duplicating_an_asset_does_not_create_extra_time_or_improve_learning_fitness():
+    original = _outcomes()
+    clone = original.copy()
+    clone["symbol"] = "ETHUSDT"
+    clone["outcome_id"] = "clone-" + clone["outcome_id"]
+    base = evaluate_contextual_candidate(ContextualCandidate.defaults(), original, _experiment())
+    doubled = evaluate_contextual_candidate(ContextualCandidate.defaults(), pd.concat([original, clone]), _experiment())
+    assert doubled.observations == base.observations
+    assert doubled.fitness <= base.fitness + 1e-9
+
+
+def test_long_and_short_results_share_one_chronological_account_clock():
+    original = _outcomes()
+    short = original.copy()
+    short["direction"] = "short"
+    short["outcome_id"] = "short-" + short["outcome_id"]
+    base = evaluate_contextual_candidate(ContextualCandidate.defaults(), original, _experiment())
+    both = evaluate_contextual_candidate(ContextualCandidate.defaults(), pd.concat([original, short]), _experiment())
+    assert both.observations == base.observations
+
+
+def test_learning_cannot_invent_a_longer_holding_horizon_by_summing_adjacent_returns():
+    with pytest.raises(ValueError, match="horizon"):
+        evaluate_contextual_candidate(
+            replace(ContextualCandidate.defaults(), long_holding_horizon_bars=2),
+            _outcomes(),
+            _experiment(),
+        )
+
+
+def test_default_contextual_search_only_searches_horizons_with_execution_evidence():
+    candidates = generate_contextual_candidates(ContextualSearchSpace.conservative(), seed=42, budget=40)
+    assert all(item.long_holding_horizon_bars == item.short_holding_horizon_bars == 1 for item in candidates)

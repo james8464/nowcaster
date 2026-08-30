@@ -4,15 +4,18 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
+from sqlalchemy import text
 
 from src.database.engine import Database
 from src.live_monitor.lifecycle import AlertLifecycle
 from src.live_monitor.repository import LiveMonitorRepository
 from src.live_monitor.types import (
     AlertState,
+    DepthLevel,
     Direction,
     LifecycleEvent,
     MarketBar,
+    MarketDepth,
     MarketQuote,
     MarketTrade,
     MonitorHealth,
@@ -280,3 +283,58 @@ def test_repository_persists_normalized_market_events_idempotently(tmp_path) -> 
         {"event_type": "quote", "sequence": 42},
         {"event_type": "trade", "sequence": 17},
     ]
+
+
+def depth_event(update_id: int) -> MarketDepth:
+    return MarketDepth(
+        provider="binance",
+        feed="spot",
+        symbol="BTCUSDT",
+        first_update_id=update_id,
+        final_update_id=update_id,
+        bids=(DepthLevel(price=Decimal("64000.10"), size=Decimal("1")),),
+        asks=(DepthLevel(price=Decimal("64000.20"), size=Decimal("1")),),
+        provider_time=NOW,
+        received_at=NOW,
+    )
+
+
+def test_repository_preserves_real_exchange_64_bit_sequence_numbers(tmp_path) -> None:
+    store = database(tmp_path)
+    repository = LiveMonitorRepository(store, clock=lambda: NOW)
+    repository.start_session("large-sequence", config_hash="c" * 64, cohort_hash="0" * 64)
+    depth = depth_event(99_417_023_643)
+
+    assert repository.record_market_event("large-sequence", depth)
+    assert not repository.record_market_event("large-sequence", depth)
+    assert store.scalar("SELECT sequence FROM live_market_events") == depth.final_update_id
+    assert store.scalar("SELECT count(*) FROM live_market_events") == 1
+
+
+def test_schema_v13_sequence_migration_preserves_existing_events_and_is_idempotent(tmp_path) -> None:
+    store = database(tmp_path)
+    repository = LiveMonitorRepository(store, clock=lambda: NOW)
+    repository.start_session("legacy-sequence", config_hash="c" * 64, cohort_hash="0" * 64)
+    assert repository.record_market_event("legacy-sequence", depth_event(42))
+    original = store.frame("SELECT event_id, payload_hash, payload FROM live_market_events").to_dict("records")
+    with store.engine.begin() as connection:
+        connection.execute(text("ALTER TABLE live_market_events ALTER COLUMN sequence TYPE INTEGER"))
+        connection.execute(text("DELETE FROM schema_versions WHERE version >= 14"))
+        connection.execute(
+            text(
+                "INSERT INTO schema_versions (version, applied_at) "
+                "SELECT 13, :now WHERE NOT EXISTS (SELECT 1 FROM schema_versions WHERE version = 13)"
+            ),
+            {"now": NOW},
+        )
+    store.dispose()
+
+    store.initialize()
+    store.initialize()
+
+    assert store.schema_version() == 14
+    assert store.scalar("SELECT count(*) FROM schema_versions WHERE version = 14") == 1
+    assert store.frame("SELECT event_id, payload_hash, payload FROM live_market_events").to_dict("records") == original
+    assert not repository.record_market_event("legacy-sequence", depth_event(42))
+    assert repository.record_market_event("legacy-sequence", depth_event(99_417_023_643))
+    assert store.scalar("SELECT max(sequence) FROM live_market_events") == 99_417_023_643
