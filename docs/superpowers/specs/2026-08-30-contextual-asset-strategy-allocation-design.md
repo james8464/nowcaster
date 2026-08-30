@@ -1,7 +1,7 @@
 # Contextual Asset Selection and Strategy Allocation Design
 
 **Date:** 2026-08-30  
-**Status:** Approved in chat; awaiting written-spec review  
+**Status:** Approved
 **Scope:** Point-in-time asset eligibility, asset- and regime-conditioned strategy weighting, covariance-aware opportunity selection, governed contextual learning, portfolio validation, and native macOS evidence presentation
 
 ## Purpose
