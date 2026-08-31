@@ -15,13 +15,14 @@ Final review tightened historical cohort authentication, timestamp integrity, sh
 | Check | Result |
 |---|---|
 | Complete Python regression suite | 948 tests passed in 12 minutes 28 seconds |
+| Integrated Python run with coverage | 948 tests passed in 19 minutes 18 seconds; 88% line coverage |
 | Focused contextual suite | 81 tests passed |
 | Python formatting, static checks and whitespace | Passed; 316 Python files checked |
 | Native tests | 84 Swift Testing cases and 1 XCTest passed |
 | Native release build | Passed |
 | Deterministic research generation | Passed; post-commit regeneration produced no fixture differences |
 | Python/native research fixture parity | Passed |
-| Live-monitor safety target | 110 Python tests, 12 native tests and recorded replay passed |
+| Live-monitor safety target | 110 Python tests, 13 native tests and recorded replay passed |
 | Packaged notification engine | Live Bitcoin/Ether quotes, clean shutdown and recorded replay passed |
 | Local app assembly, property list and signatures | Passed; ad-hoc signature only |
 | Tracked-file and reachable-history secret scan | Passed; repeated before publication |
@@ -47,7 +48,11 @@ The final packaged app helper received fresh `BTCUSDT` and `ETHUSDT` quotes on 3
 
 ## Native toolchain compatibility
 
-The [previous GitHub native build](https://github.com/james8464/nowcaster/actions/runs/33208597850) exposed an Xcode 16.2 concurrency error in notification settings. The [publication build](https://github.com/james8464/nowcaster/actions/runs/33342719093) then exposed the same boundary for permission requests. Settings, permission requests and notification submission now project only Boolean results inside Apple's callbacks; the older SDK's non-sendable center, settings and request objects do not cross actors. Allowed authorization states and failure behavior are unchanged, and no concurrency warning is suppressed. The added authorization regression and the complete native suite pass locally; the repository's CI remains the check against its pinned older toolchain.
+The [previous GitHub native build](https://github.com/james8464/nowcaster/actions/runs/33208597850) exposed an Xcode 16.2 concurrency error in notification settings. The [publication build](https://github.com/james8464/nowcaster/actions/runs/33342719093) then exposed the same boundary for permission requests. Settings, permission requests and notification submission now project only Boolean results inside Apple's callbacks; the older SDK's non-sendable center, settings and request objects do not cross actors. Allowed authorization states and failure behavior are unchanged, and no concurrency warning is suppressed. The [hosted rerun](https://github.com/james8464/nowcaster/actions/runs/33342935017) passed all 85 native tests, the live replay target, release compilation, app assembly and signature verification on Xcode 16.2.
+
+## Continuous-integration runtime
+
+That hosted rerun also passed all 948 Python tests with coverage and the secret scan. Its Python tests alone took about 29 minutes, and the job's original 30-minute allowance then cancelled the separate deterministic-research rebuild. This was not a test failure or a completed workflow. The Python job now allows 45 minutes for the full suite and subsequent rebuild checks; all tests, artifact comparisons and trading thresholds are unchanged. Coverage measures exercised code, not prediction accuracy or profitability.
 
 ## Remaining external limitations
 
