@@ -77,6 +77,15 @@ def test_gaps_are_explicit_and_bounded() -> None:
     assert [(item.start, item.end) for item in gaps] == [(START + timedelta(minutes=2), START + timedelta(minutes=4))]
 
 
+def test_aggregation_retains_the_latest_processing_time_without_changing_bar_identity() -> None:
+    original = tuple(bar(index) for index in range(5))
+    delayed = tuple(item.model_copy(update={"processed_at": START + timedelta(minutes=6)}) for item in original)
+    aggregated = aggregate_finalized(delayed, "5m")[0]
+    assert aggregated.processed_at == START + timedelta(minutes=6)
+    assert aggregated.received_at == START + timedelta(minutes=5, seconds=3)
+    assert aggregated.bar_id == aggregate_finalized(original, "5m")[0].bar_id
+
+
 def test_appending_future_bars_cannot_change_prior_aggregate_identity_or_values() -> None:
     first_window = tuple(bar(index) for index in range(5))
     before = aggregate_finalized(first_window, "5m")

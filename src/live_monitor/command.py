@@ -36,6 +36,7 @@ from src.live_monitor.providers import (
 )
 from src.live_monitor.readiness import invalidate_readiness_for_drift
 from src.live_monitor.repository import LiveMonitorRepository
+from src.live_monitor.timing import CausalClock, prepare_market_event
 from src.live_monitor.types import (
     BarIntervalValue,
     MarketBar,
@@ -154,7 +155,9 @@ async def _merged_live_events(
     stop_event: asyncio.Event | None = None,
     initial_last_bar_end: dict[tuple[str, str, str], datetime] | None = None,
     capture_verified_depth: bool = False,
+    clock: CausalClock | None = None,
 ) -> AsyncIterator[MarketEvent]:
+    runtime_clock = clock or CausalClock()
     queue: asyncio.Queue[MarketEvent] = asyncio.Queue(maxsize=1_024)
     last_seen: dict[tuple[str, str], datetime] = {}
     transport_healthy: dict[tuple[str, str], bool] = {}
@@ -166,7 +169,7 @@ async def _merged_live_events(
         async for event in stream:
             if not isinstance(event, ProviderHealthEvent):
                 provider_scope = (event.provider, event.feed)
-                last_seen[provider_scope] = datetime.now(UTC)
+                last_seen[provider_scope] = runtime_clock.now()
                 transport_healthy[provider_scope] = _transport_health_after(
                     transport_healthy.get(provider_scope, False), event
                 )
@@ -197,12 +200,12 @@ async def _merged_live_events(
                             feed=event.feed,
                             status="stale",
                             reason="gap_repair_window_exceeded",
-                            occurred_at=datetime.now(UTC),
+                            occurred_at=runtime_clock.now(),
                         )
                     )
                     continue
                 if expected_missing:
-                    now = datetime.now(UTC)
+                    now = runtime_clock.now()
                     await queue.put(
                         ProviderHealthEvent(
                             provider=event.provider,
@@ -240,7 +243,7 @@ async def _merged_live_events(
                                 feed=event.feed,
                                 status="stale",
                                 reason="gap_repair_failed",
-                                occurred_at=datetime.now(UTC),
+                                occurred_at=runtime_clock.now(),
                             )
                         )
                         # Do not advance or publish this bar. The next finalized bar
@@ -257,7 +260,7 @@ async def _merged_live_events(
                                 feed=event.feed,
                                 status="healthy",
                                 reason="gap_repair_complete_delayed_observation",
-                                occurred_at=datetime.now(UTC),
+                                occurred_at=runtime_clock.now(),
                             )
                         )
                         await queue.put(event)
@@ -286,7 +289,7 @@ async def _merged_live_events(
             secret=bootstrap.alpaca_secret.get_secret_value(),
             metadata={symbol: metadata[("alpaca", symbol)] for symbol in bootstrap.stocks},
         )
-        last_seen[("alpaca", bootstrap.stock_feed)] = datetime.now(UTC)
+        last_seen[("alpaca", bootstrap.stock_feed)] = runtime_clock.now()
         transport_healthy[("alpaca", bootstrap.stock_feed)] = False
         tasks.append(
             asyncio.create_task(
@@ -299,7 +302,7 @@ async def _merged_live_events(
             )
         )
     if bootstrap.crypto:
-        last_seen[("binance", "spot")] = datetime.now(UTC)
+        last_seen[("binance", "spot")] = runtime_clock.now()
         transport_healthy[("binance", "spot")] = False
         tasks.append(
             asyncio.create_task(
@@ -312,12 +315,41 @@ async def _merged_live_events(
         )
     if not tasks:
         raise ValueError("at least one watchlist symbol is required")
+
+    async def next_queued_event() -> MarketEvent | None:
+        queued = asyncio.create_task(queue.get())
+        try:
+            done, _ = await asyncio.wait(
+                (queued, *tasks),
+                timeout=5,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            completed_producers = tuple(task for task in tasks if task.done())
+            for task in completed_producers:
+                if task.cancelled():
+                    if stop_event is None or not stop_event.is_set():
+                        raise RuntimeError("live provider task stopped unexpectedly")
+                    continue
+                error = task.exception()
+                if error is not None:
+                    raise error
+            if queued in done:
+                return queued.result()
+            if completed_producers and (stop_event is None or not stop_event.is_set()):
+                raise RuntimeError("live provider stream ended unexpectedly")
+            return None
+        finally:
+            if not queued.done():
+                queued.cancel()
+                await asyncio.gather(queued, return_exceptions=True)
+
     try:
         last_heartbeat = datetime.min.replace(tzinfo=UTC)
         while stop_event is None or not stop_event.is_set():
-            with suppress(TimeoutError):
-                yield await asyncio.wait_for(queue.get(), timeout=5)
-            now = datetime.now(UTC)
+            event = await next_queued_event()
+            if event is not None:
+                yield await prepare_market_event(event, clock=runtime_clock.now)
+            now = runtime_clock.now()
             heartbeat_due = now - last_heartbeat >= timedelta(seconds=10)
             for (provider, feed), observed_at in tuple(last_seen.items()):
                 if now - observed_at > timedelta(seconds=30) and (provider, feed) not in stale_reported:
@@ -353,7 +385,13 @@ async def _merged_live_events(
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
-async def run_live(bootstrap: MonitorBootstrap, *, control_stream: TextIO | None = None) -> None:
+async def run_live(
+    bootstrap: MonitorBootstrap,
+    *,
+    control_stream: TextIO | None = None,
+    clock: CausalClock | None = None,
+) -> None:
+    runtime_clock = clock or CausalClock()
     database = Database.from_url(bootstrap.database_url)
     database.initialize()
     settings = Settings.load(Path.cwd())
@@ -372,7 +410,7 @@ async def run_live(bootstrap: MonitorBootstrap, *, control_stream: TextIO | None
     selected_hash = selected_cohort_hash(selected)
     if bootstrap.cohort_hash != selected_hash:
         raise ValueError("selected cohort identity does not match the native bootstrap")
-    readiness = load_active_readiness_receipt(database, cohorts=selected, now=datetime.now(UTC))
+    readiness = load_active_readiness_receipt(database, cohorts=selected, now=runtime_clock.now())
     if selected and readiness is None:
         raise ValueError("an active unexpired readiness receipt is required")
     metadata: dict[tuple[str, str], ProviderSymbolMetadata] = {}
@@ -389,18 +427,18 @@ async def run_live(bootstrap: MonitorBootstrap, *, control_stream: TextIO | None
     if bootstrap.crypto:
         binance_metadata = await asyncio.to_thread(load_binance_symbol_metadata, bootstrap.crypto)
         metadata.update({("binance", symbol): item for symbol, item in binance_metadata.items()})
-    repository = LiveMonitorRepository(database)
+    repository = LiveMonitorRepository(database, clock=runtime_clock.now)
     contextual_live_evidence = load_contextual_live_evidence(
         database,
         selected,
-        now=datetime.now(UTC),
+        now=runtime_clock.now(),
     )
     repository.start_session(
         bootstrap.session_id,
         config_hash=bootstrap.config_hash,
         cohort_hash=selected_hash,
     )
-    metadata_at = datetime.now(UTC)
+    metadata_at = runtime_clock.now()
     for (provider, symbol), item in metadata.items():
         repository.record_market_event(
             bootstrap.session_id,
@@ -447,6 +485,7 @@ async def run_live(bootstrap: MonitorBootstrap, *, control_stream: TextIO | None
             else None
         ),
         persistence=repository,
+        processing_clock=runtime_clock.now,
         readiness_cohort_hash=selected_hash if readiness is not None else None,
         readiness_invalidator=drift_invalidator,
         minimum_effective_calibration_observations=Decimal(
@@ -463,7 +502,7 @@ async def run_live(bootstrap: MonitorBootstrap, *, control_stream: TextIO | None
         interval=bootstrap.decision_interval,
         config_hash=bootstrap.config_hash,
         cohort_ids={item.cohort_id for item in selected},
-        now=datetime.now(UTC),
+        now=runtime_clock.now(),
     )
     for recovered in recovered_setups:
         engine.restore_setup(recovered.plan, state=recovered.state, actual_fill=recovered.actual_fill)
@@ -478,7 +517,7 @@ async def run_live(bootstrap: MonitorBootstrap, *, control_stream: TextIO | None
                 return
             try:
                 control = parse_control(line)
-                now = datetime.now(UTC)
+                now = runtime_clock.now()
                 if control.command == "shutdown":
                     stop_event.set()
                     return
@@ -503,7 +542,7 @@ async def run_live(bootstrap: MonitorBootstrap, *, control_stream: TextIO | None
                         engine.emit(
                             "control_ack",
                             {"command": "invalid", "accepted": False},
-                            emitted_at=datetime.now(UTC),
+                            emitted_at=runtime_clock.now(),
                         )
                     ),
                     flush=True,
@@ -525,12 +564,18 @@ async def run_live(bootstrap: MonitorBootstrap, *, control_stream: TextIO | None
         nonlocal failure_reported
         if not failure_reported:
             failure_reported = True
+            try:
+                failure_at = runtime_clock.now()
+            except ValueError:
+                failure_at = runtime_clock.watermark
+            if failure_at is None:
+                raise RuntimeError("live clock failed before establishing a causal watermark")
             print(
                 _emit(
                     engine.emit(
                         "fatal_error",
                         {"reason": "internal_monitor_failure", "status": "failed"},
-                        emitted_at=datetime.now(UTC),
+                        emitted_at=failure_at,
                     )
                 ),
                 flush=True,
@@ -547,7 +592,7 @@ async def run_live(bootstrap: MonitorBootstrap, *, control_stream: TextIO | None
                         "cohort_hash": selected_hash,
                         "readiness_receipt_id": readiness.receipt_id if readiness is not None else None,
                     },
-                    emitted_at=datetime.now(UTC),
+                    emitted_at=runtime_clock.now(),
                 )
             ),
             flush=True,
@@ -562,7 +607,7 @@ async def run_live(bootstrap: MonitorBootstrap, *, control_stream: TextIO | None
                             "state": recovered.state.value,
                             "actual_fill": str(recovered.actual_fill) if recovered.actual_fill is not None else None,
                         },
-                        emitted_at=datetime.now(UTC),
+                        emitted_at=runtime_clock.now(),
                     )
                 ),
                 flush=True,
@@ -574,7 +619,12 @@ async def run_live(bootstrap: MonitorBootstrap, *, control_stream: TextIO | None
         watermarks = repository.latest_finalized_ends(scopes)
         async with aclosing(
             _merged_live_events(
-                bootstrap, metadata, stop_event, initial_last_bar_end=watermarks, capture_verified_depth=True
+                bootstrap,
+                metadata,
+                stop_event,
+                initial_last_bar_end=watermarks,
+                capture_verified_depth=True,
+                clock=runtime_clock,
             )
         ) as market_events:
             async for event in market_events:
@@ -593,9 +643,16 @@ async def run_live(bootstrap: MonitorBootstrap, *, control_stream: TextIO | None
         if control_failure is not None:
             report_failure()
         try:
+            try:
+                terminal_at = runtime_clock.now()
+            except ValueError:
+                terminal_at = runtime_clock.watermark
+            if terminal_at is None:
+                raise RuntimeError("live clock has no terminal causal watermark")
             repository.finish_session(
                 bootstrap.session_id,
                 reason="internal_monitor_failure" if failure_reported else "monitor_stopped",
+                ended_at=terminal_at,
             )
         except Exception:
             report_failure()

@@ -68,6 +68,8 @@ def evidence(**updates) -> EligibilityEvidence:
         "portfolio_selection_id": "7" * 64,
         "portfolio_decision_hash": "8" * 64,
         "portfolio_selected": True,
+        "contextual_effective_at": NOW - timedelta(hours=1),
+        "contextual_expires_at": NOW + timedelta(hours=1),
     }
     values.update(contextual)
     values.update(updates)
@@ -93,6 +95,8 @@ def evidence(**updates) -> EligibilityEvidence:
         "portfolio_selection_id",
         "portfolio_decision_hash",
         "portfolio_selected",
+        "contextual_effective_at",
+        "contextual_expires_at",
     )
     authenticated = {key: values[key] for key in contextual_keys}
     authenticated["regime_probabilities"] = {
@@ -162,6 +166,23 @@ def test_live_alert_requires_eligible_context_and_portfolio_selection() -> None:
     assert "portfolio_selection_required" in decision.reasons
 
 
+def test_live_alert_rechecks_authenticated_context_expiry_at_final_processing_time() -> None:
+    expiring = evidence(
+        contextual_effective_at=NOW - timedelta(hours=1),
+        contextual_expires_at=NOW + timedelta(seconds=4),
+    )
+
+    decision = evaluate_alert_eligibility(
+        expiring,
+        quote(),
+        health=MonitorHealth.HEALTHY,
+        now=NOW + timedelta(seconds=5),
+    )
+
+    assert decision.status == "abstain"
+    assert "contextual_evidence_expired" in decision.reasons
+
+
 def test_legacy_live_evidence_remains_decodable_but_abstains() -> None:
     legacy = evidence().model_copy(
         update={
@@ -178,6 +199,8 @@ def test_legacy_live_evidence_remains_decodable_but_abstains() -> None:
             "portfolio_selection_id": None,
             "portfolio_decision_hash": None,
             "portfolio_selected": None,
+            "contextual_effective_at": None,
+            "contextual_expires_at": None,
             "contextual_evidence_hash": None,
         }
     )
@@ -345,6 +368,98 @@ def test_engine_emits_entry_plan_then_conservative_stop_lifecycle() -> None:
     assert len(notifications) == 1
     assert notifications[0].payload["category"] == "stop"
     assert notifications[0].payload["reason"] == "protective_stop_touched"
+
+
+def test_a_quote_that_became_stale_in_the_processing_queue_cannot_authorize_an_entry() -> None:
+    engine = LiveMonitorEngine(
+        session_id="delayed-quote",
+        evidence_resolver=lambda _bars, _quote: evidence(data_through=NOW + timedelta(minutes=5)),
+    )
+    for minute in range(5):
+        engine.accept_market_event(bar(minute))
+    emitted = engine.accept_market_event(
+        quote(
+            provider_time=NOW + timedelta(minutes=5, seconds=2),
+            received_at=NOW + timedelta(minutes=5, seconds=2),
+            processed_at=NOW + timedelta(minutes=5, seconds=42),
+        )
+    )
+    decisions = [item for item in emitted if item.event_type == "decision"]
+    assert decisions[0].payload["status"] == "abstain"
+    assert "stale_quote" in decisions[0].payload["reasons"]
+    assert decisions[0].emitted_at == NOW + timedelta(minutes=5, seconds=42)
+    assert not any(item.event_type == "notification_request" for item in emitted)
+
+
+def test_a_stop_delayed_in_processing_is_reported_as_a_delayed_observation() -> None:
+    engine = LiveMonitorEngine(
+        session_id="delayed-stop",
+        evidence_resolver=lambda _bars, _quote: evidence(data_through=NOW + timedelta(minutes=5)),
+    )
+    for minute in range(5):
+        engine.accept_market_event(bar(minute))
+    at = NOW + timedelta(minutes=5, seconds=2)
+    entry = next(
+        item
+        for item in engine.accept_market_event(quote(provider_time=at, received_at=at))
+        if item.event_type == "notification_request"
+    )
+    delayed = bar(
+        5, low=Decimal(entry.payload["stop"]) - Decimal("0.1"), processed_at=NOW + timedelta(minutes=6, seconds=42)
+    )
+    notification = next(
+        item for item in engine.accept_market_event(delayed) if item.event_type == "notification_request"
+    )
+    assert notification.payload["reason"] == "protective_stop_touched_delayed_observation"
+    assert notification.emitted_at == NOW + timedelta(minutes=6, seconds=42)
+
+
+def test_live_clock_rechecks_freshness_after_slow_evidence_calculation() -> None:
+    current = NOW + timedelta(minutes=5, seconds=2)
+
+    def slow_resolver(_bars, _quote):
+        nonlocal current
+        current += timedelta(seconds=40)
+        return evidence(data_through=NOW + timedelta(minutes=5))
+
+    engine = LiveMonitorEngine(
+        session_id="slow-evidence", evidence_resolver=slow_resolver, processing_clock=lambda: current
+    )
+    for minute in range(5):
+        engine.accept_market_event(bar(minute))
+    emitted = engine.accept_market_event(quote(provider_time=current, received_at=current))
+    decision = next(item for item in emitted if item.event_type == "decision")
+    assert decision.payload["status"] == "abstain"
+    assert "stale_quote" in decision.payload["reasons"]
+    assert not any(item.event_type == "notification_request" for item in emitted)
+
+
+def test_live_clock_rechecks_context_expiry_after_slow_evidence_calculation() -> None:
+    current = NOW + timedelta(minutes=5, seconds=2)
+    expires_at = current + timedelta(seconds=2)
+
+    def slow_resolver(_bars, _quote):
+        nonlocal current
+        current += timedelta(seconds=3)
+        return evidence(
+            data_through=NOW + timedelta(minutes=5),
+            contextual_effective_at=NOW,
+            contextual_expires_at=expires_at,
+        )
+
+    engine = LiveMonitorEngine(
+        session_id="expiring-context",
+        evidence_resolver=slow_resolver,
+        processing_clock=lambda: current,
+    )
+    for minute in range(5):
+        engine.accept_market_event(bar(minute))
+    emitted = engine.accept_market_event(quote(provider_time=current, received_at=current))
+    decision = next(item for item in emitted if item.event_type == "decision")
+    assert decision.payload["status"] == "abstain"
+    assert "contextual_evidence_expired" in decision.payload["reasons"]
+    assert "stale_quote" not in decision.payload["reasons"]
+    assert not any(item.event_type == "notification_request" for item in emitted)
 
 
 def test_engine_abstains_without_quote_evidence_or_feasible_levels() -> None:

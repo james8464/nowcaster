@@ -501,9 +501,16 @@ class Settings(BaseModel):
         return self
 
     @classmethod
-    def load(cls, project_root: Path | None = None, *, mode: str | None = None) -> Settings:
+    def load(
+        cls,
+        project_root: Path | None = None,
+        *,
+        mode: str | None = None,
+        load_environment_file: bool = True,
+    ) -> Settings:
         root = (project_root or Path.cwd()).resolve()
-        load_dotenv(root / ".env", override=False)
+        if load_environment_file and os.getenv("NOWCASTER_DISABLE_DOTENV") != "1":
+            load_dotenv(root / ".env", override=False)
 
         def read_yaml(name: str, *, required: bool = True) -> dict[str, Any]:
             path = root / "config" / name

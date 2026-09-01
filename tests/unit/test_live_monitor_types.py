@@ -163,6 +163,42 @@ def test_microstructure_events_reject_negative_sizes_and_reversed_sequences() ->
         )
 
 
+@pytest.mark.parametrize("kind", ["quote", "trade", "depth", "status", "bar"])
+def test_provider_and_local_clocks_can_differ_without_rewriting_provenance(kind) -> None:
+    lead = NOW + timedelta(milliseconds=80)
+    common = {"provider": "binance", "feed": "spot", "symbol": "BTCUSDT", "received_at": NOW}
+    if kind == "bar":
+        event = valid_bar(**common, start=lead - timedelta(minutes=1), end=lead, available_at=lead)
+        assert event.end == lead
+    else:
+        constructors = {
+            "quote": (MarketQuote, {"bid": 99, "ask": 100, "last": 100, "tick_size": "0.01"}),
+            "trade": (MarketTrade, {"price": 100, "size": 1}),
+            "depth": (MarketDepth, {"first_update_id": 1, "final_update_id": 2, "bids": (), "asks": ()}),
+            "status": (MarketStatusEvent, {"kind": "status", "status": "active"}),
+        }
+        constructor, fields = constructors[kind]
+        event = constructor(**common, **fields, provider_time=lead)
+        assert event.provider_time == lead
+    assert event.received_at == NOW
+    assert event.processed_at == NOW
+
+
+def test_clock_uncertainty_never_accepts_material_future_data_or_reversed_local_processing() -> None:
+    fields = {"provider": "binance", "feed": "spot", "symbol": "BTCUSDT", "price": 100, "size": 1}
+    with pytest.raises(ValidationError):
+        MarketTrade(**fields, provider_time=NOW + timedelta(seconds=1, microseconds=1), received_at=NOW)
+    with pytest.raises(ValidationError):
+        MarketTrade(**fields, provider_time=NOW, received_at=NOW, processed_at=NOW - timedelta(microseconds=1))
+    with pytest.raises(ValidationError):
+        valid_bar(
+            start=NOW - timedelta(minutes=1),
+            end=NOW + timedelta(seconds=2),
+            available_at=NOW + timedelta(seconds=2),
+            received_at=NOW,
+        )
+
+
 def test_trade_plan_enforces_long_and_short_price_geometry() -> None:
     common = {
         "plan_id": "a" * 64,

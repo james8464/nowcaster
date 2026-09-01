@@ -7,7 +7,7 @@ import selectors
 import subprocess
 import sys
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -15,8 +15,9 @@ import pytest
 
 from src.database.engine import Database
 from src.live_monitor import command
-from src.live_monitor.command import MonitorBootstrap
+from src.live_monitor.command import MonitorBootstrap, MonitorRuntimeError
 from src.live_monitor.providers import ProviderSymbolMetadata
+from src.live_monitor.timing import CausalClock
 from src.live_monitor.types import MarketQuote
 
 
@@ -103,6 +104,95 @@ def test_shutdown_discards_an_event_already_waiting_in_the_transport_queue(monke
 
     assert closed == [True]
     assert [json.loads(line)["event_type"] for line in capsys.readouterr().out.splitlines()] == ["ready"]
+
+
+def test_wall_clock_regression_during_a_silent_feed_fails_the_live_session(tmp_path, monkeypatch, capsys) -> None:
+    path = tmp_path / "clock-regression.duckdb"
+    bootstrap = MonitorBootstrap(
+        schema_version=1,
+        session_id="clock-regression",
+        database_url=f"duckdb:///{path}",
+        crypto=("BTCUSDT",),
+        config_hash="c" * 64,
+        cohort_hash="0" * 64,
+    )
+    monkeypatch.setattr(
+        command,
+        "load_binance_symbol_metadata",
+        lambda _symbols: {"BTCUSDT": ProviderSymbolMetadata("BTCUSDT", Decimal("0.01"), True, False, False)},
+    )
+    watermark = datetime(2026, 9, 1, 14, tzinfo=UTC)
+    current = [watermark]
+    clock = CausalClock(lambda: current[0])
+
+    async def regressed_silent_stream(_bootstrap, _metadata, _stop_event, **kwargs):
+        current[0] -= timedelta(seconds=1)
+        kwargs["clock"].now()
+        if False:
+            yield None
+
+    monkeypatch.setattr(command, "_merged_live_events", regressed_silent_stream)
+
+    with pytest.raises(MonitorRuntimeError):
+        asyncio.run(command.run_live(bootstrap, clock=clock))
+
+    events = [json.loads(line)["event_type"] for line in capsys.readouterr().out.splitlines()]
+    assert events == ["ready", "fatal_error"]
+
+    database = Database.from_url(f"duckdb:///{path}")
+    session = database.frame(
+        "select started_at, ended_at, created_at, status, terminal_reason from monitor_sessions "
+        "where session_id = 'clock-regression'"
+    ).iloc[0]
+    assert session.status == "stopped"
+    assert session.terminal_reason == "internal_monitor_failure"
+    assert session.started_at.to_pydatetime().astimezone(UTC) == watermark
+    assert session.created_at.to_pydatetime().astimezone(UTC) == watermark
+    assert session.ended_at.to_pydatetime().astimezone(UTC) == watermark
+
+
+def test_transient_clock_regression_inside_a_provider_task_is_immediately_propagated(monkeypatch) -> None:
+    bootstrap = MonitorBootstrap(
+        schema_version=1,
+        session_id="producer-clock-regression",
+        database_url="duckdb:///:memory:",
+        crypto=("BTCUSDT",),
+        config_hash="c" * 64,
+        cohort_hash="0" * 64,
+    )
+    metadata = {"BTCUSDT": ProviderSymbolMetadata("BTCUSDT", Decimal("0.01"), True, False, False)}
+    readings = iter((datetime(2026, 9, 1, 14, tzinfo=UTC), datetime(2026, 9, 1, 13, 59, 59, tzinfo=UTC)))
+    clock = CausalClock(lambda: next(readings))
+
+    async def regressing_stream(_adapter, _url, _symbols):
+        observed = datetime(2026, 9, 1, 14, tzinfo=UTC)
+        yield MarketQuote(
+            provider="binance",
+            feed="spot",
+            symbol="BTCUSDT",
+            bid=Decimal("100"),
+            ask=Decimal("100.01"),
+            last=Decimal("100"),
+            tick_size=Decimal("0.01"),
+            provider_time=observed,
+            received_at=observed,
+        )
+
+    monkeypatch.setattr(command.BinanceSpotAdapter, "stream", regressing_stream)
+
+    async def consume() -> None:
+        stream = command._merged_live_events(
+            bootstrap,
+            {("binance", "BTCUSDT"): metadata["BTCUSDT"]},
+            clock=clock,
+        )
+        try:
+            await anext(stream)
+        finally:
+            await stream.aclose()
+
+    with pytest.raises(ValueError, match="regressed"):
+        asyncio.run(asyncio.wait_for(consume(), timeout=1))
 
 
 @pytest.mark.parametrize("failure_scope", ["market", "control"])

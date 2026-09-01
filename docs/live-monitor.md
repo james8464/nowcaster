@@ -46,6 +46,22 @@ After a disconnect, pending pre-gap decisions are discarded and quotes cannot si
 
 Provider and feed identity are part of the evidence. Alpaca IEX research cannot authorize a SIP alert, and Binance evidence is never spliced with another crypto venue.
 
+Provider and Mac clocks can differ slightly even when both are healthy. Nowcaster preserves both original timestamps and waits until a provider timestamp is no longer in the Mac's future before processing that event. This allowance is capped at one second; a larger difference or any process-wide backwards movement of the local clock permanently latches the session into failure, including inside a provider task or while a feed is silent. Provider-task failures reach the monitor immediately, and failure-session persistence uses the last safe causal watermark. Freshness, authenticated contextual validity windows, and delayed stop/target labels are rechecked against actual processing time after evidence work, including time spent waiting in the app, rather than pretending that queued data was still fresh.
+
+### Checking the public live connection
+
+Developers can run a bounded, credential-free observation of the exact BTCUSDT and ETHUSDT monitor path:
+
+```bash
+python -m scripts.validate_live_monitor --seconds 900
+```
+
+The check creates a new database and an append-only observation log under `build/`, disables `.env` loading, launches the helper with a non-secret environment allowlist, supplies no broker credentials, and cannot submit orders. It verifies the exact signed/manifest-bound packaged helper when that bundle path is supplied, then checks the strict wire schema, Binance spot identity, event order, health coverage, quote freshness through the end of the run, finalized-minute continuity, decision-window coverage, provider interruptions, processing delay, unexpected actionable output, the complete requested observation duration, and clean shutdown. A helper that exits early is a failed probe even when it returns exit code zero. Ten minutes or more is needed for the result to cover live feed and abstention behaviour across multiple five-minute windows; a shorter run is connectivity-only.
+
+An empty isolated database deliberately has zero qualified cohorts, so every decision must abstain and no notification is allowed. This verifies live transport and fail-closed behaviour. It does **not** measure win rate, return, or profitability; those require a previously frozen cohort and a much longer untouched forward paper period.
+
+The latest packaged-helper observation and data-quality audit are recorded in [Live market validation — 1 September 2026](live-validation-2026-09-01.md).
+
 ## Use it in the macOS app
 
 1. Build historical evidence first in **Strategy Lab**. The monitor will correctly abstain if no strategy cohort has passed every gate.

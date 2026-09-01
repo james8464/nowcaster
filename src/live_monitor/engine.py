@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Literal, Protocol
 
@@ -104,6 +104,8 @@ class EligibilityEvidence(LiveMonitorModel):
     portfolio_selection_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     portfolio_decision_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     portfolio_selected: bool | None = None
+    contextual_effective_at: datetime | None = None
+    contextual_expires_at: datetime | None = None
     contextual_evidence_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
     @model_validator(mode="after")
@@ -131,6 +133,15 @@ class EligibilityEvidence(LiveMonitorModel):
             or sum(self.regime_probabilities.values()) != Decimal(1)
         ):
             raise ValueError("contextual regime probabilities must be a normalized four-state vector")
+        assert self.contextual_effective_at is not None and self.contextual_expires_at is not None
+        if (
+            self.contextual_effective_at.tzinfo is not UTC
+            or self.contextual_expires_at.tzinfo is not UTC
+            or not self.contextual_effective_at
+            < self.contextual_expires_at
+            <= self.contextual_effective_at + timedelta(hours=24)
+        ):
+            raise ValueError("contextual evidence requires a bounded explicit UTC validity window")
         if not self.contextual_authentication_valid():
             raise ValueError("contextual live evidence authentication failed")
         return self
@@ -155,6 +166,8 @@ class EligibilityEvidence(LiveMonitorModel):
             "portfolio_selection_id": self.portfolio_selection_id,
             "portfolio_decision_hash": self.portfolio_decision_hash,
             "portfolio_selected": self.portfolio_selected,
+            "contextual_effective_at": self.contextual_effective_at,
+            "contextual_expires_at": self.contextual_expires_at,
         }
 
     def contextual_authentication_valid(self) -> bool:
@@ -209,6 +222,11 @@ def evaluate_alert_eligibility(
     elif not evidence.contextual_authentication_valid():
         reasons.append("contextual_evidence_mismatch")
     else:
+        assert evidence.contextual_effective_at is not None and evidence.contextual_expires_at is not None
+        if now < evidence.contextual_effective_at:
+            reasons.append("contextual_evidence_not_effective")
+        elif now >= evidence.contextual_expires_at:
+            reasons.append("contextual_evidence_expired")
         if evidence.contextual_eligibility_state != "eligible":
             reasons.append("contextual_asset_not_eligible")
         if evidence.contextual_drift_status == "confirmed":
@@ -314,6 +332,7 @@ class LiveMonitorEngine:
         decision_interval: BarIntervalValue = "5m",
         evidence_resolver: Callable[[tuple[MarketBar, ...], MarketQuote], EligibilityEvidence | None] | None = None,
         persistence: MonitorPersistence | None = None,
+        processing_clock: Callable[[], datetime] | None = None,
         readiness_cohort_hash: str | None = None,
         readiness_invalidator: Callable[[str, str, datetime], None] | None = None,
         minimum_effective_calibration_observations: Decimal = Decimal("100"),
@@ -327,6 +346,7 @@ class LiveMonitorEngine:
         self.decision_interval = decision_interval
         self.evidence_resolver = evidence_resolver
         self.persistence = persistence
+        self.processing_clock = processing_clock
         if minimum_effective_calibration_observations < 100:
             raise ValueError("effective calibration minimum cannot be weakened below 100")
         if not Decimal(0) <= maximum_brier_score <= Decimal("0.25"):
@@ -445,7 +465,7 @@ class LiveMonitorEngine:
             result: list[MonitorWireEvent] = []
             previous = self._last_quote_emitted.get(scope)
             if previous is None or event.provider_time - previous >= timedelta(seconds=1):
-                result.append(self.emit("quote", event.model_dump(mode="json"), emitted_at=event.received_at))
+                result.append(self.emit("quote", event.model_dump(mode="json"), emitted_at=event.processed_at))
                 self._last_quote_emitted[scope] = event.provider_time
             pending = self._pending.get(scope, [])
             remaining = []
@@ -470,7 +490,7 @@ class LiveMonitorEngine:
             return ()
         if self.persistence is not None:
             self.persistence.record_finalized_bar(self.session_id, event)
-        result = [self.emit("bar_finalized", event.model_dump(mode="json"), emitted_at=event.received_at)]
+        result = [self.emit("bar_finalized", event.model_dump(mode="json"), emitted_at=event.processed_at)]
         event_scope = (event.provider, event.feed, event.symbol)
         scope = tuple(
             item
@@ -567,7 +587,7 @@ class LiveMonitorEngine:
         evidence = self.evidence_resolver(decision_bars, quote)
         if evidence is None:
             return [self._abstention(aggregated, "qualified_evidence_unavailable")]
-        now = max(aggregated.received_at, quote.received_at)
+        now = self._processing_time(max(aggregated.processed_at, quote.processed_at))
         result: list[MonitorWireEvent] = []
         if (
             evidence.drift_status == "confirmed"
@@ -742,8 +762,16 @@ class LiveMonitorEngine:
         return self.emit(
             "decision",
             payload,
-            emitted_at=bar.received_at,
+            emitted_at=self._processing_time(bar.processed_at),
         )
+
+    def _processing_time(self, earliest: datetime) -> datetime:
+        # Recorded replay remains deterministic. Live mode supplies the actual
+        # clock so slow persistence/inference cannot retain a formerly fresh quote.
+        now = self.processing_clock() if self.processing_clock is not None else earliest
+        if now < earliest:
+            raise ValueError("local clock regressed during market processing")
+        return now
 
     def _transition(
         self,
@@ -799,7 +827,8 @@ class LiveMonitorEngine:
         target: AlertState | None = None
         category: str | None = None
         reason = ""
-        delayed = bar.received_at - bar.end > timedelta(seconds=30)
+        observed_at = self._processing_time(bar.processed_at)
+        delayed = observed_at - bar.end > timedelta(seconds=30)
         if (plan.direction is Direction.LONG and bar.low <= plan.stop) or (
             plan.direction is Direction.SHORT and bar.high >= plan.stop
         ):
@@ -821,10 +850,10 @@ class LiveMonitorEngine:
             if reached_target_2:
                 target_1_reason = "target_1_touched_delayed_observation" if delayed else "target_1_touched"
                 target_2_reason = "target_2_touched_delayed_observation" if delayed else "target_2_touched"
-                result = self._transition(lifecycle, AlertState.TARGET_1, bar.received_at, target_1_reason)
-                result.append(self._notification(plan, "target", bar.received_at, target_1_reason))
-                result.extend(self._transition(lifecycle, AlertState.TARGET_2, bar.received_at, target_2_reason))
-                result.append(self._notification(plan, "target", bar.received_at, target_2_reason))
+                result = self._transition(lifecycle, AlertState.TARGET_1, observed_at, target_1_reason)
+                result.append(self._notification(plan, "target", observed_at, target_1_reason))
+                result.extend(self._transition(lifecycle, AlertState.TARGET_2, observed_at, target_2_reason))
+                result.append(self._notification(plan, "target", observed_at, target_2_reason))
                 self._active.pop(scope, None)
                 return result
             target, category, reason = AlertState.TARGET_1, "target", "target_1_touched"
@@ -832,8 +861,8 @@ class LiveMonitorEngine:
             return []
         if delayed:
             reason += "_delayed_observation"
-        result = self._transition(lifecycle, target, bar.received_at, reason)
-        result.append(self._notification(plan, category, bar.received_at, reason))
+        result = self._transition(lifecycle, target, observed_at, reason)
+        result.append(self._notification(plan, category, observed_at, reason))
         if target in {AlertState.EXPIRED, AlertState.STOPPED, AlertState.TARGET_2}:
             self._active.pop(scope, None)
         return result

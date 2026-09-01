@@ -215,11 +215,14 @@ make verify-paper-trading # Broker adapter, idempotency, stream, recovery, and C
 make verify-trading-readiness # Risk, emergency, forward evidence, readiness, live-lock, and arming tests
 make verify-live-monitor   # Live protocol, causal alerts, native models, and deterministic replay
 make replay-live-monitor   # Credential-free recorded Binance protocol replay
+python -m scripts.validate_live_monitor --seconds 900 # Observe public BTC/ETH data; isolated DB, no orders
 make verify-deep-research # End-to-end ledger, controls, resume, export, and broker-isolation tests
 make macos-ui-test       # Launch the app and verify a real native window
 make macos-screenshots   # Capture the primary native views
 make release-archive     # Build the app ZIP and SHA-256 checksum
 ```
+
+See the [1 September 2026 live validation report](docs/live-validation-2026-09-01.md) for the latest packaged-app feed, timing, continuity, and fail-closed results. A successful connection test is not evidence of profitability.
 
 ## Project layout
 

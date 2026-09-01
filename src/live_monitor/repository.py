@@ -66,13 +66,16 @@ class LiveMonitorRepository:
             ],
         )
 
-    def finish_session(self, session_id: str, *, reason: str) -> None:
+    def finish_session(self, session_id: str, *, reason: str, ended_at: datetime | None = None) -> None:
+        terminal_at = ended_at if ended_at is not None else self._now()
+        if terminal_at.tzinfo is not UTC:
+            raise ValueError("session end time must be explicit UTC")
         table = TABLES["monitor_sessions"]
         with self.database.engine.begin() as connection:
             connection.execute(
                 update(table)
                 .where(table.c.session_id == session_id)
-                .values(ended_at=self._now(), status="stopped", terminal_reason=reason)
+                .values(ended_at=terminal_at, status="stopped", terminal_reason=reason)
             )
 
     def create_setup(self, session_id: str, setup_id: str, plan: TradePlan) -> None:

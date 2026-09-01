@@ -232,6 +232,8 @@ class ContextualLiveEvidence(LiveMonitorModel):
             "portfolio_selection_id": self.portfolio_selection_id,
             "portfolio_decision_hash": self.portfolio_decision_hash,
             "portfolio_selected": self.portfolio_selected,
+            "contextual_effective_at": self.effective_at,
+            "contextual_expires_at": self.expires_at,
         }
         return {**payload, "contextual_evidence_hash": canonical_hash(payload)}
 
@@ -489,7 +491,10 @@ class SealedCohortResolver:
         values: dict[str, float] = {
             "prediction_distribution": float(evidence.probability),
             "net_edge": float(evidence.expected_net_edge),
-            "latency": max((quote.received_at - quote.provider_time).total_seconds() * 1_000, 0.0),
+            "latency": max(
+                ((quote.processed_at or quote.received_at) - quote.provider_time).total_seconds() * 1_000,
+                0.0,
+            ),
         }
         if len(bars) >= 2 and bars[-2].close > 0:
             values["feature_distribution"] = float(bars[-1].close / bars[-2].close - Decimal(1))

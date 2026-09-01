@@ -292,6 +292,32 @@ def test_sealed_resolver_warms_then_attaches_stable_multimetric_drift_evidence()
     assert reports[-1].drift_evidence_hash != "0" * 64
 
 
+def test_sealed_resolver_measures_latency_at_actual_processing_time() -> None:
+    resolver = SealedCohortResolver((cohort(),))
+    key = ("alpaca", "iex", "AAPL", "5m")
+    delegate = resolver._drift_monitors[key]
+    observed: dict[str, float] = {}
+
+    class CapturingDriftMonitor:
+        def update(self, values):
+            observed.update(values)
+            return delegate.update(values)
+
+    resolver._drift_monitors[key] = CapturingDriftMonitor()
+    event = quote()
+    timed_quote = MarketQuote(
+        **{
+            **event.model_dump(),
+            "provider_time": event.provider_time + timedelta(milliseconds=80),
+            "processed_at": event.provider_time + timedelta(milliseconds=200),
+        }
+    )
+
+    resolver(bars(), timed_quote)
+
+    assert observed["latency"] == 120.0
+
+
 def test_live_evidence_fails_closed_when_component_version_does_not_match() -> None:
     bad = component("macd_histogram_trend", "1").model_copy(update={"strategy_version": "wrong"})
     evidence = evaluate_sealed_cohort(

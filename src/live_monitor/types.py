@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from enum import StrEnum
 from typing import Any, Literal
@@ -11,6 +11,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from src.strategies.types import canonical_hash
 
 BarIntervalValue = Literal["1m", "5m", "15m", "30m", "1h", "4h", "1d"]
+# Independent provider/local clocks are not totally ordered. Preserve their raw
+# readings; the live consumer waits out this bounded lead before using an event.
+MAXIMUM_PROVIDER_CLOCK_LEAD = timedelta(seconds=1)
 
 
 class Direction(StrEnum):
@@ -76,6 +79,7 @@ class MarketBar(LiveMonitorModel):
     end: datetime
     available_at: datetime
     received_at: datetime
+    processed_at: datetime | None = None
     open: Decimal = Field(gt=0)
     high: Decimal = Field(gt=0)
     low: Decimal = Field(gt=0)
@@ -101,8 +105,11 @@ class MarketBar(LiveMonitorModel):
             raise ValueError("bar end must follow start")
         if self.available_at < self.end:
             raise ValueError("bar cannot be available before its end")
-        if self.received_at < self.end:
-            raise ValueError("bar cannot be received before its end")
+        object.__setattr__(self, "processed_at", self.processed_at or self.received_at)
+        if max(self.end, self.available_at) - self.received_at > MAXIMUM_PROVIDER_CLOCK_LEAD:
+            raise ValueError("bar provider clock lead exceeds the supported bound")
+        if self.processed_at < self.received_at:
+            raise ValueError("bar local provenance timestamps must be ordered")
         if self.high < max(self.open, self.low, self.close) or self.low > min(self.open, self.high, self.close):
             raise ValueError("bar has impossible OHLC values")
         return self
@@ -159,7 +166,7 @@ class MarketQuote(LiveMonitorModel):
         if self.ask < self.bid:
             raise ValueError("ask must be greater than or equal to bid")
         object.__setattr__(self, "processed_at", self.processed_at or self.received_at)
-        if self.received_at < self.provider_time or self.processed_at < self.received_at:
+        if self.provider_time - self.received_at > MAXIMUM_PROVIDER_CLOCK_LEAD or self.processed_at < self.received_at:
             raise ValueError("quote provenance timestamps must be ordered")
         return self
 
@@ -194,7 +201,7 @@ class MarketTrade(LiveMonitorModel):
     @model_validator(mode="after")
     def ordered_provenance(self) -> MarketTrade:
         object.__setattr__(self, "processed_at", self.processed_at or self.received_at)
-        if self.received_at < self.provider_time or self.processed_at < self.received_at:
+        if self.provider_time - self.received_at > MAXIMUM_PROVIDER_CLOCK_LEAD or self.processed_at < self.received_at:
             raise ValueError("trade provenance timestamps must be ordered")
         return self
 
@@ -236,7 +243,7 @@ class MarketDepth(LiveMonitorModel):
         object.__setattr__(self, "processed_at", self.processed_at or self.received_at)
         if self.final_update_id < self.first_update_id:
             raise ValueError("final update id must not precede first update id")
-        if self.received_at < self.provider_time or self.processed_at < self.received_at:
+        if self.provider_time - self.received_at > MAXIMUM_PROVIDER_CLOCK_LEAD or self.processed_at < self.received_at:
             raise ValueError("depth provenance timestamps must be ordered")
         if self.snapshot_verified:
             if not self.bids or not self.asks or max(len(self.bids), len(self.asks)) > 1_000:
@@ -286,7 +293,7 @@ class MarketStatusEvent(LiveMonitorModel):
     @model_validator(mode="after")
     def ordered_provenance(self) -> MarketStatusEvent:
         object.__setattr__(self, "processed_at", self.processed_at or self.received_at)
-        if self.received_at < self.provider_time or self.processed_at < self.received_at:
+        if self.provider_time - self.received_at > MAXIMUM_PROVIDER_CLOCK_LEAD or self.processed_at < self.received_at:
             raise ValueError("status provenance timestamps must be ordered")
         return self
 

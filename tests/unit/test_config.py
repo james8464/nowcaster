@@ -17,6 +17,15 @@ def test_settings_loads_yaml_and_environment_override(project_root, monkeypatch)
     assert settings.universe.companies[0].ticker == "SBUX"
 
 
+def test_settings_can_refuse_environment_file_loading(project_root, monkeypatch):
+    monkeypatch.delenv("SEC_USER_AGENT", raising=False)
+    (project_root / ".env").write_text("SEC_USER_AGENT=must-not-load\n", encoding="utf-8")
+
+    settings = Settings.load(project_root, mode="test", load_environment_file=False)
+
+    assert settings.sec_user_agent is None
+
+
 def test_settings_rejects_duplicate_tickers(project_root):
     universe = project_root / "config" / "universe.yaml"
     universe.write_text(

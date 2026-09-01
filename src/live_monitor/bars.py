@@ -113,6 +113,7 @@ def aggregate_finalized(
                 end=bucket + duration,
                 available_at=max(item.available_at for item in ordered),
                 received_at=max(item.received_at for item in ordered),
+                processed_at=max(item.processed_at for item in ordered),
                 open=ordered[0].open,
                 high=max(item.high for item in ordered),
                 low=min(item.low for item in ordered),
