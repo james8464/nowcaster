@@ -1,0 +1,130 @@
+{
+  "schema_version": 1,
+  "window": {
+    "start": "2017-08-17T00:00:00+00:00",
+    "end_exclusive": "2026-09-01T00:00:00+00:00"
+  },
+  "evidence_tier": "retrospective_archive_only",
+  "eligible_for_live_promotion": false,
+  "overall_decision": "no_reliable_strategy_found",
+  "live_money_status": "locked",
+  "source": "official Binance public spot kline archives with published SHA-256 checksums",
+  "verified_archive_files": 918,
+  "archive_manifest_hash": "315cb5139ba2ca3d52a3ad7a29673f7d456870a330418a8f0c47794170e65a74",
+  "invalid_archive_boundary_rows": 96,
+  "total_candle_rows_across_scopes": 2689416,
+  "total_diagnostic_holdout_setups": 45582,
+  "total_directional_hypotheses": 140,
+  "policy": {
+    "entry": "next continuous bar open",
+    "stop_atr": 1.0,
+    "target_r": 1.5,
+    "maximum_bars": 3,
+    "round_trip_cost_bps": 34.0,
+    "ambiguous_bar": "stop_first",
+    "expiry_bar_precedence": "stop_then_expiry_then_target"
+  },
+  "chronology": {
+    "development_fraction": 0.6,
+    "validation_fraction": 0.2,
+    "holdout_fraction": 0.2,
+    "holdout_used_for_selection": false
+  },
+  "multiplicity": {
+    "method": "Bonferroni family-wise bootstrap probability across direction and selection split",
+    "base_bootstrap_probability": 0.99
+  },
+  "scopes": [
+    {
+      "symbol": "BTCUSDT",
+      "interval": "5m",
+      "bars": 949208,
+      "gap_events": 34,
+      "missing_bars": 1720,
+      "invalid_boundary_rows": 17,
+      "directional_hypotheses_tested": 22,
+      "familywise_bootstrap_probability_threshold": 0.9997727272727273,
+      "rules_selected": 0,
+      "diagnostic_holdout_setups": 9217,
+      "diagnostic_holdout_mean_gross_return": 0.000023691583374818302,
+      "diagnostic_holdout_mean_net_return": -0.003376308416625182,
+      "decision": "no_reliable_strategy_found"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "interval": "15m",
+      "bars": 316398,
+      "gap_events": 33,
+      "missing_bars": 578,
+      "invalid_boundary_rows": 16,
+      "directional_hypotheses_tested": 30,
+      "familywise_bootstrap_probability_threshold": 0.9998333333333334,
+      "rules_selected": 0,
+      "diagnostic_holdout_setups": 10540,
+      "diagnostic_holdout_mean_gross_return": 0.00007249755544459783,
+      "diagnostic_holdout_mean_net_return": -0.003327502444555402,
+      "decision": "no_reliable_strategy_found"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "interval": "1h",
+      "bars": 79102,
+      "gap_events": 32,
+      "missing_bars": 142,
+      "invalid_boundary_rows": 15,
+      "directional_hypotheses_tested": 20,
+      "familywise_bootstrap_probability_threshold": 0.99975,
+      "rules_selected": 0,
+      "diagnostic_holdout_setups": 3422,
+      "diagnostic_holdout_mean_gross_return": 0.000005358977801434585,
+      "diagnostic_holdout_mean_net_return": -0.003394641022198566,
+      "decision": "no_reliable_strategy_found"
+    },
+    {
+      "symbol": "ETHUSDT",
+      "interval": "5m",
+      "bars": 949208,
+      "gap_events": 34,
+      "missing_bars": 1720,
+      "invalid_boundary_rows": 17,
+      "directional_hypotheses_tested": 22,
+      "familywise_bootstrap_probability_threshold": 0.9997727272727273,
+      "rules_selected": 0,
+      "diagnostic_holdout_setups": 8467,
+      "diagnostic_holdout_mean_gross_return": 0.000016526359025563254,
+      "diagnostic_holdout_mean_net_return": -0.0033834736409744373,
+      "decision": "no_reliable_strategy_found"
+    },
+    {
+      "symbol": "ETHUSDT",
+      "interval": "15m",
+      "bars": 316398,
+      "gap_events": 33,
+      "missing_bars": 578,
+      "invalid_boundary_rows": 16,
+      "directional_hypotheses_tested": 28,
+      "familywise_bootstrap_probability_threshold": 0.9998214285714285,
+      "rules_selected": 0,
+      "diagnostic_holdout_setups": 10680,
+      "diagnostic_holdout_mean_gross_return": 0.0001036489985368536,
+      "diagnostic_holdout_mean_net_return": -0.003296351001463147,
+      "decision": "no_reliable_strategy_found"
+    },
+    {
+      "symbol": "ETHUSDT",
+      "interval": "1h",
+      "bars": 79102,
+      "gap_events": 32,
+      "missing_bars": 142,
+      "invalid_boundary_rows": 15,
+      "directional_hypotheses_tested": 18,
+      "familywise_bootstrap_probability_threshold": 0.9997222222222222,
+      "rules_selected": 0,
+      "diagnostic_holdout_setups": 3256,
+      "diagnostic_holdout_mean_gross_return": -0.00022701936955949885,
+      "diagnostic_holdout_mean_net_return": -0.003627019369559499,
+      "decision": "no_reliable_strategy_found"
+    }
+  ],
+  "note": "This compact result records a rejection audit. It cannot qualify alerts or establish future profitability."
+}

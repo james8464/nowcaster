@@ -10,7 +10,7 @@ from typing import Literal, Protocol
 from pydantic import Field, model_validator
 
 from src.live_monitor.bars import FinalizedBarLedger, aggregate_finalized
-from src.live_monitor.levels import EmpiricalLevelEvidence, plan_trade_levels
+from src.live_monitor.levels import DEFAULT_TRADE_LEVEL_POLICY, EmpiricalLevelEvidence, plan_trade_levels
 from src.live_monitor.lifecycle import AlertLifecycle
 from src.live_monitor.types import (
     AlertState,
@@ -27,7 +27,6 @@ from src.live_monitor.types import (
     MonitorHealth,
     MonitorWireEvent,
     ProviderHealthEvent,
-    TradeLevelPolicy,
     TradePlan,
 )
 from src.models.drift import DEFAULT_DRIFT_POLICY_HASH
@@ -377,15 +376,7 @@ class LiveMonitorEngine:
         self._last_quote_emitted: dict[tuple[str, str, str], datetime] = {}
         self._continuity_healthy: dict[tuple[str, str, str], bool] = {}
         self._invalidated_drift_evidence: set[str] = set()
-        self._level_policy = TradeLevelPolicy(
-            atr_multiplier=Decimal("1"),
-            maximum_chase_bps=Decimal("10"),
-            maximum_stop_atr=Decimal("4"),
-            minimum_stop_noise_multiple=Decimal("2"),
-            minimum_target_1_r=Decimal("1"),
-            minimum_target_2_r=Decimal("1.5"),
-            expires_after_bars=3,
-        )
+        self._level_policy = DEFAULT_TRADE_LEVEL_POLICY
 
     def seed_history(self, bars: tuple[MarketBar, ...]) -> None:
         """Add immutable pre-session warm-up bars without emitting retrospective decisions."""

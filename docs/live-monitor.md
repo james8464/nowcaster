@@ -60,7 +60,7 @@ The check creates a new database and an append-only observation log under `build
 
 An empty isolated database deliberately has zero qualified cohorts, so every decision must abstain and no notification is allowed. This verifies live transport and fail-closed behaviour. It does **not** measure win rate, return, or profitability; those require a previously frozen cohort and a much longer untouched forward paper period.
 
-The latest packaged-helper observation and data-quality audit are recorded in [Live market validation — 1 September 2026](live-validation-2026-09-01.md).
+The latest packaged-helper observation and data-quality audit are recorded in [Live market validation — 1 September 2026](live-validation-2026-09-01.md). Signal quality is a separate question: the [full-history day-trading opportunity audit](day-trading-opportunity-audit-2026-09-01.md) found no reliable BTC/ETH rule after causal timing and conservative costs, so no archive-tested strategy is eligible for alerts.
 
 ## Use it in the macOS app
 

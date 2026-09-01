@@ -1,5 +1,21 @@
 # Live market validation — 1 September 2026
 
+## Post-audit final observation
+
+After the direction-specific day-trading audit, its gap-safe ATR correction, and the final code-review hardening, the rebuilt packaged helper completed another credential-free 15-minute observation with **zero validator issues**. The UTC window was 22:16:14–22:31:40 on 1 September 2026 (crossing into 2 September in Europe/Paris).
+
+- Packaged-helper SHA-256: `8f898112261d15e9c25a0e0b5c069f3fa906d713a773f0266d4adb90aa83f73b`
+- Source-tree SHA-256: `ddb0a97a1241db416f5bb5d7419ff6fba8db2bf852957bc15154ce872d821e5c`
+- Live duration after readiness: 900.241 of 900 requested seconds; startup took 14.998 seconds.
+- BTCUSDT and ETHUSDT each produced 15 contiguous finalized minute bars and two complete five-minute decision windows, with zero bar gaps.
+- The UI protocol received 1,253 quotes, 30 finalized bars, seven abstention decisions, 90 healthy heartbeats, and no reconnecting, stale, failed, or fatal event.
+- Three decisions correctly waited for a post-finalization quote; four then reported `qualified_evidence_unavailable` because the isolated database contained zero qualified cohorts.
+- No entry, stop, target, close, notification, order, or fill event was produced. No broker credential was supplied, `.env` loading was disabled, the child environment was allowlisted, and order submission was unavailable.
+- Median provider-to-observer time was 129.751 ms for BTCUSDT and 131.440 ms for ETHUSDT; p95 was 142.525 ms and 144.423 ms respectively. These are one-machine observations, not latency guarantees.
+- The helper shut down cleanly with exit code zero. Profitability was not assessed because no strategy qualified for an entry.
+
+The detailed timing-fix observation below is retained as an earlier validation record. This post-audit run supersedes its executable/source hashes and event counts, while reaching the same safety conclusion.
+
 ## Outcome
 
 The final packaged macOS helper completed a credential-free 15-minute Binance observation with **zero validator issues**. BTCUSDT and ETHUSDT stayed healthy, produced contiguous finalized bars, respected causal time ordering, abstained without qualified evidence, and shut down cleanly. The reconnect loop found in the previous build is fixed.

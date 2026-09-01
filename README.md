@@ -206,6 +206,7 @@ make demo                # Rebuild the bundled research demo
 make research-ci         # Rebuild the network-free intraday research fixture
 make research-live CACHE_DIR=/external/path # Exhaustive official Binance history
 make research-live-probe CACHE_DIR=/external/path # Bounded official-provider coverage probe
+make audit-day-trading AUDIT_END=2026-09-01T00:00:00Z # Causal intraday opportunity audit
 make report              # Write a measured research note
 make sync-macos-snapshot # Merge authoritative CI research into the app's first-launch data
 make verify-swift-fixture-parity # Read-only check that the committed app fixture matches CI research
@@ -222,7 +223,7 @@ make macos-screenshots   # Capture the primary native views
 make release-archive     # Build the app ZIP and SHA-256 checksum
 ```
 
-See the [1 September 2026 live validation report](docs/live-validation-2026-09-01.md) for the latest packaged-app feed, timing, continuity, and fail-closed results. A successful connection test is not evidence of profitability.
+See the [1 September 2026 day-trading opportunity audit](docs/day-trading-opportunity-audit-2026-09-01.md) for the latest full-history BTC/ETH results. It tested 2,689,416 candles and selected zero reliable rules after causal timing and conservative costs. The [live validation report](docs/live-validation-2026-09-01.md) separately covers packaged-app feed, timing, continuity, and fail-closed behavior. Neither test is a promise of future profitability.
 
 ## Project layout
 

@@ -15,6 +15,16 @@ from src.strategies.types import canonical_hash
 
 _INTERVAL_MINUTES = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60, "4h": 240, "1d": 1_440}
 
+DEFAULT_TRADE_LEVEL_POLICY = TradeLevelPolicy(
+    atr_multiplier=Decimal("1"),
+    maximum_chase_bps=Decimal("10"),
+    maximum_stop_atr=Decimal("4"),
+    minimum_stop_noise_multiple=Decimal("2"),
+    minimum_target_1_r=Decimal("1"),
+    minimum_target_2_r=Decimal("1.5"),
+    expires_after_bars=3,
+)
+
 
 class EmpiricalLevelEvidence(LiveMonitorModel):
     sample_size: int = Field(ge=1)
@@ -213,4 +223,9 @@ def plan_trade_levels(
     )
 
 
-__all__ = ["EmpiricalLevelEvidence", "plan_trade_levels", "select_empirical_levels"]
+__all__ = [
+    "DEFAULT_TRADE_LEVEL_POLICY",
+    "EmpiricalLevelEvidence",
+    "plan_trade_levels",
+    "select_empirical_levels",
+]
