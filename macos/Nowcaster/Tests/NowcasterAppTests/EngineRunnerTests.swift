@@ -435,15 +435,22 @@ private actor LaunchGate {
     let consumer = Task {
         for try await _ in EngineRunner().run(.exportSnapshot(databaseURL: nil), configuration: configuration) {}
     }
-    let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+    // Hosted runners can delay this detached child while the Swift Testing suite
+    // starts its other tests in parallel. Wait for explicit child readiness rather
+    // than assuming process launch completes within two seconds under load.
+    let deadline = ContinuousClock.now.advanced(by: .seconds(15))
     while !FileManager.default.fileExists(atPath: pidFile.path), ContinuousClock.now < deadline {
         try await Task.sleep(for: .milliseconds(20))
     }
+    try #require(
+        FileManager.default.fileExists(atPath: pidFile.path),
+        "Signal-resistant child did not report readiness before the bounded deadline"
+    )
     let pid = try #require(Int32(String(contentsOf: pidFile, encoding: .utf8)))
 
     consumer.cancel()
     _ = try? await consumer.value
-    let exitDeadline = ContinuousClock.now.advanced(by: .seconds(2))
+    let exitDeadline = ContinuousClock.now.advanced(by: .seconds(10))
     while Darwin.kill(pid, 0) == 0, ContinuousClock.now < exitDeadline {
         try await Task.sleep(for: .milliseconds(20))
     }
