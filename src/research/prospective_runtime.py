@@ -24,7 +24,7 @@ from src.ingestion.bars import atomic_write_bytes
 from src.live_monitor.bars import FinalizedBarLedger, aggregate_finalized
 from src.live_monitor.providers import BinanceSpotAdapter, ProviderSymbolMetadata, _binance_spot_tradable
 from src.live_monitor.types import MarketBar, MarketQuote, MonitorHealth, ProviderHealthEvent
-from src.research.holding_period_search import eligible_long_signals
+from src.research.holding_period_search import eligible_long_signals, research_runtime_fingerprint, validate_discovery
 from src.research.opportunity_audit import gap_safe_atr
 from src.strategies.library import build_strategy_registry
 from src.strategies.types import canonical_hash
@@ -40,7 +40,9 @@ def study_source_hash(root: Path) -> str:
         for p in sorted((root / "scripts").rglob("*.py"))
         if "__pycache__" not in p.parts
     ]
-    return canonical_hash({"research": research_source_hash(root), "scripts": scripts})
+    return canonical_hash(
+        {"research": research_source_hash(root), "scripts": scripts, "runtime": research_runtime_fingerprint()}
+    )
 
 
 def load_registry(root: Path):
@@ -51,6 +53,38 @@ def load_registry(root: Path):
 
 def _json_bytes(value: dict) -> bytes:
     return (json.dumps(value, indent=2, sort_keys=True, default=str) + "\n").encode()
+
+
+def _campaign_records(parent: Path) -> list[dict]:
+    from src.research.prospective_types import StudyManifest
+
+    path = parent / "campaigns.jsonl"
+    try:
+        records = [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+        predecessor = None
+        memberships = set()
+        for number, record in enumerate(records, 1):
+            if (
+                record["study_number"] != number
+                or record["predecessor_study_id"] != predecessor
+                or canonical_hash({k: v for k, v in record.items() if k != "record_hash"}) != record["record_hash"]
+            ):
+                raise ValueError("campaign registry integrity failure")
+            memberships.add((record["directory"], record["study_id"], number, predecessor))
+            predecessor = record["study_id"]
+        for manifest_path in parent.glob("*/manifest.json"):
+            retained = StudyManifest.model_validate_json(manifest_path.read_bytes())
+            membership = (
+                str(manifest_path.parent.resolve()),
+                retained.study_id,
+                retained.study_number,
+                retained.predecessor_study_id,
+            )
+            if membership not in memberships:
+                raise ValueError("retained manifest missing from campaign registry")
+        return records
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("campaign registry integrity failure") from error
 
 
 def register_study(
@@ -66,9 +100,11 @@ def register_study(
     if directory.exists():
         raise FileExistsError("study directory already exists; resume it instead")
     payload = discovery.read_bytes()
+    discovery_data = json.loads(payload)
+    validate_discovery(discovery_data, root=root)
     candidates = tuple(
         StudyCandidate.model_validate({k: v for k, v in row.items() if k in StudyCandidate.model_fields})
-        for row in json.loads(payload)["candidates"]
+        for row in discovery_data["candidates"]
     )
     registry = load_registry(root)
     for candidate in candidates:
@@ -80,19 +116,8 @@ def register_study(
     with (parent / "campaigns.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         registry_path = parent / "campaigns.jsonl"
-        records = (
-            [json.loads(line) for line in registry_path.read_text().splitlines()] if registry_path.exists() else []
-        )
-        previous = None
-        for index, record in enumerate(records, 1):
-            expected = canonical_hash({k: v for k, v in record.items() if k != "record_hash"})
-            if (
-                record["study_number"] != index
-                or record["predecessor_study_id"] != previous
-                or expected != record["record_hash"]
-            ):
-                raise ValueError("campaign registry integrity failure")
-            previous = record["study_id"]
+        records = _campaign_records(parent)
+        previous = records[-1]["study_id"] if records else None
         manifest = StudyManifest(
             study_number=len(records) + 1,
             registered_at=now,
@@ -125,31 +150,31 @@ def register_study(
 
 
 def verify_study(directory: Path, root: Path):
-    from src.research.prospective_types import StudyManifest
+    from src.research.prospective_types import StudyCandidate, StudyManifest
 
     manifest = StudyManifest.model_validate_json((directory / "manifest.json").read_bytes())
     if manifest.source_hash != study_source_hash(root):
         raise ValueError("frozen source changed; retain this study and register a successor")
     if manifest.discovery_hash != hashlib.sha256((directory / "discovery.json").read_bytes()).hexdigest():
         raise ValueError("frozen discovery changed")
+    discovery_data = json.loads((directory / "discovery.json").read_bytes())
+    validate_discovery(discovery_data, root=root)
+    selected = tuple(
+        StudyCandidate.model_validate({k: v for k, v in row.items() if k in StudyCandidate.model_fields})
+        for row in discovery_data["candidates"]
+    )
+    if manifest.candidates != selected:
+        raise ValueError("frozen candidates do not match validated discovery")
     if not (directory / "ledger.sqlite").is_file():
         raise ValueError("registered ledger is missing; refuse to reset evidence")
     campaign_path = directory.parent / "campaigns.jsonl"
     if not campaign_path.is_file():
         raise ValueError("retained campaign registry is missing")
-    records = [json.loads(line) for line in campaign_path.read_text().splitlines()]
-    predecessor = None
+    records = _campaign_records(directory.parent)
     matched = False
-    for number, record in enumerate(records, 1):
-        if (
-            record["study_number"] != number
-            or record["predecessor_study_id"] != predecessor
-            or canonical_hash({k: v for k, v in record.items() if k != "record_hash"}) != record["record_hash"]
-        ):
-            raise ValueError("campaign registry integrity failure")
+    for record in records:
         if record["study_id"] == manifest.study_id and record["directory"] == str(directory.resolve()):
             matched = True
-        predecessor = record["study_id"]
     if not matched:
         raise ValueError("manifest does not belong to the retained campaign registry")
     registry = load_registry(root)
@@ -304,7 +329,8 @@ class PublicBinanceTransport:
         bars, rules = [], {}
         async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
             response = await client.get(
-                "https://api.binance.com/api/v3/exchangeInfo", params={"symbols": json.dumps(list(symbols))}
+                "https://api.binance.com/api/v3/exchangeInfo",
+                params={"symbols": json.dumps(list(symbols), separators=(",", ":"))},
             )
             response.raise_for_status()
             rows = response.json()["symbols"]
@@ -409,6 +435,7 @@ async def run_study(
             last_feed_event_at=None,
             last_error=None,
             context_refreshes=0,
+            runtime_fingerprint=research_runtime_fingerprint(),
         )
 
         def publish(at):
@@ -432,7 +459,9 @@ async def run_study(
                 now = datetime.now(UTC)
                 if now >= manifest.ends_at:
                     ended = ledger.summary(now=now)
-                    if all(Decimal(row["position_quantity"]) == 0 for row in ended["candidates"]):
+                    if all(
+                        Decimal(row["post_end_liquidation"]["position_quantity"]) == 0 for row in ended["candidates"]
+                    ):
                         break
                 if pending is None:
                     if stage == "seed":

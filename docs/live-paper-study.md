@@ -16,9 +16,15 @@ dated report must be retained, including losing configurations and exclusions.
 
 Run from the retained source checkout and its installed environment. Keep that
 checkout unchanged for the whole experiment: the collector verifies source,
-study scripts, discovery and strategy definitions before contacting the feed.
+study scripts, installed Python and calculation/transport package versions,
+the full 24-trial discovery and strategy definitions before contacting the feed.
 Documentation changes alone do not change the source identity. Use a separate
 checkout for subsequent app development.
+
+Keep every study in the same collection directory. A missing or truncated
+campaign registry with retained study manifests blocks registration and resume;
+it cannot restart the campaign count. Restore the retained registry evidence
+before continuing.
 
 ```sh
 .venv/bin/python scripts/run_prospective_study.py register \
@@ -51,7 +57,9 @@ fills remain. Stopping or losing connection records an observation gap, cancels
 pending entries and marks affected open trades as interrupted. Resuming cannot
 invent fills during missed time. A Codex heartbeat may check and resume this
 command, but it is not an operating-system daemon. The Mac must be awake and
-online. Sleeping, a closed app, network outages and manual stops reduce coverage.
+online, with the separate background collector running. The Nowcaster window
+does not need to stay open. Sleeping, network outages and stopping the collector
+reduce coverage.
 No power settings are changed by this feature.
 
 ## Read results

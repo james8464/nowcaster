@@ -28,23 +28,166 @@ def test_source_freeze_detects_changed_study_script(tmp_path):
     assert runtime().study_source_hash(tmp_path) != before
 
 
-def discovery(tmp_path):
-    spec = runtime().load_registry(ROOT).resolve("macd_histogram_trend").spec
-    candidate = dict(
-        symbol="BTCUSDT",
-        strategy_id=spec.strategy_id,
-        strategy_definition_hash=spec.definition_hash,
-        stop_atr=1,
-        target_atr=1.5,
-        maximum_bars=6,
-        screen_passed=False,
+def test_study_source_hash_binds_installed_runtime(monkeypatch, tmp_path):
+    from src.research import holding_period_search
+
+    _, directory, _ = registered(tmp_path)
+    before = runtime().study_source_hash(ROOT)
+    original = holding_period_search.metadata.version
+    monkeypatch.setattr(
+        holding_period_search.metadata,
+        "version",
+        lambda package: "changed" if package == "websockets" else original(package),
     )
+    assert runtime().study_source_hash(ROOT) != before
+    with pytest.raises(ValueError, match="source"):
+        asyncio.run(runtime().run_study(directory, root=ROOT, duration_seconds=0.02, transport=ForbiddenTransport()))
+
+
+def discovery(tmp_path):
+    from src.research.holding_period_search import STRATEGY_IDS, discovery_source_hash, research_runtime_fingerprint
     from src.strategies.types import canonical_hash
 
-    candidate["candidate_id"] = canonical_hash({k: v for k, v in candidate.items() if k != "screen_passed"})
+    trials, selected = [], []
+    for symbol in ("BTCUSDT", "ETHUSDT"):
+        for strategy in STRATEGY_IDS:
+            spec = runtime().load_registry(ROOT).resolve(strategy).spec
+            for stop in (1, 2):
+                for expiry in (6, 12):
+                    definition = dict(
+                        symbol=symbol,
+                        strategy_id=strategy,
+                        strategy_definition_hash=spec.definition_hash,
+                        stop_atr=stop,
+                        target_atr=1.5 * stop,
+                        maximum_bars=expiry,
+                    )
+                    chosen = strategy == "macd_histogram_trend" and stop == 1 and expiry == 6
+                    metrics = dict(
+                        trades=1,
+                        losses=0,
+                        mean_net_return=0.0134 if chosen else 0.0034,
+                        mean_stressed_return=0.01 if chosen else 0,
+                    )
+                    row = dict(
+                        **definition,
+                        candidate_id=canonical_hash(definition),
+                        screen_passed=False,
+                        folds=[
+                            dict(
+                                fold=i,
+                                start=f"2025-01-0{i}T00:00:00+00:00",
+                                end=f"2025-01-0{i + 1}T00:00:00+00:00",
+                                **metrics,
+                            )
+                            for i in range(1, 5)
+                        ],
+                        full=dict(metrics, trades=4),
+                        signal_prefix_hash="a" * 64,
+                        diagnostics={
+                            name: 0
+                            for name in (
+                                "signals_considered",
+                                "overlap_blocked",
+                                "gap_blocked",
+                                "gap_truncated",
+                                "right_censored",
+                                "late_decision",
+                                "invalid_risk",
+                                "scored_opportunities",
+                                "minimum_target_distance_excluded",
+                            )
+                        },
+                    )
+                    row["diagnostics"]["scored_opportunities"] = 4
+                    row["diagnostics"]["signals_considered"] = 4
+                    trials.append(row)
+                    if chosen:
+                        selected.append(row)
+    manifests = [{"symbol": symbol, "checksum_verified": True, "sha256": "a" * 64} for symbol in ("BTCUSDT", "ETHUSDT")]
+    payload = dict(
+        schema_version=1,
+        source_hash=discovery_source_hash(ROOT),
+        runtime_fingerprint=research_runtime_fingerprint(),
+        candidates=selected,
+        trials=trials,
+        promotable=False,
+        status="experimental_observation_only",
+        evidence_tier="retrospective_development_only",
+        independent_validation=False,
+        symbols=["BTCUSDT", "ETHUSDT"],
+        interval="1h",
+        chronology={"kind": "four_chronological_development_folds", "folds": 4},
+        assumptions=dict(
+            round_trip_cost_bps=34,
+            stressed_round_trip_cost_bps=68,
+            minimum_target_distance_bps=68,
+            entry="next continuous hourly bar open",
+            ambiguous_barrier="stop_first",
+            expiry="expiry_before_target",
+        ),
+        archive_manifests=manifests,
+        archive_manifest_hash=canonical_hash(manifests),
+    )
     path = tmp_path / "discovery.json"
-    path.write_text(json.dumps({"candidates": [candidate], "promotable": False}))
+    path.write_text(json.dumps(payload))
     return path
+
+
+@pytest.mark.parametrize("damage", ["candidate_only", "screen", "source"])
+def test_invalid_discovery_rejected_before_any_registration_write(tmp_path, damage):
+    path = discovery(tmp_path)
+    payload = json.loads(path.read_text())
+    if damage == "candidate_only":
+        payload = {"candidates": payload["candidates"]}
+    elif damage == "screen":
+        payload["candidates"][0]["screen_passed"] = True
+    else:
+        payload["source_hash"] = "0" * 64
+    path.write_text(json.dumps(payload))
+    parent = tmp_path / "studies"
+    with pytest.raises(ValueError, match="discovery"):
+        runtime().register_study(path, parent / "one", root=ROOT)
+    assert not parent.exists()
+
+
+def test_collection_revalidates_full_discovery_even_with_matching_file_hashes(tmp_path):
+    import hashlib
+
+    from src.research.prospective_types import StudyManifest
+    from src.strategies.types import canonical_hash
+
+    _, directory, _ = registered(tmp_path)
+    path = directory / "discovery.json"
+    payload = json.loads(path.read_text())
+    payload["trials"] = payload["candidates"]
+    path.write_text(json.dumps(payload))
+    manifest_path = directory / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["discovery_hash"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    manifest_path.write_text(json.dumps(manifest))
+    campaign_path = directory.parent / "campaigns.jsonl"
+    record = json.loads(campaign_path.read_text())
+    record["study_id"] = StudyManifest.model_validate(manifest).study_id
+    record["record_hash"] = canonical_hash({k: v for k, v in record.items() if k != "record_hash"})
+    campaign_path.write_text(json.dumps(record) + "\n")
+    with pytest.raises(ValueError, match="24"):
+        runtime().verify_study(directory, ROOT)
+
+
+def test_two_symbol_metadata_request_uses_binance_compact_json():
+    import httpx
+    import respx
+
+    with respx.mock(assert_all_mocked=True) as router:
+
+        def metadata(request):
+            assert request.url.params["symbols"] == '["BTCUSDT","ETHUSDT"]'
+            return httpx.Response(200, json={"symbols": []})
+
+        router.get("https://api.binance.com/api/v3/exchangeInfo").mock(side_effect=metadata)
+        with pytest.raises(ValueError):
+            asyncio.run(runtime().PublicBinanceTransport().seed(("BTCUSDT", "ETHUSDT"), datetime.now(UTC)))
 
 
 def test_registration_rejects_overwrite_and_retains_campaign_counter(tmp_path):
@@ -70,6 +213,23 @@ def test_registration_rejects_past_start_before_creating_campaign(tmp_path):
     assert not (tmp_path / "campaigns.jsonl").exists()
 
 
+@pytest.mark.parametrize("damage", ["missing", "empty", "truncated"])
+def test_retained_campaigns_prevent_registry_reset(tmp_path, damage):
+    source = discovery(tmp_path)
+    runtime().register_study(source, tmp_path / "one", root=ROOT)
+    runtime().register_study(source, tmp_path / "two", root=ROOT)
+    registry = tmp_path / "campaigns.jsonl"
+    if damage == "missing":
+        registry.unlink()
+    else:
+        registry.write_text("" if damage == "empty" else registry.read_text().splitlines()[0] + "\n")
+    with pytest.raises(ValueError, match="campaign"):
+        runtime().register_study(source, tmp_path / "three", root=ROOT)
+    assert not (tmp_path / "three").exists()
+    with pytest.raises(ValueError, match="campaign"):
+        runtime().verify_study(tmp_path / "one", ROOT)
+
+
 def test_changed_source_refuses_before_feed_is_opened(tmp_path):
     source = discovery(tmp_path)
     directory = tmp_path / "one"
@@ -92,6 +252,63 @@ def test_finished_cash_only_study_stops_without_network(tmp_path):
     )
     assert summary["status"] == "insufficient_evidence"
     assert summary["evidence_counts"]["quotes"] == 0
+
+
+def test_already_liquidated_study_stops_despite_frozen_end_position(tmp_path):
+    from src.live_monitor.types import MarketQuote
+    from src.research.prospective import ProspectiveLedger
+
+    start = datetime.now(UTC) - timedelta(days=91)
+    directory = tmp_path / "old"
+    manifest = runtime().register_study(
+        discovery(tmp_path), directory, root=ROOT, now=start - timedelta(minutes=3), starts_at=start
+    )
+    decision = manifest.ends_at - timedelta(seconds=10)
+    with ProspectiveLedger(directory / "ledger.sqlite", manifest) as ledger:
+        initial = MarketQuote(
+            provider="binance",
+            feed="spot",
+            symbol="BTCUSDT",
+            bid=Decimal("100"),
+            ask=Decimal("100.05"),
+            bid_size=Decimal("100"),
+            ask_size=Decimal("100"),
+            last=Decimal("100"),
+            tick_size=Decimal(".01"),
+            provider_time=decision,
+            received_at=decision,
+        )
+        ledger.on_quote(initial, now=decision, lot_step=Decimal(".1"), min_notional=Decimal("10"))
+        ledger.record_signal(
+            manifest.candidates[0].candidate_id,
+            decision_at=decision,
+            bar_end=decision,
+            reference_price=Decimal("100"),
+            atr=Decimal("2"),
+            signal_id="last",
+        )
+        for at in (decision + timedelta(seconds=1), manifest.ends_at + timedelta(seconds=1)):
+            quote = MarketQuote(
+                provider="binance",
+                feed="spot",
+                symbol="BTCUSDT",
+                bid=Decimal("100"),
+                ask=Decimal("100.05"),
+                bid_size=Decimal("100"),
+                ask_size=Decimal("100"),
+                last=Decimal("100"),
+                tick_size=Decimal(".01"),
+                provider_time=at,
+                received_at=at,
+            )
+            ledger.on_quote(quote, now=at, lot_step=Decimal(".1"), min_notional=Decimal("10"))
+        row = ledger.summary(now=manifest.ends_at + timedelta(seconds=2))["candidates"][0]
+        assert Decimal(row["position_quantity"]) > 0
+        assert Decimal(row["post_end_liquidation"]["position_quantity"]) == 0
+    summary = asyncio.run(
+        runtime().run_study(directory, root=ROOT, duration_seconds=0.02, transport=ForbiddenTransport())
+    )
+    assert summary["collector"]["state"] == "stopped"
 
 
 def test_removed_campaign_registry_refuses_collection(tmp_path):

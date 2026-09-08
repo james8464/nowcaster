@@ -233,6 +233,8 @@ with independent simulated USDT balances, retained failed historical screens,
 explicit modeled costs and outage accounting. It adds no native Start button or
 qualified signal panel and sends no orders. Read its local `report.md` and
 `summary.json` in Codex; the existing native monitor is unchanged.
+The separate collector requires the Mac awake and online; the Nowcaster window
+can be closed while that collector continues running.
 
 ```text
 macos/Nowcaster/    native SwiftUI app and Swift tests
