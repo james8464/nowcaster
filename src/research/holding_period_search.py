@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
+import platform
 from collections.abc import Mapping
+from importlib import metadata
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -23,6 +27,61 @@ STRATEGY_IDS = (
 ROUND_TRIP_COST_BPS = 34
 STRESSED_ROUND_TRIP_COST_BPS = 68
 MINIMUM_TARGET_DISTANCE_BPS = 68
+_PROSPECTIVE_MODULES = {
+    Path("src/research/prospective.py"),
+    Path("src/research/prospective_types.py"),
+    Path("src/research/prospective_statistics.py"),
+    Path("src/research/prospective_runtime.py"),
+}
+_RUNTIME_DISTRIBUTIONS = (
+    ("numpy", "numpy"),
+    ("pandas", "pandas"),
+    ("pydantic", "pydantic"),
+    ("scipy", "scipy"),
+    ("statsmodels", "statsmodels"),
+    ("scikit_learn", "scikit-learn"),
+    ("pyyaml", "PyYAML"),
+    ("httpx", "httpx"),
+    ("websockets", "websockets"),
+    ("certifi", "certifi"),
+)
+
+
+def research_runtime_fingerprint() -> dict[str, str]:
+    """Return the explicit calculation and transport runtime versions."""
+
+    result = {"python": platform.python_version()}
+    for key, distribution in _RUNTIME_DISTRIBUTIONS:
+        try:
+            result[key] = metadata.version(distribution)
+        except metadata.PackageNotFoundError as error:
+            raise ValueError(f"required research runtime package is missing: {distribution}") from error
+    return result
+
+
+def discovery_source_hash(root: Path) -> str:
+    """Hash the frozen development-search source scope with relative paths."""
+
+    resolved = root.resolve()
+    paths = set((resolved / "src").glob("**/*.py"))
+    paths.difference_update(resolved / path for path in _PROSPECTIVE_MODULES)
+    paths.update((resolved / "config").glob("*.yaml"))
+    paths.update((resolved / name) for name in ("pyproject.toml", "scripts/search_holding_periods.py"))
+    missing = [path for path in paths if not path.is_file()]
+    if missing:
+        raise ValueError(f"discovery source scope has missing files: {[str(path) for path in sorted(missing)]}")
+    digest = hashlib.sha256()
+    runtime_hash = canonical_hash(research_runtime_fingerprint()).encode()
+    digest.update(len(runtime_hash).to_bytes(8, "big"))
+    digest.update(runtime_hash)
+    for path in sorted(paths, key=lambda item: item.relative_to(resolved).as_posix()):
+        relative = path.relative_to(resolved).as_posix().encode()
+        payload = path.read_bytes()
+        digest.update(len(relative).to_bytes(8, "big"))
+        digest.update(relative)
+        digest.update(len(payload).to_bytes(8, "big"))
+        digest.update(payload)
+    return digest.hexdigest()
 
 
 def _summary(outcomes: pd.DataFrame) -> dict[str, Any]:
@@ -99,6 +158,187 @@ def _select_candidate(configurations: list[dict[str, Any]]) -> dict[str, Any]:
             str(row["candidate_id"]),
         ),
     )
+
+
+def _finite_optional(value: Any, *, field: str) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValueError(f"discovery {field} must be numeric or null")
+    try:
+        result = float(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"discovery {field} must be numeric or null") from error
+    if not math.isfinite(result):
+        raise ValueError(f"discovery {field} must be finite")
+    return result
+
+
+def _count(value: Any, *, field: str) -> int:
+    if type(value) is not int or value < 0:
+        raise ValueError(f"discovery {field} must be a non-negative integer")
+    return value
+
+
+def _configured_definition_hashes(root: Path) -> dict[str, str]:
+    from src.config.settings import Settings
+    from src.strategies.library import build_strategy_registry
+
+    registry = build_strategy_registry(Settings.load(root.resolve(), mode="live").strategies.enabled)
+    configured = {item.spec.strategy_id: item.spec.definition_hash for item in registry.enabled()}
+    missing = set(STRATEGY_IDS) - set(configured)
+    if missing:
+        raise ValueError(f"configured discovery strategies are missing: {sorted(missing)}")
+    return {strategy_id: configured[strategy_id] for strategy_id in STRATEGY_IDS}
+
+
+def _validate_metrics(metrics: Any, *, field: str) -> None:
+    if not isinstance(metrics, dict):
+        raise ValueError(f"discovery {field} must be an object")
+    trades = _count(metrics.get("trades"), field=f"{field}.trades")
+    losses = _count(metrics.get("losses"), field=f"{field}.losses")
+    net = _finite_optional(metrics.get("mean_net_return"), field=f"{field}.mean_net_return")
+    stressed = _finite_optional(metrics.get("mean_stressed_return"), field=f"{field}.mean_stressed_return")
+    if losses > trades or (trades == 0) != (net is None and stressed is None):
+        raise ValueError(f"discovery {field} metrics are internally inconsistent")
+
+
+def _validate_trial(row: Any, *, definition_hashes: dict[str, str]) -> None:
+    if not isinstance(row, dict):
+        raise ValueError("discovery trial must be an object")
+    definition = {
+        "symbol": row.get("symbol"),
+        "strategy_id": row.get("strategy_id"),
+        "strategy_definition_hash": row.get("strategy_definition_hash"),
+        "stop_atr": row.get("stop_atr"),
+        "target_atr": row.get("target_atr"),
+        "maximum_bars": row.get("maximum_bars"),
+    }
+    strategy_id = definition["strategy_id"]
+    if strategy_id not in definition_hashes or definition["strategy_definition_hash"] != definition_hashes[strategy_id]:
+        raise ValueError("discovery strategy definition hash does not match configured source")
+    if row.get("candidate_id") != canonical_hash(definition):
+        raise ValueError("discovery candidate ID is not canonical")
+    folds = row.get("folds")
+    if not isinstance(folds, list) or len(folds) != 4:
+        raise ValueError("discovery trial must retain four chronological folds")
+    previous_end: pd.Timestamp | None = None
+    for ordinal, fold in enumerate(folds, start=1):
+        if not isinstance(fold, dict) or fold.get("fold") != ordinal:
+            raise ValueError("discovery folds must be ordered one through four")
+        if not isinstance(fold.get("start"), str) or not isinstance(fold.get("end"), str):
+            raise ValueError("discovery fold boundaries must be timestamp strings")
+        start = pd.Timestamp(fold["start"])
+        end = pd.Timestamp(fold["end"])
+        invalid_chronology = (
+            start.tzinfo is None
+            or end.tzinfo is None
+            or start >= end
+            or (previous_end is not None and start != previous_end)
+        )
+        if invalid_chronology:
+            raise ValueError("discovery folds must form one explicit chronological partition")
+        previous_end = end
+        _validate_metrics(fold, field=f"fold {ordinal}")
+    _validate_metrics(row.get("full"), field="full")
+    diagnostics = row.get("diagnostics")
+    required_diagnostics = {
+        "signals_considered",
+        "overlap_blocked",
+        "gap_blocked",
+        "gap_truncated",
+        "right_censored",
+        "late_decision",
+        "invalid_risk",
+        "scored_opportunities",
+        "minimum_target_distance_excluded",
+    }
+    if not isinstance(diagnostics, dict) or not required_diagnostics.issubset(diagnostics):
+        raise ValueError("discovery trial diagnostics are incomplete")
+    for name in required_diagnostics:
+        _count(diagnostics[name], field=f"diagnostics.{name}")
+    if diagnostics["scored_opportunities"] != row["full"]["trades"]:
+        raise ValueError("discovery full trade count does not match diagnostics")
+    expected_screen = all(
+        fold["trades"] >= 30
+        and (_finite_optional(fold["mean_stressed_return"], field="fold mean_stressed_return") or -math.inf) > 0
+        for fold in folds
+    )
+    if type(row.get("screen_passed")) is not bool or row["screen_passed"] != expected_screen:
+        raise ValueError("discovery screen_passed flag does not match four-fold evidence")
+
+
+def validate_discovery(payload: dict, *, root: Path) -> None:
+    """Validate local protocol integrity of a complete development discovery."""
+
+    if not isinstance(payload, dict):
+        raise ValueError("discovery payload must be an object")
+    if payload.get("source_hash") != discovery_source_hash(root):
+        raise ValueError("discovery source hash does not match local development source")
+    if payload.get("runtime_fingerprint") != research_runtime_fingerprint():
+        raise ValueError("discovery runtime fingerprint does not match local research runtime")
+    if (
+        payload.get("promotable") is not False
+        or payload.get("status") != "experimental_observation_only"
+        or payload.get("evidence_tier") != "retrospective_development_only"
+        or payload.get("independent_validation") is not False
+    ):
+        raise ValueError("discovery must remain explicitly non-promotable development evidence")
+    if payload.get("symbols") != ["BTCUSDT", "ETHUSDT"] or payload.get("interval") != "1h":
+        raise ValueError("discovery universe does not match the predeclared scope")
+    if payload.get("chronology") != {"kind": "four_chronological_development_folds", "folds": 4}:
+        raise ValueError("discovery chronology does not match four development folds")
+    assumptions = payload.get("assumptions")
+    required_assumptions = {
+        "round_trip_cost_bps": 34,
+        "stressed_round_trip_cost_bps": 68,
+        "minimum_target_distance_bps": 68,
+        "entry": "next continuous hourly bar open",
+        "ambiguous_barrier": "stop_first",
+        "expiry": "expiry_before_target",
+    }
+    if not isinstance(assumptions, dict) or any(
+        assumptions.get(key) != value for key, value in required_assumptions.items()
+    ):
+        raise ValueError("discovery execution and cost assumptions changed")
+    manifests = payload.get("archive_manifests")
+    if not isinstance(manifests, list) or not manifests:
+        raise ValueError("discovery archive manifests must be retained")
+    if payload.get("archive_manifest_hash") != canonical_hash(manifests):
+        raise ValueError("discovery archive manifest hash mismatch")
+    trials = payload.get("trials")
+    if not isinstance(trials, list) or len(trials) != 24:
+        raise ValueError("discovery must retain exactly 24 predeclared trials")
+    definition_hashes = _configured_definition_hashes(root)
+    for row in trials:
+        _validate_trial(row, definition_hashes=definition_hashes)
+    fold_partitions = {
+        tuple((fold["start"], fold["end"]) for fold in row["folds"]) for row in trials if row["symbol"] == "BTCUSDT"
+    }
+    eth_partitions = {
+        tuple((fold["start"], fold["end"]) for fold in row["folds"]) for row in trials if row["symbol"] == "ETHUSDT"
+    }
+    if len(fold_partitions) != 1 or len(eth_partitions) != 1:
+        raise ValueError("discovery trials do not share one fold chronology per asset")
+    expected_grid = {
+        (symbol, strategy_id, stop_atr, 1.5 * stop_atr, maximum_bars)
+        for symbol in ("BTCUSDT", "ETHUSDT")
+        for strategy_id in STRATEGY_IDS
+        for stop_atr in (1, 2)
+        for maximum_bars in (6, 12)
+    }
+    observed_grid = {
+        (row["symbol"], row["strategy_id"], row["stop_atr"], row["target_atr"], row["maximum_bars"]) for row in trials
+    }
+    candidate_ids = [row["candidate_id"] for row in trials]
+    if observed_grid != expected_grid or len(observed_grid) != 24 or len(set(candidate_ids)) != 24:
+        raise ValueError("discovery does not contain the exact unique 24-trial grid")
+    candidates = payload.get("candidates")
+    if not isinstance(candidates, list) or len(candidates) != 2:
+        raise ValueError("discovery must retain one selected candidate per asset")
+    expected = [_select_candidate([row for row in trials if row["symbol"] == symbol]) for symbol in payload["symbols"]]
+    if candidates != expected:
+        raise ValueError("discovery selected candidates do not match deterministic ranking")
 
 
 def _signal_hash(signals: pd.DataFrame, length: int) -> str:
@@ -261,4 +501,10 @@ def search_scope(bars: pd.DataFrame, *, symbol: str, registry: StrategyRegistry)
     }
 
 
-__all__ = ["eligible_long_signals", "search_scope"]
+__all__ = [
+    "discovery_source_hash",
+    "eligible_long_signals",
+    "research_runtime_fingerprint",
+    "search_scope",
+    "validate_discovery",
+]

@@ -14,7 +14,13 @@ import httpx
 from src.config.settings import Settings
 from src.ingestion.bars import atomic_write_bytes
 from src.ingestion.binance_archive import BinancePublicArchive
-from src.research.holding_period_search import STRATEGY_IDS, search_scope
+from src.research.holding_period_search import (
+    STRATEGY_IDS,
+    discovery_source_hash,
+    research_runtime_fingerprint,
+    search_scope,
+    validate_discovery,
+)
 from src.research.opportunity_audit import gap_safe_atr
 from src.strategies.library import build_strategy_registry
 from src.strategies.registry import StrategyRegistry
@@ -97,6 +103,7 @@ def run_search(
         raise ValueError("search boundaries must be explicit UTC")
     if end <= start:
         raise ValueError("exclusive end must follow start")
+    source_hash = discovery_source_hash(root)
     registry = _research_registry(root)
     scopes: list[dict[str, Any]] = []
     manifests: list[dict[str, Any]] = []
@@ -119,6 +126,8 @@ def run_search(
     candidates = [scope["selected_candidate"] for scope in scopes]
     discovery = {
         "schema_version": 1,
+        "source_hash": source_hash,
+        "runtime_fingerprint": research_runtime_fingerprint(),
         "generated_at": datetime.now(UTC).isoformat(),
         "start": start.astimezone(UTC).isoformat(),
         "end_exclusive": end.astimezone(UTC).isoformat(),
@@ -132,8 +141,13 @@ def run_search(
         "candidates": candidates,
         "promotable": False,
         "status": "experimental_observation_only",
+        "evidence_tier": "retrospective_development_only",
+        "independent_validation": False,
         "note": "Retrospective development search; no independent validation and no live strategy promotion.",
     }
+    if discovery_source_hash(root) != source_hash:
+        raise RuntimeError("development search source changed while discovery was running")
+    validate_discovery(discovery, root=root)
     output_dir.mkdir(parents=True, exist_ok=True)
     atomic_write_bytes(
         output_dir / "discovery.json",
