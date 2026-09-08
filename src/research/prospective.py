@@ -71,6 +71,7 @@ class ProspectiveLedger:
                 CREATE TABLE IF NOT EXISTS valuations (
                     candidate_id TEXT NOT NULL, minute INTEGER NOT NULL, event_key TEXT NOT NULL,
                     PRIMARY KEY(candidate_id, minute));
+                CREATE INDEX IF NOT EXISTS journal_kind ON journal(kind);
             """)
             found = self._conn.execute("SELECT payload FROM journal WHERE seq=1").fetchone()
             if found:
@@ -93,7 +94,10 @@ class ProspectiveLedger:
                             cash="10000",
                             pending=None,
                             position=None,
-                            trades=[],
+                            closed_trades=0,
+                            tainted_trades=0,
+                            late_closed_trades=0,
+                            closed_entry_notional="0",
                             fills=0,
                             decisions=0,
                             fees="0",
@@ -160,6 +164,27 @@ class ProspectiveLedger:
         if self._state["last_at"] and now < _at(self._state["last_at"]):
             raise ValueError("backward clock; observation rejected")
         self._state["last_at"] = now.isoformat()
+
+    def _freeze_end(self):
+        """One transactional cutoff; later execution can never rewrite study evidence."""
+        if self._state.get("fixed_end") is not None:
+            return
+        end = self.manifest.ends_at
+        self._clock(end)
+        for candidate in self.manifest.candidates:
+            previous = self._state["last_quotes"].get(candidate.symbol)
+            since = _at(previous["at"]) if previous else self.manifest.starts_at
+            if (end - since).total_seconds() > self.manifest.maximum_gap_seconds:
+                self._gap(end, "unobserved_at_fixed_end", symbol=candidate.symbol, since=since)
+        snapshot = dict(
+            accounts=copy.deepcopy(self._state["accounts"]),
+            coverage={c.candidate_id: self._coverage(c, end) for c in self.manifest.candidates},
+            quote_count=self._state["quote_count"],
+            rejected_quotes=self._state["rejected_quotes"],
+            gaps=len(self._state["gaps"]),
+        )
+        self._state["fixed_end"] = snapshot
+        self._append("fixed_end", "fixed_end", end, snapshot)
 
     def verify_integrity(self) -> bool:
         try:
@@ -288,6 +313,8 @@ class ProspectiveLedger:
             return
 
         def operation():
+            if at > self.manifest.ends_at:
+                self._freeze_end()
             self._clock(at)
             self._gap(at, reason, since=since)
 
@@ -298,10 +325,25 @@ class ProspectiveLedger:
         _positive(lot_step)
         _positive(min_notional)
         previous = self._state["last_quotes"].get(quote.symbol)
-        event_key = "quote:" + quote.event_id
-        if (previous and previous["event_id"] == quote.event_id) or self._conn.execute(
-            "SELECT 1 FROM journal WHERE event_key=?", (event_key,)
-        ).fetchone():
+        # Receipt/processing clocks identify deliveries, not new displayed liquidity.
+        source_id = canonical_hash(
+            dict(
+                provider=quote.provider,
+                feed=quote.feed,
+                symbol=quote.symbol,
+                sequence=quote.sequence,
+                provider_time=quote.provider_time.isoformat() if quote.sequence is None else None,
+            )
+        )
+        source_hash = canonical_hash(quote.model_dump(mode="json", exclude={"received_at", "processed_at"}))
+        event_key = "quote:" + source_id
+        recorded = self._conn.execute("SELECT payload FROM journal WHERE event_key=?", (event_key,)).fetchone()
+        prior_hash = json.loads(recorded[0])["source_hash"] if recorded else None
+        if previous and previous["source_id"] == source_id:
+            prior_hash = previous["source_hash"]
+        if prior_hash is not None:
+            if prior_hash != source_hash:
+                raise ValueError("conflicting provider observation")
             return
         if (
             previous
@@ -318,6 +360,8 @@ class ProspectiveLedger:
         )
 
         def operation():
+            if now > self.manifest.ends_at:
+                self._freeze_end()
             self._clock(now)
             if not fresh:
                 self._state["rejected_quotes"] += 1
@@ -330,7 +374,8 @@ class ProspectiveLedger:
             self._state["quote_count"] += 1
             self._state["last_quotes"][quote.symbol] = dict(
                 at=now.isoformat(),
-                event_id=quote.event_id,
+                source_id=source_id,
+                source_hash=source_hash,
                 sequence=quote.sequence,
                 provider_time=quote.provider_time.isoformat(),
             )
@@ -388,6 +433,8 @@ class ProspectiveLedger:
                     "fills",
                     now,
                     dict(
+                        source_id=source_id,
+                        source_hash=source_hash,
                         quote=quote.model_dump(mode="json"),
                         fills=filled,
                         lot_step=str(lot_step),
@@ -472,7 +519,11 @@ class ProspectiveLedger:
                 net_pnl=str(pnl),
                 stressed_pnl=str(pnl - D(position["entry_notional"]) * D(".0034")),
             )
-            account["trades"].append(trade)
+            self._append("trade:" + position["signal_id"], "closed_trade", now, trade)
+            account["closed_trades"] += 1
+            account["tainted_trades"] += int(position["tainted"])
+            account["late_closed_trades"] += int(now > self.manifest.ends_at)
+            account["closed_entry_notional"] = str(D(account["closed_entry_notional"]) + D(position["entry_notional"]))
             account["position"] = None
         return dict(
             side="sell",
@@ -538,17 +589,22 @@ class ProspectiveLedger:
         if self._state["last_at"] and now < _at(self._state["last_at"]):
             raise ValueError("backward summary clock")
         ended = now >= self.manifest.ends_at
+        if ended and self._state.get("fixed_end") is None:
+            self._transaction(self._freeze_end)
+        fixed = self._state.get("fixed_end") if ended else None
         rows = []
         for candidate in self.manifest.candidates:
-            account = self._state["accounts"][candidate.candidate_id]
+            live_account = self._state["accounts"][candidate.candidate_id]
+            account = fixed["accounts"][candidate.candidate_id] if fixed else live_account
             equity = self._equity(account)
             pnl = equity - D("10000")
-            stress = sum((D(t["entry_notional"]) * D(".0034") for t in account["trades"]), D("0"))
+            stress = D(account["closed_entry_notional"]) * D(".0034")
             if account["position"]:
                 stress += D(account["position"]["entry_notional"]) * D(".0034")
-            coverage = self._coverage(candidate, min(now, self.manifest.ends_at))
-            tainted = sum(t["tainted"] for t in account["trades"])
-            stale = account["mark_at"] is None or (now - _at(account["mark_at"])).total_seconds() > 2
+            coverage = fixed["coverage"][candidate.candidate_id] if fixed else self._coverage(candidate, now)
+            tainted = account["tainted_trades"]
+            mark_deadline = self.manifest.ends_at if fixed else now
+            stale = account["mark_at"] is None or (mark_deadline - _at(account["mark_at"])).total_seconds() > 2
             screening = (
                 bootstrap_screen(
                     coverage["complete_daily_returns"],
@@ -561,11 +617,11 @@ class ProspectiveLedger:
             reasons = []
             if not candidate.screen_passed:
                 reasons.append("failed_historical_screen")
-            if len(account["trades"]) < 100:
+            if account["closed_trades"] < 100:
                 reasons.append("fewer_than_100_closed_trades")
             if account["position"] or account["pending"]:
                 reasons.append("outstanding_position_or_pending_entry")
-            if any(_at(t["closed_at"]) > self.manifest.ends_at for t in account["trades"]):
+            if live_account["late_closed_trades"]:
                 reasons.append("liquidation_after_fixed_end")
             if coverage["fraction"] < 0.99:
                 reasons.append("minute_coverage_below_99_percent")
@@ -604,7 +660,7 @@ class ProspectiveLedger:
                     position_quantity=account["position"]["quantity"] if account["position"] else "0",
                     open_exposure=str(equity - D(account["cash"])),
                     pending_entry=account["pending"] is not None,
-                    closed_trades=len(account["trades"]),
+                    closed_trades=account["closed_trades"],
                     tainted_trades=tainted,
                     fills=account["fills"],
                     decisions=account["decisions"],
@@ -612,8 +668,19 @@ class ProspectiveLedger:
                     valuation_at=account["mark_at"],
                     valuation_stale=stale,
                     buy_and_hold_return=benchmark,
-                    coverage=coverage,
+                    coverage=copy.deepcopy(coverage),
                     bootstrap=screening,
+                    post_end_liquidation=dict(
+                        cash=live_account["cash"],
+                        equity=str(self._equity(live_account)),
+                        net_pnl=str(self._equity(live_account) - D("10000")),
+                        closed_trades=live_account["closed_trades"] - account["closed_trades"],
+                        fills=live_account["fills"] - account["fills"],
+                        position_quantity=live_account["position"]["quantity"] if live_account["position"] else "0",
+                        valuation_at=live_account["mark_at"],
+                    )
+                    if fixed
+                    else None,
                 )
             )
         status = (
@@ -636,11 +703,11 @@ class ProspectiveLedger:
             updated_at=now.isoformat(),
             candidates=rows,
             evidence_counts=dict(
-                quotes=self._state["quote_count"],
-                rejected_quotes=self._state["rejected_quotes"],
+                quotes=fixed["quote_count"] if fixed else self._state["quote_count"],
+                rejected_quotes=fixed["rejected_quotes"] if fixed else self._state["rejected_quotes"],
                 decisions=sum(r["decisions"] for r in rows),
                 fills=sum(r["fills"] for r in rows),
-                gaps=len(self._state["gaps"]),
+                gaps=fixed["gaps"] if fixed else len(self._state["gaps"]),
             ),
             limitations=[
                 "Independent 10,000 USDT paper accounts approximate USD; never sum them into portfolio performance.",

@@ -250,3 +250,118 @@ def test_incomplete_day_is_not_silently_zero_filled(tmp_path):
         assert coverage["complete_daily_returns"] == []
         assert not coverage["all_full_utc_days_complete"]
         assert coverage["fraction"] == 0
+
+
+def test_fixed_end_metrics_do_not_change_with_post_end_quotes_or_gaps(tmp_path):
+    end = 90 * 86400
+    path = tmp_path / "ledger.db"
+    with ProspectiveLedger(path, manifest()) as ledger:
+        observe(ledger, quote(end - 61))
+        observe(ledger, quote(end - 31))
+        observe(ledger, quote(end - 1))
+        at_end = row(ledger, end)
+        assert at_end["coverage"]["observed_minutes"] == 1
+    with ProspectiveLedger(path, manifest()) as ledger:
+        observe(ledger, quote(end + 31, bid="200", ask="200.05"))
+        later = row(ledger, end + 31)
+        for key in ("coverage", "buy_and_hold_return", "cash", "equity", "net_pnl", "maximum_drawdown"):
+            assert later[key] == at_end[key]
+
+
+def test_late_liquidation_reported_separately_from_frozen_end_account(tmp_path):
+    end = 90 * 86400
+    path = tmp_path / "ledger.db"
+    with ProspectiveLedger(path, manifest()) as ledger:
+        observe(ledger, quote(end - 11))
+        decision = START + timedelta(seconds=end - 10)
+        ledger.record_signal(
+            "c" * 64, decision_at=decision, bar_end=decision, reference_price=D("100"), atr=D("2"), signal_id="late"
+        )
+        observe(ledger, quote(end - 9))
+        frozen = row(ledger, end)
+        observe(ledger, quote(end + 1, bid="104", ask="104.05"))
+        later = row(ledger, end + 1)
+        assert later["cash"] == frozen["cash"]
+        assert later["net_pnl"] == frozen["net_pnl"]
+        assert later["position_quantity"] == frozen["position_quantity"]
+        assert later["closed_trades"] == 0
+        assert later["post_end_liquidation"]["closed_trades"] == 1
+        assert later["post_end_liquidation"]["position_quantity"] == "0"
+        assert "liquidation_after_fixed_end" in later["reasons"]
+
+
+def test_closed_trade_history_is_not_rewritten_in_per_quote_state(tmp_path):
+    path = tmp_path / "ledger.db"
+    with ProspectiveLedger(path, manifest()) as ledger:
+        for i in range(100):
+            at = START + timedelta(seconds=3 * i)
+            ledger.record_signal(
+                "c" * 64, decision_at=at, bar_end=at, reference_price=D("100"), atr=D("2"), signal_id=f"trade-{i}"
+            )
+            observe(ledger, quote(3 * i + 1))
+            observe(ledger, quote(3 * i + 2, bid="104", ask="104.05"))
+        assert row(ledger, 300)["closed_trades"] == 100
+    with sqlite3.connect(path) as conn:
+        state_bytes = conn.execute("SELECT length(payload) FROM state").fetchone()[0]
+        assert state_bytes < 10000
+        assert conn.execute("SELECT COUNT(*) FROM journal WHERE kind='closed_trade'").fetchone()[0] == 100
+    with ProspectiveLedger(path, manifest()) as ledger:
+        assert row(ledger, 301)["closed_trades"] == 100
+        assert ledger.verify_integrity()
+
+
+def test_source_retransmission_cannot_consume_displayed_exit_size_twice(tmp_path):
+    path = tmp_path / "ledger.db"
+    stop_quote = quote(2, bid="97", ask="97.05", size="5")
+    with ProspectiveLedger(path, manifest()) as ledger:
+        signal(ledger)
+        observe(ledger, quote())
+        observe(ledger, stop_quote)
+        assert row(ledger)["position_quantity"] == "6.1"
+    with ProspectiveLedger(path, manifest()) as ledger:
+        received = START + timedelta(seconds=2.5)
+        replay = stop_quote.model_copy(update={"received_at": received, "processed_at": received})
+        observe(ledger, replay)
+        result = row(ledger, 2.5)
+        assert result["position_quantity"] == "6.1"
+        assert result["fills"] == 2
+        # Advance another observation then retransmit the earlier economic quote again.
+        observe(ledger, quote(3, bid="97", ask="97.05", size="0.01"))
+        received = START + timedelta(seconds=3.5)
+        replay = stop_quote.model_copy(update={"received_at": received, "processed_at": received})
+        observe(ledger, replay)
+        assert row(ledger, 3.5)["position_quantity"] == "6.1"
+
+
+def test_same_provider_observation_with_changed_price_fails_closed(tmp_path):
+    path = tmp_path / "ledger.db"
+    with ProspectiveLedger(path, manifest()) as ledger:
+        observe(ledger, quote())
+    with ProspectiveLedger(path, manifest()) as ledger:
+        received = START + timedelta(seconds=1.5)
+        changed = quote(1, bid="99", ask="99.05").model_copy(update={"received_at": received, "processed_at": received})
+        with pytest.raises(ValueError, match="conflicting"):
+            observe(ledger, changed)
+
+
+def test_first_post_end_fill_freezes_without_an_end_summary(tmp_path):
+    end = 90 * 86400
+    with ProspectiveLedger(tmp_path / "ledger.db", manifest()) as ledger:
+        observe(ledger, quote(end - 11))
+        decision = START + timedelta(seconds=end - 10)
+        ledger.record_signal(
+            "c" * 64, decision_at=decision, bar_end=decision, reference_price=D("100"), atr=D("2"), signal_id="last"
+        )
+        observe(ledger, quote(end - 9))
+        observe(ledger, quote(end + 1, bid="104", ask="104.05"))
+        result = row(ledger, end + 1)
+        assert result["cash"] == "8887.7786122225"
+        assert result["closed_trades"] == 0
+        assert result["post_end_liquidation"]["closed_trades"] == 1
+
+
+def test_returned_summary_cannot_modify_fixed_evidence(tmp_path):
+    with ProspectiveLedger(tmp_path / "ledger.db", manifest()) as ledger:
+        summary = row(ledger, 90 * 86400)
+        summary["coverage"]["fraction"] = 1
+        assert row(ledger, 90 * 86400)["coverage"]["fraction"] == 0
