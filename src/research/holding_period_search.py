@@ -140,9 +140,9 @@ def _generated_signals(bars: pd.DataFrame, strategy_id: str, registry: StrategyR
 def _apply_long_eligibility(
     bars: pd.DataFrame, raw_signals: pd.DataFrame, *, target_atr: float
 ) -> tuple[pd.DataFrame, int]:
-    distance_bps = target_atr * pd.to_numeric(bars["atr"], errors="coerce") / pd.to_numeric(
-        bars["close"], errors="raise"
-    ) * 10_000
+    distance_bps = (
+        target_atr * pd.to_numeric(bars["atr"], errors="coerce") / pd.to_numeric(bars["close"], errors="raise") * 10_000
+    )
     signals = raw_signals.copy()
     active = pd.to_numeric(signals["signal"], errors="raise").eq(1)
     target_eligible = distance_bps.ge(MINIMUM_TARGET_DISTANCE_BPS).fillna(False)
@@ -152,9 +152,7 @@ def _apply_long_eligibility(
     return signals, int(excluded.sum())
 
 
-def eligible_long_signals(
-    bars: pd.DataFrame, candidate: Mapping[str, Any], registry: StrategyRegistry
-) -> pd.DataFrame:
+def eligible_long_signals(bars: pd.DataFrame, candidate: Mapping[str, Any], registry: StrategyRegistry) -> pd.DataFrame:
     """Generate the candidate's causal long signals with the frozen distance floor."""
 
     ordered = bars.sort_values("open_timestamp", kind="stable").reset_index(drop=True).copy()
@@ -185,8 +183,7 @@ def search_scope(bars: pd.DataFrame, *, symbol: str, registry: StrategyRegistry)
     if missing:
         raise ValueError(f"holding-period registry is missing strategies: {sorted(missing)}")
     signals_by_strategy = {
-        strategy_id: _generated_signals(ordered, strategy_id, registry)
-        for strategy_id in STRATEGY_IDS
+        strategy_id: _generated_signals(ordered, strategy_id, registry) for strategy_id in STRATEGY_IDS
     }
     configurations: list[dict[str, Any]] = []
     prefix_length = int(len(ordered) * 0.75)
@@ -234,9 +231,7 @@ def search_scope(bars: pd.DataFrame, *, symbol: str, registry: StrategyRegistry)
                         **definition,
                         "candidate_id": candidate_id,
                         "screen_passed": all(
-                            fold["trades"] >= 30
-                            and _rank_value(fold["mean_stressed_return"]) > 0
-                            for fold in folds
+                            fold["trades"] >= 30 and _rank_value(fold["mean_stressed_return"]) > 0 for fold in folds
                         ),
                         "folds": folds,
                         "full": _summary(audit.outcomes),
