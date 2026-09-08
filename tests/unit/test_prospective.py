@@ -9,6 +9,7 @@ import pytest
 from src.live_monitor.types import MarketQuote
 from src.research.prospective import ProspectiveLedger
 from src.research.prospective_types import StudyCandidate, StudyManifest
+from src.strategies.types import canonical_hash, canonical_json
 
 START = datetime(2026, 9, 9, tzinfo=UTC)
 
@@ -367,6 +368,102 @@ def test_returned_summary_cannot_modify_fixed_evidence(tmp_path):
         summary = row(ledger, 90 * 86400)
         summary["coverage"]["fraction"] = 1
         assert row(ledger, 90 * 86400)["coverage"]["fraction"] == 0
+
+
+def two_symbol_manifest():
+    btc = manifest().candidates[0]
+    eth = btc.model_copy(update={"candidate_id": "e" * 64, "symbol": "ETHUSDT"})
+    return manifest(candidates=(btc, eth))
+
+
+def test_overlapping_outages_keep_hot_state_small_and_all_gap_evidence(tmp_path):
+    path = tmp_path / "ledger.db"
+    m = two_symbol_manifest()
+    with ProspectiveLedger(path, m) as ledger:
+        for symbol in ("BTCUSDT", "ETHUSDT"):
+            observe(ledger, quote(0).model_copy(update={"symbol": symbol}))
+        for seconds in range(1, 1001):
+            ledger.record_gap(at=START + timedelta(seconds=seconds), reason="retry_offline")
+        for symbol in ("BTCUSDT", "ETHUSDT"):
+            observe(ledger, quote(1001).model_copy(update={"symbol": symbol}))
+        summary = ledger.summary(now=START + timedelta(seconds=1001))
+        assert all(c["coverage"]["observed_minutes"] == 0 for c in summary["candidates"])
+        with sqlite3.connect(path) as conn:
+            assert conn.execute("SELECT length(payload) FROM state").fetchone()[0] < 10000
+            assert conn.execute("SELECT count(*) FROM journal WHERE kind='gap'").fetchone()[0] == 1002
+    with ProspectiveLedger(path, m) as ledger:
+        assert ledger.verify_integrity()
+        assert ledger.summary(now=START + timedelta(seconds=1001))["evidence_counts"]["gaps"] == 1002
+
+
+def test_gap_union_preserves_per_symbol_coverage_boundaries(tmp_path):
+    path = tmp_path / "ledger.db"
+    m = two_symbol_manifest()
+    with ProspectiveLedger(path, m) as ledger:
+        for seconds in range(0, 241, 30):
+            observe(ledger, quote(seconds))
+            if seconds == 0 or seconds >= 120:
+                observe(ledger, quote(seconds).model_copy(update={"symbol": "ETHUSDT"}))
+        rows = ledger.summary(now=START + timedelta(seconds=240))["candidates"]
+        assert rows[0]["coverage"]["observed_minutes"] == 4
+        # ETH gap [0,120] invalidates minute 0,1,2 inclusively; minute 3 is valid.
+        assert rows[1]["coverage"]["observed_minutes"] == 1
+    with ProspectiveLedger(path, m) as ledger:
+        rows = ledger.summary(now=START + timedelta(seconds=240))["candidates"]
+        assert [c["coverage"]["observed_minutes"] for c in rows] == [4, 1]
+        assert ledger.verify_integrity()
+
+
+def test_gap_index_corruption_fails_closed(tmp_path):
+    path = tmp_path / "ledger.db"
+    with ProspectiveLedger(path, manifest()) as ledger:
+        ledger.record_gap(at=START + timedelta(seconds=120), reason="offline")
+    with sqlite3.connect(path) as conn:
+        conn.execute("DELETE FROM gap_intervals")
+    with pytest.raises(ValueError, match="integrity"):
+        ProspectiveLedger(path, manifest())
+
+
+def test_authenticated_legacy_gap_list_migrates_without_losing_evidence(tmp_path):
+    path = tmp_path / "ledger.db"
+    with ProspectiveLedger(path, manifest()) as ledger:
+        ledger.record_gap(at=START + timedelta(seconds=120), reason="offline")
+    # Recreate the preceding storage layout with its original authenticated list.
+    with sqlite3.connect(path) as conn:
+        state = json.loads(conn.execute("SELECT payload FROM state").fetchone()[0])
+        state.pop("gap_count")
+        state["gaps"] = [json.loads(r[0]) for r in conn.execute("SELECT payload FROM journal WHERE kind='gap'")]
+        conn.execute("UPDATE state SET payload=?,hash=?", (canonical_json(state), canonical_hash(state)))
+        conn.execute("DROP TABLE gap_intervals")
+    with ProspectiveLedger(path, manifest()) as ledger:
+        assert ledger.verify_integrity()
+        assert ledger.summary(now=START + timedelta(seconds=120))["evidence_counts"]["gaps"] == 1
+    with sqlite3.connect(path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM journal WHERE kind='gap'").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM gap_intervals").fetchone()[0] == 1
+
+
+def test_symbol_outage_only_taints_that_symbols_position(tmp_path):
+    with ProspectiveLedger(tmp_path / "ledger.db", two_symbol_manifest()) as ledger:
+        for candidate in two_symbol_manifest().candidates:
+            ledger.record_signal(
+                candidate.candidate_id,
+                decision_at=START,
+                bar_end=START,
+                reference_price=D("100"),
+                atr=D("2"),
+                signal_id=candidate.symbol,
+            )
+        for symbol in ("BTCUSDT", "ETHUSDT"):
+            observe(ledger, quote(1).model_copy(update={"symbol": symbol}))
+        for seconds in (31, 61, 91, 121):
+            observe(ledger, quote(seconds))
+        observe(ledger, quote(121).model_copy(update={"symbol": "ETHUSDT"}))
+        for symbol in ("BTCUSDT", "ETHUSDT"):
+            observe(ledger, quote(124, bid="104", ask="104.05").model_copy(update={"symbol": symbol}))
+        rows = ledger.summary(now=START + timedelta(seconds=124))["candidates"]
+        assert [r["closed_trades"] for r in rows] == [1, 1]
+        assert [r["tainted_trades"] for r in rows] == [0, 1]
 
 
 def test_provider_lead_requires_settled_processing_and_preserves_receipt(tmp_path):

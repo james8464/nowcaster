@@ -72,6 +72,9 @@ class ProspectiveLedger:
                     candidate_id TEXT NOT NULL, minute INTEGER NOT NULL, event_key TEXT NOT NULL,
                     PRIMARY KEY(candidate_id, minute));
                 CREATE INDEX IF NOT EXISTS journal_kind ON journal(kind);
+                CREATE TABLE IF NOT EXISTS gap_intervals (
+                    symbol TEXT NOT NULL, start_minute INTEGER NOT NULL, end_minute INTEGER NOT NULL,
+                    PRIMARY KEY(symbol, start_minute));
             """)
             found = self._conn.execute("SELECT payload FROM journal WHERE seq=1").fetchone()
             if found:
@@ -80,6 +83,8 @@ class ProspectiveLedger:
                 if json.loads(found[0]) != manifest.model_dump(mode="json"):
                     raise ValueError("manifest mismatch; register a new study")
                 self._state = json.loads(self._conn.execute("SELECT payload FROM state").fetchone()[0])
+                if "gaps" in self._state:
+                    self._transaction(self._migrate_gap_index)
             else:
                 if self._conn.execute("SELECT COUNT(*) FROM state").fetchone()[0]:
                     raise ValueError("ledger integrity failure: missing manifest")
@@ -87,7 +92,7 @@ class ProspectiveLedger:
                     last_at=None,
                     quote_count=0,
                     rejected_quotes=0,
-                    gaps=[],
+                    gap_count=0,
                     last_quotes={},
                     accounts={
                         c.candidate_id: dict(
@@ -181,7 +186,7 @@ class ProspectiveLedger:
             coverage={c.candidate_id: self._coverage(c, end) for c in self.manifest.candidates},
             quote_count=self._state["quote_count"],
             rejected_quotes=self._state["rejected_quotes"],
-            gaps=len(self._state["gaps"]),
+            gaps=self._state["gap_count"],
         )
         self._state["fixed_end"] = snapshot
         self._append("fixed_end", "fixed_end", end, snapshot)
@@ -189,15 +194,31 @@ class ProspectiveLedger:
     def verify_integrity(self) -> bool:
         try:
             previous, expected = "0" * 64, 1
+            gaps = []
             for seq, key, kind, at, payload, prev, digest in self._conn.execute("SELECT * FROM journal ORDER BY seq"):
                 values = dict(seq=seq, event_key=key, kind=kind, at=at, payload=json.loads(payload), previous_hash=prev)
                 if seq != expected or prev != previous or canonical_hash(values) != digest:
                     return False
                 previous, expected = digest, seq + 1
+                if kind == "gap":
+                    gaps.append(values["payload"])
             state = self._conn.execute("SELECT payload,hash FROM state WHERE singleton=1").fetchone()
             if not state or canonical_hash(json.loads(state[0])) != state[1] or expected == 1:
                 return False
             if json.loads(state[0]).get("journal_head") != previous:
+                return False
+            state_data = json.loads(state[0])
+            if "gaps" in state_data:
+                # Authenticate the previous layout before its transactional index migration.
+                if state_data["gaps"] != gaps or self._conn.execute("SELECT COUNT(*) FROM gap_intervals").fetchone()[0]:
+                    return False
+            elif (
+                state_data["gap_count"] != len(gaps)
+                or self._gap_union(gaps)
+                != self._conn.execute(
+                    "SELECT symbol,start_minute,end_minute FROM gap_intervals ORDER BY symbol,start_minute"
+                ).fetchall()
+            ):
                 return False
             # Index integrity: every sampled valuation is linked to its immutable event.
             indexed = self._conn.execute("""SELECT v.candidate_id,v.minute,j.kind,j.payload FROM valuations v
@@ -277,10 +298,62 @@ class ProspectiveLedger:
 
         self._transaction(operation)
 
+    def _gap_union(self, gaps):
+        """Rebuild coverage index from immutable evidence for integrity checks only."""
+        result = []
+        for symbol in sorted(c.symbol for c in self.manifest.candidates):
+            intervals = sorted(
+                (_minute(_at(g["since"])), _minute(_at(g["at"]))) for g in gaps if g["symbol"] in (None, symbol)
+            )
+            merged = []
+            for start, end in intervals:
+                if start > end:
+                    continue
+                if merged and start <= merged[-1][1] + 1:
+                    merged[-1][1] = max(merged[-1][1], end)
+                else:
+                    merged.append([start, end])
+            result.extend((symbol, start, end) for start, end in merged)
+        return result
+
+    def _index_gap(self, gap):
+        start, end = _minute(_at(gap["since"])), _minute(_at(gap["at"]))
+        if start > end:
+            return
+        for candidate in self.manifest.candidates:
+            if gap["symbol"] not in (None, candidate.symbol):
+                continue
+            bounds = self._conn.execute(
+                """SELECT MIN(start_minute),MAX(end_minute) FROM gap_intervals
+                WHERE symbol=? AND start_minute<=? AND end_minute>=?""",
+                (candidate.symbol, end + 1, start - 1),
+            ).fetchone()
+            lo = min(start, bounds[0]) if bounds[0] is not None else start
+            hi = max(end, bounds[1]) if bounds[1] is not None else end
+            # Only the derived index is replaced; every gap event remains in the journal.
+            self._conn.execute(
+                "DELETE FROM gap_intervals WHERE symbol=? AND start_minute<=? AND end_minute>=?",
+                (candidate.symbol, hi + 1, lo - 1),
+            )
+            self._conn.execute("INSERT INTO gap_intervals VALUES(?,?,?)", (candidate.symbol, lo, hi))
+
+    def _migrate_gap_index(self):
+        gaps = self._state.pop("gaps")
+        for gap in gaps:
+            self._index_gap(gap)
+        self._state["gap_count"] = len(gaps)
+        self._append(
+            "gap_index_migration",
+            "storage_migration",
+            _at(self._state["last_at"]) if self._state["last_at"] else self.manifest.registered_at,
+            dict(gap_count=len(gaps), method="coalesced_per_symbol_minute_intervals"),
+        )
+
     def _gap(self, at: datetime, reason: str, *, symbol: str | None = None, since: datetime | None = None):
         since = since or self.manifest.starts_at
         gap = dict(at=at.isoformat(), since=since.isoformat(), reason=reason, symbol=symbol)
-        self._state["gaps"].append(gap)
+        self._state["gap_count"] += 1
+        self._index_gap(gap)
         for candidate in self.manifest.candidates:
             if symbol is not None and candidate.symbol != symbol:
                 continue
@@ -560,11 +633,12 @@ class ProspectiveLedger:
             event = json.loads(payload)
             marks[event["minute"]] = event
         invalid = set()
-        for gap in self._state["gaps"]:
-            if gap["symbol"] in (None, candidate.symbol):
-                invalid.update(
-                    range(max(start_minute, _minute(_at(gap["since"]))), min(end_minute, _minute(_at(gap["at"]))) + 1)
-                )
+        for start, end in self._conn.execute(
+            """SELECT start_minute,end_minute FROM gap_intervals
+            WHERE symbol=? AND start_minute<=? AND end_minute>=?""",
+            (candidate.symbol, end_minute, start_minute),
+        ):
+            invalid.update(range(max(start_minute, start), min(end_minute, end) + 1))
         covered = len({minute for minute in marks if start_minute <= minute < end_minute} - invalid)
         expected = max(0, end_minute - start_minute)
         # Exclude partial boundary days; never select isolated profitable trade days.
@@ -714,7 +788,7 @@ class ProspectiveLedger:
                 rejected_quotes=fixed["rejected_quotes"] if fixed else self._state["rejected_quotes"],
                 decisions=sum(r["decisions"] for r in rows),
                 fills=sum(r["fills"] for r in rows),
-                gaps=fixed["gaps"] if fixed else len(self._state["gaps"]),
+                gaps=fixed["gaps"] if fixed else self._state["gap_count"],
             ),
             limitations=[
                 "Independent 10,000 USDT paper accounts approximate USD; never sum them into portfolio performance.",
