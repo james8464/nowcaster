@@ -1,3 +1,5 @@
+import asyncio
+import json
 import sqlite3
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal as D
@@ -365,3 +367,67 @@ def test_returned_summary_cannot_modify_fixed_evidence(tmp_path):
         summary = row(ledger, 90 * 86400)
         summary["coverage"]["fraction"] = 1
         assert row(ledger, 90 * 86400)["coverage"]["fraction"] == 0
+
+
+def test_provider_lead_requires_settled_processing_and_preserves_receipt(tmp_path):
+    from src.live_monitor.timing import CausalClock, prepare_market_event
+
+    received = START + timedelta(seconds=0.3)
+    provider = START + timedelta(seconds=0.45)
+    raw = quote(0.45).model_copy(update={"received_at": received, "processed_at": received})
+    clock_time = received
+    clock = CausalClock(lambda: clock_time)
+
+    async def pause(seconds):
+        nonlocal clock_time
+        clock_time += timedelta(seconds=seconds)
+
+    path = tmp_path / "ledger.db"
+    with ProspectiveLedger(path, manifest()) as ledger:
+        signal(ledger)
+        ledger.on_quote(raw, now=received, lot_step=D(".1"), min_notional=D("10"))
+        assert row(ledger, 0.3)["fills"] == 0
+        settled = asyncio.run(prepare_market_event(raw, clock=clock.now, pause=pause))
+        assert settled.received_at == received
+        assert settled.processed_at == provider
+        ledger.on_quote(settled, now=clock.now(), lot_step=D(".1"), min_notional=D("10"))
+        assert row(ledger, 0.45)["fills"] == 1
+    with sqlite3.connect(path) as conn:
+        payload = json.loads(conn.execute("SELECT payload FROM journal WHERE kind='fills'").fetchone()[0])
+        assert payload["quote"]["received_at"] == received.isoformat().replace("+00:00", "Z")
+
+
+def test_future_provider_time_cannot_bypass_receipt_entry_latency(tmp_path):
+    from src.live_monitor.timing import CausalClock, prepare_market_event
+
+    received = START + timedelta(seconds=0.1)
+    clock_time = received
+    clock = CausalClock(lambda: clock_time)
+    raw = quote(0.3).model_copy(update={"received_at": received, "processed_at": received})
+
+    async def pause(seconds):
+        nonlocal clock_time
+        clock_time += timedelta(seconds=seconds)
+
+    settled = asyncio.run(prepare_market_event(raw, clock=clock.now, pause=pause))
+    with ProspectiveLedger(tmp_path / "ledger.db", manifest()) as ledger:
+        signal(ledger)
+        ledger.on_quote(settled, now=clock.now(), lot_step=D(".1"), min_notional=D("10"))
+        assert row(ledger, 0.3)["fills"] == 0
+        assert ledger.summary(now=clock.now())["evidence_counts"]["quotes"] == 1
+        replay = settled.model_copy(
+            update={"received_at": START + timedelta(seconds=0.5), "processed_at": START + timedelta(seconds=0.5)}
+        )
+        observe(ledger, replay)
+        assert row(ledger, 0.5)["fills"] == 0
+        observe(ledger, quote(0.6))
+        assert row(ledger, 0.6)["fills"] == 1
+
+
+def test_quote_provider_lead_over_one_second_fails_closed(tmp_path):
+    # Even model_copy input cannot bypass the ledger's frozen provenance bound.
+    raw = quote(2).model_copy(update={"received_at": START, "processed_at": START + timedelta(seconds=2)})
+    with ProspectiveLedger(tmp_path / "ledger.db", manifest()) as ledger:
+        signal(ledger)
+        ledger.on_quote(raw, now=START + timedelta(seconds=2), lot_step=D(".1"), min_notional=D("10"))
+        assert ledger.summary(now=START + timedelta(seconds=2))["evidence_counts"]["quotes"] == 0

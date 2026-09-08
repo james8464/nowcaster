@@ -23,6 +23,7 @@ from src.config.settings import StrategiesConfig
 from src.ingestion.bars import atomic_write_bytes
 from src.live_monitor.bars import FinalizedBarLedger, aggregate_finalized
 from src.live_monitor.providers import BinanceSpotAdapter, ProviderSymbolMetadata, _binance_spot_tradable
+from src.live_monitor.timing import CausalClock, prepare_market_event
 from src.live_monitor.types import MarketBar, MarketQuote, MonitorHealth, ProviderHealthEvent
 from src.research.holding_period_search import eligible_long_signals, research_runtime_fingerprint, validate_discovery
 from src.research.opportunity_audit import gap_safe_atr
@@ -424,6 +425,7 @@ async def run_study(
     manifest, registry = verify_study(directory, root)
     feed = transport if transport is not None else PublicBinanceTransport()
     symbols = tuple(candidate.symbol for candidate in manifest.candidates)
+    runtime_clock = CausalClock(lambda: datetime.now(UTC))
     loop = asyncio.get_running_loop()
     deadline = loop.time() + duration_seconds
     with ProspectiveLedger(directory / "ledger.sqlite", manifest) as ledger:
@@ -444,8 +446,8 @@ async def run_study(
             write_summary(directory, result)
             return result
 
-        ledger.record_gap(at=datetime.now(UTC), reason="collector_started_or_resumed")
-        publish(datetime.now(UTC))
+        ledger.record_gap(at=runtime_clock.now(), reason="collector_started_or_resumed")
+        publish(runtime_clock.now())
         next_report = loop.time() + heartbeat_seconds
         last_event = loop.time()
         stalled = False
@@ -454,9 +456,16 @@ async def run_study(
         iterator = None
         metadata = None
         stage = "seed"
+
+        async def next_observation():
+            event = await anext(iterator)
+            if isinstance(event, (MarketQuote, MarketBar, ProviderHealthEvent)):
+                return await prepare_market_event(event, clock=runtime_clock.now)
+            return event
+
         try:
             while loop.time() < deadline:
-                now = datetime.now(UTC)
+                now = runtime_clock.now()
                 if now >= manifest.ends_at:
                     ended = ledger.summary(now=now)
                     if all(
@@ -468,11 +477,11 @@ async def run_study(
                         pending = asyncio.create_task(feed.seed(symbols, now))
                     else:
                         iterator = feed.stream(symbols).__aiter__() if iterator is None else iterator
-                        pending = asyncio.create_task(anext(iterator))
+                        pending = asyncio.create_task(next_observation())
                 wait = max(0, min(1, deadline - loop.time(), next_report - loop.time()))
                 tasks = {pending} if repair is None else {pending, repair}
                 ready, _ = await asyncio.wait(tasks, timeout=wait, return_when=asyncio.FIRST_COMPLETED)
-                now = datetime.now(UTC)
+                now = runtime_clock.now()
                 if repair is not None and repair in ready:
                     completed_repair, repair = repair, None
                     try:
@@ -494,6 +503,7 @@ async def run_study(
                 task, pending = pending, None
                 try:
                     event = task.result()
+                    now = runtime_clock.now()
                     if stage == "seed":
                         history, metadata = event
                         processor.seed(history)
@@ -535,7 +545,7 @@ async def run_study(
         except Exception as error:
             health["state"] = "failed"
             health["last_error"] = type(error).__name__
-            ledger.record_gap(at=datetime.now(UTC), reason=f"collector_failed:{type(error).__name__}")
+            ledger.record_gap(at=runtime_clock.watermark, reason=f"collector_failed:{type(error).__name__}")
             raise
         finally:
             if repair is not None:
@@ -544,12 +554,15 @@ async def run_study(
                     await repair
             if pending is not None:
                 pending.cancel()
-                with suppress(asyncio.CancelledError):
-                    await pending
+                # A clock failure may already have completed this task exceptionally.
+                # Retrieve it without hiding the primary failure or skipping its report.
+                await asyncio.gather(pending, return_exceptions=True)
             if iterator is not None:
                 await iterator.aclose()
-            ledger.record_gap(at=datetime.now(UTC), reason="collector_stopped_observation_interrupted")
+            # A failed wall clock cannot timestamp new evidence; retain its last causal watermark.
+            finished_at = runtime_clock.watermark
+            ledger.record_gap(at=finished_at, reason="collector_stopped_observation_interrupted")
             if health["state"] != "failed":
                 health["state"] = "stopped"
-            summary = publish(datetime.now(UTC))
+            summary = publish(finished_at)
         return summary

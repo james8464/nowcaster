@@ -45,6 +45,7 @@ class StudyManifest(LiveMonitorModel):
     minimum_target_bps: Literal[68] = 68
     entry_latency_ms: Literal[250] = 250
     maximum_quote_age_seconds: Literal[2] = 2
+    maximum_provider_clock_lead_seconds: Literal[1] = 1
     maximum_entry_spread_bps: Literal[10] = 10
     pending_lifetime_seconds: Literal[30] = 30
     maximum_gap_seconds: Literal[30] = 30

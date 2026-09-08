@@ -355,7 +355,10 @@ class ProspectiveLedger:
         fresh = (
             quote.provider == "binance"
             and quote.feed == "spot"
-            and self.manifest.starts_at <= quote.provider_time <= quote.received_at <= quote.processed_at <= now
+            and self.manifest.starts_at <= quote.provider_time <= quote.processed_at <= now
+            and quote.received_at <= quote.processed_at
+            and (quote.provider_time - quote.received_at).total_seconds()
+            <= self.manifest.maximum_provider_clock_lead_seconds
             and (now - quote.provider_time).total_seconds() <= self.manifest.maximum_quote_age_seconds
         )
 
@@ -395,7 +398,11 @@ class ProspectiveLedger:
                         ),
                     )
                     account["pending"] = pending = None
-                if pending and (quote.provider_time - _at(pending["decision_at"])).total_seconds() >= 0.25:
+                if (
+                    pending
+                    and (min(quote.provider_time, quote.received_at) - _at(pending["decision_at"])).total_seconds()
+                    >= self.manifest.entry_latency_ms / 1000
+                ):
                     fill = self._enter(account, pending, quote, now, lot_step, min_notional)
                     if fill:
                         filled.append(fill | {"candidate_id": candidate.candidate_id})

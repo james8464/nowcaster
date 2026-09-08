@@ -594,3 +594,132 @@ def test_mid_hour_start_repair_warms_only_later_complete_live_hour(tmp_path, rep
             minute = bar(now + timedelta(minutes=i))
             processor.on_bar(minute, now=minute.end)
         assert ledger.summary(now=now + timedelta(hours=2))["evidence_counts"]["decisions"] == int(repair)
+
+
+def test_runtime_settles_small_provider_lead_before_quote_accounting(tmp_path):
+    import sqlite3
+
+    from src.live_monitor.types import MarketQuote
+
+    _, directory, _ = registered(tmp_path)
+
+    class LeadingFeed(StalledPublicFeed):
+        async def stream(self, symbols):
+            received = datetime.now(UTC)
+            yield MarketQuote(
+                provider="binance",
+                feed="spot",
+                symbol="BTCUSDT",
+                bid=Decimal("100"),
+                ask=Decimal("100.05"),
+                bid_size=Decimal("100"),
+                ask_size=Decimal("100"),
+                last=Decimal("100"),
+                tick_size=Decimal(".01"),
+                provider_time=received + timedelta(milliseconds=120),
+                received_at=received,
+            )
+            await asyncio.sleep(100)
+
+    async def collect():
+        task = asyncio.create_task(
+            runtime().run_study(
+                directory, root=ROOT, duration_seconds=0.3, heartbeat_seconds=0.01, transport=LeadingFeed()
+            )
+        )
+        await asyncio.sleep(0.06)
+        intermediate = json.loads((directory / "summary.json").read_text())
+        assert intermediate["evidence_counts"]["quotes"] == 0
+        return await task
+
+    summary = asyncio.run(collect())
+    assert summary["evidence_counts"]["quotes"] == 1
+    with sqlite3.connect(directory / "ledger.sqlite") as conn:
+        payload = json.loads(conn.execute("SELECT payload FROM journal WHERE kind='valuation'").fetchone()[0])
+        observed = payload["quote"]
+        assert observed["received_at"] < observed["provider_time"] <= observed["processed_at"]
+
+
+def test_runtime_settles_final_minute_clock_lead_without_losing_hour(tmp_path, monkeypatch):
+    import time
+
+    now, directory, _ = registered(tmp_path)
+    clock_base = [now, time.monotonic()]
+
+    class TestDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return clock_base[0] + timedelta(seconds=time.monotonic() - clock_base[1])
+
+    monkeypatch.setattr(runtime(), "datetime", TestDateTime)
+
+    class LeadingBars(StalledPublicFeed):
+        async def seed(self, symbols, at):
+            history = [
+                bar(now - timedelta(hours=100 - i), interval="1h", price=Decimal(100) + Decimal(i) / 10)
+                for i in range(100)
+            ]
+            return history, {s: (Decimal(".00001"), Decimal("5")) for s in symbols}
+
+        async def stream(self, symbols):
+            for i in range(60):
+                event = bar(now + timedelta(minutes=i))
+                received = event.end - timedelta(milliseconds=120 if i == 59 else 0)
+                clock_base[:] = [received, time.monotonic()]
+                yield event.model_copy(update={"received_at": received, "processed_at": received})
+            await asyncio.sleep(100)
+
+    summary = asyncio.run(runtime().run_study(directory, root=ROOT, duration_seconds=0.6, transport=LeadingBars()))
+    assert summary["evidence_counts"]["decisions"] == 1
+
+
+def test_runtime_clock_rollback_fails_closed_with_failure_report(tmp_path, monkeypatch):
+    now, directory, _ = registered(tmp_path)
+    current = now
+
+    class TestDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return current
+
+    monkeypatch.setattr(runtime(), "datetime", TestDateTime)
+
+    class RolledBackFeed(StalledPublicFeed):
+        async def stream(self, symbols):
+            nonlocal current
+            current -= timedelta(seconds=1)
+            yield bar(now - timedelta(minutes=1))
+
+    with pytest.raises(ValueError, match="clock"):
+        asyncio.run(runtime().run_study(directory, root=ROOT, duration_seconds=0.1, transport=RolledBackFeed()))
+    summary = json.loads((directory / "summary.json").read_text())
+    assert summary["collector"]["state"] == "failed"
+    assert summary["evidence_counts"]["quotes"] == 0
+
+
+def test_runtime_rejects_provider_lead_over_one_second(tmp_path):
+    from src.live_monitor.types import MarketQuote
+
+    _, directory, _ = registered(tmp_path)
+
+    class ExcessiveLead(StalledPublicFeed):
+        async def stream(self, symbols):
+            at = datetime.now(UTC)
+            quote = MarketQuote(
+                provider="binance",
+                feed="spot",
+                symbol="BTCUSDT",
+                bid=Decimal("100"),
+                ask=Decimal("100.05"),
+                last=Decimal("100"),
+                tick_size=Decimal(".01"),
+                provider_time=at,
+                received_at=at,
+            )
+            yield quote.model_copy(update={"provider_time": at + timedelta(seconds=2)})
+
+    with pytest.raises(ValueError, match="lead"):
+        asyncio.run(runtime().run_study(directory, root=ROOT, duration_seconds=0.1, transport=ExcessiveLead()))
+    summary = json.loads((directory / "summary.json").read_text())
+    assert summary["collector"]["state"] == "failed"
+    assert summary["evidence_counts"]["quotes"] == 0
