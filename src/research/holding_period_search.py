@@ -195,11 +195,18 @@ def _configured_definition_hashes(root: Path) -> dict[str, str]:
 def _validate_metrics(metrics: Any, *, field: str) -> None:
     if not isinstance(metrics, dict):
         raise ValueError(f"discovery {field} must be an object")
+    mean_fields = {"mean_net_return", "mean_stressed_return"}
+    if not mean_fields.issubset(metrics):
+        raise ValueError(f"discovery {field} metrics must include both return means")
     trades = _count(metrics.get("trades"), field=f"{field}.trades")
     losses = _count(metrics.get("losses"), field=f"{field}.losses")
     net = _finite_optional(metrics.get("mean_net_return"), field=f"{field}.mean_net_return")
     stressed = _finite_optional(metrics.get("mean_stressed_return"), field=f"{field}.mean_stressed_return")
-    if losses > trades or (trades == 0) != (net is None and stressed is None):
+    if losses > trades or (trades == 0 and (net is not None or stressed is not None)):
+        raise ValueError(f"discovery {field} metrics are internally inconsistent")
+    if trades > 0 and (net is None or stressed is None):
+        raise ValueError(f"discovery {field} metrics are internally inconsistent")
+    if net is not None and stressed is not None and not math.isclose(net - stressed, 0.0034, rel_tol=0, abs_tol=1e-12):
         raise ValueError(f"discovery {field} metrics are internally inconsistent")
 
 

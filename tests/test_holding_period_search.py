@@ -11,6 +11,7 @@ import pytest
 
 from src.research.holding_period_search import (
     _select_candidate,
+    _validate_metrics,
     discovery_source_hash,
     research_runtime_fingerprint,
     search_scope,
@@ -296,3 +297,29 @@ def test_discovery_source_hash_binds_explicit_runtime_fingerprint(monkeypatch, t
     monkeypatch.setattr(module, "research_runtime_fingerprint", lambda: {**fingerprint, "python": "changed"})
 
     assert discovery_source_hash(tmp_path) != original
+
+
+@pytest.mark.parametrize(
+    "metrics",
+    [
+        {"trades": 30, "losses": 0, "mean_stressed_return": 0.01},
+        {"trades": 30, "losses": 0, "mean_net_return": None, "mean_stressed_return": 0.01},
+        {"trades": 30, "losses": 0, "mean_net_return": -0.5, "mean_stressed_return": 0.1},
+        {"trades": 0, "losses": 0, "mean_net_return": 0.0, "mean_stressed_return": None},
+    ],
+)
+def test_discovery_metrics_reject_missing_partial_or_cost_inconsistent_means(metrics) -> None:
+    with pytest.raises(ValueError, match="metrics"):
+        _validate_metrics(metrics, field="test")
+
+
+@pytest.mark.parametrize(
+    "metrics",
+    [
+        {"trades": 0, "losses": 0, "mean_net_return": None, "mean_stressed_return": None},
+        {"trades": 1, "losses": 0, "mean_net_return": 0.0034, "mean_stressed_return": 0.0},
+        {"trades": 1, "losses": 0, "mean_net_return": 0.003400000001, "mean_stressed_return": 1e-12},
+    ],
+)
+def test_discovery_metrics_accept_zero_trade_nulls_and_floating_cost_boundary(metrics) -> None:
+    _validate_metrics(metrics, field="test")
