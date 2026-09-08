@@ -38,8 +38,10 @@ The 45,582 diagnostic holdout setups above combine every tested rule only to mea
 - Missing candles block or truncate affected outcomes. Right-censored trades at the end of a period are not scored.
 - Strategy selection sees development and validation only. The holdout cannot change which rules were selected.
 - Every rule's long and short sides are tested independently; a weak short side cannot hide a useful long side, or vice versa.
-- A Bonferroni family-wise correction covers every directional hypothesis in both selection periods.
+- A Bonferroni-adjusted screening threshold covers every directional hypothesis in both selection periods within each asset/timeframe scope; it is not a joint correction across all 140 hypotheses.
 - Prefix-invariance tests prove that appending future candles cannot change a completed earlier result.
+
+The bootstrap uses 2,000 resamples, giving a probability resolution of 0.0005. The adjusted tail thresholds are smaller than that resolution, so passing requires every sampled mean to be positive. This is a screening rule, not a calibrated guarantee of family-wise confidence. No rule passed, so this limitation does not change the reported rejection result.
 
 Archive evidence can reject a strategy, but it can never authorize a live alert. Public archives can be corrected later and cannot recreate historical order-book queues, transient spread, market impact, outages, funding, borrow, taxes, or the exact data vintage visible in real time. Any future survivor still needs a frozen forward shadow period and then paper trading with measured fills.
 

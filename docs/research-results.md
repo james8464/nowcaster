@@ -4,6 +4,8 @@
 
 These artifacts demonstrate a research process. They do not promise profit, and backtests are not live evidence. The deterministic CI profile is software-test data. The exhaustive provider attempt remains unavailable for strategy inference because exact coverage gates found exchange-history gaps.
 
+The later [1 September day-trading opportunity audit](day-trading-opportunity-audit-2026-09-01.md) tested continuous archive segments while excluding outcomes crossing gaps. It evaluated 140 directional hypotheses across six BTC/ETH scopes and selected none. The earlier REST coverage attempt below is retained as a separate historical record.
+
 ## Deterministic CI profile
 
 The committed artifact is [research-summary.json](../data/research/ci/research-summary.json), accompanied by a cautious Markdown report and a native-compatible snapshot v5. It uses one BTCUSDT scalar fixture per exercised interval, 110 finalized bars per scope, a fixed `2026-08-20T00:00:00Z` cutoff, and no network or credentials.

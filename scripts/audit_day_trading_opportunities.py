@@ -150,7 +150,9 @@ def _report(summary: dict[str, Any]) -> str:
         "- Official Binance public monthly/daily kline ZIP files; every used file passed its published SHA-256.",
         "- Fixed 60% development, 20% validation, 20% holdout chronology.",
         "- Every configured rule's long and short hypotheses are gated independently.",
-        "- Bootstrap evidence uses a Bonferroni family-wise correction across every direction and selection split.",
+        "- Bootstrap evidence uses a Bonferroni-adjusted screening threshold across every direction and selection "
+        "split within each asset/timeframe scope, not jointly across all scopes. Finite bootstrap resamples "
+        "limit tail-probability resolution; this is not a calibrated family-wise confidence guarantee.",
         "- Next-bar entry, 1 ATR screening stop, 1.5R target, and the live monitor's exact three-bar expiry.",
         "- 34 bps conservative round trip: two 10 bps taker fees, two 2 bps half-spreads, "
         "and two 5 bps slippage charges.",
