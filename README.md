@@ -227,6 +227,13 @@ See the [1 September 2026 day-trading opportunity audit](docs/day-trading-opport
 
 ## Project layout
 
+The [live paper study guide](docs/live-paper-study.md) describes a separate,
+resumable public-feed research collector. It observes a fixed 90-day experiment
+with independent simulated USDT balances, retained failed historical screens,
+explicit modeled costs and outage accounting. It adds no native Start button or
+qualified signal panel and sends no orders. Read its local `report.md` and
+`summary.json` in Codex; the existing native monitor is unchanged.
+
 ```text
 macos/Nowcaster/    native SwiftUI app and Swift tests
 src/                data ingestion, models, backtests, and snapshot export
