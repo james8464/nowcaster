@@ -1,0 +1,4365 @@
+{
+  "archive_manifest_hash": "b4760f75a23b09990d1ec4a839a97c7c18b9553cf16d7d414cd5781d8d3c74d1",
+  "archive_manifests": [
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 1218,
+      "frequency": "daily",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2017-08-17.zip",
+      "selected_rows": 20,
+      "sha256": "971697ea1b9589b0b684d21fcb5c8f31f08177aec21908eb440482d161dc3029",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 1449,
+      "frequency": "daily",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2017-08-18.zip",
+      "selected_rows": 24,
+      "sha256": "a050e2a56e61bfcfbe4778eedc4c6ff2a8d828aa206b45d711134269ee20c250",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 1377,
+      "frequency": "daily",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2017-08-19.zip",
+      "selected_rows": 24,
+      "sha256": "f8519ea15bda0f6920f9cb321cb700540d3ecd0249d3bacd997bd3dd8eaed9ea",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 1333,
+      "frequency": "daily",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2017-08-20.zip",
+      "selected_rows": 24,
+      "sha256": "76e039d8af09132c12bdd5f82a4e563253d5084e2b233bd71e0b75b51664f8a7",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 1392,
+      "frequency": "daily",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2017-08-21.zip",
+      "selected_rows": 24,
+      "sha256": "35ec91d40cee8052c33be2ac302efb7b93d69c19dcdc7cab4724a9f4fb923be3",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 1404,
+      "frequency": "daily",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2017-08-22.zip",
+      "selected_rows": 24,
+      "sha256": "1759680b8d9597f5f11967bd79f16525ca5cdafcee1a74c6065f701d59db95aa",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 1421,
+      "frequency": "daily",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2017-08-23.zip",
+      "selected_rows": 24,
+      "sha256": "3332e5d8c9c75b89caf0d5d72de2400e3ca6dbed456b61e96809918b4c02d5fd",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 1406,
+      "frequency": "daily",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2017-08-24.zip",
+      "selected_rows": 24,
+      "sha256": "937d18ce029ee1a5b2b6f25edc8eca2c6fe5ccb950871983d3c1234a021ae69a",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 1397,
+      "frequency": "daily",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2017-08-25.zip",
+      "selected_rows": 24,
+      "sha256": "4ba36cad918392b43c7d30936c0f9ec9cbc07d5ce31c13491dd2ced943119e00",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 1341,
+      "frequency": "daily",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2017-08-26.zip",
+      "selected_rows": 24,
+      "sha256": "948016d1f2797b8ebf897f656d71dbe4924077f2192f2e82f620bf809ce543a9",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 1380,
+      "frequency": "daily",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2017-08-27.zip",
+      "selected_rows": 24,
+      "sha256": "2b4a047061ccc85b1baab8e0e30847f303ed8d6998eda84ddb1ab36e45399be1",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 1405,
+      "frequency": "daily",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2017-08-28.zip",
+      "selected_rows": 24,
+      "sha256": "b095bc838dce33e669ed9b189f986da347aa199db5347dbebd781da029ad9b30",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 1407,
+      "frequency": "daily",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2017-08-29.zip",
+      "selected_rows": 24,
+      "sha256": "4acb6563ba3c45af434c3e31c3b738b0d70f678602465ea46c2fc8ae28a7c061",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 1430,
+      "frequency": "daily",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2017-08-30.zip",
+      "selected_rows": 24,
+      "sha256": "7f77d62d607c767d0667edd0d323ce00d7075cf9a92c9933d35bc623716f3b68",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 1376,
+      "frequency": "daily",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2017-08-31.zip",
+      "selected_rows": 24,
+      "sha256": "4c4bed6a4eecac5b78d23cfb9af101d79211eaa521e7e7b709d5c167d6668128",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 42670,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 1,
+      "name": "BTCUSDT-1h-2017-09.zip",
+      "selected_rows": 712,
+      "sha256": "d1e21aef67c8cd565e57fd422c7faab3fe709d0d5f04e85fbce8aafe0b1c6cdd",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 44624,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2017-10.zip",
+      "selected_rows": 744,
+      "sha256": "8b3de5650f1aebe4c923eda13aca8a25b5b73b95fa4e0b6cf47fd5abfac00eca",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 44942,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2017-11.zip",
+      "selected_rows": 720,
+      "sha256": "3df1d2c3378f0aab1b7bb64901e87f2f4cf71fccecbb12a48cd917770a7ba77c",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 46065,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 1,
+      "name": "BTCUSDT-1h-2017-12.zip",
+      "selected_rows": 743,
+      "sha256": "9b86b43c9a649065cc1e7f3b8fe4825e614d9e8ca43808b74a0efe96465bd90c",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 43217,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 1,
+      "name": "BTCUSDT-1h-2018-01.zip",
+      "selected_rows": 742,
+      "sha256": "b649198039645124717f334443ae550d1060661ee03c5fb605cf067fab26dc85",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 37572,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 2,
+      "name": "BTCUSDT-1h-2018-02.zip",
+      "selected_rows": 638,
+      "sha256": "4e040b57a38af99b1f86efb12d95aed406b575af67b8038831523ff6362225d1",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 42999,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2018-03.zip",
+      "selected_rows": 744,
+      "sha256": "a3f45f20d28eab88292d1baac72402ebf59f4462d0bb834288f69b59a65cbf5f",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 41169,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2018-04.zip",
+      "selected_rows": 720,
+      "sha256": "d0fe439f2afab8677e423c9748bc96ef9694b8d60bf8a59790fd776d8ed18d87",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 42573,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2018-05.zip",
+      "selected_rows": 744,
+      "sha256": "a365154fb49c29060df5f5b6a79181e4e667ca1bac049df26a067faa634ffa62",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 40629,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2018-06.zip",
+      "selected_rows": 709,
+      "sha256": "20894cb34d1049cbdd93df83be5f218c6ae1b5ca27b689b1b076ac5bc809fb81",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 42249,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 1,
+      "name": "BTCUSDT-1h-2018-07.zip",
+      "selected_rows": 736,
+      "sha256": "29610f0bb84011e494b83881584d1eb2d3a61c5801ee51ebea7c1c4e6a9b4210",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 42956,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2018-08.zip",
+      "selected_rows": 744,
+      "sha256": "cad3b2b11aefa082a07ae3d8f11dfd6ee5018702dfd3986277151b66ae002991",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 41166,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2018-09.zip",
+      "selected_rows": 720,
+      "sha256": "d8109c9f64af195fb9babf498f84ece9e7ac471618977202dcf710461e124d00",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 41446,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2018-10.zip",
+      "selected_rows": 741,
+      "sha256": "959094f6d37e7cae75951cea30fdc3d5b1eb9de58a6cf1ce40f0e49d0adfb79b",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 40709,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2018-11.zip",
+      "selected_rows": 713,
+      "sha256": "a75aba58d80b798809e47819990fad71418c0982be1c4643b5a0490e0f86bd91",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 42802,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2018-12.zip",
+      "selected_rows": 744,
+      "sha256": "c5f05f2966529220add51dc1ee66ab7408ae787179f96c288e4f6ff021f51edd",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 41901,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2019-01.zip",
+      "selected_rows": 744,
+      "sha256": "41cb84ccff03d5372f22e7502a1c563dd7b3b15347fe086b16daa98aced7a179",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 37982,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2019-02.zip",
+      "selected_rows": 672,
+      "sha256": "fc054507a0f33b54bcc2f292243b8caa765927572e92731283f42498c64dc4e6",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 41360,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2019-03.zip",
+      "selected_rows": 738,
+      "sha256": "2c4a969908c2570299052b4faf27b4a39561b1043babc7a65a846a6a65abaa2e",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 41191,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2019-04.zip",
+      "selected_rows": 720,
+      "sha256": "d37e1150e8f4556a22cb2ed98d9b6eefe7b5df3be9f06587e273baea2bbf960e",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 43004,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2019-05.zip",
+      "selected_rows": 734,
+      "sha256": "ddffd71adc100760d31ab5ea0fb8d8ccf5f3c80a06a31808a024324b4a693799",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 42603,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 1,
+      "name": "BTCUSDT-1h-2019-06.zip",
+      "selected_rows": 719,
+      "sha256": "079b0071aaf0642d3608bca3ee14e50e394550176da3e4029d22761e288466e8",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 44318,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2019-07.zip",
+      "selected_rows": 744,
+      "sha256": "f45beec30a4812d42b8eb3a34da3f75e5dee0433032a06ba57ff48644ee7c2f9",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 43243,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2019-08.zip",
+      "selected_rows": 736,
+      "sha256": "50b058b5774190b577f1bc45767aeb33f4e947dc00e8d143f6c4afa0f5a3cd34",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 42109,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2019-09.zip",
+      "selected_rows": 720,
+      "sha256": "2aaaf6e4d0455b889225ca1cfde23a15e2359850f803bc9998df30ac1bbef63f",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 43434,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2019-10.zip",
+      "selected_rows": 744,
+      "sha256": "d44a2b3e463683c8bfc61c2f15f156665dc3dd3835e69c2ea3b49a518ca14b43",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 41930,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2019-11.zip",
+      "selected_rows": 716,
+      "sha256": "63572600e87350f1d5679049a44e8338cf7b692d0c67220dc316267a91af108b",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 43061,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2019-12.zip",
+      "selected_rows": 744,
+      "sha256": "87267b84d9f0e64ec94799d62de6730825c6a44f154ada5ed8c2dd267df78481",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 43583,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2020-01.zip",
+      "selected_rows": 744,
+      "sha256": "4ef7fa698b6821493f4c8317bc616d48bcdf5951d32fe6e40aaa7608886e51ca",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 40628,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 1,
+      "name": "BTCUSDT-1h-2020-02.zip",
+      "selected_rows": 689,
+      "sha256": "0189065a1b789825448530cb3fdddcefa45ca13b0a6bca181f358c72d3a6d5e6",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 44270,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 1,
+      "name": "BTCUSDT-1h-2020-03.zip",
+      "selected_rows": 742,
+      "sha256": "cc36c481c31ef93115d96b5a7045ec2ef737e5339546d6688cb1f677526c6787",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 42275,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2020-04.zip",
+      "selected_rows": 718,
+      "sha256": "4f08d13c81cadf8d5fc7afcd0924d084d2f81c7d004323812e7508ad135f89e7",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 44022,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2020-05.zip",
+      "selected_rows": 744,
+      "sha256": "1559b30329851938a54e6782cd28dcbf34ec27a6cc82132250db9a357f4eaf5a",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 41724,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2020-06.zip",
+      "selected_rows": 717,
+      "sha256": "2ccf45a7307e09dec1fd3622d54057e7e44371bf70a8be1030687f654341799e",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 43137,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2020-07.zip",
+      "selected_rows": 744,
+      "sha256": "378b83c163c8d315075189b039b027d705c3ae225461f04c1226569a4edfcb99",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 43923,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2020-08.zip",
+      "selected_rows": 744,
+      "sha256": "3b4fbdfe798389a1317e333772f176bce711856d87e68c1b77f09631b0cf4b84",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 42467,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2020-09.zip",
+      "selected_rows": 720,
+      "sha256": "46f236c7cd38d72d4a37e80a45e357e7bec48bc89cc6a36c0c17ceb92ce8d101",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 43559,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2020-10.zip",
+      "selected_rows": 744,
+      "sha256": "72fe011922ace0851a44ffa51327d75545212a7e8179867d514a5934ce93a6e0",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 43234,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2020-11.zip",
+      "selected_rows": 719,
+      "sha256": "c3f3548fd082f0fa63d2138a5aca3b572729f6351de8a20c895a80acd3ae395b",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 44596,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 1,
+      "name": "BTCUSDT-1h-2020-12.zip",
+      "selected_rows": 739,
+      "sha256": "c880c8e76e2dbcbed04bc1ddd549949a94a4314520dc1f1becbd881453aa5ede",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 45988,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2021-01.zip",
+      "selected_rows": 744,
+      "sha256": "a2fa12bec12d942e58dbc7fb223973bd2173dfccf8e09edc501bda40b3c3638e",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 41575,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 1,
+      "name": "BTCUSDT-1h-2021-02.zip",
+      "selected_rows": 670,
+      "sha256": "8cd20f5058dc7585cfa874a3ab0e5fd0096f369c182d8fda80dc16495050e018",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 45712,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2021-03.zip",
+      "selected_rows": 743,
+      "sha256": "748783e9715835dd334fbc0cbbff0518962ebbcbe0430acb65f2f506193bad2d",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 43918,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 1,
+      "name": "BTCUSDT-1h-2021-04.zip",
+      "selected_rows": 714,
+      "sha256": "e5a33803814e6771c4c85e8f2e28e90e46d40f14ca3180a8c10c305cf07fab74",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 46221,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2021-05.zip",
+      "selected_rows": 744,
+      "sha256": "728503d417904afff17b403e66f74c18ed0067d3f8e4215130c8a97180c9fccc",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 44232,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2021-06.zip",
+      "selected_rows": 720,
+      "sha256": "9ea9585cf2c938044d2d1b613f451ff9482bd7d2a38da2c9d22cf0c9f00f65ac",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 45217,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2021-07.zip",
+      "selected_rows": 744,
+      "sha256": "993a88728e31b4c4e6f3b28442ab251de5ee434fe06865e1b57063a4f91fc8d9",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 44883,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 1,
+      "name": "BTCUSDT-1h-2021-08.zip",
+      "selected_rows": 739,
+      "sha256": "5cadb462255761842326a2c4b5fe2a91c8a2135c3ba6dd5f0969877f0722f4be",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 42473,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2021-09.zip",
+      "selected_rows": 718,
+      "sha256": "0d344f8ab39d910c148b89fada91256afcb3e8b20eb812ebc158ac8ac527ea07",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 44164,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2021-10.zip",
+      "selected_rows": 744,
+      "sha256": "8065fe2ddd9992398b49fb76e83a60e51392e1ecd4b46c438c075d3e5f6e2291",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 42690,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2021-11.zip",
+      "selected_rows": 720,
+      "sha256": "64d376e949c3518c3b526cac41322114a2e7287395e9089f0da34e25079c2940",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 43757,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 1,
+      "name": "BTCUSDT-1h-2021-12.zip",
+      "selected_rows": 743,
+      "sha256": "b01133a69b22aa7904742a06a892ff3811152377f61e23977051a937afe2fbaa",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 43687,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2022-01.zip",
+      "selected_rows": 744,
+      "sha256": "e04068d0aee5e3571dc7e9a1d220475047f544e1cf1bad800b7cbbf190281c40",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 39642,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2022-02.zip",
+      "selected_rows": 672,
+      "sha256": "4e479b38278726cccb9257f5564c5c78477144d3ffe69df6afaf3b55ace617be",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 43784,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2022-03.zip",
+      "selected_rows": 744,
+      "sha256": "1cfb082f6bc9a2937b5b846073ddf65f71b18f2502778ac667aab3421ef80085",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 42204,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2022-04.zip",
+      "selected_rows": 720,
+      "sha256": "7157a267e70bcd9ae04a8898527fad00d7733e941df9b95a1d5e0ae6dcd61c3e",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 43955,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2022-05.zip",
+      "selected_rows": 744,
+      "sha256": "ff0744eceba5e6d2f7145ecfdc9d3fac84f4576c15221dbeb71c6d6e59484300",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 42662,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2022-06.zip",
+      "selected_rows": 720,
+      "sha256": "b18f6f8edbb41960f81aec100c7836fdc0de6d640ee4309a3d0fad999ae0a2c8",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 44740,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2022-07.zip",
+      "selected_rows": 744,
+      "sha256": "9f0ba9663f9fada7692b3cfe645df3832599f9e785056ddd77bd464475553e9e",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 44748,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2022-08.zip",
+      "selected_rows": 744,
+      "sha256": "3cc22044f94cb303d12013293ba6db6d44abdf1490d38d00f1389e98717a3891",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 43701,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2022-09.zip",
+      "selected_rows": 720,
+      "sha256": "a65dcd73017d92ea8d86e82ea1aee3dac55881f8672594d2e85d1cf392e1e78a",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 44566,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2022-10.zip",
+      "selected_rows": 744,
+      "sha256": "2591cbbe022ce9d4559aee1fa41ea0033324c2c4debc776cfedc9588167d413b",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 43509,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2022-11.zip",
+      "selected_rows": 720,
+      "sha256": "5608adf8602a8ac616ee03c2c4461a37f4646631d67edf3d2f1a94e82e5c5065",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 44019,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2022-12.zip",
+      "selected_rows": 744,
+      "sha256": "69c5e5f01df947bfea48ab3c8e2f462b7358effa9e2700489a4ad0dbd29b24aa",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 44765,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2023-01.zip",
+      "selected_rows": 744,
+      "sha256": "ea8caf7fd56c7f7143723f56f8d12a2fc0b643badbcdae5c660db2d11454a11d",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 40955,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2023-02.zip",
+      "selected_rows": 672,
+      "sha256": "53525b700548a19488fcb8754778acdf7941c9ba0b6e7eb548a51a376ef8d86b",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 44928,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 1,
+      "name": "BTCUSDT-1h-2023-03.zip",
+      "selected_rows": 742,
+      "sha256": "7f2afb8e0179a57ac31eab5205660298ba5eb77039ac2e21aef9b715ff3d06ce",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 41904,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2023-04.zip",
+      "selected_rows": 720,
+      "sha256": "1787dc83836deafaa77d4276cbe3b3ca1fe0083b3017079e3560605ff4f7a4ba",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 43095,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2023-05.zip",
+      "selected_rows": 744,
+      "sha256": "16b33557a4a4040fc56c711f4b1a750ebafb5a7f8dd46c060d9fc8c66cdc1982",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 41669,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2023-06.zip",
+      "selected_rows": 720,
+      "sha256": "05f87fb5f004ee0aff019adb7015afab8df0baaaf2b77154d75ae53e18d59b11",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 42245,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2023-07.zip",
+      "selected_rows": 744,
+      "sha256": "f49a738a793055a583784e78a54840a43861fd110118cbe1add14ef1afb63032",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 42213,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2023-08.zip",
+      "selected_rows": 744,
+      "sha256": "e983243d44536a06ff4707cf35df29f636fe788e6fb69c3b3feed2ef43d343d4",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 40962,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2023-09.zip",
+      "selected_rows": 720,
+      "sha256": "28e12ccaf15745bfe11f570b9079793750047fde3d340fe0231858b26bc0f9d9",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 42928,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2023-10.zip",
+      "selected_rows": 744,
+      "sha256": "165ec50601f914d6c41b776414096bc73974bf45fcd41aaddfedd1cf66cb6c6e",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 41648,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2023-11.zip",
+      "selected_rows": 720,
+      "sha256": "4f550d182d529839dd9cfc28ef0ecca8cd8003e991067e92a2af5b9e92762f49",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 43309,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2023-12.zip",
+      "selected_rows": 744,
+      "sha256": "6117d93e3eb6574df6b0087a45cf12e171afe91789b523b0bfcce00d8f1b6e37",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 43482,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2024-01.zip",
+      "selected_rows": 744,
+      "sha256": "cf873a185bd5b24b8e00034e49583fcb49928e0c3a45c6fc27a632a683655417",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 40711,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2024-02.zip",
+      "selected_rows": 696,
+      "sha256": "b83aa7319ef1d4baa7b923c0fe802b88dfaf241c7456af295f1f656a24379b33",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 44044,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2024-03.zip",
+      "selected_rows": 744,
+      "sha256": "b0851daf609d6ab82fdf8f1d1c4fbd974bc1b4e6530a832067516ac1c2be63a6",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 42474,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2024-04.zip",
+      "selected_rows": 720,
+      "sha256": "e266707ad2ea3cd4680bf1ac5025f0c1bfeb38e703374a91f8dc193d1ec8d48f",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 43425,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2024-05.zip",
+      "selected_rows": 744,
+      "sha256": "077c71eec71a8ecf2edb6e3a3927b600b8f358fd37066ce120c19fb5302a9ab8",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 41535,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2024-06.zip",
+      "selected_rows": 720,
+      "sha256": "2e1f968fa34b9feabfb19cc6eec47a146e20d64a706f4b17d0babf4d2f475c39",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 43162,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2024-07.zip",
+      "selected_rows": 744,
+      "sha256": "41fd58a70ae40bebb74682555cc5054709f8dde0f5c8193ae2103dac95274e5f",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 43406,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2024-08.zip",
+      "selected_rows": 744,
+      "sha256": "88521a975ee7bfdd21f891d81f4243a01b90b977cf525d11747e27c66e3bad60",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 41468,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2024-09.zip",
+      "selected_rows": 720,
+      "sha256": "123f402c6dbf19b9b72b4af7ad4d5325c73ba4833148cc398b803d7a34ac5c5f",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 42989,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2024-10.zip",
+      "selected_rows": 744,
+      "sha256": "393b18ad2634f0cd3b2fd54321c8286ea143419cf3129b4cc44e089681912b03",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 42752,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2024-11.zip",
+      "selected_rows": 720,
+      "sha256": "7a51fe8811c754ff43a2be0ba10e53a6d4218521e27ac765fbc9a1ca0fc15bac",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 44271,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2024-12.zip",
+      "selected_rows": 744,
+      "sha256": "dfec812f73a84257b195cbdaed34d020fa77e845625c061c13bd6a60e7ef9372",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 44655,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2025-01.zip",
+      "selected_rows": 744,
+      "sha256": "e7f2aaa5396a8062a57ab29ce9fab2d76b2c84ec58815d4ab7b3fe16f78c7118",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 40203,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2025-02.zip",
+      "selected_rows": 672,
+      "sha256": "7420f55c93f61d7e734fc9d2507c7f2fcb5eaf48112277cecd241d4e1dbf3bd5",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 44468,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2025-03.zip",
+      "selected_rows": 744,
+      "sha256": "b5ae8bb57e5e526c2050c9f8229b723871a5af47d80c53453abf61847a5f3aa6",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 42741,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2025-04.zip",
+      "selected_rows": 720,
+      "sha256": "bbec48ed5f7b603bbceff943ad0dccd3c29cae6d14161bcd2eabc9f762ff0a35",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 44381,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2025-05.zip",
+      "selected_rows": 744,
+      "sha256": "da6213bf4c57ea60faed3ef1f6a0ecb87f22ca7a3a67614604cf44d2d6b265fe",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 42662,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2025-06.zip",
+      "selected_rows": 720,
+      "sha256": "d0760943538f48032dd066401e53f46bbf4868e6545929678e23bcdee032a5e8",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 43886,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2025-07.zip",
+      "selected_rows": 744,
+      "sha256": "487738ee596380eaad32a2a93c75d17e1ebdd165a9b544c0e44be36079f5c02e",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 44104,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2025-08.zip",
+      "selected_rows": 744,
+      "sha256": "a99ec5bac64333fb521b2ab1bac5e8387eede6413cc7841656a02be95613c64f",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 42491,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2025-09.zip",
+      "selected_rows": 720,
+      "sha256": "b0ad5b54097f6adb440d07204fd215dae9b224fb73569fd4309a55c9234d46b3",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 44751,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2025-10.zip",
+      "selected_rows": 744,
+      "sha256": "5426b1b48905963d50e11d1243910b5fa05a89c9a2003bcd5082561d352a2123",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 43273,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2025-11.zip",
+      "selected_rows": 720,
+      "sha256": "1f28f02e33e1f19e5163cd45b67c07b3b75870e78dbbf9f861d1348ca372d942",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 43894,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2025-12.zip",
+      "selected_rows": 744,
+      "sha256": "d546c6e44b443e34cef5122043c5cdd3b9c76980e23cc408dafd9f6f76d65c05",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 43807,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2026-01.zip",
+      "selected_rows": 744,
+      "sha256": "a40e86beb4f1e6d4b19ca022c87b8b2f0e4e40874d349a5a75b27baa9634c858",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 40150,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2026-02.zip",
+      "selected_rows": 672,
+      "sha256": "0be4e5c92892495c5da5b371fe8755f2d508b28a58414b4171284480806ed6c4",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 44392,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2026-03.zip",
+      "selected_rows": 744,
+      "sha256": "44f383f9423f96cdc29e03b4ba8062296763dd740ab1d93f04b62c88bac30aa6",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 42394,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2026-04.zip",
+      "selected_rows": 720,
+      "sha256": "9f8e49b70978177414a005a6e84b1cf891f97b0196526cbd579535449c14b6f6",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 43547,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2026-05.zip",
+      "selected_rows": 744,
+      "sha256": "11b8537dc1769a7de9d6cb2e0354dd4a376018986a826c67d1078e25fbf8fb80",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 42265,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2026-06.zip",
+      "selected_rows": 720,
+      "sha256": "7c446aee297f382ee92b8d9b3300a1d7c21bed8166118f3bb261275bed5e308e",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 43238,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2026-07.zip",
+      "selected_rows": 744,
+      "sha256": "ec98553c10acdbf3f210c55045614e8d3daf616e407c36718269361b1e972b16",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 43110,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2026-08.zip",
+      "selected_rows": 744,
+      "sha256": "1fa85817e358f73e0dd9509f6f31c79bf9b23d9470971a882c8f814871a3fccf",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 1584,
+      "frequency": "daily",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2026-09-01.zip",
+      "selected_rows": 24,
+      "sha256": "9ec08317bac65126db44993706ca86528cc46352f498f34ef2c4307491c85d4e",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 1582,
+      "frequency": "daily",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2026-09-02.zip",
+      "selected_rows": 24,
+      "sha256": "d52468e77640b33b60c846f163f3de7e9060b8b575b5371599e22fbb50fe8bda",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 1582,
+      "frequency": "daily",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2026-09-03.zip",
+      "selected_rows": 24,
+      "sha256": "ec46d1deee6ca6369f614e0398d7dc8adfbbeeee0eb572c75306d8cb5605f88f",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 1590,
+      "frequency": "daily",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2026-09-04.zip",
+      "selected_rows": 24,
+      "sha256": "cd835eb104b7a02fd4049075400c92a22c7180584b69d9010b124f6a70219222",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 1547,
+      "frequency": "daily",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2026-09-05.zip",
+      "selected_rows": 24,
+      "sha256": "c3e48cfa15c11d5277c6a3987978c198c47494f97f6e6bbcb3f71382ad64c27f",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 1552,
+      "frequency": "daily",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2026-09-06.zip",
+      "selected_rows": 24,
+      "sha256": "e91c6be46c45c0469e0133b464ec81d003319bea6122d6f489f0b20e30af79a0",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 1581,
+      "frequency": "daily",
+      "invalid_boundary_rows": 0,
+      "name": "BTCUSDT-1h-2026-09-07.zip",
+      "selected_rows": 24,
+      "sha256": "6a93e517460a2550f52ad942db13ebc4684501ecaf7172cb0189d5f91789ae0f",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 1155,
+      "frequency": "daily",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2017-08-17.zip",
+      "selected_rows": 20,
+      "sha256": "138bb98446b0248ea5b6639610e56a7b924b5100e3d0cc06bed896eb3f11582e",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 1353,
+      "frequency": "daily",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2017-08-18.zip",
+      "selected_rows": 24,
+      "sha256": "751b6bbfa14bceff623c83f93cea36bfa8d87b09d4994b9c3dd71419efefac82",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 1255,
+      "frequency": "daily",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2017-08-19.zip",
+      "selected_rows": 24,
+      "sha256": "0014edefd6040eb9a53b1ec031df196b6652d328b555b80721ae14b48d70d379",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 1251,
+      "frequency": "daily",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2017-08-20.zip",
+      "selected_rows": 24,
+      "sha256": "1c77c18a532dafe2706e578df1fc90240eae97cb4e8d34552e5c4d60a596d86f",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 1361,
+      "frequency": "daily",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2017-08-21.zip",
+      "selected_rows": 24,
+      "sha256": "f4f4bc5508a92733d46170e05d6b8f7b7f8f35bc8962479f1c43242ed158aa64",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 1361,
+      "frequency": "daily",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2017-08-22.zip",
+      "selected_rows": 24,
+      "sha256": "b37e607bcd5ac6a04ab2b4df89fb11fc9a14931f7d84d6804a2ceceda02d7303",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 1353,
+      "frequency": "daily",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2017-08-23.zip",
+      "selected_rows": 24,
+      "sha256": "fbf1b281de48a1f8324d552ed60e994c810b64ce022fc2ef6c7ae4320325da87",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 1331,
+      "frequency": "daily",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2017-08-24.zip",
+      "selected_rows": 24,
+      "sha256": "d7efb0ea723d24f56777fdaee27866b9f4809773b9cb2ba696b7aa705dd56d2f",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 1352,
+      "frequency": "daily",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2017-08-25.zip",
+      "selected_rows": 24,
+      "sha256": "3d2607041ddb8a9efa67688c4d97544503f3c86b680f9d59e5cfd58152714752",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 1307,
+      "frequency": "daily",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2017-08-26.zip",
+      "selected_rows": 24,
+      "sha256": "d4d95c626ca402af16cde1e613e5bbb22b980df249a6bf482859129cd666842f",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 1322,
+      "frequency": "daily",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2017-08-27.zip",
+      "selected_rows": 24,
+      "sha256": "7d99c6c3c20b8f94c635e10aa1cc26e28a2b900f79771618340d90823c293f50",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 1332,
+      "frequency": "daily",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2017-08-28.zip",
+      "selected_rows": 24,
+      "sha256": "5fb64be296315c60f8dc7d5810a36c91d1c009ffa90dded967606daf9fe681cf",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 1327,
+      "frequency": "daily",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2017-08-29.zip",
+      "selected_rows": 24,
+      "sha256": "4790b71b171e24d9d349bd43fc0e81e168eea415dcda6256edf5756747379c1c",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 1342,
+      "frequency": "daily",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2017-08-30.zip",
+      "selected_rows": 24,
+      "sha256": "e1d2d25bbcc45573d764e9fa0a8eefaa3f329e14f30348e6b78dc42be6d1b21f",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 1329,
+      "frequency": "daily",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2017-08-31.zip",
+      "selected_rows": 24,
+      "sha256": "012d886735b5e6863efa43672cc12525f93205797f7d047cb02853e97400c786",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 40420,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 1,
+      "name": "ETHUSDT-1h-2017-09.zip",
+      "selected_rows": 712,
+      "sha256": "b1856a6b94912a29aa627b5ec9c013b8a7680af28f321909dc1d8347bbedec83",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 42488,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2017-10.zip",
+      "selected_rows": 744,
+      "sha256": "d3d589b30d621d0e31ca538ab7d24e9ef180e4f20fba11e7e07bd2cb4c30ce22",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 42635,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2017-11.zip",
+      "selected_rows": 720,
+      "sha256": "6ddf8e075d3a37dc562e23256d345ee81a522cc0d5f85d377f5f27d33fc119cd",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 43044,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 1,
+      "name": "ETHUSDT-1h-2017-12.zip",
+      "selected_rows": 743,
+      "sha256": "19c7f837276cb4a83bc06e8980008e1f8628af980c708c381f694297591d939e",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 41014,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 1,
+      "name": "ETHUSDT-1h-2018-01.zip",
+      "selected_rows": 742,
+      "sha256": "884fb186232c8c1c8fee29dd768b77e1015e0097769f559fb63980287a3e96a1",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 35315,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 2,
+      "name": "ETHUSDT-1h-2018-02.zip",
+      "selected_rows": 638,
+      "sha256": "e1fe7f0dd649f4bfc94c43e071d8c47360bdc9f6e63b8b5926c316490bb99220",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 40062,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2018-03.zip",
+      "selected_rows": 744,
+      "sha256": "30e21e25299d62747bf2c1e72e1f2ac7a84fb42fe8dd4b18008097e7e658fbab",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 38706,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2018-04.zip",
+      "selected_rows": 720,
+      "sha256": "517ff7fb242c9e5b4c04e0cdc9a877dd74f339d6508ecfbb03a40a9d395d9eab",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 40396,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2018-05.zip",
+      "selected_rows": 744,
+      "sha256": "96e76aad0d76259a46c6939eec7fca2f03d3257efc132314d0c7841f21590563",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 38094,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2018-06.zip",
+      "selected_rows": 709,
+      "sha256": "89ca6f4f5f3d7eda63a1e2b73e89137c84de07f64dca9f3137c0b5720a373f16",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 39428,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 1,
+      "name": "ETHUSDT-1h-2018-07.zip",
+      "selected_rows": 736,
+      "sha256": "52e7fc8fcd45d532b9c39c7188e7b0f23c7cd0b1fb85ab9f96a1f769e985d45e",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 40152,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2018-08.zip",
+      "selected_rows": 744,
+      "sha256": "08aa5c8650555341cb9a97bb36d224a885f7f43d2639062d86dc73999ba7a8c5",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 39154,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2018-09.zip",
+      "selected_rows": 720,
+      "sha256": "4dc44f74cddfb7fdb4e443bfc5625ddd01a219bd05bf9b828edebb460cad24d2",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 38544,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2018-10.zip",
+      "selected_rows": 741,
+      "sha256": "cb5965743f2d34dcbc9e74c838e631d102ded65bbab6af7f9be1f1a47c1d5902",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 37852,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2018-11.zip",
+      "selected_rows": 713,
+      "sha256": "c5ec22c135d03b693efc18ee5a800976eeeffa0d77c2018eb4b8001c34dbd261",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 39734,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2018-12.zip",
+      "selected_rows": 744,
+      "sha256": "c879eedf9c34e514d4366a521c9270641359128168b493e5e7c1c86fdc47cccd",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 39432,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2019-01.zip",
+      "selected_rows": 744,
+      "sha256": "dfcb945fc3bb86dbb6695e5c043b6e55cd239c52abd7cabdaa7bafef2c9ddf1b",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 35539,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2019-02.zip",
+      "selected_rows": 672,
+      "sha256": "274f269cdb4d5e261776f36dc013dfd894e6708b3ef1716b50e8d35e9e16f6c9",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 38409,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2019-03.zip",
+      "selected_rows": 738,
+      "sha256": "00baadffa3bb44317c2b8b188da4303b486e9c06c042f6ef735755257ad246dc",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 38262,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2019-04.zip",
+      "selected_rows": 720,
+      "sha256": "1a71dd3568ff0c875ef870f0023d2a9e7c8cdd7d7b427e373cdddb9b02909c51",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 39800,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2019-05.zip",
+      "selected_rows": 734,
+      "sha256": "147ba87d425554fe66c387c44100f6c6fbf0857d116ebbe16a5854ae5662f2c3",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 39069,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 1,
+      "name": "ETHUSDT-1h-2019-06.zip",
+      "selected_rows": 719,
+      "sha256": "3b51d2c72e8ba3891bb8631d226a5d1610ada0abc8095f7b48de539db8fcd6e0",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 40233,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2019-07.zip",
+      "selected_rows": 744,
+      "sha256": "341560f517488020a87e50c379b37cc2605dbeceeb29a171d8f078186e2ed6eb",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 38918,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2019-08.zip",
+      "selected_rows": 736,
+      "sha256": "84a769439af04f0c8413c32f9c8dcfd5a29241b8bcfb389776b296a6b4f8b6d4",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 38471,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2019-09.zip",
+      "selected_rows": 720,
+      "sha256": "4c2f8e47ac294e8f10726273b5a637ed172e98711915960eb5d15e71421d1ea7",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 39685,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2019-10.zip",
+      "selected_rows": 744,
+      "sha256": "546117d59598496fcb3122772c2c9bf45d0c2dd7a25a9b07bd78a9cb83ad677b",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 37868,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2019-11.zip",
+      "selected_rows": 716,
+      "sha256": "222067844687455cf1f50022f906eb19eb0001e690378f3c5a12e89dd7bdc721",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 38826,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2019-12.zip",
+      "selected_rows": 744,
+      "sha256": "c7734b09fafca18a99f4906ba33b34a37cb96b8c0f866e6b92f9e951f99f5b8d",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 39551,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2020-01.zip",
+      "selected_rows": 744,
+      "sha256": "9e0ca4d30bcb22d5c876b912b3160445d2410634d09e9584060f592c30a06402",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 37876,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 1,
+      "name": "ETHUSDT-1h-2020-02.zip",
+      "selected_rows": 689,
+      "sha256": "1cf8a5b129d16bed072c46e158b5914247007ec7e00b489880f422c80c73afbe",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 40856,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 1,
+      "name": "ETHUSDT-1h-2020-03.zip",
+      "selected_rows": 742,
+      "sha256": "2d80640a11d7de0eb052637d25aa95eb42602a927ad7c0be6d77a7689fbe93d3",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 39174,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2020-04.zip",
+      "selected_rows": 718,
+      "sha256": "0171b734b6131a542d79e35dc2ffbf886c1353574ef0983e95c4a8eb2856e56a",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 40466,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2020-05.zip",
+      "selected_rows": 744,
+      "sha256": "4a02d33138486434643a314ea561e274f95c9d93124763d15cbf18bf809ca771",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 38510,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2020-06.zip",
+      "selected_rows": 717,
+      "sha256": "d605f9ad1cc5556cfef7559f2d9e5cda0e55deba7f8ec03ea253bf8ec2f99d81",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 40313,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2020-07.zip",
+      "selected_rows": 744,
+      "sha256": "3a740ceed16217e109224e01ca0ce552d241bf39045d82d29f69e61f13149ff8",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 41392,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2020-08.zip",
+      "selected_rows": 744,
+      "sha256": "2b50f4e13ad28b1502cb99abb6e2d71048a46f207ecbd02aa4720ae1e451f703",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 40089,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2020-09.zip",
+      "selected_rows": 720,
+      "sha256": "1bbbb6fece1ff1f5ac8b42b8073686bc1e05e1cee404f453843a5cb5716d3a95",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 40737,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2020-10.zip",
+      "selected_rows": 744,
+      "sha256": "7dac6824ff1762f704b9cd6becab4282ceada67be26f0466d378341c41db0ea2",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 40447,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2020-11.zip",
+      "selected_rows": 719,
+      "sha256": "a1b583dd091363fa1375bced29f78f69889c6da219d1c136b9d0f9269a19158b",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 41720,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 1,
+      "name": "ETHUSDT-1h-2020-12.zip",
+      "selected_rows": 739,
+      "sha256": "3928cbf56a66752d619eb438b92e0bc8cca2c8f0420237e5f5e81fdc19db13ea",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 43823,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2021-01.zip",
+      "selected_rows": 744,
+      "sha256": "01d6bb8175fb847a256ca1cc14dce06194a86c740d7edc951a5d2835aba9b577",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 39318,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 1,
+      "name": "ETHUSDT-1h-2021-02.zip",
+      "selected_rows": 670,
+      "sha256": "f2e871ec862f36045bfa06a05210832d6b772a101a62b18bc7acddf906083b44",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 43093,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2021-03.zip",
+      "selected_rows": 743,
+      "sha256": "64d15bc69f1788ccfa775cea47bf2f614a2ccb4eccf66257f512c8cd99d497ad",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 41907,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 1,
+      "name": "ETHUSDT-1h-2021-04.zip",
+      "selected_rows": 714,
+      "sha256": "299b928009158743a92860a66c75ba898243ecbdfa8ef9b346c0a7fd553bcbff",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 44688,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2021-05.zip",
+      "selected_rows": 744,
+      "sha256": "56707e7dbceacc194a6ecd31ea2b2a75a5c5f428182e63055217188c7e47c89d",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 42407,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2021-06.zip",
+      "selected_rows": 720,
+      "sha256": "e5244f5f095543d47d24a617c67292cf5daf95cc403407f5fff2fbd394580512",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 43318,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2021-07.zip",
+      "selected_rows": 744,
+      "sha256": "7048eb9eec2a091a3550f16870b93165eb21885ba6e217dac28682aebf248241",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 43105,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 1,
+      "name": "ETHUSDT-1h-2021-08.zip",
+      "selected_rows": 739,
+      "sha256": "9e390848fe76625e72b8f4eac86d405ed33c79ca9d79d9af14266c54d9d215af",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 40803,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2021-09.zip",
+      "selected_rows": 718,
+      "sha256": "c10a61248a5c92280e35beadcfdf33220fdc0561ab1973893a4fe5a3335d3b78",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 42076,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2021-10.zip",
+      "selected_rows": 744,
+      "sha256": "332cdaac0de88dd2452c0ed2561f86e99ebba6f89d9db69b35aa9f52acafe805",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 40833,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2021-11.zip",
+      "selected_rows": 720,
+      "sha256": "fc8093a34678bd6ce4436c411127a69f245b2d5cfa6208aee67ffda504a70664",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 41944,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 1,
+      "name": "ETHUSDT-1h-2021-12.zip",
+      "selected_rows": 743,
+      "sha256": "7cec67435b94112e7d1a8ec45b4d0167735102d12cb8649699aedf5018b09a80",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 41862,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2022-01.zip",
+      "selected_rows": 744,
+      "sha256": "14a3875732b7e404be2522aec94b5f17fc43f81e77c0a68fdd72980ea644ef5a",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 37936,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2022-02.zip",
+      "selected_rows": 672,
+      "sha256": "2c155824e909de8c1f91a41bbdc2356c29f3c16944db3982a7c912ff58083eb3",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 41670,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2022-03.zip",
+      "selected_rows": 744,
+      "sha256": "9af5cd5120e2942f763f0a45cec35b0a98322015d52b29884655875f8bfe361d",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 40240,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2022-04.zip",
+      "selected_rows": 720,
+      "sha256": "d47fd9d00967d87564a52cc7025960de98513f863a83018e9f9dd0eb5875df39",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 41837,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2022-05.zip",
+      "selected_rows": 744,
+      "sha256": "382390f47d0660bb3dc16aaedf7901002a2293ca7a375045b08d956208c95615",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 40835,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2022-06.zip",
+      "selected_rows": 720,
+      "sha256": "9fd8dabf04723354423f643b62b74ac5f1046e28f855c0e15d9eb68b5e49f559",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 42054,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2022-07.zip",
+      "selected_rows": 744,
+      "sha256": "87c81755af5e05b5b24182eed98582284b6896048d231a245581d76df669d4b4",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 41777,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2022-08.zip",
+      "selected_rows": 744,
+      "sha256": "7792ffb44dbcd7a9964ea796ffc2dc2049b5437a5a317c07b64eb4be8aac1a13",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 40195,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2022-09.zip",
+      "selected_rows": 720,
+      "sha256": "e64c3e782b8421fa035843584bff1ddcdee84ee1bcb06d6e154915855d6917c4",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 40772,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2022-10.zip",
+      "selected_rows": 744,
+      "sha256": "e0e1d08f8e089a0273e2ad62ad052b690d4082c82bf56da6f7b2c37795e2ab6f",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 39897,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2022-11.zip",
+      "selected_rows": 720,
+      "sha256": "109c93bc5db33562650e146c9a9332ec4496dae5021cf942f5c75317c75d16eb",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 40023,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2022-12.zip",
+      "selected_rows": 744,
+      "sha256": "6f704c3ed1be5ce404b5ca53e733e42b005308714218ff9e21d15e7cfb128f01",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 40509,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2023-01.zip",
+      "selected_rows": 744,
+      "sha256": "6a646f674ecfa736db1e6fd0c4ebaf26594806efde851f2c7081aec533714e3d",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 36954,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2023-02.zip",
+      "selected_rows": 672,
+      "sha256": "c23f2ce377caba0279a932cfea93701bd02c996879293c5c395eaba06a943039",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 41120,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 1,
+      "name": "ETHUSDT-1h-2023-03.zip",
+      "selected_rows": 742,
+      "sha256": "90d268be1e0d39f7411f88ca3c0f21fe110fee7ff3c1dd054555e1fea6e22d8d",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 39687,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2023-04.zip",
+      "selected_rows": 720,
+      "sha256": "36598c7b9ac93706b8c9f9e6da11bc2137f605c442dab139ac35e397efcd9473",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 40460,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2023-05.zip",
+      "selected_rows": 744,
+      "sha256": "e03f762cd90b9a4eb6bf3499a05f4df84a71fd23f18d8b1b9c2e88eb469b0f2e",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 39155,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2023-06.zip",
+      "selected_rows": 720,
+      "sha256": "7ca4b8f6f6ff04f6899fe49b68df2c7b60841dfadb4a334631491af2d192bfbf",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 39931,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2023-07.zip",
+      "selected_rows": 744,
+      "sha256": "b141e7b3ec07f24756b1c5c27b562acfe06d331678a49c493a5fa2cba44eb97a",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 39655,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2023-08.zip",
+      "selected_rows": 744,
+      "sha256": "25930d0ba8280ec82b879d130071582c3ee4d5a1fbe31dc34c016b2c314d3525",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 38385,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2023-09.zip",
+      "selected_rows": 720,
+      "sha256": "3453dc6570a7193ab358e5a4c592439b4073028b1ab09412610d9409cf330219",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 40238,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2023-10.zip",
+      "selected_rows": 744,
+      "sha256": "d91229dd47c4cf53b8e326b500295a4fb9f0316faca0e2149076065bc53ae049",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 39562,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2023-11.zip",
+      "selected_rows": 720,
+      "sha256": "2be46057e4a5b40b4b7c6bdf5b163aa22e353048e62907e730cd471fbf3a62b5",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 41082,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2023-12.zip",
+      "selected_rows": 744,
+      "sha256": "89ec0d0b4f4ee72f4f1c2fad52ec1d94435d525bb107ae23d6f9716c77dbc428",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 41245,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2024-01.zip",
+      "selected_rows": 744,
+      "sha256": "1fdb3a8fa6b77ef30ef17ed4b71b184172ef1f812d83bd0f50bbd08e71a92057",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 38782,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2024-02.zip",
+      "selected_rows": 696,
+      "sha256": "f080ff288b2f7e85e78c5370a8a3258b93f85531ff96b4131c1b7889649a8ba4",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 42083,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2024-03.zip",
+      "selected_rows": 744,
+      "sha256": "4eb16ab0c5db15e5e0d77827f5c19c215c7ce601a5501d9563b75bda7602f46e",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 40291,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2024-04.zip",
+      "selected_rows": 720,
+      "sha256": "8b710fad720ae0bc75eaded37b3add95ca49122ae398f3f6e33e57e864da781e",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 41346,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2024-05.zip",
+      "selected_rows": 744,
+      "sha256": "0307d64f0d9ae6ff4001442a014d7b02dcbc5a003dcc36ba139f1c9695996b51",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 39586,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2024-06.zip",
+      "selected_rows": 720,
+      "sha256": "59ee6920bd72d93d1130c89711c93ea192bbfd5f82b548dcb0448f66450f6a06",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 41340,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2024-07.zip",
+      "selected_rows": 744,
+      "sha256": "83181cfcc1f1e32a542e2c220cbd58acd1c550cc64ad1e2c414e47088266aa7c",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 41335,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2024-08.zip",
+      "selected_rows": 744,
+      "sha256": "d908255a48978f6acb769c4b856a3307c58a8c19dbf2b3b7f10067245d5e8b89",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 39572,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2024-09.zip",
+      "selected_rows": 720,
+      "sha256": "bfbdda97d03abac469199120ec3c2f1305e2d5947e9155ff84dbeafe33cd4a67",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 41095,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2024-10.zip",
+      "selected_rows": 744,
+      "sha256": "cbb13664485b6c9a6365da7ae23299b722ab5926a6aed516add486ef501883bc",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 40916,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2024-11.zip",
+      "selected_rows": 720,
+      "sha256": "29cd30419b86d5dff5467a7a81d43e492aaaeb3669db216ab8badaad5fe610ec",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 42106,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2024-12.zip",
+      "selected_rows": 744,
+      "sha256": "84312b7dc2b5c903853c78d94f587ef1d24b7960d7bd95f5bfe3afc3db006203",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 42253,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2025-01.zip",
+      "selected_rows": 744,
+      "sha256": "f7350a6f3b51de466a0db52ba890cf296d4faeb6e84811b9606f87ad39ccf3ec",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 38410,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2025-02.zip",
+      "selected_rows": 672,
+      "sha256": "40c2f73850422d47ca7d044959cecc39ff3416f6e3c88f30636da4a01a0b6e31",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 41867,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2025-03.zip",
+      "selected_rows": 744,
+      "sha256": "dc32ecad498d19f8663633196ec84cbd480595c89aa1ae6062c0fa0b8d9bd11d",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 40375,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2025-04.zip",
+      "selected_rows": 720,
+      "sha256": "73f39799fae1ba4ef291c6785b934a6c817426ef8ef60e1bdf42078efd27893d",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 42206,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2025-05.zip",
+      "selected_rows": 744,
+      "sha256": "720a319face496acff79d8e6279b9b03f31495097d555c74daa076cd66421bee",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 40653,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2025-06.zip",
+      "selected_rows": 720,
+      "sha256": "780788805b48a094886590d939ef45372db2ee053aa5d464f8e135121df2b8eb",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 42467,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2025-07.zip",
+      "selected_rows": 744,
+      "sha256": "d5c4c2482004a49b479ff5bfbdb885b25035ace24e5f95edd8057507718df366",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 43041,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2025-08.zip",
+      "selected_rows": 744,
+      "sha256": "1ebdd24f8e1df5369518b721fdb0bfaaca9892ae71499b82783194573f804cad",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 40873,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2025-09.zip",
+      "selected_rows": 720,
+      "sha256": "f83ffff284b408574a4571e83fabc5c641e20edc71818912541cc38ec7e1be43",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 42832,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2025-10.zip",
+      "selected_rows": 744,
+      "sha256": "f3668059619d772ae8f7167d82666dcc6e2f88f17e6fd66a4a8098c9cd8ba042",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 41327,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2025-11.zip",
+      "selected_rows": 720,
+      "sha256": "3c0171cdd5eef1ece36c818ace3a07cc48e331cb9d991488a8db917bc496b78d",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 42005,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2025-12.zip",
+      "selected_rows": 744,
+      "sha256": "7a7a35ce7b9be9bafa0a00c47370acc57a48329a3289c21cb19f1185f6430fdb",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 41945,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2026-01.zip",
+      "selected_rows": 744,
+      "sha256": "eb060da7fb1adc65c7999f7d1f4f3b004edf2335311bb32d05a86f9577c21106",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 38274,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2026-02.zip",
+      "selected_rows": 672,
+      "sha256": "8c8c6e664688497711832add90349b8617caf7e8892f085e97fe4290989fe78b",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 41894,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2026-03.zip",
+      "selected_rows": 744,
+      "sha256": "0bf4dc37f2b201a8891f63dd76164742ed7d4fa24c24065a2e7709f34488ff74",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 40057,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2026-04.zip",
+      "selected_rows": 720,
+      "sha256": "46d62ed100717d8195bce4c07a41dc7606f41abc491ca71f9bfe653d2b92bfc0",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 41042,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2026-05.zip",
+      "selected_rows": 744,
+      "sha256": "8c4cef22ad7046183621f1a41155e91301780a3c9f377d7770763027b08e2462",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 40134,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2026-06.zip",
+      "selected_rows": 720,
+      "sha256": "e24954ab4ada9dc5f6bbf9ac30275d459a5729fb522f045f627296b4ad7ee985",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 40988,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2026-07.zip",
+      "selected_rows": 744,
+      "sha256": "5e8c974c008689943b473ccc5890707d0c2cd0b7e71bdb28c0ad65a87abde338",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 40869,
+      "frequency": "monthly",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2026-08.zip",
+      "selected_rows": 744,
+      "sha256": "ebac99df5b1d9c84c56ea8f7a86daf09bcb43f8fdbded0049fec5205ab977dcc",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 1512,
+      "frequency": "daily",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2026-09-01.zip",
+      "selected_rows": 24,
+      "sha256": "575f3c644797a90c3b342fe00af004926a6d6a01cf75eace7a08a4a00a52e8c4",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 1523,
+      "frequency": "daily",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2026-09-02.zip",
+      "selected_rows": 24,
+      "sha256": "0530cfc5e7b0c48509b6d887dbbee5f9ff1802269a616dab786b2565b33576e2",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 1553,
+      "frequency": "daily",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2026-09-03.zip",
+      "selected_rows": 24,
+      "sha256": "1c536c15410819349569b0f4c815a4d01c100986ce8a60f85a27397534f4fcc2",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 1538,
+      "frequency": "daily",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2026-09-04.zip",
+      "selected_rows": 24,
+      "sha256": "11bfc126fc2ef8f3bcffd3fed687782152f3862550dd940a4b4dfaf4e3f4ad58",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 1467,
+      "frequency": "daily",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2026-09-05.zip",
+      "selected_rows": 24,
+      "sha256": "62bf61fea6200a851204ca68117b5b5521fb267b2768a8bd49f1174b90d48589",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 1535,
+      "frequency": "daily",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2026-09-06.zip",
+      "selected_rows": 24,
+      "sha256": "be0d1240ef958d5a4f5f6d9a782a541a54b3e631c477af8d443d0f42a0107a6d",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "checksum_verified": true,
+      "compressed_bytes": 1508,
+      "frequency": "daily",
+      "invalid_boundary_rows": 0,
+      "name": "ETHUSDT-1h-2026-09-07.zip",
+      "selected_rows": 24,
+      "sha256": "14c54bbc5c9fb34a8d838e76e8cf4883647c778b2371c81e1c319359b9076c5f",
+      "symbol": "ETHUSDT"
+    }
+  ],
+  "assumptions": {
+    "ambiguous_barrier": "stop_first",
+    "entry": "next continuous hourly bar open",
+    "expiry": "expiry_before_target",
+    "minimum_target_distance_bps": 68,
+    "round_trip_cost_bps": 34,
+    "stressed_round_trip_cost_bps": 68
+  },
+  "candidates": [
+    {
+      "candidate_id": "1895e93aac81a4aeb9e85da523d2e7ee02273cde061c1cf3f4d703999f037ceb",
+      "diagnostics": {
+        "gap_blocked": 14,
+        "gap_truncated": 104,
+        "invalid_risk": 0,
+        "late_decision": 0,
+        "minimum_target_distance_excluded": 447,
+        "overlap_blocked": 34433,
+        "right_censored": 0,
+        "scored_opportunities": 5664,
+        "signals_considered": 40215
+      },
+      "folds": [
+        {
+          "end": "2019-11-25T04:00:00+00:00",
+          "fold": 1,
+          "losses": 856,
+          "mean_net_return": -0.0017209806719057587,
+          "mean_stressed_return": -0.005120980671905759,
+          "start": "2017-08-17T04:00:00+00:00",
+          "trades": 1352
+        },
+        {
+          "end": "2022-03-01T11:00:00+00:00",
+          "fold": 2,
+          "losses": 926,
+          "mean_net_return": -0.002403902575213063,
+          "mean_stressed_return": -0.0058039025752130635,
+          "start": "2019-11-25T04:00:00+00:00",
+          "trades": 1422
+        },
+        {
+          "end": "2024-06-04T06:00:00+00:00",
+          "fold": 3,
+          "losses": 1002,
+          "mean_net_return": -0.003072118363819086,
+          "mean_stressed_return": -0.006472118363819086,
+          "start": "2022-03-01T11:00:00+00:00",
+          "trades": 1443
+        },
+        {
+          "end": "2026-09-08T00:00:00+00:00",
+          "fold": 4,
+          "losses": 988,
+          "mean_net_return": -0.003127576167095586,
+          "mean_stressed_return": -0.006527576167095586,
+          "start": "2024-06-04T06:00:00+00:00",
+          "trades": 1447
+        }
+      ],
+      "full": {
+        "losses": 3772,
+        "mean_net_return": -0.0025974626614595807,
+        "mean_stressed_return": -0.005997462661459581,
+        "trades": 5664
+      },
+      "maximum_bars": 12,
+      "screen_passed": false,
+      "signal_prefix_hash": "74e9737e8c90db1d91871c6cb3f9cd8947c0027d17b80fb24541df0c1a9b8d9c",
+      "stop_atr": 2,
+      "strategy_definition_hash": "cbd4bac9b47dec2acd13757808c5b9dd38cc8cd9c25faff4671268e74727dc38",
+      "strategy_id": "volatility_scaled_trend",
+      "symbol": "BTCUSDT",
+      "target_atr": 3.0
+    },
+    {
+      "candidate_id": "62d2c86fb5b8b1b5d481a2145086267cec460ed1a1276436f909b968d3142299",
+      "diagnostics": {
+        "gap_blocked": 0,
+        "gap_truncated": 3,
+        "invalid_risk": 0,
+        "late_decision": 0,
+        "minimum_target_distance_excluded": 179,
+        "overlap_blocked": 630,
+        "right_censored": 0,
+        "scored_opportunities": 1193,
+        "signals_considered": 1826
+      },
+      "folds": [
+        {
+          "end": "2019-11-25T04:00:00+00:00",
+          "fold": 1,
+          "losses": 176,
+          "mean_net_return": -0.002112979989222702,
+          "mean_stressed_return": -0.005512979989222702,
+          "start": "2017-08-17T04:00:00+00:00",
+          "trades": 303
+        },
+        {
+          "end": "2022-03-01T11:00:00+00:00",
+          "fold": 2,
+          "losses": 158,
+          "mean_net_return": -0.0012773214285371917,
+          "mean_stressed_return": -0.004677321428537192,
+          "start": "2019-11-25T04:00:00+00:00",
+          "trades": 289
+        },
+        {
+          "end": "2024-06-04T06:00:00+00:00",
+          "fold": 3,
+          "losses": 176,
+          "mean_net_return": -0.0031507822270671624,
+          "mean_stressed_return": -0.006550782227067163,
+          "start": "2022-03-01T11:00:00+00:00",
+          "trades": 287
+        },
+        {
+          "end": "2026-09-08T00:00:00+00:00",
+          "fold": 4,
+          "losses": 188,
+          "mean_net_return": -0.0030662316401861367,
+          "mean_stressed_return": -0.006466231640186137,
+          "start": "2024-06-04T06:00:00+00:00",
+          "trades": 314
+        }
+      ],
+      "full": {
+        "losses": 698,
+        "mean_net_return": -0.002411106507769027,
+        "mean_stressed_return": -0.005811106507769027,
+        "trades": 1193
+      },
+      "maximum_bars": 12,
+      "screen_passed": false,
+      "signal_prefix_hash": "8558f3eedf845dfaf2bb5ef006a5776a481367aa3ae718fb9bfda34c75ca280f",
+      "stop_atr": 1,
+      "strategy_definition_hash": "47585e8296a80a0d31d7c0c47c3d19c803e695376c800d7b75b169074ad4d09a",
+      "strategy_id": "bollinger_keltner_squeeze",
+      "symbol": "ETHUSDT",
+      "target_atr": 1.5
+    }
+  ],
+  "chronology": {
+    "folds": 4,
+    "kind": "four_chronological_development_folds"
+  },
+  "end_exclusive": "2026-09-08T00:00:00+00:00",
+  "evidence_tier": "retrospective_development_only",
+  "generated_at": "2026-09-08T18:14:53.097296+00:00",
+  "independent_validation": false,
+  "interval": "1h",
+  "note": "Retrospective development search; no independent validation and no live strategy promotion.",
+  "promotable": false,
+  "runtime_fingerprint": {
+    "certifi": "2026.7.22",
+    "httpx": "0.28.1",
+    "numpy": "2.5.2",
+    "pandas": "3.0.5",
+    "pydantic": "2.13.4",
+    "python": "3.13.14",
+    "pyyaml": "6.0.3",
+    "scikit_learn": "1.9.0",
+    "scipy": "1.18.1",
+    "statsmodels": "0.14.6",
+    "websockets": "16.1.1"
+  },
+  "schema_version": 1,
+  "source_hash": "353e6721adbf3322afdd699f4321cd024380ac3f1de5460eed3a5550a9c0028c",
+  "start": "2017-08-17T00:00:00+00:00",
+  "status": "experimental_observation_only",
+  "symbols": [
+    "BTCUSDT",
+    "ETHUSDT"
+  ],
+  "trials": [
+    {
+      "candidate_id": "0acf16eee2a0c28b4f6ca812128cc8f71d307f538c896ec7293b11b8db883296",
+      "diagnostics": {
+        "gap_blocked": 0,
+        "gap_truncated": 5,
+        "invalid_risk": 0,
+        "late_decision": 0,
+        "minimum_target_distance_excluded": 537,
+        "overlap_blocked": 635,
+        "right_censored": 0,
+        "scored_opportunities": 1114,
+        "signals_considered": 1754
+      },
+      "folds": [
+        {
+          "end": "2019-11-25T04:00:00+00:00",
+          "fold": 1,
+          "losses": 205,
+          "mean_net_return": -0.002108275799816728,
+          "mean_stressed_return": -0.0055082757998167284,
+          "start": "2017-08-17T04:00:00+00:00",
+          "trades": 322
+        },
+        {
+          "end": "2022-03-01T11:00:00+00:00",
+          "fold": 2,
+          "losses": 227,
+          "mean_net_return": -0.004153775794841569,
+          "mean_stressed_return": -0.007553775794841568,
+          "start": "2019-11-25T04:00:00+00:00",
+          "trades": 324
+        },
+        {
+          "end": "2024-06-04T06:00:00+00:00",
+          "fold": 3,
+          "losses": 178,
+          "mean_net_return": -0.003304945368369817,
+          "mean_stressed_return": -0.006704945368369818,
+          "start": "2022-03-01T11:00:00+00:00",
+          "trades": 273
+        },
+        {
+          "end": "2026-09-08T00:00:00+00:00",
+          "fold": 4,
+          "losses": 141,
+          "mean_net_return": -0.003781364305058034,
+          "mean_stressed_return": -0.007181364305058035,
+          "start": "2024-06-04T06:00:00+00:00",
+          "trades": 195
+        }
+      ],
+      "full": {
+        "losses": 751,
+        "mean_net_return": -0.0032893216248841392,
+        "mean_stressed_return": -0.006689321624884141,
+        "trades": 1114
+      },
+      "maximum_bars": 6,
+      "screen_passed": false,
+      "signal_prefix_hash": "0d39abb34ceddcd7275191989c01eb2d6b2c4999fe3104e4cd6aa5d4fd34e362",
+      "stop_atr": 1,
+      "strategy_definition_hash": "47585e8296a80a0d31d7c0c47c3d19c803e695376c800d7b75b169074ad4d09a",
+      "strategy_id": "bollinger_keltner_squeeze",
+      "symbol": "BTCUSDT",
+      "target_atr": 1.5
+    },
+    {
+      "candidate_id": "889e2ffe515c40bde46c15a3e388bbb9887c303df754490c359c04c35b3a8afa",
+      "diagnostics": {
+        "gap_blocked": 0,
+        "gap_truncated": 5,
+        "invalid_risk": 0,
+        "late_decision": 0,
+        "minimum_target_distance_excluded": 537,
+        "overlap_blocked": 648,
+        "right_censored": 0,
+        "scored_opportunities": 1101,
+        "signals_considered": 1754
+      },
+      "folds": [
+        {
+          "end": "2019-11-25T04:00:00+00:00",
+          "fold": 1,
+          "losses": 184,
+          "mean_net_return": -0.0019584144102263194,
+          "mean_stressed_return": -0.00535841441022632,
+          "start": "2017-08-17T04:00:00+00:00",
+          "trades": 316
+        },
+        {
+          "end": "2022-03-01T11:00:00+00:00",
+          "fold": 2,
+          "losses": 198,
+          "mean_net_return": -0.0038515298555162896,
+          "mean_stressed_return": -0.0072515298555162885,
+          "start": "2019-11-25T04:00:00+00:00",
+          "trades": 321
+        },
+        {
+          "end": "2024-06-04T06:00:00+00:00",
+          "fold": 3,
+          "losses": 165,
+          "mean_net_return": -0.0031757142344435814,
+          "mean_stressed_return": -0.006575714234443581,
+          "start": "2022-03-01T11:00:00+00:00",
+          "trades": 270
+        },
+        {
+          "end": "2026-09-08T00:00:00+00:00",
+          "fold": 4,
+          "losses": 127,
+          "mean_net_return": -0.0036849627939122293,
+          "mean_stressed_return": -0.00708496279391223,
+          "start": "2024-06-04T06:00:00+00:00",
+          "trades": 194
+        }
+      ],
+      "full": {
+        "losses": 674,
+        "mean_net_return": -0.0031131023274940826,
+        "mean_stressed_return": -0.006513102327494083,
+        "trades": 1101
+      },
+      "maximum_bars": 12,
+      "screen_passed": false,
+      "signal_prefix_hash": "0d39abb34ceddcd7275191989c01eb2d6b2c4999fe3104e4cd6aa5d4fd34e362",
+      "stop_atr": 1,
+      "strategy_definition_hash": "47585e8296a80a0d31d7c0c47c3d19c803e695376c800d7b75b169074ad4d09a",
+      "strategy_id": "bollinger_keltner_squeeze",
+      "symbol": "BTCUSDT",
+      "target_atr": 1.5
+    },
+    {
+      "candidate_id": "25cd6495bd4a2bd3b9ec58b5c5fb75e83304a5711048cd9aadb1912fed8cf559",
+      "diagnostics": {
+        "gap_blocked": 0,
+        "gap_truncated": 6,
+        "invalid_risk": 0,
+        "late_decision": 0,
+        "minimum_target_distance_excluded": 59,
+        "overlap_blocked": 1008,
+        "right_censored": 0,
+        "scored_opportunities": 1218,
+        "signals_considered": 2232
+      },
+      "folds": [
+        {
+          "end": "2019-11-25T04:00:00+00:00",
+          "fold": 1,
+          "losses": 234,
+          "mean_net_return": -0.0014723369965138702,
+          "mean_stressed_return": -0.00487233699651387,
+          "start": "2017-08-17T04:00:00+00:00",
+          "trades": 331
+        },
+        {
+          "end": "2022-03-01T11:00:00+00:00",
+          "fold": 2,
+          "losses": 235,
+          "mean_net_return": -0.0035443966546305503,
+          "mean_stressed_return": -0.006944396654630551,
+          "start": "2019-11-25T04:00:00+00:00",
+          "trades": 316
+        },
+        {
+          "end": "2024-06-04T06:00:00+00:00",
+          "fold": 3,
+          "losses": 236,
+          "mean_net_return": -0.0031537684219744414,
+          "mean_stressed_return": -0.006553768421974441,
+          "start": "2022-03-01T11:00:00+00:00",
+          "trades": 320
+        },
+        {
+          "end": "2026-09-08T00:00:00+00:00",
+          "fold": 4,
+          "losses": 203,
+          "mean_net_return": -0.0035119141113588988,
+          "mean_stressed_return": -0.0069119141113588994,
+          "start": "2024-06-04T06:00:00+00:00",
+          "trades": 251
+        }
+      ],
+      "full": {
+        "losses": 908,
+        "mean_net_return": -0.002871978017809729,
+        "mean_stressed_return": -0.0062719780178097295,
+        "trades": 1218
+      },
+      "maximum_bars": 6,
+      "screen_passed": false,
+      "signal_prefix_hash": "0d39abb34ceddcd7275191989c01eb2d6b2c4999fe3104e4cd6aa5d4fd34e362",
+      "stop_atr": 2,
+      "strategy_definition_hash": "47585e8296a80a0d31d7c0c47c3d19c803e695376c800d7b75b169074ad4d09a",
+      "strategy_id": "bollinger_keltner_squeeze",
+      "symbol": "BTCUSDT",
+      "target_atr": 3.0
+    },
+    {
+      "candidate_id": "98e3635bd678bf666945cae52276454afba73e43ee06ae543231c9f1f3b94986",
+      "diagnostics": {
+        "gap_blocked": 0,
+        "gap_truncated": 16,
+        "invalid_risk": 0,
+        "late_decision": 0,
+        "minimum_target_distance_excluded": 59,
+        "overlap_blocked": 1064,
+        "right_censored": 0,
+        "scored_opportunities": 1152,
+        "signals_considered": 2232
+      },
+      "folds": [
+        {
+          "end": "2019-11-25T04:00:00+00:00",
+          "fold": 1,
+          "losses": 190,
+          "mean_net_return": -0.0008755970086443466,
+          "mean_stressed_return": -0.004275597008644347,
+          "start": "2017-08-17T04:00:00+00:00",
+          "trades": 306
+        },
+        {
+          "end": "2022-03-01T11:00:00+00:00",
+          "fold": 2,
+          "losses": 191,
+          "mean_net_return": -0.0035822783120181426,
+          "mean_stressed_return": -0.006982278312018142,
+          "start": "2019-11-25T04:00:00+00:00",
+          "trades": 297
+        },
+        {
+          "end": "2024-06-04T06:00:00+00:00",
+          "fold": 3,
+          "losses": 216,
+          "mean_net_return": -0.0031793477978718336,
+          "mean_stressed_return": -0.006579347797871835,
+          "start": "2022-03-01T11:00:00+00:00",
+          "trades": 308
+        },
+        {
+          "end": "2026-09-08T00:00:00+00:00",
+          "fold": 4,
+          "losses": 176,
+          "mean_net_return": -0.003340702107915141,
+          "mean_stressed_return": -0.0067407021079151416,
+          "start": "2024-06-04T06:00:00+00:00",
+          "trades": 241
+        }
+      ],
+      "full": {
+        "losses": 773,
+        "mean_net_return": -0.0027050500634258957,
+        "mean_stressed_return": -0.006105050063425896,
+        "trades": 1152
+      },
+      "maximum_bars": 12,
+      "screen_passed": false,
+      "signal_prefix_hash": "0d39abb34ceddcd7275191989c01eb2d6b2c4999fe3104e4cd6aa5d4fd34e362",
+      "stop_atr": 2,
+      "strategy_definition_hash": "47585e8296a80a0d31d7c0c47c3d19c803e695376c800d7b75b169074ad4d09a",
+      "strategy_id": "bollinger_keltner_squeeze",
+      "symbol": "BTCUSDT",
+      "target_atr": 3.0
+    },
+    {
+      "candidate_id": "20137a690b14a3dbfb0ef73cdb643b4625161178e687eb669f764139c9aa7d2a",
+      "diagnostics": {
+        "gap_blocked": 11,
+        "gap_truncated": 21,
+        "invalid_risk": 0,
+        "late_decision": 0,
+        "minimum_target_distance_excluded": 5976,
+        "overlap_blocked": 23205,
+        "right_censored": 0,
+        "scored_opportunities": 9790,
+        "signals_considered": 33027
+      },
+      "folds": [
+        {
+          "end": "2019-11-25T04:00:00+00:00",
+          "fold": 1,
+          "losses": 1725,
+          "mean_net_return": -0.003321508343626842,
+          "mean_stressed_return": -0.006721508343626841,
+          "start": "2017-08-17T04:00:00+00:00",
+          "trades": 2540
+        },
+        {
+          "end": "2022-03-01T11:00:00+00:00",
+          "fold": 2,
+          "losses": 1783,
+          "mean_net_return": -0.003560162786359217,
+          "mean_stressed_return": -0.006960162786359217,
+          "start": "2019-11-25T04:00:00+00:00",
+          "trades": 2603
+        },
+        {
+          "end": "2024-06-04T06:00:00+00:00",
+          "fold": 3,
+          "losses": 1649,
+          "mean_net_return": -0.0034672172130655494,
+          "mean_stressed_return": -0.0068672172130655506,
+          "start": "2022-03-01T11:00:00+00:00",
+          "trades": 2359
+        },
+        {
+          "end": "2026-09-08T00:00:00+00:00",
+          "fold": 4,
+          "losses": 1606,
+          "mean_net_return": -0.003351100650438014,
+          "mean_stressed_return": -0.006751100650438014,
+          "start": "2024-06-04T06:00:00+00:00",
+          "trades": 2288
+        }
+      ],
+      "full": {
+        "losses": 6763,
+        "mean_net_return": -0.0034269886230366736,
+        "mean_stressed_return": -0.0068269886230366734,
+        "trades": 9790
+      },
+      "maximum_bars": 6,
+      "screen_passed": false,
+      "signal_prefix_hash": "f7d760b11e368579c459e281ca7746643b17cee9b11ba8dc4499fdc89ed8b6db",
+      "stop_atr": 1,
+      "strategy_definition_hash": "8ea38c9dc6146e2783cfc28c8dc24c6e2f9c9958d4bed52af50dc597534c2737",
+      "strategy_id": "macd_histogram_trend",
+      "symbol": "BTCUSDT",
+      "target_atr": 1.5
+    },
+    {
+      "candidate_id": "ac296a16f252443a05668b766d89b09a681af9384c15b9a2ba71f559c9b9d4c0",
+      "diagnostics": {
+        "gap_blocked": 11,
+        "gap_truncated": 30,
+        "invalid_risk": 0,
+        "late_decision": 0,
+        "minimum_target_distance_excluded": 5976,
+        "overlap_blocked": 24932,
+        "right_censored": 0,
+        "scored_opportunities": 8054,
+        "signals_considered": 33027
+      },
+      "folds": [
+        {
+          "end": "2019-11-25T04:00:00+00:00",
+          "fold": 1,
+          "losses": 1273,
+          "mean_net_return": -0.0033489787594065132,
+          "mean_stressed_return": -0.006748978759406514,
+          "start": "2017-08-17T04:00:00+00:00",
+          "trades": 2039
+        },
+        {
+          "end": "2022-03-01T11:00:00+00:00",
+          "fold": 2,
+          "losses": 1350,
+          "mean_net_return": -0.0036227556363129802,
+          "mean_stressed_return": -0.007022755636312981,
+          "start": "2019-11-25T04:00:00+00:00",
+          "trades": 2127
+        },
+        {
+          "end": "2024-06-04T06:00:00+00:00",
+          "fold": 3,
+          "losses": 1244,
+          "mean_net_return": -0.003419654840835174,
+          "mean_stressed_return": -0.006819654840835174,
+          "start": "2022-03-01T11:00:00+00:00",
+          "trades": 1966
+        },
+        {
+          "end": "2026-09-08T00:00:00+00:00",
+          "fold": 4,
+          "losses": 1230,
+          "mean_net_return": -0.0033646961047531163,
+          "mean_stressed_return": -0.0067646961047531165,
+          "start": "2024-06-04T06:00:00+00:00",
+          "trades": 1922
+        }
+      ],
+      "full": {
+        "losses": 5097,
+        "mean_net_return": -0.0034422841146368303,
+        "mean_stressed_return": -0.00684228411463683,
+        "trades": 8054
+      },
+      "maximum_bars": 12,
+      "screen_passed": false,
+      "signal_prefix_hash": "f7d760b11e368579c459e281ca7746643b17cee9b11ba8dc4499fdc89ed8b6db",
+      "stop_atr": 1,
+      "strategy_definition_hash": "8ea38c9dc6146e2783cfc28c8dc24c6e2f9c9958d4bed52af50dc597534c2737",
+      "strategy_id": "macd_histogram_trend",
+      "symbol": "BTCUSDT",
+      "target_atr": 1.5
+    },
+    {
+      "candidate_id": "e35cebda6b4e73a1bc72b1c894532342bda0a076b931f07d71c65818853c0b46",
+      "diagnostics": {
+        "gap_blocked": 11,
+        "gap_truncated": 32,
+        "invalid_risk": 0,
+        "late_decision": 0,
+        "minimum_target_distance_excluded": 439,
+        "overlap_blocked": 30261,
+        "right_censored": 0,
+        "scored_opportunities": 8260,
+        "signals_considered": 38564
+      },
+      "folds": [
+        {
+          "end": "2019-11-25T04:00:00+00:00",
+          "fold": 1,
+          "losses": 1477,
+          "mean_net_return": -0.002915747979372911,
+          "mean_stressed_return": -0.006315747979372911,
+          "start": "2017-08-17T04:00:00+00:00",
+          "trades": 2051
+        },
+        {
+          "end": "2022-03-01T11:00:00+00:00",
+          "fold": 2,
+          "losses": 1429,
+          "mean_net_return": -0.002528217630726844,
+          "mean_stressed_return": -0.005928217630726845,
+          "start": "2019-11-25T04:00:00+00:00",
+          "trades": 2027
+        },
+        {
+          "end": "2024-06-04T06:00:00+00:00",
+          "fold": 3,
+          "losses": 1590,
+          "mean_net_return": -0.0032408503211202176,
+          "mean_stressed_return": -0.006640850321120218,
+          "start": "2022-03-01T11:00:00+00:00",
+          "trades": 2082
+        },
+        {
+          "end": "2026-09-08T00:00:00+00:00",
+          "fold": 4,
+          "losses": 1636,
+          "mean_net_return": -0.003298504778017456,
+          "mean_stressed_return": -0.006698504778017456,
+          "start": "2024-06-04T06:00:00+00:00",
+          "trades": 2100
+        }
+      ],
+      "full": {
+        "losses": 6132,
+        "mean_net_return": -0.0029999039522501337,
+        "mean_stressed_return": -0.006399903952250134,
+        "trades": 8260
+      },
+      "maximum_bars": 6,
+      "screen_passed": false,
+      "signal_prefix_hash": "f7d760b11e368579c459e281ca7746643b17cee9b11ba8dc4499fdc89ed8b6db",
+      "stop_atr": 2,
+      "strategy_definition_hash": "8ea38c9dc6146e2783cfc28c8dc24c6e2f9c9958d4bed52af50dc597534c2737",
+      "strategy_id": "macd_histogram_trend",
+      "symbol": "BTCUSDT",
+      "target_atr": 3.0
+    },
+    {
+      "candidate_id": "3001b0fdb9d0ab33275f16ba1879cdb04ac6a4c256fc4f5f1818d281f55c43f5",
+      "diagnostics": {
+        "gap_blocked": 11,
+        "gap_truncated": 80,
+        "invalid_risk": 0,
+        "late_decision": 0,
+        "minimum_target_distance_excluded": 439,
+        "overlap_blocked": 33160,
+        "right_censored": 0,
+        "scored_opportunities": 5313,
+        "signals_considered": 38564
+      },
+      "folds": [
+        {
+          "end": "2019-11-25T04:00:00+00:00",
+          "fold": 1,
+          "losses": 843,
+          "mean_net_return": -0.0031471050440221512,
+          "mean_stressed_return": -0.006547105044022152,
+          "start": "2017-08-17T04:00:00+00:00",
+          "trades": 1292
+        },
+        {
+          "end": "2022-03-01T11:00:00+00:00",
+          "fold": 2,
+          "losses": 813,
+          "mean_net_return": -0.0018912430351475853,
+          "mean_stressed_return": -0.0052912430351475855,
+          "start": "2019-11-25T04:00:00+00:00",
+          "trades": 1286
+        },
+        {
+          "end": "2024-06-04T06:00:00+00:00",
+          "fold": 3,
+          "losses": 933,
+          "mean_net_return": -0.0029502391320973165,
+          "mean_stressed_return": -0.006350239132097316,
+          "start": "2022-03-01T11:00:00+00:00",
+          "trades": 1369
+        },
+        {
+          "end": "2026-09-08T00:00:00+00:00",
+          "fold": 4,
+          "losses": 952,
+          "mean_net_return": -0.0033359347928762955,
+          "mean_stressed_return": -0.006735934792876295,
+          "start": "2024-06-04T06:00:00+00:00",
+          "trades": 1366
+        }
+      ],
+      "full": {
+        "losses": 3541,
+        "mean_net_return": -0.0028409490982470656,
+        "mean_stressed_return": -0.006240949098247066,
+        "trades": 5313
+      },
+      "maximum_bars": 12,
+      "screen_passed": false,
+      "signal_prefix_hash": "f7d760b11e368579c459e281ca7746643b17cee9b11ba8dc4499fdc89ed8b6db",
+      "stop_atr": 2,
+      "strategy_definition_hash": "8ea38c9dc6146e2783cfc28c8dc24c6e2f9c9958d4bed52af50dc597534c2737",
+      "strategy_id": "macd_histogram_trend",
+      "symbol": "BTCUSDT",
+      "target_atr": 3.0
+    },
+    {
+      "candidate_id": "dbc6494abd116681b6d226cf52280237a2e2635da774b003cfabf7f799b771ff",
+      "diagnostics": {
+        "gap_blocked": 13,
+        "gap_truncated": 27,
+        "invalid_risk": 0,
+        "late_decision": 0,
+        "minimum_target_distance_excluded": 6315,
+        "overlap_blocked": 23881,
+        "right_censored": 0,
+        "scored_opportunities": 10426,
+        "signals_considered": 34347
+      },
+      "folds": [
+        {
+          "end": "2019-11-25T04:00:00+00:00",
+          "fold": 1,
+          "losses": 1756,
+          "mean_net_return": -0.002770641980135587,
+          "mean_stressed_return": -0.006170641980135587,
+          "start": "2017-08-17T04:00:00+00:00",
+          "trades": 2685
+        },
+        {
+          "end": "2022-03-01T11:00:00+00:00",
+          "fold": 2,
+          "losses": 1981,
+          "mean_net_return": -0.0033903828679616795,
+          "mean_stressed_return": -0.00679038286796168,
+          "start": "2019-11-25T04:00:00+00:00",
+          "trades": 2887
+        },
+        {
+          "end": "2024-06-04T06:00:00+00:00",
+          "fold": 3,
+          "losses": 1764,
+          "mean_net_return": -0.0035146954580757197,
+          "mean_stressed_return": -0.006914695458075719,
+          "start": "2022-03-01T11:00:00+00:00",
+          "trades": 2488
+        },
+        {
+          "end": "2026-09-08T00:00:00+00:00",
+          "fold": 4,
+          "losses": 1675,
+          "mean_net_return": -0.0034482888947357684,
+          "mean_stressed_return": -0.006848288894735767,
+          "start": "2024-06-04T06:00:00+00:00",
+          "trades": 2366
+        }
+      ],
+      "full": {
+        "losses": 7176,
+        "mean_net_return": -0.0032735874622200883,
+        "mean_stressed_return": -0.0066735874622200885,
+        "trades": 10426
+      },
+      "maximum_bars": 6,
+      "screen_passed": false,
+      "signal_prefix_hash": "74e9737e8c90db1d91871c6cb3f9cd8947c0027d17b80fb24541df0c1a9b8d9c",
+      "stop_atr": 1,
+      "strategy_definition_hash": "cbd4bac9b47dec2acd13757808c5b9dd38cc8cd9c25faff4671268e74727dc38",
+      "strategy_id": "volatility_scaled_trend",
+      "symbol": "BTCUSDT",
+      "target_atr": 1.5
+    },
+    {
+      "candidate_id": "40eb4b9ca99871a331f8538e4c9f3fd49897433e046dbba6cc4ed598a10afeed",
+      "diagnostics": {
+        "gap_blocked": 13,
+        "gap_truncated": 36,
+        "invalid_risk": 0,
+        "late_decision": 0,
+        "minimum_target_distance_excluded": 6315,
+        "overlap_blocked": 25790,
+        "right_censored": 0,
+        "scored_opportunities": 8508,
+        "signals_considered": 34347
+      },
+      "folds": [
+        {
+          "end": "2019-11-25T04:00:00+00:00",
+          "fold": 1,
+          "losses": 1289,
+          "mean_net_return": -0.0026067326867515337,
+          "mean_stressed_return": -0.006006732686751533,
+          "start": "2017-08-17T04:00:00+00:00",
+          "trades": 2144
+        },
+        {
+          "end": "2022-03-01T11:00:00+00:00",
+          "fold": 2,
+          "losses": 1441,
+          "mean_net_return": -0.0034863047226362832,
+          "mean_stressed_return": -0.006886304722636283,
+          "start": "2019-11-25T04:00:00+00:00",
+          "trades": 2308
+        },
+        {
+          "end": "2024-06-04T06:00:00+00:00",
+          "fold": 3,
+          "losses": 1320,
+          "mean_net_return": -0.0034690019023525896,
+          "mean_stressed_return": -0.00686900190235259,
+          "start": "2022-03-01T11:00:00+00:00",
+          "trades": 2065
+        },
+        {
+          "end": "2026-09-08T00:00:00+00:00",
+          "fold": 4,
+          "losses": 1288,
+          "mean_net_return": -0.0035209017312554172,
+          "mean_stressed_return": -0.0069209017312554175,
+          "start": "2024-06-04T06:00:00+00:00",
+          "trades": 1991
+        }
+      ],
+      "full": {
+        "losses": 5338,
+        "mean_net_return": -0.0032685508292815543,
+        "mean_stressed_return": -0.0066685508292815545,
+        "trades": 8508
+      },
+      "maximum_bars": 12,
+      "screen_passed": false,
+      "signal_prefix_hash": "74e9737e8c90db1d91871c6cb3f9cd8947c0027d17b80fb24541df0c1a9b8d9c",
+      "stop_atr": 1,
+      "strategy_definition_hash": "cbd4bac9b47dec2acd13757808c5b9dd38cc8cd9c25faff4671268e74727dc38",
+      "strategy_id": "volatility_scaled_trend",
+      "symbol": "BTCUSDT",
+      "target_atr": 1.5
+    },
+    {
+      "candidate_id": "9172f49f27e377a8d1ae77fb3007168318dff9b6f6eb939b4c34677fbb16535e",
+      "diagnostics": {
+        "gap_blocked": 14,
+        "gap_truncated": 44,
+        "invalid_risk": 0,
+        "late_decision": 0,
+        "minimum_target_distance_excluded": 447,
+        "overlap_blocked": 31226,
+        "right_censored": 0,
+        "scored_opportunities": 8931,
+        "signals_considered": 40215
+      },
+      "folds": [
+        {
+          "end": "2019-11-25T04:00:00+00:00",
+          "fold": 1,
+          "losses": 1540,
+          "mean_net_return": -0.0023147865279353566,
+          "mean_stressed_return": -0.005714786527935356,
+          "start": "2017-08-17T04:00:00+00:00",
+          "trades": 2196
+        },
+        {
+          "end": "2022-03-01T11:00:00+00:00",
+          "fold": 2,
+          "losses": 1637,
+          "mean_net_return": -0.0027687990670827397,
+          "mean_stressed_return": -0.00616879906708274,
+          "start": "2019-11-25T04:00:00+00:00",
+          "trades": 2279
+        },
+        {
+          "end": "2024-06-04T06:00:00+00:00",
+          "fold": 3,
+          "losses": 1714,
+          "mean_net_return": -0.0030913925446549567,
+          "mean_stressed_return": -0.006491392544654958,
+          "start": "2022-03-01T11:00:00+00:00",
+          "trades": 2226
+        },
+        {
+          "end": "2026-09-08T00:00:00+00:00",
+          "fold": 4,
+          "losses": 1740,
+          "mean_net_return": -0.00321402702517326,
+          "mean_stressed_return": -0.006614027025173261,
+          "start": "2024-06-04T06:00:00+00:00",
+          "trades": 2229
+        }
+      ],
+      "full": {
+        "losses": 6632,
+        "mean_net_return": -0.0028492501791959066,
+        "mean_stressed_return": -0.006249250179195907,
+        "trades": 8931
+      },
+      "maximum_bars": 6,
+      "screen_passed": false,
+      "signal_prefix_hash": "74e9737e8c90db1d91871c6cb3f9cd8947c0027d17b80fb24541df0c1a9b8d9c",
+      "stop_atr": 2,
+      "strategy_definition_hash": "cbd4bac9b47dec2acd13757808c5b9dd38cc8cd9c25faff4671268e74727dc38",
+      "strategy_id": "volatility_scaled_trend",
+      "symbol": "BTCUSDT",
+      "target_atr": 3.0
+    },
+    {
+      "candidate_id": "1895e93aac81a4aeb9e85da523d2e7ee02273cde061c1cf3f4d703999f037ceb",
+      "diagnostics": {
+        "gap_blocked": 14,
+        "gap_truncated": 104,
+        "invalid_risk": 0,
+        "late_decision": 0,
+        "minimum_target_distance_excluded": 447,
+        "overlap_blocked": 34433,
+        "right_censored": 0,
+        "scored_opportunities": 5664,
+        "signals_considered": 40215
+      },
+      "folds": [
+        {
+          "end": "2019-11-25T04:00:00+00:00",
+          "fold": 1,
+          "losses": 856,
+          "mean_net_return": -0.0017209806719057587,
+          "mean_stressed_return": -0.005120980671905759,
+          "start": "2017-08-17T04:00:00+00:00",
+          "trades": 1352
+        },
+        {
+          "end": "2022-03-01T11:00:00+00:00",
+          "fold": 2,
+          "losses": 926,
+          "mean_net_return": -0.002403902575213063,
+          "mean_stressed_return": -0.0058039025752130635,
+          "start": "2019-11-25T04:00:00+00:00",
+          "trades": 1422
+        },
+        {
+          "end": "2024-06-04T06:00:00+00:00",
+          "fold": 3,
+          "losses": 1002,
+          "mean_net_return": -0.003072118363819086,
+          "mean_stressed_return": -0.006472118363819086,
+          "start": "2022-03-01T11:00:00+00:00",
+          "trades": 1443
+        },
+        {
+          "end": "2026-09-08T00:00:00+00:00",
+          "fold": 4,
+          "losses": 988,
+          "mean_net_return": -0.003127576167095586,
+          "mean_stressed_return": -0.006527576167095586,
+          "start": "2024-06-04T06:00:00+00:00",
+          "trades": 1447
+        }
+      ],
+      "full": {
+        "losses": 3772,
+        "mean_net_return": -0.0025974626614595807,
+        "mean_stressed_return": -0.005997462661459581,
+        "trades": 5664
+      },
+      "maximum_bars": 12,
+      "screen_passed": false,
+      "signal_prefix_hash": "74e9737e8c90db1d91871c6cb3f9cd8947c0027d17b80fb24541df0c1a9b8d9c",
+      "stop_atr": 2,
+      "strategy_definition_hash": "cbd4bac9b47dec2acd13757808c5b9dd38cc8cd9c25faff4671268e74727dc38",
+      "strategy_id": "volatility_scaled_trend",
+      "symbol": "BTCUSDT",
+      "target_atr": 3.0
+    },
+    {
+      "candidate_id": "7f76e306be6d01a7b7e908bf23f710f58d7cf33dfcd70a00d6bc9076cbe75f8a",
+      "diagnostics": {
+        "gap_blocked": 0,
+        "gap_truncated": 1,
+        "invalid_risk": 0,
+        "late_decision": 0,
+        "minimum_target_distance_excluded": 179,
+        "overlap_blocked": 620,
+        "right_censored": 0,
+        "scored_opportunities": 1205,
+        "signals_considered": 1826
+      },
+      "folds": [
+        {
+          "end": "2019-11-25T04:00:00+00:00",
+          "fold": 1,
+          "losses": 198,
+          "mean_net_return": -0.0020099662910525442,
+          "mean_stressed_return": -0.0054099662910525445,
+          "start": "2017-08-17T04:00:00+00:00",
+          "trades": 308
+        },
+        {
+          "end": "2022-03-01T11:00:00+00:00",
+          "fold": 2,
+          "losses": 170,
+          "mean_net_return": -0.0013194957140578738,
+          "mean_stressed_return": -0.004719495714057874,
+          "start": "2019-11-25T04:00:00+00:00",
+          "trades": 290
+        },
+        {
+          "end": "2024-06-04T06:00:00+00:00",
+          "fold": 3,
+          "losses": 192,
+          "mean_net_return": -0.003381518847804438,
+          "mean_stressed_return": -0.006781518847804438,
+          "start": "2022-03-01T11:00:00+00:00",
+          "trades": 291
+        },
+        {
+          "end": "2026-09-08T00:00:00+00:00",
+          "fold": 4,
+          "losses": 210,
+          "mean_net_return": -0.0030912169524886495,
+          "mean_stressed_return": -0.00649121695248865,
+          "start": "2024-06-04T06:00:00+00:00",
+          "trades": 316
+        }
+      ],
+      "full": {
+        "losses": 770,
+        "mean_net_return": -0.0024585642459904328,
+        "mean_stressed_return": -0.005858564245990433,
+        "trades": 1205
+      },
+      "maximum_bars": 6,
+      "screen_passed": false,
+      "signal_prefix_hash": "8558f3eedf845dfaf2bb5ef006a5776a481367aa3ae718fb9bfda34c75ca280f",
+      "stop_atr": 1,
+      "strategy_definition_hash": "47585e8296a80a0d31d7c0c47c3d19c803e695376c800d7b75b169074ad4d09a",
+      "strategy_id": "bollinger_keltner_squeeze",
+      "symbol": "ETHUSDT",
+      "target_atr": 1.5
+    },
+    {
+      "candidate_id": "62d2c86fb5b8b1b5d481a2145086267cec460ed1a1276436f909b968d3142299",
+      "diagnostics": {
+        "gap_blocked": 0,
+        "gap_truncated": 3,
+        "invalid_risk": 0,
+        "late_decision": 0,
+        "minimum_target_distance_excluded": 179,
+        "overlap_blocked": 630,
+        "right_censored": 0,
+        "scored_opportunities": 1193,
+        "signals_considered": 1826
+      },
+      "folds": [
+        {
+          "end": "2019-11-25T04:00:00+00:00",
+          "fold": 1,
+          "losses": 176,
+          "mean_net_return": -0.002112979989222702,
+          "mean_stressed_return": -0.005512979989222702,
+          "start": "2017-08-17T04:00:00+00:00",
+          "trades": 303
+        },
+        {
+          "end": "2022-03-01T11:00:00+00:00",
+          "fold": 2,
+          "losses": 158,
+          "mean_net_return": -0.0012773214285371917,
+          "mean_stressed_return": -0.004677321428537192,
+          "start": "2019-11-25T04:00:00+00:00",
+          "trades": 289
+        },
+        {
+          "end": "2024-06-04T06:00:00+00:00",
+          "fold": 3,
+          "losses": 176,
+          "mean_net_return": -0.0031507822270671624,
+          "mean_stressed_return": -0.006550782227067163,
+          "start": "2022-03-01T11:00:00+00:00",
+          "trades": 287
+        },
+        {
+          "end": "2026-09-08T00:00:00+00:00",
+          "fold": 4,
+          "losses": 188,
+          "mean_net_return": -0.0030662316401861367,
+          "mean_stressed_return": -0.006466231640186137,
+          "start": "2024-06-04T06:00:00+00:00",
+          "trades": 314
+        }
+      ],
+      "full": {
+        "losses": 698,
+        "mean_net_return": -0.002411106507769027,
+        "mean_stressed_return": -0.005811106507769027,
+        "trades": 1193
+      },
+      "maximum_bars": 12,
+      "screen_passed": false,
+      "signal_prefix_hash": "8558f3eedf845dfaf2bb5ef006a5776a481367aa3ae718fb9bfda34c75ca280f",
+      "stop_atr": 1,
+      "strategy_definition_hash": "47585e8296a80a0d31d7c0c47c3d19c803e695376c800d7b75b169074ad4d09a",
+      "strategy_id": "bollinger_keltner_squeeze",
+      "symbol": "ETHUSDT",
+      "target_atr": 1.5
+    },
+    {
+      "candidate_id": "f901af903bd0925dc5564d15d8ead6ec1341539673062db9a3d9d3f8cd49b605",
+      "diagnostics": {
+        "gap_blocked": 0,
+        "gap_truncated": 2,
+        "invalid_risk": 0,
+        "late_decision": 0,
+        "minimum_target_distance_excluded": 11,
+        "overlap_blocked": 868,
+        "right_censored": 0,
+        "scored_opportunities": 1124,
+        "signals_considered": 1994
+      },
+      "folds": [
+        {
+          "end": "2019-11-25T04:00:00+00:00",
+          "fold": 1,
+          "losses": 185,
+          "mean_net_return": -0.001219136205378133,
+          "mean_stressed_return": -0.004619136205378133,
+          "start": "2017-08-17T04:00:00+00:00",
+          "trades": 276
+        },
+        {
+          "end": "2022-03-01T11:00:00+00:00",
+          "fold": 2,
+          "losses": 159,
+          "mean_net_return": 0.00024710499241088627,
+          "mean_stressed_return": -0.003152895007589114,
+          "start": "2019-11-25T04:00:00+00:00",
+          "trades": 260
+        },
+        {
+          "end": "2024-06-04T06:00:00+00:00",
+          "fold": 3,
+          "losses": 211,
+          "mean_net_return": -0.004045330339958573,
+          "mean_stressed_return": -0.0074453303399585734,
+          "start": "2022-03-01T11:00:00+00:00",
+          "trades": 286
+        },
+        {
+          "end": "2026-09-08T00:00:00+00:00",
+          "fold": 4,
+          "losses": 219,
+          "mean_net_return": -0.0026545877732522915,
+          "mean_stressed_return": -0.006054587773252292,
+          "start": "2024-06-04T06:00:00+00:00",
+          "trades": 302
+        }
+      ],
+      "full": {
+        "losses": 774,
+        "mean_net_return": -0.0019847724905764043,
+        "mean_stressed_return": -0.0053847724905764045,
+        "trades": 1124
+      },
+      "maximum_bars": 6,
+      "screen_passed": false,
+      "signal_prefix_hash": "8558f3eedf845dfaf2bb5ef006a5776a481367aa3ae718fb9bfda34c75ca280f",
+      "stop_atr": 2,
+      "strategy_definition_hash": "47585e8296a80a0d31d7c0c47c3d19c803e695376c800d7b75b169074ad4d09a",
+      "strategy_id": "bollinger_keltner_squeeze",
+      "symbol": "ETHUSDT",
+      "target_atr": 3.0
+    },
+    {
+      "candidate_id": "4ce93f36e6ea18f194fde9c0f954672739aeeeb71a9a2514bf8673a91ccdf7d7",
+      "diagnostics": {
+        "gap_blocked": 0,
+        "gap_truncated": 7,
+        "invalid_risk": 0,
+        "late_decision": 0,
+        "minimum_target_distance_excluded": 11,
+        "overlap_blocked": 922,
+        "right_censored": 0,
+        "scored_opportunities": 1065,
+        "signals_considered": 1994
+      },
+      "folds": [
+        {
+          "end": "2019-11-25T04:00:00+00:00",
+          "fold": 1,
+          "losses": 171,
+          "mean_net_return": -0.0022190947245077424,
+          "mean_stressed_return": -0.005619094724507742,
+          "start": "2017-08-17T04:00:00+00:00",
+          "trades": 264
+        },
+        {
+          "end": "2022-03-01T11:00:00+00:00",
+          "fold": 2,
+          "losses": 132,
+          "mean_net_return": 0.0005839641088621781,
+          "mean_stressed_return": -0.0028160358911378225,
+          "start": "2019-11-25T04:00:00+00:00",
+          "trades": 246
+        },
+        {
+          "end": "2024-06-04T06:00:00+00:00",
+          "fold": 3,
+          "losses": 186,
+          "mean_net_return": -0.004040238959174454,
+          "mean_stressed_return": -0.007440238959174454,
+          "start": "2022-03-01T11:00:00+00:00",
+          "trades": 270
+        },
+        {
+          "end": "2026-09-08T00:00:00+00:00",
+          "fold": 4,
+          "losses": 195,
+          "mean_net_return": -0.0032575707374060546,
+          "mean_stressed_return": -0.006657570737406054,
+          "start": "2024-06-04T06:00:00+00:00",
+          "trades": 285
+        }
+      ],
+      "full": {
+        "losses": 684,
+        "mean_net_return": -0.002311228183688053,
+        "mean_stressed_return": -0.005711228183688053,
+        "trades": 1065
+      },
+      "maximum_bars": 12,
+      "screen_passed": false,
+      "signal_prefix_hash": "8558f3eedf845dfaf2bb5ef006a5776a481367aa3ae718fb9bfda34c75ca280f",
+      "stop_atr": 2,
+      "strategy_definition_hash": "47585e8296a80a0d31d7c0c47c3d19c803e695376c800d7b75b169074ad4d09a",
+      "strategy_id": "bollinger_keltner_squeeze",
+      "symbol": "ETHUSDT",
+      "target_atr": 3.0
+    },
+    {
+      "candidate_id": "f4a452249d7515c5b69eadbfa058d910d41e843b4cc9a564e49b61d240b7f883",
+      "diagnostics": {
+        "gap_blocked": 13,
+        "gap_truncated": 28,
+        "invalid_risk": 0,
+        "late_decision": 0,
+        "minimum_target_distance_excluded": 1976,
+        "overlap_blocked": 26055,
+        "right_censored": 0,
+        "scored_opportunities": 10934,
+        "signals_considered": 37030
+      },
+      "folds": [
+        {
+          "end": "2019-11-25T04:00:00+00:00",
+          "fold": 1,
+          "losses": 1790,
+          "mean_net_return": -0.003142914592531814,
+          "mean_stressed_return": -0.006542914592531815,
+          "start": "2017-08-17T04:00:00+00:00",
+          "trades": 2745
+        },
+        {
+          "end": "2022-03-01T11:00:00+00:00",
+          "fold": 2,
+          "losses": 1761,
+          "mean_net_return": -0.0029314638240375487,
+          "mean_stressed_return": -0.006331463824037548,
+          "start": "2019-11-25T04:00:00+00:00",
+          "trades": 2740
+        },
+        {
+          "end": "2024-06-04T06:00:00+00:00",
+          "fold": 3,
+          "losses": 1794,
+          "mean_net_return": -0.0031360009336834976,
+          "mean_stressed_return": -0.006536000933683498,
+          "start": "2022-03-01T11:00:00+00:00",
+          "trades": 2659
+        },
+        {
+          "end": "2026-09-08T00:00:00+00:00",
+          "fold": 4,
+          "losses": 1933,
+          "mean_net_return": -0.0034650346093634075,
+          "mean_stressed_return": -0.006865034609363408,
+          "start": "2024-06-04T06:00:00+00:00",
+          "trades": 2790
+        }
+      ],
+      "full": {
+        "losses": 7278,
+        "mean_net_return": -0.0031704394070926505,
+        "mean_stressed_return": -0.006570439407092651,
+        "trades": 10934
+      },
+      "maximum_bars": 6,
+      "screen_passed": false,
+      "signal_prefix_hash": "11c4e0f8dbc6485c9c67325a357586580c8e920de38cb0a74d03668d96e387b6",
+      "stop_atr": 1,
+      "strategy_definition_hash": "8ea38c9dc6146e2783cfc28c8dc24c6e2f9c9958d4bed52af50dc597534c2737",
+      "strategy_id": "macd_histogram_trend",
+      "symbol": "ETHUSDT",
+      "target_atr": 1.5
+    },
+    {
+      "candidate_id": "b708c0d8f5502795bbf4063440a2db9ce7c86b17e6f0eb03396bf686a8aff966",
+      "diagnostics": {
+        "gap_blocked": 13,
+        "gap_truncated": 47,
+        "invalid_risk": 0,
+        "late_decision": 0,
+        "minimum_target_distance_excluded": 1976,
+        "overlap_blocked": 27909,
+        "right_censored": 0,
+        "scored_opportunities": 9061,
+        "signals_considered": 37030
+      },
+      "folds": [
+        {
+          "end": "2019-11-25T04:00:00+00:00",
+          "fold": 1,
+          "losses": 1366,
+          "mean_net_return": -0.003295203082523868,
+          "mean_stressed_return": -0.006695203082523868,
+          "start": "2017-08-17T04:00:00+00:00",
+          "trades": 2239
+        },
+        {
+          "end": "2022-03-01T11:00:00+00:00",
+          "fold": 2,
+          "losses": 1349,
+          "mean_net_return": -0.002917242835881056,
+          "mean_stressed_return": -0.006317242835881056,
+          "start": "2019-11-25T04:00:00+00:00",
+          "trades": 2248
+        },
+        {
+          "end": "2024-06-04T06:00:00+00:00",
+          "fold": 3,
+          "losses": 1360,
+          "mean_net_return": -0.003058263646118301,
+          "mean_stressed_return": -0.006458263646118301,
+          "start": "2022-03-01T11:00:00+00:00",
+          "trades": 2223
+        },
+        {
+          "end": "2026-09-08T00:00:00+00:00",
+          "fold": 4,
+          "losses": 1501,
+          "mean_net_return": -0.0035608492525913056,
+          "mean_stressed_return": -0.006960849252591305,
+          "start": "2024-06-04T06:00:00+00:00",
+          "trades": 2351
+        }
+      ],
+      "full": {
+        "losses": 5576,
+        "mean_net_return": -0.0032122280405026704,
+        "mean_stressed_return": -0.00661222804050267,
+        "trades": 9061
+      },
+      "maximum_bars": 12,
+      "screen_passed": false,
+      "signal_prefix_hash": "11c4e0f8dbc6485c9c67325a357586580c8e920de38cb0a74d03668d96e387b6",
+      "stop_atr": 1,
+      "strategy_definition_hash": "8ea38c9dc6146e2783cfc28c8dc24c6e2f9c9958d4bed52af50dc597534c2737",
+      "strategy_id": "macd_histogram_trend",
+      "symbol": "ETHUSDT",
+      "target_atr": 1.5
+    },
+    {
+      "candidate_id": "4bebd8b0c6b43bcae6ab508920a0c55c655b9f70a1b7d54f89c827cc60b4b03f",
+      "diagnostics": {
+        "gap_blocked": 13,
+        "gap_truncated": 42,
+        "invalid_risk": 0,
+        "late_decision": 0,
+        "minimum_target_distance_excluded": 127,
+        "overlap_blocked": 30517,
+        "right_censored": 0,
+        "scored_opportunities": 8307,
+        "signals_considered": 38879
+      },
+      "folds": [
+        {
+          "end": "2019-11-25T04:00:00+00:00",
+          "fold": 1,
+          "losses": 1369,
+          "mean_net_return": -0.0026340349612584348,
+          "mean_stressed_return": -0.0060340349612584354,
+          "start": "2017-08-17T04:00:00+00:00",
+          "trades": 2042
+        },
+        {
+          "end": "2022-03-01T11:00:00+00:00",
+          "fold": 2,
+          "losses": 1319,
+          "mean_net_return": -0.0019387207285907634,
+          "mean_stressed_return": -0.005338720728590763,
+          "start": "2019-11-25T04:00:00+00:00",
+          "trades": 2018
+        },
+        {
+          "end": "2024-06-04T06:00:00+00:00",
+          "fold": 3,
+          "losses": 1577,
+          "mean_net_return": -0.0031077269874278204,
+          "mean_stressed_return": -0.00650772698742782,
+          "start": "2022-03-01T11:00:00+00:00",
+          "trades": 2120
+        },
+        {
+          "end": "2026-09-08T00:00:00+00:00",
+          "fold": 4,
+          "losses": 1558,
+          "mean_net_return": -0.0034282558167253907,
+          "mean_stressed_return": -0.006828255816725391,
+          "start": "2024-06-04T06:00:00+00:00",
+          "trades": 2126
+        }
+      ],
+      "full": {
+        "losses": 5823,
+        "mean_net_return": -0.002783619424869517,
+        "mean_stressed_return": -0.006183619424869518,
+        "trades": 8307
+      },
+      "maximum_bars": 6,
+      "screen_passed": false,
+      "signal_prefix_hash": "11c4e0f8dbc6485c9c67325a357586580c8e920de38cb0a74d03668d96e387b6",
+      "stop_atr": 2,
+      "strategy_definition_hash": "8ea38c9dc6146e2783cfc28c8dc24c6e2f9c9958d4bed52af50dc597534c2737",
+      "strategy_id": "macd_histogram_trend",
+      "symbol": "ETHUSDT",
+      "target_atr": 3.0
+    },
+    {
+      "candidate_id": "f6a6aaba368f6e3561565b6203dbcb2e3241ba6e8d604d5072dba148b66f914e",
+      "diagnostics": {
+        "gap_blocked": 13,
+        "gap_truncated": 89,
+        "invalid_risk": 0,
+        "late_decision": 0,
+        "minimum_target_distance_excluded": 127,
+        "overlap_blocked": 33493,
+        "right_censored": 0,
+        "scored_opportunities": 5284,
+        "signals_considered": 38879
+      },
+      "folds": [
+        {
+          "end": "2019-11-25T04:00:00+00:00",
+          "fold": 1,
+          "losses": 778,
+          "mean_net_return": -0.002493445995038004,
+          "mean_stressed_return": -0.005893445995038004,
+          "start": "2017-08-17T04:00:00+00:00",
+          "trades": 1268
+        },
+        {
+          "end": "2022-03-01T11:00:00+00:00",
+          "fold": 2,
+          "losses": 749,
+          "mean_net_return": -0.001463714736334243,
+          "mean_stressed_return": -0.004863714736334243,
+          "start": "2019-11-25T04:00:00+00:00",
+          "trades": 1278
+        },
+        {
+          "end": "2024-06-04T06:00:00+00:00",
+          "fold": 3,
+          "losses": 914,
+          "mean_net_return": -0.002608008199554162,
+          "mean_stressed_return": -0.006008008199554162,
+          "start": "2022-03-01T11:00:00+00:00",
+          "trades": 1371
+        },
+        {
+          "end": "2026-09-08T00:00:00+00:00",
+          "fold": 4,
+          "losses": 905,
+          "mean_net_return": -0.0034396560930873184,
+          "mean_stressed_return": -0.0068396560930873195,
+          "start": "2024-06-04T06:00:00+00:00",
+          "trades": 1367
+        }
+      ],
+      "full": {
+        "losses": 3345,
+        "mean_net_return": -0.0025107072107691543,
+        "mean_stressed_return": -0.005910707210769155,
+        "trades": 5284
+      },
+      "maximum_bars": 12,
+      "screen_passed": false,
+      "signal_prefix_hash": "11c4e0f8dbc6485c9c67325a357586580c8e920de38cb0a74d03668d96e387b6",
+      "stop_atr": 2,
+      "strategy_definition_hash": "8ea38c9dc6146e2783cfc28c8dc24c6e2f9c9958d4bed52af50dc597534c2737",
+      "strategy_id": "macd_histogram_trend",
+      "symbol": "ETHUSDT",
+      "target_atr": 3.0
+    },
+    {
+      "candidate_id": "85c73ae160808505fe560c910470cca068e1b6203c74c1dbaaaf1366f3beefdd",
+      "diagnostics": {
+        "gap_blocked": 14,
+        "gap_truncated": 30,
+        "invalid_risk": 0,
+        "late_decision": 0,
+        "minimum_target_distance_excluded": 1969,
+        "overlap_blocked": 26616,
+        "right_censored": 0,
+        "scored_opportunities": 11654,
+        "signals_considered": 38314
+      },
+      "folds": [
+        {
+          "end": "2019-11-25T04:00:00+00:00",
+          "fold": 1,
+          "losses": 1832,
+          "mean_net_return": -0.0028815119622266918,
+          "mean_stressed_return": -0.0062815119622266925,
+          "start": "2017-08-17T04:00:00+00:00",
+          "trades": 2839
+        },
+        {
+          "end": "2022-03-01T11:00:00+00:00",
+          "fold": 2,
+          "losses": 2017,
+          "mean_net_return": -0.0029597817934158,
+          "mean_stressed_return": -0.0063597817934158,
+          "start": "2019-11-25T04:00:00+00:00",
+          "trades": 3123
+        },
+        {
+          "end": "2024-06-04T06:00:00+00:00",
+          "fold": 3,
+          "losses": 1854,
+          "mean_net_return": -0.003192673457544588,
+          "mean_stressed_return": -0.00659267345754459,
+          "start": "2022-03-01T11:00:00+00:00",
+          "trades": 2746
+        },
+        {
+          "end": "2026-09-08T00:00:00+00:00",
+          "fold": 4,
+          "losses": 2016,
+          "mean_net_return": -0.00332346827674348,
+          "mean_stressed_return": -0.006723468276743481,
+          "start": "2024-06-04T06:00:00+00:00",
+          "trades": 2946
+        }
+      ],
+      "full": {
+        "losses": 7719,
+        "mean_net_return": -0.0030875261591988027,
+        "mean_stressed_return": -0.006487526159198803,
+        "trades": 11654
+      },
+      "maximum_bars": 6,
+      "screen_passed": false,
+      "signal_prefix_hash": "2868d8fc71dce2f7b356ece0371572481ac54f1a256f1b6d433946464486b97d",
+      "stop_atr": 1,
+      "strategy_definition_hash": "cbd4bac9b47dec2acd13757808c5b9dd38cc8cd9c25faff4671268e74727dc38",
+      "strategy_id": "volatility_scaled_trend",
+      "symbol": "ETHUSDT",
+      "target_atr": 1.5
+    },
+    {
+      "candidate_id": "d58656017e581de7ae800d26c219fd7c0d16b2897170d3fb1bdf24a4e4642b00",
+      "diagnostics": {
+        "gap_blocked": 14,
+        "gap_truncated": 52,
+        "invalid_risk": 0,
+        "late_decision": 0,
+        "minimum_target_distance_excluded": 1969,
+        "overlap_blocked": 28645,
+        "right_censored": 0,
+        "scored_opportunities": 9603,
+        "signals_considered": 38314
+      },
+      "folds": [
+        {
+          "end": "2019-11-25T04:00:00+00:00",
+          "fold": 1,
+          "losses": 1387,
+          "mean_net_return": -0.0028906496578601014,
+          "mean_stressed_return": -0.006290649657860101,
+          "start": "2017-08-17T04:00:00+00:00",
+          "trades": 2287
+        },
+        {
+          "end": "2022-03-01T11:00:00+00:00",
+          "fold": 2,
+          "losses": 1519,
+          "mean_net_return": -0.002938482452467063,
+          "mean_stressed_return": -0.006338482452467063,
+          "start": "2019-11-25T04:00:00+00:00",
+          "trades": 2545
+        },
+        {
+          "end": "2024-06-04T06:00:00+00:00",
+          "fold": 3,
+          "losses": 1414,
+          "mean_net_return": -0.003338186815613001,
+          "mean_stressed_return": -0.006738186815613001,
+          "start": "2022-03-01T11:00:00+00:00",
+          "trades": 2278
+        },
+        {
+          "end": "2026-09-08T00:00:00+00:00",
+          "fold": 4,
+          "losses": 1567,
+          "mean_net_return": -0.0033793675754080314,
+          "mean_stressed_return": -0.006779367575408032,
+          "start": "2024-06-04T06:00:00+00:00",
+          "trades": 2493
+        }
+      ],
+      "full": {
+        "losses": 5887,
+        "mean_net_return": -0.003136364317454271,
+        "mean_stressed_return": -0.006536364317454271,
+        "trades": 9603
+      },
+      "maximum_bars": 12,
+      "screen_passed": false,
+      "signal_prefix_hash": "2868d8fc71dce2f7b356ece0371572481ac54f1a256f1b6d433946464486b97d",
+      "stop_atr": 1,
+      "strategy_definition_hash": "cbd4bac9b47dec2acd13757808c5b9dd38cc8cd9c25faff4671268e74727dc38",
+      "strategy_id": "volatility_scaled_trend",
+      "symbol": "ETHUSDT",
+      "target_atr": 1.5
+    },
+    {
+      "candidate_id": "9416463c6bb96ecdc4418a395d1ac460ae257d8adf0fc6d5ce6d0533f591078c",
+      "diagnostics": {
+        "gap_blocked": 14,
+        "gap_truncated": 32,
+        "invalid_risk": 0,
+        "late_decision": 0,
+        "minimum_target_distance_excluded": 110,
+        "overlap_blocked": 31273,
+        "right_censored": 0,
+        "scored_opportunities": 8854,
+        "signals_considered": 40173
+      },
+      "folds": [
+        {
+          "end": "2019-11-25T04:00:00+00:00",
+          "fold": 1,
+          "losses": 1399,
+          "mean_net_return": -0.0020714043231810347,
+          "mean_stressed_return": -0.005471404323181035,
+          "start": "2017-08-17T04:00:00+00:00",
+          "trades": 2128
+        },
+        {
+          "end": "2022-03-01T11:00:00+00:00",
+          "fold": 2,
+          "losses": 1506,
+          "mean_net_return": -0.0022300414002954278,
+          "mean_stressed_return": -0.005630041400295428,
+          "start": "2019-11-25T04:00:00+00:00",
+          "trades": 2272
+        },
+        {
+          "end": "2024-06-04T06:00:00+00:00",
+          "fold": 3,
+          "losses": 1664,
+          "mean_net_return": -0.0030759376533895343,
+          "mean_stressed_return": -0.0064759376533895345,
+          "start": "2022-03-01T11:00:00+00:00",
+          "trades": 2223
+        },
+        {
+          "end": "2026-09-08T00:00:00+00:00",
+          "fold": 4,
+          "losses": 1633,
+          "mean_net_return": -0.0032241736074431863,
+          "mean_stressed_return": -0.0066241736074431875,
+          "start": "2024-06-04T06:00:00+00:00",
+          "trades": 2230
+        }
+      ],
+      "full": {
+        "losses": 6202,
+        "mean_net_return": -0.0026554952066015908,
+        "mean_stressed_return": -0.006055495206601591,
+        "trades": 8854
+      },
+      "maximum_bars": 6,
+      "screen_passed": false,
+      "signal_prefix_hash": "2868d8fc71dce2f7b356ece0371572481ac54f1a256f1b6d433946464486b97d",
+      "stop_atr": 2,
+      "strategy_definition_hash": "cbd4bac9b47dec2acd13757808c5b9dd38cc8cd9c25faff4671268e74727dc38",
+      "strategy_id": "volatility_scaled_trend",
+      "symbol": "ETHUSDT",
+      "target_atr": 3.0
+    },
+    {
+      "candidate_id": "1faa74ae6009b34ecc97d9b6b07721d31754c67a9b3c5af40ea234d0c0b1aaa5",
+      "diagnostics": {
+        "gap_blocked": 14,
+        "gap_truncated": 89,
+        "invalid_risk": 0,
+        "late_decision": 0,
+        "minimum_target_distance_excluded": 110,
+        "overlap_blocked": 34479,
+        "right_censored": 0,
+        "scored_opportunities": 5591,
+        "signals_considered": 40173
+      },
+      "folds": [
+        {
+          "end": "2019-11-25T04:00:00+00:00",
+          "fold": 1,
+          "losses": 815,
+          "mean_net_return": -0.001761551760797338,
+          "mean_stressed_return": -0.005161551760797338,
+          "start": "2017-08-17T04:00:00+00:00",
+          "trades": 1317
+        },
+        {
+          "end": "2022-03-01T11:00:00+00:00",
+          "fold": 2,
+          "losses": 851,
+          "mean_net_return": -0.0016650256929080752,
+          "mean_stressed_return": -0.0050650256929080754,
+          "start": "2019-11-25T04:00:00+00:00",
+          "trades": 1406
+        },
+        {
+          "end": "2024-06-04T06:00:00+00:00",
+          "fold": 3,
+          "losses": 960,
+          "mean_net_return": -0.0030836667746885534,
+          "mean_stressed_return": -0.006483666774688553,
+          "start": "2022-03-01T11:00:00+00:00",
+          "trades": 1424
+        },
+        {
+          "end": "2026-09-08T00:00:00+00:00",
+          "fold": 4,
+          "losses": 956,
+          "mean_net_return": -0.0033697708924361677,
+          "mean_stressed_return": -0.006769770892436168,
+          "start": "2024-06-04T06:00:00+00:00",
+          "trades": 1444
+        }
+      ],
+      "full": {
+        "losses": 3582,
+        "mean_net_return": -0.0024893722856435653,
+        "mean_stressed_return": -0.005889372285643565,
+        "trades": 5591
+      },
+      "maximum_bars": 12,
+      "screen_passed": false,
+      "signal_prefix_hash": "2868d8fc71dce2f7b356ece0371572481ac54f1a256f1b6d433946464486b97d",
+      "stop_atr": 2,
+      "strategy_definition_hash": "cbd4bac9b47dec2acd13757808c5b9dd38cc8cd9c25faff4671268e74727dc38",
+      "strategy_id": "volatility_scaled_trend",
+      "symbol": "ETHUSDT",
+      "target_atr": 3.0
+    }
+  ]
+}

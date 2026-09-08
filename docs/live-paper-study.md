@@ -12,6 +12,12 @@ candidate per asset for observation. A failed historical screen stays visible
 and cannot receive a positive study verdict. The full discovery JSON and its
 dated report must be retained, including losing configurations and exclusions.
 
+The [8 September longer-holding-period results](holding-period-search-2026-09-08.md)
+are available with all 24 trials. None passed; the current pair is diagnostic
+only and cannot qualify even if a later short period happens to be profitable.
+The [registered live experiment snapshot](live-paper-study-2026-09-08.md) records
+the actual study window, operational checks and remaining limitations.
+
 ## Register once, then resume
 
 Run from the retained source checkout and its installed environment. Keep that

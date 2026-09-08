@@ -223,7 +223,7 @@ make macos-screenshots   # Capture the primary native views
 make release-archive     # Build the app ZIP and SHA-256 checksum
 ```
 
-See the [1 September 2026 day-trading opportunity audit](docs/day-trading-opportunity-audit-2026-09-01.md) for the latest full-history BTC/ETH results. It tested 2,689,416 candles and selected zero reliable rules after causal timing and conservative costs. The [live validation report](docs/live-validation-2026-09-01.md) separately covers packaged-app feed, timing, continuity, and fail-closed behavior. Neither test is a promise of future profitability.
+The latest [8 September longer-holding-period study](docs/holding-period-search-2026-09-08.md) tested 24 variations against verified hourly BTC/ETH history. Every variation lost on average after modeled costs. The earlier [1 September day-trading opportunity audit](docs/day-trading-opportunity-audit-2026-09-01.md) tested 2,689,416 candles and also selected zero reliable rules. The [1 September live validation report](docs/live-validation-2026-09-01.md) separately covers packaged-app feed, timing, continuity, and fail-closed behavior. These tests do not establish a profitable strategy or promise future profitability.
 
 ## Project layout
 
@@ -235,6 +235,8 @@ qualified signal panel and sends no orders. Read its local `report.md` and
 `summary.json` in Codex; the existing native monitor is unchanged.
 The separate collector requires the Mac awake and online; the Nowcaster window
 can be closed while that collector continues running.
+The [8 September live experiment record](docs/live-paper-study-2026-09-08.md)
+documents its fixed dates, actual observations and verification limits.
 
 ```text
 macos/Nowcaster/    native SwiftUI app and Swift tests
