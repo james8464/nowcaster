@@ -1,6 +1,6 @@
 .worktrees/
 .env
-.venv/
+.venv
 *.duckdb
 *.duckdb.wal
 data/raw/
