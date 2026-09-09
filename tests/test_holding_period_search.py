@@ -254,6 +254,30 @@ def test_discovery_validator_rejects_incomplete_or_tampered_search(monkeypatch, 
         validate_discovery(wrong_selection, root=root)
 
 
+@pytest.mark.parametrize(
+    "invalid_fingerprint",
+    [None, 123, "a" * 63, "g" * 64, "A" * 64],
+    ids=["missing", "non-string", "wrong-length", "non-hex", "uppercase"],
+)
+def test_discovery_validator_requires_sha256_shaped_signal_prefix_fingerprint(
+    monkeypatch, tmp_path, invalid_fingerprint
+) -> None:
+    from scripts import search_holding_periods as script
+
+    root = Path(__file__).resolve().parents[1]
+    valid = json.loads(json.dumps(_run_fake_search(script, monkeypatch, tmp_path, root)))
+    validate_discovery(valid, root=root)
+
+    for row in [*valid["trials"], *valid["candidates"]]:
+        if invalid_fingerprint is None:
+            row.pop("signal_prefix_hash")
+        else:
+            row["signal_prefix_hash"] = invalid_fingerprint
+
+    with pytest.raises(ValueError, match="signal prefix fingerprint"):
+        validate_discovery(valid, root=root)
+
+
 def test_discovery_source_hash_includes_search_inputs_but_excludes_exact_prospective_modules(tmp_path) -> None:
     files = {
         "src/package.py": "search logic",
