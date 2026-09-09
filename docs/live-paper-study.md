@@ -96,6 +96,17 @@ Hourly background REST refreshes can fill missing context from the initial
 partial hour. They never rewrite already observed live bars or trigger old
 decisions, and do not block quote processing or report publication.
 
+`tainted_trades` counts only completed trades that crossed a missing-feed
+interval. Read it alongside `open_position_tainted`: an open position can be
+gap-tainted while the closed counter is still zero. Its
+`open_position_diagnostics` retain the entry, stop-trigger bid, target-trigger
+bid, expiry, remaining quantity, prior net exit proceeds and valuation freshness.
+The diagnostics are `null` when there is no open position. After the fixed end,
+they come from the frozen end-window account even if later public quotes finish
+liquidating the live paper position. A stale mark leaves the frozen plan visible,
+but its current marked value is stale. Gaps are not interpolated and do not imply
+that an exit happened.
+
 Hypothetical entries pay the observed ask plus 5 basis points slippage; exits
 receive the observed bid minus 5 basis points. The model charges 10 basis points
 per side, independently of anyone's actual fee tier. Stress deducts another
@@ -103,6 +114,19 @@ per side, independently of anyone's actual fee tier. Stress deducts another
 quote freshness, spread, lot size and minimum notional limit fills. Maximum
 entry exposure is 25%; nominal planned risk is 0.25% of initial paper cash.
 Price gaps and interrupted observation can cause larger eventual losses.
+
+Open-position stop and target figures are modeled **total-trade** P&L if all
+remaining quantity exits at that bid, after the existing exit slippage and fee
+and including net proceeds from any partial exits. They are conditional
+diagnostics, not guaranteed fills or evidence that displayed liquidity will be
+available. The account equity already marks remaining quantity to net liquidation
+value, so these exit costs are not deducted from it a second time. Additional
+stress remains a separate deduction on full original entry notional. The
+after-cost reward/loss ratio is shown only when target P&L is positive and stop
+P&L is negative. Stop triggers can gap, and a profitable modeled target says
+nothing about the probability of reaching it. A zero modeled break-even bid
+means prior net proceeds have already recovered entry cost; it is not a
+recommended price.
 
 There is no positive verdict before the fixed end. Each candidate additionally
 needs at least 100 closed trades, 99% observable-minute coverage, no tainted

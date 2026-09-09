@@ -189,6 +189,7 @@ def write_summary(directory: Path, summary: dict) -> None:
     atomic_write_bytes(directory / "summary.json", _json_bytes(summary))
     account_lines = []
     for row in summary.get("candidates", []):
+        diagnostics = row.get("open_position_diagnostics")
         account_lines.extend(
             [
                 f"## {row.get('symbol')} — {row.get('candidate_id')}",
@@ -200,9 +201,44 @@ def write_summary(directory: Path, summary: dict) -> None:
                 f"Decisions: {row.get('decisions')}; fills: {row.get('fills')}; "
                 f"closed trades: {row.get('closed_trades')}.",
                 f"Open quantity: {row.get('position_quantity')}; stale valuation: {row.get('valuation_stale')}.",
+                f"Closed gap-tainted trades: {row.get('tainted_trades')}. "
+                f"Open position gap-tainted: {row.get('open_position_tainted', False)}.",
                 "",
             ]
         )
+        if row.get("open_position_tainted"):
+            account_lines.extend(
+                [
+                    "WARNING: this open position crossed a missing-feed interval; an unobserved level crossing "
+                    "cannot be reconstructed as a fill.",
+                    "",
+                ]
+            )
+        if diagnostics:
+            account_lines.extend(
+                [
+                    "Frozen open plan: "
+                    f"entry {diagnostics.get('entry_price')}; stop-trigger bid {diagnostics.get('stop_bid')}; "
+                    f"target-trigger bid {diagnostics.get('target_bid')}; expiry {diagnostics.get('expires_at')}.",
+                    f"Remaining quantity: {diagnostics.get('remaining_quantity')}; prior net exit proceeds: "
+                    f"{diagnostics.get('prior_net_exit_proceeds')} USDT.",
+                    "After modeled exit costs, modeled total trade P&L if all remaining quantity exits at the "
+                    f"stop bid: {diagnostics.get('modeled_total_trade_pnl_at_stop_bid')} USDT; at the target bid: "
+                    f"{diagnostics.get('modeled_total_trade_pnl_at_target_bid')} USDT.",
+                    f"Modeled break-even exit bid: {diagnostics.get('modeled_break_even_bid')}; after-cost "
+                    f"reward/loss ratio: {diagnostics.get('after_cost_reward_loss_ratio')}.",
+                    "Additional stress on full entry notional: "
+                    f"{diagnostics.get('additional_stress_on_full_entry_notional')} USDT.",
+                    "These conditional totals include prior partial-exit proceeds and are model diagnostics, "
+                    "not guaranteed fills or executable liquidity. Stop triggers can gap, and modeled "
+                    "profitability at the target says nothing about the probability of reaching it.",
+                    "A zero break-even bid means prior net proceeds already recovered the entry cost; it is not "
+                    "a recommended price.",
+                    "The frozen plan remains visible when valuation is stale; in that case the current marked "
+                    "value is stale, not a new exit event.",
+                    "",
+                ]
+            )
     lines = [
         "# Live paper study",
         "",

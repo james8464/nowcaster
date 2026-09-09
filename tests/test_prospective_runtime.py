@@ -439,6 +439,53 @@ def test_bounded_run_writes_summary_even_when_feed_stalls(tmp_path):
     assert (directory / "report.md").is_file()
 
 
+def test_report_warns_about_open_gap_taint_and_explains_modeled_economics(tmp_path):
+    from src.live_monitor.types import MarketQuote
+    from src.research.prospective import ProspectiveLedger
+
+    now, directory, manifest = registered(tmp_path)
+    candidate_id = manifest.candidates[0].candidate_id
+    with ProspectiveLedger(directory / "ledger.sqlite", manifest) as ledger:
+        initial = MarketQuote(
+            provider="binance",
+            feed="spot",
+            symbol="BTCUSDT",
+            bid=Decimal("100"),
+            ask=Decimal("100.05"),
+            bid_size=Decimal("100"),
+            ask_size=Decimal("100"),
+            last=Decimal("100"),
+            tick_size=Decimal(".01"),
+            provider_time=now,
+            received_at=now,
+            processed_at=now,
+        )
+        ledger.on_quote(initial, now=now, lot_step=Decimal(".1"), min_notional=Decimal("10"))
+        ledger.record_signal(
+            candidate_id,
+            decision_at=now,
+            bar_end=now,
+            reference_price=Decimal("100"),
+            atr=Decimal("2"),
+            signal_id="open-gap",
+        )
+        at = now + timedelta(seconds=1)
+        quote = initial.model_copy(update={"provider_time": at, "received_at": at, "processed_at": at})
+        ledger.on_quote(quote, now=at, lot_step=Decimal(".1"), min_notional=Decimal("10"))
+        ledger.record_gap(at=now + timedelta(seconds=40), reason="offline")
+        summary = ledger.summary(now=now + timedelta(seconds=40))
+
+    runtime().write_summary(directory, summary)
+    report = (directory / "report.md").read_text()
+    assert "WARNING: this open position crossed a missing-feed interval" in report
+    assert "Closed gap-tainted trades: 0. Open position gap-tainted: True." in report
+    assert "modeled total trade P&L" in report
+    assert "not guaranteed fills" in report
+    assert "Stop triggers can gap" in report
+    assert "says nothing about the probability of reaching it" in report
+    assert "A zero break-even bid means prior net proceeds already recovered the entry cost" in report
+
+
 def test_cli_register_twice_rejects_and_status_reads_evidence(tmp_path):
     from scripts.run_prospective_study import main
 

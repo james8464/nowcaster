@@ -145,6 +145,88 @@ def test_stop_latches_partial_exit_gap_taints_loss(tmp_path):
         assert result["position_quantity"] == "0"
 
 
+def test_open_gap_taint_is_separate_from_closed_trade_count(tmp_path):
+    with ProspectiveLedger(tmp_path / "ledger.db", manifest()) as ledger:
+        signal(ledger)
+        observe(ledger, quote())
+        ledger.record_gap(at=START + timedelta(seconds=40), reason="offline")
+        result = row(ledger, 40)
+
+        assert result["closed_trades"] == 0
+        assert result["tainted_trades"] == 0
+        assert result["open_position_tainted"] is True
+        assert "gap_tainted_open_position" in result["reasons"]
+        assert result["open_position_diagnostics"]["taint_reason"] == "feed_gap_crossed_while_position_open"
+
+
+def test_open_position_diagnostics_use_net_exit_economics(tmp_path):
+    with ProspectiveLedger(tmp_path / "ledger.db", manifest()) as ledger:
+        signal(ledger)
+        observe(ledger, quote())
+        result = row(ledger)
+        diagnostics = result["open_position_diagnostics"]
+
+        assert diagnostics["entry_price"] == "100.100025"
+        assert diagnostics["stop_bid"] == "98.100025"
+        assert diagnostics["target_bid"] == "103.100025"
+        assert diagnostics["expires_at"] == "2026-09-09T06:00:00+00:00"
+        assert diagnostics["remaining_quantity"] == "11.1"
+        assert diagnostics["prior_net_exit_proceeds"] == "0"
+        assert diagnostics["entry_cost"] == "1112.2213877775"
+        # q * bid * (.9995 * .999), followed by subtracting entry cost once.
+        assert diagnostics["remaining_net_liquidation_value"] == "1108.33555500"
+        assert diagnostics["modeled_total_trade_pnl_at_current_bid"] == "-3.8858327775"
+        assert diagnostics["modeled_total_trade_pnl_at_stop_bid"] == "-24.94393123861125"
+        assert diagnostics["modeled_total_trade_pnl_at_target_bid"] == "30.47284651138875"
+        assert diagnostics["modeled_break_even_bid"] == "100.3506007508258633821415212"
+        assert diagnostics["after_cost_reward_loss_ratio"] == "1.221653724903601907558011579"
+        assert diagnostics["additional_stress_on_full_entry_notional"] == "3.77777494350"
+        assert diagnostics["modeled_total_trade_pnl_at_current_bid"] == result["net_pnl"]
+        assert diagnostics["valuation_stale"] is False
+
+
+def test_partial_exit_diagnostics_include_realized_net_proceeds(tmp_path):
+    with ProspectiveLedger(tmp_path / "ledger.db", manifest()) as ledger:
+        signal(ledger)
+        observe(ledger, quote())
+        observe(ledger, quote(2, bid="97", ask="97.05", size="5"))
+        diagnostics = row(ledger)["open_position_diagnostics"]
+
+        # 5 * 97 * (.9995 * .999) is already net of modeled slippage and fee.
+        assert diagnostics["remaining_quantity"] == "6.1"
+        assert diagnostics["prior_net_exit_proceeds"] == "484.2727425"
+        assert diagnostics["remaining_net_liquidation_value"] == "590.81274585"
+        assert diagnostics["modeled_total_trade_pnl_at_current_bid"] == "-37.1358994275"
+        assert diagnostics["modeled_total_trade_pnl_at_stop_bid"] == "-30.43580880117375"
+        assert diagnostics["modeled_total_trade_pnl_at_target_bid"] == "0.01845644882625"
+        assert diagnostics["modeled_break_even_bid"] == "103.0969948088798497609460468"
+        assert diagnostics["after_cost_reward_loss_ratio"] == "0.0006064057290811417922789359165"
+
+
+def test_diagnostics_keep_plan_when_mark_is_stale(tmp_path):
+    with ProspectiveLedger(tmp_path / "ledger.db", manifest()) as ledger:
+        signal(ledger)
+        observe(ledger, quote())
+        diagnostics = row(ledger, 4)["open_position_diagnostics"]
+
+        assert diagnostics["valuation_stale"] is True
+        assert diagnostics["valuation_at"] == "2026-09-09T00:00:01+00:00"
+        assert diagnostics["stop_bid"] == "98.100025"
+        assert diagnostics["target_bid"] == "103.100025"
+
+
+def test_recovered_entry_cost_has_zero_break_even_and_no_reward_loss_ratio(tmp_path):
+    with ProspectiveLedger(tmp_path / "ledger.db", manifest()) as ledger:
+        signal(ledger)
+        observe(ledger, quote())
+        observe(ledger, quote(2, bid="200", ask="200.05", size="10"))
+        diagnostics = row(ledger)["open_position_diagnostics"]
+
+        assert D(diagnostics["prior_net_exit_proceeds"]) > D(diagnostics["entry_cost"])
+        assert diagnostics["modeled_break_even_bid"] == "0"
+        assert diagnostics["after_cost_reward_loss_ratio"] is None
+
+
 def test_window_and_metadata_and_no_early_success(tmp_path):
     with ProspectiveLedger(tmp_path / "ledger.db", manifest()) as ledger:
         with pytest.raises(ValueError):
@@ -156,6 +238,8 @@ def test_window_and_metadata_and_no_early_success(tmp_path):
         assert result["status"] == "collecting"
         assert result["paper_only"] is True
         assert result["candidates"][0]["cash"] == "10000"
+        assert result["candidates"][0]["open_position_tainted"] is False
+        assert result["candidates"][0]["open_position_diagnostics"] is None
         result = ledger.summary(now=START + timedelta(days=90))
         assert result["status"] == "insufficient_evidence"
 
@@ -291,6 +375,8 @@ def test_late_liquidation_reported_separately_from_frozen_end_account(tmp_path):
         assert later["post_end_liquidation"]["closed_trades"] == 1
         assert later["post_end_liquidation"]["position_quantity"] == "0"
         assert "liquidation_after_fixed_end" in later["reasons"]
+        assert later["open_position_diagnostics"] == frozen["open_position_diagnostics"]
+        assert later["open_position_diagnostics"]["remaining_quantity"] == "11.1"
 
 
 def test_closed_trade_history_is_not_rewritten_in_per_quote_state(tmp_path):

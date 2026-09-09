@@ -622,6 +622,50 @@ class ProspectiveLedger:
             D(position["quantity"]) * D(account["last_bid"] or "0") * D(".9995") * D(".999") if position else D("0")
         )
 
+    @staticmethod
+    def _open_position_diagnostics(account, *, valuation_stale: bool):
+        position = account["position"]
+        if position is None:
+            return None
+        exit_factor = D(".9995") * D(".999")
+        quantity = D(position["quantity"])
+        prior_proceeds = D(position["proceeds"])
+        entry_cost = D(position["entry_cost"])
+
+        def trade_pnl(level: Decimal) -> Decimal:
+            return prior_proceeds + quantity * level * exit_factor - entry_cost
+
+        stop_pnl = trade_pnl(D(position["stop"]))
+        target_pnl = trade_pnl(D(position["target"]))
+        unrecovered_cost = max(entry_cost - prior_proceeds, D("0"))
+        break_even = unrecovered_cost / (quantity * exit_factor)
+        ratio = target_pnl / -stop_pnl if target_pnl > 0 and stop_pnl < 0 else None
+        last_bid = D(account["last_bid"]) if account["last_bid"] is not None else None
+        remaining_value = quantity * last_bid * exit_factor if last_bid is not None else None
+        return dict(
+            entry_price=position["intended_entry"],
+            stop_bid=position["stop"],
+            target_bid=position["target"],
+            expires_at=position["expires_at"],
+            remaining_quantity=position["quantity"],
+            prior_net_exit_proceeds=position["proceeds"],
+            entry_cost=position["entry_cost"],
+            entry_notional=position["entry_notional"],
+            valuation_bid=account["last_bid"],
+            valuation_at=account["mark_at"],
+            valuation_stale=valuation_stale,
+            remaining_net_liquidation_value=str(remaining_value) if remaining_value is not None else None,
+            modeled_total_trade_pnl_at_current_bid=str(trade_pnl(last_bid)) if last_bid is not None else None,
+            modeled_total_trade_pnl_at_stop_bid=str(stop_pnl),
+            modeled_total_trade_pnl_at_target_bid=str(target_pnl),
+            modeled_break_even_bid="0" if break_even == 0 else str(break_even),
+            after_cost_reward_loss_ratio=str(ratio) if ratio is not None else None,
+            additional_stress_on_full_entry_notional=str(D(position["entry_notional"]) * D(".0034")),
+            trigger=position["trigger"],
+            tainted=bool(position["tainted"]),
+            taint_reason="feed_gap_crossed_while_position_open" if position["tainted"] else None,
+        )
+
     def _coverage(self, candidate, until):
         start_minute, end_minute = _minute(self.manifest.starts_at), _minute(until)
         marks = {}
@@ -686,6 +730,8 @@ class ProspectiveLedger:
             tainted = account["tainted_trades"]
             mark_deadline = self.manifest.ends_at if fixed else now
             stale = account["mark_at"] is None or (mark_deadline - _at(account["mark_at"])).total_seconds() > 2
+            open_tainted = bool(account["position"] and account["position"]["tainted"])
+            open_diagnostics = self._open_position_diagnostics(account, valuation_stale=stale)
             screening = (
                 bootstrap_screen(
                     coverage["complete_daily_returns"],
@@ -708,6 +754,8 @@ class ProspectiveLedger:
                 reasons.append("minute_coverage_below_99_percent")
             if tainted:
                 reasons.append("gap_tainted_trades")
+            if open_tainted:
+                reasons.append("gap_tainted_open_position")
             if pnl <= 0 or pnl - stress <= 0:
                 reasons.append("nonpositive_net_or_stressed_pnl")
             if D(account["drawdown"]) >= D(".1"):
@@ -743,6 +791,8 @@ class ProspectiveLedger:
                     pending_entry=account["pending"] is not None,
                     closed_trades=account["closed_trades"],
                     tainted_trades=tainted,
+                    open_position_tainted=open_tainted,
+                    open_position_diagnostics=open_diagnostics,
                     fills=account["fills"],
                     decisions=account["decisions"],
                     maximum_drawdown=account["drawdown"],
