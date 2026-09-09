@@ -229,6 +229,8 @@ The latest [8 September longer-holding-period study](docs/holding-period-search-
 
 The [9 September live paper review](docs/live-paper-review-2026-09-09.md) explains what the first open BTC position actually showed: no completed trades yet, gaps in observation, and a target whose apparent 1.5-to-1 reward/risk fell below 1-to-1 after modeled costs. The resulting improvements correct short-return calibration, separate training from confirmation, and make open-position warnings and after-cost outcomes clearer. The ongoing frozen study is not modified by these software changes. No profitable strategy has been established.
 
+The [paper trade audit](docs/paper-trade-audit.md) follows each original decision through its actual paper entry and exits. It explains whether an open trade is waiting for its stop, target or time limit; completed trades are checked against all recorded fills and fees, including losses, partial exits and missing-data warnings. It reads the retained study without changing it and never invents a confidence score or retroactively rebuilds a decision from newer candles.
+
 ## Project layout
 
 The [live paper study guide](docs/live-paper-study.md) describes a separate,

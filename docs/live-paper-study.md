@@ -114,6 +114,13 @@ so its original report does not gain new fields mid-experiment. The
 read-only analysis of that retained position. Do not upgrade or restart the
 frozen collector to obtain a newer report format.
 
+For a read-only decision-to-outcome reconciliation, use the separate
+[paper trade audit](paper-trade-audit.md). It can inspect the original frozen
+study while its collector keeps running, without taking the writer lock or
+changing any decision, fill or exit rule. The monitor audits newly completed
+round-trips and changed exit problems; it does not force trades to finish merely
+to increase the sample count.
+
 Hypothetical entries pay the observed ask plus 5 basis points slippage; exits
 receive the observed bid minus 5 basis points. The model charges 10 basis points
 per side, independently of anyone's actual fee tier. Stress deducts another
