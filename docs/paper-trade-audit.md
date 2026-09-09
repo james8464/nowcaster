@@ -66,6 +66,10 @@ Historical registration also requires a correctly formed `signal_prefix_hash` fo
 
 This separation follows the principle that evaluation data must not influence model fitting or selection; see [scikit-learn's data-leakage guidance](https://scikit-learn.org/stable/common_pitfalls.html#data-leakage). Binance also documents ticker and trade streams as different data products; the study's ticker feed is not a complete execution tape ([official stream reference](https://developers.binance.com/en/docs/catalog/core-trading-spot-trading/api/ws-streams/~)).
 
+## Engineering verification
+
+The 9 September release passed 1,174 Python tests and 85 native tests, including 37 focused auditor cases. Those cases exercise valid stop/target/time exits, partial fills, successive entries after losses, unchanged completed records after later events, and rejection of altered evidence. Deterministic fixture regeneration, Python/Swift fixture parity, app assembly, signing/manifest checks and a packaged recorded-feed replay also passed. These are software checks, not live-performance results. The previously documented native foreground-window visual-smoke limitation is unchanged.
+
 ## Reproduce the initial timing check
 
 Use SQLite read-only mode and a read transaction against the retained `ledger.sqlite`:
