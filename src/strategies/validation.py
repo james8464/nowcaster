@@ -21,6 +21,7 @@ from src.backtest.robustness import (
     run_block_bootstrap,
 )
 from src.models.calibration import calibration_report, fit_out_of_fold_calibration, selective_threshold
+from src.models.calibration_contracts import StrategyReturnCalibrationContract
 from src.strategies.registry import StrategyRegistry
 from src.strategies.types import BarInterval, StrategyFamily, StrategyMode, canonical_hash
 
@@ -1034,6 +1035,7 @@ def fit_strategy_oof_calibration(
     isotonic_minimum: int = 1_000,
 ) -> tuple[str, float, float, float, float, Mapping[str, Any]]:
     receipt: dict[str, Any] = {
+        "calibration_contract": StrategyReturnCalibrationContract().model_dump(),
         "probability_definition": "positive_strategy_return_after_costs",
         "report_scope": "chronological_confirmation",
         "confidence_scope": "selection_candidate_family_then_independent_fixed_threshold_confirmation",

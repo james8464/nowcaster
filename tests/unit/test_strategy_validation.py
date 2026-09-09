@@ -444,6 +444,10 @@ def test_strategy_oof_calibration_emits_chronological_confirmation_receipt() -> 
     assert receipt["method"] == "oof_sigmoid_v2"
     assert receipt["effective_observations"] == pytest.approx(120)
     assert receipt["probability_definition"] == "positive_strategy_return_after_costs"
+    assert receipt["calibration_contract"] == {
+        "version": "strategy_return_v1",
+        "outcome_source": "strategy_equity_curve",
+    }
     assert receipt["report_scope"] == "chronological_confirmation"
     assert receipt["phases"]["fit"]["observations"] == 239
     assert receipt["phases"]["selection"]["observations"] == 119

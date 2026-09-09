@@ -25,6 +25,7 @@ from src.live_monitor.evidence import (
 from src.live_monitor.types import Direction, MarketBar, MarketQuote
 from src.models.drift import DEFAULT_DRIFT_POLICY_HASH
 from src.strategies.types import BarInterval, StrategyFamily, StrategySpec, canonical_hash
+from src.strategies.validation import FoldEvidence, StrategyRunEvidence, fit_strategy_oof_calibration
 from src.trading.forward import ForwardEvidenceBuilder
 from src.trading.live_monitor_readiness import (
     evaluate_and_persist_live_readiness,
@@ -396,10 +397,9 @@ class FrameDatabase:
         return next(self.frames)
 
 
-def test_loader_keeps_promoted_cohort_when_cutoff_posture_abstained() -> None:
-    configured = (component("macd_histogram_trend", "0.6"), component("ema_adx_trend", "0.4"))
-    members = [{"strategy_id": item.spec.strategy_id, "strategy_version": item.strategy_version} for item in configured]
-    calibration = {
+def legacy_calibration_receipt() -> dict:
+    """Exact pre-contract fixture: self-hashed, but falsely labeled event evidence."""
+    return {
         "method": "oof_sigmoid_v2",
         "observations": 100,
         "effective_observations": 100,
@@ -418,6 +418,11 @@ def test_loader_keeps_promoted_cohort_when_cutoff_posture_abstained() -> None:
         "outcomes_through": NOW.isoformat(),
         "decision_rows_hash": "b" * 64,
     }
+
+
+def loader_frames(calibration: dict) -> tuple[pd.DataFrame, pd.DataFrame, list[StrategySpec]]:
+    configured = (component("macd_histogram_trend", "0.6"), component("ema_adx_trend", "0.4"))
+    members = [{"strategy_id": item.spec.strategy_id, "strategy_version": item.strategy_version} for item in configured]
     live_model = {
         "calibration": calibration,
         "calibration_hash": canonical_hash(calibration),
@@ -475,10 +480,175 @@ def test_loader_keeps_promoted_cohort_when_cutoff_posture_abstained() -> None:
         ]
     )
 
-    loaded = load_sealed_cohorts(FrameDatabase([weights, runs]), [item.spec for item in configured])
+    return weights, runs, [item.spec for item in configured]
+
+
+def test_loader_rejects_exact_legacy_receipt_despite_valid_hash_and_qualifying_numbers() -> None:
+    weights, runs, specs = loader_frames(legacy_calibration_receipt())
+
+    assert load_sealed_cohorts(FrameDatabase([weights, runs]), specs) == ()
+
+
+def target_event_structural_receipt() -> dict:
+    """Synthetic separate event contract, not a migrated return receipt or a producer validation."""
+    return {
+        "calibration_contract": {
+            "version": "target_stop_event_v1",
+            "outcome_source": "resolved_target_stop_events",
+            "event_definition_hash": "a" * 64,
+            "outcome_rows_hash": "e" * 64,
+        },
+        "method": "oof_sigmoid_v2",
+        "observations": 100,
+        "effective_observations": 100,
+        "successes": 67,
+        "probability": 0.68,
+        "confidence_low": 0.58,
+        "confidence_high": 0.76,
+        "brier_score": 0.19,
+        "log_loss": 0.58,
+        "expected_calibration_error": 0.04,
+        "slice_identity": "AAPL:5m:target-stop-events",
+        "probability_definition": "target_before_stop_after_costs",
+        "selective_threshold": 0.60,
+        "selective_coverage": 0.30,
+        "lower_expected_net_edge": 0.004,
+        "outcomes_through": NOW.isoformat(),
+        "decision_rows_hash": "b" * 64,
+    }
+
+
+def test_loader_keeps_supported_event_contract_when_cutoff_posture_abstained() -> None:
+    weights, runs, specs = loader_frames(target_event_structural_receipt())
+    loaded = load_sealed_cohorts(FrameDatabase([weights, runs]), specs)
 
     assert len(loaded) == 1
     assert loaded[0].cohort_id == "c" * 64
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("version", "target_stop_event_v0"),
+        ("version", "target_stop_event_v2"),
+        ("version", "strategy_return_v1"),
+        ("outcome_source", "strategy_equity_curve"),
+        ("outcome_source", "unknown"),
+        ("event_definition_hash", None),
+        ("event_definition_hash", ""),
+        ("outcome_rows_hash", "invalid"),
+        ("outcome_rows_hash", None),
+        ("extra", "unsupported"),
+    ],
+)
+def test_loader_rejects_incompatible_event_contract_even_after_rehash(field: str, value: object) -> None:
+    calibration = target_event_structural_receipt()
+    if value is None:
+        calibration["calibration_contract"].pop(field)
+    else:
+        calibration["calibration_contract"][field] = value
+    weights, runs, specs = loader_frames(calibration)
+
+    assert load_sealed_cohorts(FrameDatabase([weights, runs]), specs) == ()
+
+
+@pytest.mark.parametrize("contract", [None, "target_stop_event_v1", [], {}])
+def test_loader_rejects_malformed_contract(contract: object) -> None:
+    calibration = target_event_structural_receipt()
+    calibration["calibration_contract"] = contract
+    weights, runs, specs = loader_frames(calibration)
+
+    assert load_sealed_cohorts(FrameDatabase([weights, runs]), specs) == ()
+
+
+@pytest.mark.parametrize("mislabel_as_event", [False, True])
+def test_current_return_producer_cannot_qualify_even_if_probability_definition_is_changed(
+    mislabel_as_event: bool,
+) -> None:
+    decisions = pd.date_range("2026-01-01", periods=480, freq="min", tz="UTC")
+    signals = pd.DataFrame({"decision_timestamp": decisions, "signal": 1, "strength": 0.8})
+    curve = pd.DataFrame(
+        {
+            "decision_timestamp": decisions,
+            "cost_decision_timestamp": decisions,
+            "outcome_available_at": decisions + pd.Timedelta(minutes=1),
+            "net_return": [0.005, 0.005, -0.001] * 160,
+            "gross_return": [0.006, 0.006, 0.0] * 160,
+            "cost_return": 0.001,
+        }
+    )
+    evidence = StrategyRunEvidence(
+        signals=signals,
+        fold_evidence=(
+            FoldEvidence(
+                0,
+                decisions[0].to_pydatetime(),
+                decisions[-1].to_pydatetime(),
+                (decisions[-1] + pd.Timedelta(minutes=1)).to_pydatetime(),
+                1.0,
+                0.1,
+            ),
+        ),
+    )
+    status, _probability, _edge, _cost, _uncertainty, receipt = fit_strategy_oof_calibration(
+        evidence,
+        curve,
+        pd.Series(True, index=curve.index),
+        current_signal=1,
+        current_strength=0.8,
+    )
+    assert status == "calibrated"
+    calibration = dict(receipt)
+    if mislabel_as_event:
+        calibration["probability_definition"] = "target_before_stop_after_costs"
+    weights, runs, specs = loader_frames(calibration)
+
+    assert load_sealed_cohorts(FrameDatabase([weights, runs]), specs) == ()
+
+
+def test_loading_legacy_receipts_retains_database_rows_unchanged(tmp_path) -> None:
+    database = Database.from_url(f"duckdb:///{tmp_path / 'legacy.duckdb'}")
+    database.initialize()
+    weights, runs, specs = loader_frames(legacy_calibration_receipt())
+    for index, (weight, run) in enumerate(zip(weights.to_dict("records"), runs.to_dict("records"), strict=True)):
+        common = {
+            key: weight[key]
+            for key in ("dataset_hash", "strategy_id", "strategy_version", "symbol", "interval", "mode")
+        }
+        database.insert(
+            "strategy_runs",
+            [
+                {
+                    **run,
+                    **common,
+                    "family": "trend",
+                    "run_timestamp": NOW,
+                    "parameters": {},
+                    "status": "evaluated",
+                    "started_at": NOW,
+                    "created_at": NOW,
+                }
+            ],
+        )
+        database.insert(
+            "ensemble_weights",
+            [
+                {
+                    **weight,
+                    "weight_id": f"weight-{index}",
+                    "family": "trend",
+                    "created_at": NOW,
+                }
+            ],
+        )
+    before_runs = database.frame("select * from strategy_runs order by strategy_run_id")
+    before_weights = database.frame("select * from ensemble_weights order by weight_id")
+
+    loaded = load_sealed_cohorts(database, specs)
+
+    pd.testing.assert_frame_equal(before_runs, database.frame("select * from strategy_runs order by strategy_run_id"))
+    pd.testing.assert_frame_equal(before_weights, database.frame("select * from ensemble_weights order by weight_id"))
+    assert loaded == ()
 
 
 def test_selected_identity_and_readiness_receipt_must_be_exact_current_and_all_passed() -> None:

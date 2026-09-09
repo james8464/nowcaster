@@ -16,6 +16,7 @@ from src.contextual.types import AssetProfileName, StrategyContextKey, StrategyD
 from src.database.engine import Database
 from src.live_monitor.engine import EligibilityEvidence
 from src.live_monitor.types import BarIntervalValue, Direction, LiveMonitorModel, MarketBar, MarketQuote
+from src.models.calibration_contracts import TargetEventCalibrationContract
 from src.models.drift import (
     DEFAULT_DRIFT_POLICY,
     DEFAULT_DRIFT_POLICY_HASH,
@@ -1136,6 +1137,9 @@ def load_sealed_cohorts(database: Database, specs: Sequence[StrategySpec]) -> tu
                 valid = False
                 break
             try:
+                # Legacy receipts remain stored, but an outcome label and self-hash
+                # alone cannot establish compatibility with target/stop evidence.
+                TargetEventCalibrationContract.model_validate(calibration.get("calibration_contract"))
                 components.append(
                     SealedComponent(
                         spec=spec,

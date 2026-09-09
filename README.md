@@ -93,6 +93,8 @@ The app keeps the last known good snapshot if a refresh fails. Broker credential
 
 Missing evidence is displayed as unavailable; the app does not silently substitute a favorable number.
 
+Qualified cohort loading now requires a [versioned calibration evidence contract](docs/calibration-evidence-contract.md). Legacy receipts without that contract no longer qualify, even if their hashes and old readiness evidence still match. Their database rows remain unchanged for research. The current strategy-return calibration producer remains research-only; there is no production target-before-stop event-calibration producer.
+
 ### Why different assets get different strategies
 
 The **Assess Markets** button in Strategy Lab runs an extra asset-selection and strategy-weighting assessment. Think of it as choosing both the playing field and the tools:
