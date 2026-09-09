@@ -97,6 +97,16 @@ def render_report(result: dict) -> str:
         "remains development data, including any inspected tail. This is not independent validation; failed "
         "historical screens remain binding. No promotion, alerts, account access or orders are authorized.",
         "",
+        "This amended retrospective evaluation follows the retained v1 failure on exact-duration, off-clock "
+        "archive rows. Only UTC clock-aligned starts are executable. Off-clock rows are quarantined with their "
+        "original parsed contents and archive identities in data-quality.json; no timestamps or prices are "
+        "edited, resampled, filled or substituted. The resulting absence uses the unchanged gap policy.",
+        f"Original failed source: `{protocol['amendment']['original_source_identity']}`; "
+        f"original hypothesis: `{protocol['amendment']['original_hypothesis']}`. "
+        f"Same-parent failed attempt reference: `{json_text(protocol['amendment']['parent_attempt'])}`. "
+        "A fresh reproduction retains this amendment history even when the original attempt is stored elsewhere.",
+        f"Data-quality artifact SHA-256: `{result['data_quality_sha256']}`.",
+        "",
         "Each asset and cost scenario has an independent 10,000 USDT account. Accounts are never added. "
         "Marked equity includes modeled liquidation costs; realized P&L includes completed trades only. "
         "No synthetic terminal liquidation is applied.",
@@ -128,6 +138,10 @@ def render_report(result: dict) -> str:
                 "",
                 f"Candidate `{asset['candidate']['candidate_id']}`; original screen passed: "
                 f"{asset['candidate']['screen_passed']}.",
+                f"Raw parser-valid rows: {quality['raw_selected_rows']}; quarantined off-clock rows: "
+                f"{quality['quarantined_off_clock_rows']}; executable rows: {quality['executable_rows']}; "
+                f"already excluded invalid-duration rows: {quality['invalid_boundary_rows']}. "
+                "Original archive selected-row counts and checksum pins are unchanged.",
                 f"Observed {quality['observed_hours']} / {quality['expected_hours']} hours; "
                 f"missing {quality['missing_hours']} (leading {quality['leading_missing_hours']}, "
                 f"internal {quality['internal_missing_hours']}, trailing {quality['trailing_missing_hours']}). "

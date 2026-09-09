@@ -3,25 +3,30 @@
 import hashlib
 import io
 import json
+import multiprocessing
 import os
+import signal
 import zipfile
 from copy import deepcopy
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pandas as pd
 import pytest
 
 from scripts import run_historical_replay as runner
+from src.research.historical_replay import HistoricalReplay
 from src.research.historical_replay_reporting import period_changes, render_report
 from src.research.prospective_runtime import load_registry
 from src.strategies.types import canonical_hash
+from tests.unit.test_historical_replay import bar, setup
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def fixture_discovery(cache):
+def fixture_discovery(cache, hours=(0, 1, 3)):
     retained = json.loads((ROOT / runner.DISCOVERY_PATH).read_text())
     discovery = deepcopy(retained)
     discovery.update(start="2025-01-01T00:00:00+00:00", end_exclusive="2025-01-02T00:00:00+00:00")
@@ -31,7 +36,7 @@ def fixture_discovery(cache):
         name = f"{symbol}-1h-2025-01-01.zip"
         buffer = io.BytesIO()
         lines = []
-        for hour in (0, 1, 3):
+        for hour in hours:
             stamp = int((pd.Timestamp("2025-01-01T00:00:00Z") + pd.Timedelta(hours=hour)).timestamp() * 1000)
             lines.append(f"{stamp},100,101,99,100,1000,{stamp + 3599999},100000,10,500,50000,0")
         with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
@@ -44,7 +49,7 @@ def fixture_discovery(cache):
             frequency="daily",
             sha256=digest,
             compressed_bytes=len(payload),
-            selected_rows=3,
+            selected_rows=len(hours),
             invalid_boundary_rows=0,
             checksum_verified=True,
         )
@@ -341,20 +346,48 @@ def test_parallel_worker_failure_retains_other_partial_evidence(tmp_path, monkey
     data, _ = fixture_discovery(cache)
     monkeypatch.setattr(runner, "load_pinned_discovery", lambda root: data)
     monkeypatch.setattr(runner.os, "cpu_count", lambda: 4)
-    original = runner.load_scopes
+    context = multiprocessing.get_context("spawn")
+    sibling_started, blocked = context.Event(), context.Event()
+    processes = []
 
-    def invalid_scopes(*args, **kwargs):
-        scopes = original(*args, **kwargs)
-        scopes["BTCUSDT"].loc[1, "high"] = 1
-        return scopes
+    def process_factory(*, target, args):
+        process = context.Process(target=synchronized_failing_worker, args=(*args, sibling_started, blocked))
+        processes.append(process)
+        return process
 
-    monkeypatch.setattr(runner, "load_scopes", invalid_scopes)
+    monkeypatch.setattr(
+        runner.multiprocessing, "get_context", lambda _: SimpleNamespace(Pipe=context.Pipe, Process=process_factory)
+    )
     output = tmp_path / "HistoricalReplays/worker-failure"
-    with pytest.raises((ValueError, RuntimeError), match="OHLC"):
+    with pytest.raises(RuntimeError, match="synchronized callback failure"):
         runner.run_replay(ROOT, cache, output, workers=2)
+    assert sibling_started.is_set()
     assert (output / "BTCUSDT/events.jsonl").stat().st_size > 0
+    survivor_events = (output / "ETHUSDT/events.jsonl").read_text().splitlines()
+    assert len(survivor_events) == 1 and json.loads(survivor_events[0])["type"] == "open"
+    assert len(processes) == 2 and all(not process.is_alive() for process in processes)
+    assert processes[1].exitcode == -signal.SIGTERM
     assert json.loads((output / "status.json").read_text())["status"] == "failed"
     assert not (output / "result.json").exists()
+
+
+def synchronized_failing_worker(connection, arguments, expected_source, expected_runtime, sibling_started, blocked):
+    original = runner._json
+
+    def serialize(value):
+        if value.get("type") == "close":
+            if arguments[2]["symbol"] == "ETHUSDT":
+                sibling_started.set()
+                if not blocked.wait(10):
+                    raise RuntimeError("sibling was not terminated")
+            else:
+                if not sibling_started.wait(10):
+                    raise RuntimeError("sibling never started")
+                raise OSError("synchronized callback failure")
+        return original(value)
+
+    runner._json = serialize
+    runner._asset_process(connection, arguments, expected_source, expected_runtime)
 
 
 def test_retained_discovery_preserves_original_pinned_bytes(tmp_path, monkeypatch):
@@ -374,12 +407,14 @@ def test_period_without_closes_carries_equity_and_zero_start_has_no_return():
     assert months[2]["return"] is None
 
 
-def test_shared_registry_symlink_refused_without_writing_target(tmp_path):
+def test_shared_registry_symlink_refused_without_writing_target(tmp_path, monkeypatch):
     parent = tmp_path / "HistoricalReplays"
     parent.mkdir()
     unrelated = tmp_path / "unrelated"
     unrelated.write_text("")
-    (parent / "campaigns.jsonl").symlink_to(unrelated)
+    redirected = parent / "campaigns.jsonl"
+    original = Path.is_symlink
+    monkeypatch.setattr(Path, "is_symlink", lambda path: path == redirected or original(path))
     with pytest.raises(ValueError, match="registry"):
         runner.run_replay(ROOT, tmp_path / "cache", parent / "round")
     assert unrelated.read_text() == ""
@@ -429,3 +464,196 @@ def test_successful_cli_emits_machine_readable_result_location(tmp_path, capsys,
     output = tmp_path / "HistoricalReplays/cli"
     assert runner.main(["--root", str(ROOT), "--cache-dir", str(cache), "--output-dir", str(output)]) == 0
     assert json.loads(capsys.readouterr().out) == dict(status="succeeded", output_dir=str(output))
+
+
+def test_off_clock_parser_row_is_quarantined_without_relaxing_engine(tmp_path, monkeypatch):
+    cache = tmp_path / "cache"
+    data, _ = fixture_discovery(cache, hours=(0, 1.5, 3))
+    original_manifest = deepcopy(data["archive_manifests"])
+    scopes = runner.load_scopes(data, cache)
+    candidate = data["candidates"][0]
+    engine = HistoricalReplay(candidate, load_registry(ROOT))
+    with pytest.raises(ValueError, match="UTC clock hour"):
+        engine.push_bar(scopes["BTCUSDT"].iloc[1].to_dict())
+    monkeypatch.setattr(runner, "load_pinned_discovery", lambda root: data)
+    original = runner._run_asset
+    output = tmp_path / "HistoricalReplays/quarantine"
+
+    def assert_evidence_first(*args):
+        assert (output / "data-quality.json").exists()
+        statuses = [json.loads(line) for line in (output / "status.jsonl").read_text().splitlines()]
+        assert any(row["status"] == "preflight_complete" and row.get("data_quality_sha256") for row in statuses)
+        return original(*args)
+
+    monkeypatch.setattr(runner, "_run_asset", assert_evidence_first)
+    result = runner.run_replay(ROOT, cache, output)
+    quality_bytes = (output / "data-quality.json").read_bytes()
+    artifact = json.loads(quality_bytes)
+    assert result["data_quality_sha256"] == hashlib.sha256(quality_bytes).hexdigest()
+    assert json.loads((output / "status.json").read_text())["data_quality_sha256"] == result["data_quality_sha256"]
+    assert data["archive_manifests"] == original_manifest == result["protocol"]["archive_manifests"]
+    assert result["protocol"]["candidates"] == data["candidates"]
+    assert result["protocol"]["assumptions"]["cost_multipliers"] == [1, 2]
+    assert result["protocol"]["hypothesis"] == "fixed_selected_rule_clock_aligned_account_replay_v2"
+    assert result["protocol"]["amendment"]["original_hypothesis"] == "fixed_selected_rule_account_replay_v1"
+    assert result["protocol"]["amendment"]["parent_attempt"] is None
+    for quality, asset in zip(artifact["assets"], result["assets"], strict=True):
+        assert quality["raw_selected_rows"] == 3
+        assert quality["quarantined_off_clock_rows"] == 1
+        assert quality["executable_rows"] == 2
+        assert quality["invalid_boundary_rows"] == 0
+        row = quality["quarantined_rows"][0]
+        assert row["raw_selected_index"] == 1
+        assert row["row"]["open_timestamp"] == "2025-01-01T01:30:00+00:00"
+        assert row["row"]["close_timestamp"] == "2025-01-01T02:30:00+00:00"
+        assert row["row"]["archive_sha256"] == original_manifest[0 if quality["symbol"] == "BTCUSDT" else 1]["sha256"]
+        assert row["row_fingerprint"] == canonical_hash(row["row"])
+        assert asset["quality"]["raw_selected_rows"] == 3
+        assert asset["quality"]["quarantined_off_clock_rows"] == 1
+        assert asset["quality"]["observed_hours"] == asset["quality"]["executable_rows"] == 2
+        assert asset["quality"]["internal_missing_hours"] == 2
+        assert asset["bars_seen"] == 2
+    _, again = runner.prepare_scopes(data, scopes)
+    assert again == artifact
+    report = render_report(result)
+    assert "amended retrospective" in report
+    assert "quarantined off-clock" in report
+    assert "raw parser-valid" in report.lower()
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"provider": "other"},
+        {"symbol": "ETHUSDT"},
+        {"feed": "futures"},
+        {"interval": "5m"},
+        {"finalized": False},
+        {"revision": 2},
+        {"open": 0},
+        {"close": float("inf")},
+        {"low": -1},
+        {"high": 1},
+        {"volume": -1},
+        {"volume": float("nan")},
+        {"available_at": pd.Timestamp("2025-01-01T05:00:00Z")},
+        {"close_timestamp": pd.Timestamp("2025-01-01T05:00:00Z")},
+        {"open_timestamp": pd.Timestamp("2025-01-01T03:00:00")},
+    ],
+)
+def test_other_engine_contract_defects_fail_before_any_account(tmp_path, monkeypatch, changes):
+    cache = tmp_path / "cache"
+    data, _ = fixture_discovery(cache)
+    scopes = runner.load_scopes(data, cache)
+    rows = scopes["BTCUSDT"].to_dict("records")
+    rows[-1].update(changes)
+    scopes["BTCUSDT"] = pd.DataFrame(rows)
+    monkeypatch.setattr(runner, "load_pinned_discovery", lambda root: data)
+    monkeypatch.setattr(runner, "load_scopes", lambda *args, **kwargs: scopes)
+    output = tmp_path / "HistoricalReplays/invalid"
+    with pytest.raises(ValueError):
+        runner.run_replay(ROOT, cache, output)
+    assert not (output / "BTCUSDT").exists()
+    assert not (output / "ETHUSDT").exists()
+    assert json.loads((output / "status.json").read_text())["status"] == "failed"
+
+
+def test_quarantine_cannot_hide_another_invalid_field_or_raw_overlap(tmp_path):
+    data, _ = fixture_discovery(tmp_path / "cache", hours=(0, 1.5, 3))
+    scopes = runner.load_scopes(data, tmp_path / "cache")
+    scopes["BTCUSDT"].loc[1, "high"] = 1
+    with pytest.raises(ValueError, match="OHLC"):
+        runner.prepare_scopes(data, scopes)
+    scopes["BTCUSDT"].loc[1, "high"] = 101
+    rows = scopes["BTCUSDT"].to_dict("records")
+    for key in ("open_timestamp", "close_timestamp", "available_at"):
+        rows[1][key] -= pd.Timedelta(hours=1)
+    scopes["BTCUSDT"] = pd.DataFrame(rows)
+    with pytest.raises(ValueError, match="overlap"):
+        runner.prepare_scopes(data, scopes)
+
+
+def test_v2_registration_links_retained_failed_v1_and_preserves_history(tmp_path, monkeypatch):
+    cache = tmp_path / "cache"
+    data, _ = fixture_discovery(cache)
+    monkeypatch.setattr(runner, "load_pinned_discovery", lambda root: data)
+    parent = tmp_path / "HistoricalReplays"
+    old = parent / "failed-v1"
+    old.mkdir(parents=True)
+    original_source = "a9b9d378de119b0a89a02cc28dbbf393189f9ab9ecc490bf6a3d88d6cf0ce990"
+    protocol = dict(
+        hypothesis="fixed_selected_rule_account_replay_v1", source_identity=original_source, attempt_number=1
+    )
+    (old / "protocol.json").write_text(json.dumps(protocol))
+    (old / "status.json").write_text(json.dumps(dict(status="failed")))
+    record = dict(
+        attempt_number=1,
+        hypothesis=protocol["hypothesis"],
+        directory=str(old),
+        protocol_hash=canonical_hash(protocol),
+        previous_hash=None,
+    )
+    record["hash"] = canonical_hash(record)
+    registry_bytes = (json.dumps(record) + "\n").encode()
+    (parent / "campaigns.jsonl").write_bytes(registry_bytes)
+    result = runner.run_replay(ROOT, cache, parent / "v2")
+    amendment = result["protocol"]["amendment"]
+    assert amendment["original_source_identity"] == original_source
+    assert amendment["parent_attempt"] == dict(
+        attempt_number=1, protocol_hash=record["protocol_hash"], directory=str(old)
+    )
+    assert result["protocol"]["attempt_number"] == 2
+    assert result["protocol"]["prior_selection"]["trial_count"] == 24
+    assert (parent / "campaigns.jsonl").read_bytes().startswith(registry_bytes)
+    assert json.loads((old / "status.json").read_text())["status"] == "failed"
+
+
+def test_quality_artifact_cannot_be_replaced_during_evaluation(tmp_path, monkeypatch):
+    cache = tmp_path / "cache"
+    data, _ = fixture_discovery(cache)
+    monkeypatch.setattr(runner, "load_pinned_discovery", lambda root: data)
+    output = tmp_path / "HistoricalReplays/altered-quality"
+    original = runner._run_asset
+
+    def alter_artifact(*args):
+        asset = original(*args)
+        (output / "data-quality.json").write_text("{}\n")
+        return asset
+
+    monkeypatch.setattr(runner, "_run_asset", alter_artifact)
+    with pytest.raises(RuntimeError, match="data-quality"):
+        runner.run_replay(ROOT, cache, output)
+    assert json.loads((output / "status.json").read_text())["status"] == "failed"
+    assert not (output / "result.json").exists()
+
+
+@pytest.mark.parametrize("pending", [False, True])
+def test_prepared_quarantine_gap_retains_loss_or_cancels_pending(tmp_path, pending):
+    data, _ = fixture_discovery(tmp_path / "cache")
+    candidate, registry = setup(signals=(13,))
+    rows = [bar(index) for index in range(14 if pending else 15)]
+    off = bar(14 if pending else 15)
+    for key in ("open_timestamp", "close_timestamp", "available_at"):
+        off[key] += pd.Timedelta(minutes=30)
+    rows.extend([off, bar(17, open=90, high=91, low=89, close=90)])
+    scopes = {}
+    for symbol in runner.SYMBOLS:
+        item = next(row for row in data["archive_manifests"] if row["symbol"] == symbol)
+        item["selected_rows"] = len(rows)
+        scopes[symbol] = pd.DataFrame(
+            [row | dict(symbol=symbol, archive_name=item["name"], archive_sha256=item["sha256"]) for row in rows]
+        )
+    data["archive_manifest_hash"] = canonical_hash(data["archive_manifests"])
+    prepared, quality = runner.prepare_scopes(data, scopes)
+    replay = HistoricalReplay(candidate, registry)
+    for row in prepared["BTCUSDT"].to_dict("records"):
+        replay.push_bar(row)
+    assert quality["assets"][0]["quarantined_off_clock_rows"] == 1
+    for scenario in replay.result()["scenarios"]:
+        if pending:
+            assert scenario["counts"]["cancellations"] == 1
+            assert scenario["trades"] == []
+        else:
+            assert scenario["counts"]["gap_tainted_exits"] == 1
+            assert scenario["trades"][0]["exit_reason"] == "gap_liquidation"
+            assert Decimal(scenario["realized_pnl"]) < 0

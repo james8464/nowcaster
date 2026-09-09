@@ -20,9 +20,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import httpx  # noqa: E402
+import pandas as pd  # noqa: E402
 
 from src.ingestion.binance_archive import BinancePublicArchive  # noqa: E402
-from src.research.historical_replay import HistoricalReplay  # noqa: E402
+from src.research.historical_replay import HistoricalReplay, _decimal, _utc  # noqa: E402
 from src.research.historical_replay_reporting import period_changes, quality_profile, render_report  # noqa: E402
 from src.research.holding_period_search import research_runtime_fingerprint  # noqa: E402
 from src.research.prospective_runtime import load_registry, study_source_hash  # noqa: E402
@@ -31,7 +32,10 @@ from src.strategies.types import BarInterval, canonical_hash  # noqa: E402
 DISCOVERY_PATH = Path("data/research/holding-period-search-2026-09-08.json")
 DISCOVERY_SHA256 = "58c25ec6e836ecd7b17963a03ef6e9f3e43a03b78666c534506b874699a5f903"
 SYMBOLS = ("BTCUSDT", "ETHUSDT")
-HYPOTHESIS = "fixed_selected_rule_account_replay_v1"
+ORIGINAL_HYPOTHESIS = "fixed_selected_rule_account_replay_v1"
+HYPOTHESIS = "fixed_selected_rule_clock_aligned_account_replay_v2"
+ORIGINAL_FAILED_SOURCE = "a9b9d378de119b0a89a02cc28dbbf393189f9ab9ecc490bf6a3d88d6cf0ce990"
+QUARANTINE_POLICY = "quarantine_off_utc_clock_starts_without_transformation_v1"
 BASE_URL = "https://data.binance.vision/data/spot"
 source_identity = study_source_hash
 
@@ -265,6 +269,110 @@ def load_scopes(discovery: dict, cache_dir: Path, *, allow_download: bool = Fals
     return scopes
 
 
+def prepare_scopes(discovery: dict, scopes: dict) -> tuple[dict, dict]:
+    """Validate raw inputs before any account work; quarantine only off-clock starts.
+
+    Numeric/UTC checks reuse the engine's pure validators. Envelope, duration,
+    availability and chronology checks also apply to quarantined rows, so the
+    alignment exception cannot conceal a second defect. Original rows and pins
+    remain untouched; only the executable row selection changes.
+    """
+    manifests = validate_manifest(discovery)
+    start, end = _window(discovery)
+    if set(scopes) != set(SYMBOLS):
+        raise ValueError("preflight asset scopes mismatch")
+    prepared, assets = {}, []
+    for symbol in SYMBOLS:
+        bars = scopes[symbol]
+        pins = {row["name"]: row for row in manifests if row["symbol"] == symbol}
+        expected_rows = sum(row["selected_rows"] for row in pins.values())
+        if len(bars) != expected_rows:
+            raise ValueError(f"preflight raw selected-row count mismatch: {symbol}")
+        retained, quarantined = [], []
+        previous_close = None
+        archive_counts = dict.fromkeys(pins, 0)
+        for index, values in enumerate(bars.itertuples(index=False, name=None)):
+            row = dict(zip(bars.columns, values, strict=True))
+            try:
+                for key, expected in (
+                    ("provider", "binance"),
+                    ("feed", "spot"),
+                    ("symbol", symbol),
+                    ("interval", "1h"),
+                ):
+                    if row.get(key) != expected:
+                        raise ValueError(f"bar {key} must be {expected}")
+                if row.get("finalized") is not True or type(row.get("revision")) is not int or row["revision"] != 1:
+                    raise ValueError("only finalized initial archive revision 1 is supported")
+                opened = _utc(row.get("open_timestamp"), "open_timestamp")
+                closed = _utc(row.get("close_timestamp"), "close_timestamp")
+                available = _utc(row.get("available_at"), "available_at")
+                if closed - opened != pd.Timedelta(hours=1):
+                    raise ValueError("bar must last exactly one hour")
+                if available != closed:
+                    raise ValueError("historical bar availability must equal close_timestamp")
+                if opened < start or closed > end:
+                    raise ValueError("bar lies outside the registered window")
+                if previous_close is not None and opened < previous_close:
+                    raise ValueError("duplicate, overlapping, revised or out-of-order raw bar")
+                prices = {
+                    key: _decimal(row.get(key), key, zero=key == "volume")
+                    for key in ("open", "high", "low", "close", "volume")
+                }
+                if (
+                    not prices["low"]
+                    <= min(prices["open"], prices["close"])
+                    <= max(prices["open"], prices["close"])
+                    <= prices["high"]
+                ):
+                    raise ValueError("inconsistent OHLC bounds")
+                pin = pins.get(row.get("archive_name"))
+                if pin is None or row.get("archive_sha256") != pin["sha256"]:
+                    raise ValueError("bar archive identity mismatch")
+                archive_counts[pin["name"]] += 1
+                previous_close = closed
+                if opened == opened.floor("h"):
+                    retained.append(index)
+                else:
+                    original = {
+                        key: value.isoformat() if isinstance(value, (datetime, pd.Timestamp)) else value
+                        for key, value in row.items()
+                    }
+                    quarantined.append(
+                        dict(
+                            raw_selected_index=index,
+                            reason="off_utc_clock_start",
+                            row=original,
+                            row_fingerprint=canonical_hash(original),
+                        )
+                    )
+            except (ValueError, TypeError, KeyError) as error:
+                raise ValueError(f"preflight {symbol} raw selected row {index}: {error}") from error
+        if any(archive_counts[name] != pin["selected_rows"] for name, pin in pins.items()):
+            raise ValueError(f"preflight raw per-archive row counts mismatch: {symbol}")
+        if not retained:
+            raise ValueError(f"preflight has no executable clock-aligned rows: {symbol}")
+        prepared[symbol] = bars.iloc[retained].copy().reset_index(drop=True)
+        assets.append(
+            dict(
+                symbol=symbol,
+                raw_selected_rows=len(bars),
+                executable_rows=len(retained),
+                quarantined_off_clock_rows=len(quarantined),
+                invalid_boundary_rows=sum(row["invalid_boundary_rows"] for row in pins.values()),
+                quarantined_rows=quarantined,
+            )
+        )
+    artifact = dict(
+        schema_version=1,
+        hypothesis=HYPOTHESIS,
+        policy=QUARANTINE_POLICY,
+        archive_manifest_hash=discovery["archive_manifest_hash"],
+        assets=assets,
+    )
+    return prepared, artifact
+
+
 def _validate_paths(root, cache, output):
     if root != ROOT:
         raise ValueError("root must match the executing replay source checkout")
@@ -298,7 +406,7 @@ def _records(parent):
             if (
                 record["attempt_number"] != number
                 or record["previous_hash"] != previous
-                or record["hypothesis"] != HYPOTHESIS
+                or record["hypothesis"] not in (ORIGINAL_HYPOTHESIS, HYPOTHESIS)
                 or record["directory"] in directories
                 or canonical_hash({key: value for key, value in record.items() if key != "hash"}) != record["hash"]
             ):
@@ -317,6 +425,11 @@ def _records(parent):
                 and canonical_hash(json.loads(protocol_path.read_text())) != record["protocol_hash"]
             ):
                 raise ValueError("registry protocol identity mismatch")
+            if (
+                protocol_path.exists()
+                and json.loads(protocol_path.read_text()).get("hypothesis") != record["hypothesis"]
+            ):
+                raise ValueError("registry protocol hypothesis mismatch")
             previous = record["hash"]
             directories.add(record["directory"])
         if any(str(path.parent) not in directories for path in parent.glob("*/protocol.json")):
@@ -331,6 +444,34 @@ def _status(output, status, **fields):
     _append(output / "status.jsonl", record)
     if status in ("failed", "succeeded"):
         _write_json(output / "status.json", record)
+
+
+def _amendment(records):
+    parent_attempt = None
+    for record in records:
+        if record["hypothesis"] != ORIGINAL_HYPOTHESIS:
+            continue
+        directory = Path(record["directory"])
+        protocol_path = directory / "protocol.json"
+        if not protocol_path.exists():
+            continue
+        original = json.loads(protocol_path.read_text())
+        if original.get("source_identity") == ORIGINAL_FAILED_SOURCE:
+            if json.loads((directory / "status.json").read_text()).get("status") != "failed":
+                raise ValueError("original amendment parent must retain its failed status")
+            parent_attempt = {key: record[key] for key in ("attempt_number", "protocol_hash", "directory")}
+            break
+    return dict(
+        reason="The v1 archive parser accepted exact-duration off-clock bars that the strict UTC-clock replay "
+        "engine rejected; quarantine those starts without transformation.",
+        original_hypothesis=ORIGINAL_HYPOTHESIS,
+        original_source_identity=ORIGINAL_FAILED_SOURCE,
+        original_source_commit="46818a2",
+        original_failed_at="2026-09-09T09:54:13+00:00",
+        parent_attempt=parent_attempt,
+        disclosure="This amended retrospective input rule arose after the retained v1 failure; fresh reproductions "
+        "do not erase that history or the prior 24-trial selection.",
+    )
 
 
 def _register(root, output, discovery, requested, effective, cache):
@@ -367,6 +508,15 @@ def _register(root, output, discovery, requested, effective, cache):
             retrospective=True,
             promotable=False,
             independent_validation=False,
+            amendment=_amendment(records),
+            data_quality_policy=dict(
+                id=QUARANTINE_POLICY,
+                retain_original_parsed_rows=True,
+                quarantine_only="off_utc_clock_start",
+                retimestamp_resample_fill_or_substitute=False,
+                validate_other_engine_contracts_before_accounts=True,
+                missing_intervals_use_existing_gap_policy=True,
+            ),
             assumptions=dict(
                 initial_cash_per_account="10000",
                 independent_accounts=True,
@@ -512,10 +662,16 @@ def run_replay(
     _validate_paths(root, cache, output)
     discovery = load_pinned_discovery(root)
     protocol = _register(root, output, discovery, workers, effective, cache)
+    quality_binding = {}
     try:
         _status(output, "preflight")
-        scopes = load_scopes(discovery, cache, allow_download=allow_download)
-        _status(output, "evaluating")
+        raw_scopes = load_scopes(discovery, cache, allow_download=allow_download)
+        scopes, data_quality = prepare_scopes(discovery, raw_scopes)
+        quality_bytes = (_json(data_quality) + "\n").encode()
+        _exclusive(output / "data-quality.json", quality_bytes)
+        quality_binding = dict(data_quality_sha256=hashlib.sha256(quality_bytes).hexdigest())
+        _status(output, "preflight_complete", **quality_binding)
+        _status(output, "evaluating", **quality_binding)
         arguments = [
             (
                 root,
@@ -533,19 +689,35 @@ def run_replay(
             for candidate in discovery["candidates"]
         ]
         assets = [_run_asset(*args) for args in arguments] if effective == 1 else _parallel_assets(arguments, protocol)
+        for asset, quality in zip(assets, data_quality["assets"], strict=True):
+            asset["quality"].update(
+                {key: quality[key] for key in ("raw_selected_rows", "executable_rows", "quarantined_off_clock_rows")}
+            )
         if (
             source_identity(root) != protocol["source_identity"]
             or research_runtime_fingerprint() != protocol["runtime"]
         ):
             raise RuntimeError("replay source/runtime changed during evaluation")
-        result = dict(schema_version=1, status="succeeded", protocol=protocol, assets=assets)
+        if (
+            hashlib.sha256((output / "data-quality.json").read_bytes()).hexdigest()
+            != quality_binding["data_quality_sha256"]
+        ):
+            raise RuntimeError("replay data-quality artifact changed during evaluation")
+        result = dict(
+            schema_version=1,
+            status="succeeded",
+            protocol=protocol,
+            assets=assets,
+            data_quality_artifact="data-quality.json",
+            **quality_binding,
+        )
         report = render_report(result)
         _write_json(output / "result.json", result)
         _exclusive(output / "report.md", report.encode())
-        _status(output, "succeeded", result_hash=canonical_hash(result))
+        _status(output, "succeeded", result_hash=canonical_hash(result), **quality_binding)
         return result
     except BaseException as error:
-        _status(output, "failed", error_type=type(error).__name__, error=str(error))
+        _status(output, "failed", error_type=type(error).__name__, error=str(error), **quality_binding)
         raise
 
 
