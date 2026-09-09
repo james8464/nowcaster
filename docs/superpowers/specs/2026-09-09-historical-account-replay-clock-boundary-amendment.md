@@ -4,7 +4,7 @@ The first actual account replay failed at 09:54:13 UTC on 9 September 2026. Its 
 
 ## Root cause and decision
 
-The existing archive loader accepts intervals lasting exactly one hour. The new replay engine additionally requires UTC clock alignment. A read-only timestamp audit of all 260 checksum-pinned files found 42 exact-duration but off-clock rows per asset during a February 2018 outage. No loader-valid overlap or duplicate exists. The 15 invalid-duration rows per asset were already excluded by the original parser.
+The existing archive loader accepts intervals lasting exactly one hour. The new replay engine additionally requires UTC clock alignment. A read-only timestamp audit of all 260 checksum-pinned files found 42 exact-duration but off-clock rows per asset around a February 2018 data gap. No loader-valid overlap or duplicate exists. The 15 invalid-duration rows per asset were already excluded by the original parser. This identifies the data discrepancy, not an independently verified cause of the provider's interruption.
 
 BTC February archive SHA-256: `4e040b57a38af99b1f86efb12d95aed406b575af67b8038831523ff6362225d1`; CSV lines 170–211, open milliseconds `1518168494789 + 3600000*k`, `k=0..41`. ETH archive SHA-256: `e1fe7f0dd649f4bfc94c43e071d8c47360bdc9f6e63b8b5926c316490bb99220`; corresponding opens `1518168494800 + 3600000*k`. Their first opens are 9 February 2018 09:28:14.789/.800 UTC; last opens are 11 February 2018 02:28:14.789/.800 UTC.
 

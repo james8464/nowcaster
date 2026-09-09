@@ -10,7 +10,7 @@ The replay is a separate research tool in the project, not a new button in the n
 
 The first actual attempt failed safely on 9 September at 09:54 UTC when it reached archived bars that did not start on the UTC hourly clock. Its source and partial trading records are retained; it has no completed performance result. A separately recorded amended attempt is being prepared. Its results will appear here only after completion and independent reconciliation.
 
-The archive parser had accepted 42 one-hour bars per asset with shifted timestamps during a February 2018 outage. The replay engine correctly refused them under its stricter clock rule. The correction does not round their timestamps or relax the engine. It preserves those rows in a quarantine record and treats the interval as missing execution data. This choice is based on timestamp quality, not on whether those trades would win or lose.
+The archive parser had accepted 42 one-hour bars per asset with shifted timestamps around a February 2018 data gap. The replay engine correctly refused them under its stricter clock rule. The correction does not round their timestamps or relax the engine. It preserves those rows in a quarantine record and treats the interval as missing execution data. This choice is based on timestamp quality, not on whether those trades would win or lose.
 
 ## What is fixed before seeing the results
 
