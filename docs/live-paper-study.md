@@ -107,6 +107,13 @@ liquidating the live paper position. A stale mark leaves the frozen plan visible
 but its current marked value is stale. Gaps are not interpolated and do not imply
 that an exit happened.
 
+These added diagnostics belong to the 9 September software revision. The
+already-running study-001 deliberately remains on its earlier frozen source,
+so its original report does not gain new fields mid-experiment. The
+[dated live review](live-paper-review-2026-09-09.md) shows the equivalent
+read-only analysis of that retained position. Do not upgrade or restart the
+frozen collector to obtain a newer report format.
+
 Hypothetical entries pay the observed ask plus 5 basis points slippage; exits
 receive the observed bid minus 5 basis points. The model charges 10 basis points
 per side, independently of anyone's actual fee tier. Stress deducts another
