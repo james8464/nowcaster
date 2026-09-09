@@ -39,6 +39,14 @@ Final-fixture native verification passed: 84 Swift Testing cases in 22.665 secon
 
 The pre-existing native foreground-window visual smoke limitation remains: the harness previously observed an 882×686 inactive window where 900×700 was required and could not activate it. Native tests and successful packaging do not establish that this visual smoke check passed. This revision changes no Swift view code.
 
+## Integration and operational preservation
+
+Fast-forward integration onto `main` preserved the exact tested source and fixtures. The integrated checkout then passed 118 targeted calibration, evidence, prospective-accounting and manifest tests in 3.91 seconds, plus the tracked/reachable-history secret scan. No full suite was repeated after the identical-tree merge.
+
+At 06:48 UTC, read-only frozen-study verification again passed source/environment and retained manifest/discovery/registry checks. PID 74773 still used the original frozen working directory and command; its source checkout was clean. The 06:47:37 report was fresh and observing. Additional connection interruptions had already recovered; the latest gap record was 06:21:01.150907 UTC. The [dated live review](live-paper-review-2026-09-09.md) retains the updated coverage and economic snapshot without replacing the original observations.
+
+The development worktree is retained with the built app and detailed RED/GREEN/review records. The existing quiet hourly study monitor tracks the new GitHub CI run separately; completed historical CI run `34265762701` remains successful and is not rerun. No frozen source/environment, retained study record, trading rule, account, order, alert or power setting was changed.
+
 ## Evidence interpretation
 
 Correct software and passing tests do not establish a profitable trading strategy. Both frozen BTC/ETH candidates failed historical screening, and the observed live sample is tiny and gap-affected. No qualified alerts, broker orders or real-money readiness were enabled.

@@ -86,6 +86,12 @@ additional_stress = full_entry_notional × 0.0034
 
 The entry fill is an append-only journal record. Mark-to-market P&L naturally changes after the report timestamp; the numbers above are not a live quote.
 
+## Follow-up observation at release verification
+
+The **06:47:37 UTC** report, inspected at 06:48 UTC, remained collecting/observing with a fresh quote mark and the same four BTC decisions, one entry and zero closed trades. BTC net liquidation-marked P&L had moved to **+4.5393738050178 USDT**, while stressed P&L remained **−3.02535608581026 USDT**. ETH still had no trades. This temporary balance change does not alter the failed historical screen or qualify either candidate.
+
+Coverage was **656/723 minutes (90.7331%) per asset**, leaving **67 missing minutes**, versus 59 at the earlier observation. Read-only journal inspection found additional recovered quote gaps ending around 06:05:39, 06:11:39 and 06:21:01 UTC. There were 206 gap records in total; these are **not 206 distinct outages**, because connection retry errors also create records. The latest gap was 06:21:01.150907 UTC, and the retained `ConnectError` was not an active failure at inspection. Underlying network/sleep/upstream cause remains unestablished. No gaps, decisions or positions were edited, and the healthy collector was left alone.
+
 ## Research boundary
 
 Keep the current BTC/ETH universe and both frozen diagnostic rules unchanged. Future strategy research needs a separate recorded hypothesis and selection round, retaining losers and the total campaign count. No parameter search was conducted for this review. Favoring the asset or threshold that happens to look best in these few hours would reuse evaluation data as training data.

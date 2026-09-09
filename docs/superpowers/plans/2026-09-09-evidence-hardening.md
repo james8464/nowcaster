@@ -81,5 +81,9 @@ Define these as modeled total trade P&L if the remaining quantity exits at that 
 
 - [x] Review each task and whole diff. Record actual live observation query/evidence without rewriting the retained study.
 - [x] Run affected integration groups, then one full Python suite for the revised code. Native contracts are unchanged; run native tests/build only as needed for packaging, record existing foreground-window smoke limitation accurately.
-- [ ] Confirm frozen collector remains healthy and source/environment unchanged. Do not interrupt it.
-- [ ] Update beginner-facing README with actual improvements and remaining limitations. Merge and upload under the user's standing authorization only after clean verification; preserve all historical results and freeze records.
+- [x] Confirm frozen collector remains healthy and source/environment unchanged. Do not interrupt it.
+- [x] Update beginner-facing README with actual improvements and remaining limitations. Merge and upload under the user's standing authorization only after clean verification; preserve all historical results and freeze records.
+
+## Completion record
+
+See `docs/evidence-hardening-verification-2026-09-09.md`: 1,132 Python tests, 85 native tests, final app/replay/manifest checks and 118 post-integration checks passed. One final-review migration finding was fixed with versioned calibration contracts and approved in a scoped re-review. The contract fix preserves legacy rows and does not create or validate a target-before-stop event producer. GitHub CI is tracked separately in the retained progress ledger by the existing quiet monitor; no repeating historical search or full-test schedule was added.
