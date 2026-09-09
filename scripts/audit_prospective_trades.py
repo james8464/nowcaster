@@ -13,7 +13,7 @@ import json
 import sqlite3
 import sys
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_DOWN, Decimal, InvalidOperation
 from pathlib import Path
 
 D = Decimal
@@ -142,7 +142,7 @@ def validate_decision(event, candidate, manifest):
     require(type(payload["accepted"]) is bool, "invalid accepted flag")
 
 
-def validate_fill(event, fill, candidate, manifest):
+def validate_fill(event, fill, candidate, manifest, *, cash, frozen):
     payload, time = event["payload"], at(event["at"])
     quote = payload["quote"]
     provider, received, processed = (at(quote[key]) for key in ("provider_time", "received_at", "processed_at"))
@@ -170,6 +170,18 @@ def validate_fill(event, fill, candidate, manifest):
     )
     equal(fill["price"], (ask if buy else bid) * (D("1.0005") if buy else D(".9995")), "modeled fill price")
     equal(fill["fee"], quantity * price * D(".001"), "fill fee")
+    if buy:
+        require((ask - bid) / bid * 10000 <= manifest["maximum_entry_spread_bps"], "entry spread exceeds frozen limit")
+        cost = price * D("1.001")
+        stop = price - number(frozen["stop_distance"], positive=True)
+        risk = cost - stop * D(".9995") * D(".999")
+        require(risk > 0, "entry risk must be positive")
+        exposure_limit = cash * D(str(manifest["maximum_exposure_fraction"]))
+        risk_budget = D(str(manifest["initial_cash"])) * D(str(manifest["initial_risk_fraction"]))
+        expected_quantity = (min(exposure_limit / cost, risk_budget / risk) / step).to_integral_value(
+            rounding=ROUND_DOWN
+        ) * step
+        equal(fill["quantity"], expected_quantity, "entry quantity from cash/risk/lot sizing")
     source_quote = {k: v for k, v in quote.items() if k not in ("received_at", "processed_at")}
     require(digest(source_quote) == payload["source_hash"], "fill source hash mismatch")
     return (
@@ -369,6 +381,10 @@ def audit(directory, now=None):
         "fee_bps": 10,
         "additional_stress_bps": 34,
         "entry_latency_ms": 250,
+        "maximum_entry_spread_bps": 10,
+        "initial_cash": 10000,
+        "maximum_exposure_fraction": 0.25,
+        "initial_risk_fraction": 0.0025,
     }.items():
         require(manifest[key] == value, f"unsupported frozen contract: {key}")
     candidates = {c["candidate_id"]: c for c in manifest["candidates"]}
@@ -376,6 +392,7 @@ def audit(directory, now=None):
     decisions, fills, closed, cancellations = {}, {}, {}, {}
     gaps = [e["payload"] | {"seq": e["seq"]} for e in events if e["kind"] == "gap"]
     active = {}
+    cash = {candidate_id: D(str(manifest["initial_cash"])) for candidate_id in candidates}
     for event in events:
         payload, kind = event["payload"], event["kind"]
         if kind == "decision":
@@ -393,10 +410,19 @@ def audit(directory, now=None):
                     identity[0] in active and active[identity[0]][0] == identity,
                     "fill does not match active account decision",
                 )
+                validated = validate_fill(
+                    event,
+                    fill,
+                    candidates[identity[0]],
+                    manifest,
+                    cash=cash[identity[0]],
+                    frozen=decisions[identity]["payload"]["frozen"],
+                )
                 remaining = active[identity[0]][1]
                 if fill["side"] == "buy":
                     require(remaining is None, "entry overlaps active position")
                     active[identity[0]] = (identity, number(fill["quantity"], positive=True))
+                    cash[identity[0]] -= number(fill["quantity"]) * (number(fill["price"]) * D("1.001"))
                 else:
                     require(remaining is not None, "exit before entry")
                     remaining -= number(fill["quantity"], positive=True)
@@ -405,7 +431,8 @@ def audit(directory, now=None):
                         active[identity[0]] = (identity, remaining)
                     else:
                         del active[identity[0]]
-                fills.setdefault(identity, []).append(validate_fill(event, fill, candidates[identity[0]], manifest))
+                    cash[identity[0]] += number(fill["quantity"]) * number(fill["price"]) - number(fill["fee"])
+                fills.setdefault(identity, []).append(validated)
         elif kind in ("closed_trade", "cancellation"):
             identity = (payload["candidate_id"], payload["signal_id"])
             collection = closed if kind == "closed_trade" else cancellations
@@ -458,6 +485,7 @@ def audit(directory, now=None):
     if fixed_events:
         fixed = fixed_events[0]
         require(at(fixed["at"]) == at(manifest["ends_at"]), "fixed end time mismatch")
+        require(set(fixed["payload"]["accounts"]) == set(candidates), "fixed end candidate/account mismatch")
         for candidate_id, account in fixed["payload"]["accounts"].items():
             owned = []
             for identity, original_fills in fills.items():

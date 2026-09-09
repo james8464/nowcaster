@@ -346,6 +346,94 @@ def test_rehashed_fixed_end_cannot_change_original_position_levels(study):
     assert audit(directory, end + 1).returncode != 0
 
 
+def test_rehashed_entry_cannot_bypass_frozen_spread_limit(study):
+    directory, ledger = study
+    signal(ledger)
+    observe(ledger, quote())
+    assert result(directory)["trades"][0]["initial_quantity"] == "11.1"
+    ledger.close()
+
+    def change(events, state):
+        payload = next(e["payload"] for e in events if e["kind"] == "fills")
+        payload["quote"]["bid"] = "99"
+        payload["source_hash"] = canonical_hash(
+            {k: v for k, v in payload["quote"].items() if k not in ("received_at", "processed_at")}
+        )
+        state["last_quotes"]["BTCUSDT"]["source_hash"] = payload["source_hash"]
+
+    rewrite(directory, change)
+    process = audit(directory)
+    assert process.returncode != 0
+    assert "entry spread" in process.stderr
+
+
+@pytest.mark.parametrize("atr,quantity", [(".5", "26"), ("2", "11.0")])
+def test_rehashed_entry_quantity_must_match_cash_risk_and_lot_sizing(study, atr, quantity):
+    directory, ledger = study
+    ledger.record_signal(
+        "c" * 64, decision_at=START, bar_end=START, reference_price=D("100"), atr=D(atr), signal_id="sizing"
+    )
+    observe(ledger, quote())
+    assert result(directory)["trades"]
+    ledger.close()
+
+    def change(events, state):
+        fill = next(e["payload"]["fills"][0] for e in events if e["kind"] == "fills")
+        account = state["accounts"]["c" * 64]
+        position = account["position"]
+        units = D(quantity)
+        price = D("100.100025")
+        fee = units * price * D(".001")
+        cost = units * price + fee
+        fill["quantity"], fill["fee"] = quantity, str(fee)
+        fill["frozen_plan"]["planned_loss"] = str(
+            units * (price * D("1.001") - (price - D(atr)) * D(".9995") * D(".999"))
+        )
+        position.update(
+            quantity=quantity, initial_quantity=quantity, entry_cost=str(cost), entry_notional=str(units * price)
+        )
+        account.update(cash=str(D("10000") - cost), fees=str(fee), slippage=str(units * D("100.05") * D(".0005")))
+
+    rewrite(directory, change)
+    process = audit(directory)
+    assert process.returncode != 0
+    assert "entry quantity" in process.stderr
+
+
+def test_next_entry_uses_cash_after_partial_and_same_time_final_exit(study):
+    directory, ledger = study
+    signal(ledger)
+    observe(ledger, quote(sequence=1))
+    observe(ledger, quote(2, bid="97", ask="97.05", size="5", sequence=2))
+    assert result(directory)["trades"][0]["remaining_quantity"] == "6.1"
+    observe(ledger, quote(2, bid="97", ask="97.05", size="100", sequence=3))
+    at = START + timedelta(seconds=2)
+    ledger.record_signal(
+        "c" * 64, decision_at=at, bar_end=at, reference_price=D("1"), atr=D(".005"), signal_id="after-loss"
+    )
+    observe(ledger, quote(3, bid="1", ask="1.0005", size="10000", sequence=4))
+    report = result(directory, 3)
+    assert report["trades"][0]["status"] == "completed"
+    assert report["trades"][1]["initial_quantity"] == "2485.7"
+
+
+def test_rehashed_fixed_end_cannot_omit_a_candidate_account(study):
+    directory, ledger = study
+    ledger.summary(now=START + timedelta(days=90))
+    assert result(directory, 90 * 86400)["fixed_end"]["accounts"]
+    ledger.close()
+
+    def change(events, state):
+        fixed = next(e["payload"] for e in events if e["kind"] == "fixed_end")
+        fixed["accounts"] = {}
+        state["fixed_end"] = fixed
+
+    rewrite(directory, change)
+    process = audit(directory, 90 * 86400)
+    assert process.returncode != 0
+    assert "fixed end candidate/account" in process.stderr
+
+
 def test_outputs_preserve_collisions_and_reject_source_descendants(study, tmp_path):
     directory, ledger = study
     signal(ledger)
