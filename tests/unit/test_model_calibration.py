@@ -105,3 +105,42 @@ def test_selective_threshold_requires_a_positive_lower_net_edge() -> None:
     assert selected.threshold > 0.5
     assert selected.lower_net_edge > 0
     assert rejected.status == "abstain"
+
+
+def test_threshold_search_adjusts_for_all_unique_attempts() -> None:
+    # Mean .002, standard error about .00092: pointwise positive, search-adjusted negative.
+    returns = np.array([0.012, -0.008] * 60)
+    pointwise = selective_threshold(np.full(120, 0.8), returns, candidates=[0.5])
+    searched = selective_threshold(np.full(120, 0.8), returns, candidates=np.linspace(0.5, 1, 101))
+    assert pointwise.status == "selected"
+    assert searched.status == "abstain"
+    assert searched.candidate_count == 101
+    assert searched.lower_net_edge < 0
+
+
+def test_duplicate_thresholds_do_not_inflate_multiplicity() -> None:
+    probabilities = np.full(120, 0.8)
+    returns = np.array([0.012, -0.008] * 60)
+    unique = selective_threshold(probabilities, returns, candidates=[0.5, 0.7])
+    repeated = selective_threshold(probabilities, returns, candidates=[0.5, 0.7] * 20)
+    assert repeated == unique
+    assert repeated.candidate_count == 2
+
+
+def test_threshold_requires_effective_sample_floor_for_clustered_returns() -> None:
+    returns = np.repeat([0.004, 0.006], 60)
+    selected = selective_threshold(np.full(120, 0.8), returns, candidates=[0.5])
+    assert selected.status == "abstain"
+    relaxed = selective_threshold(np.full(120, 0.8), returns, candidates=[0.5], minimum_effective_observations=2)
+    assert relaxed.status == "selected"
+    assert relaxed.effective_observations < 30
+
+
+def test_low_level_calibrator_report_is_fit_diagnostics() -> None:
+    started = datetime(2026, 1, 1, tzinfo=UTC)
+    fitted = fit_out_of_fold_calibration(
+        np.array([0.9, 0.55] * 120),
+        np.array([1, 0] * 120),
+        tuple(started + timedelta(minutes=i) for i in range(240)),
+    )
+    assert fitted.report.report_scope == "fit_diagnostics"

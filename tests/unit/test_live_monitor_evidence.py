@@ -4,6 +4,8 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pandas as pd
+import pytest
+from pydantic import ValidationError
 
 from src.database.engine import Database
 from src.live_monitor.evidence import (
@@ -369,6 +371,13 @@ def test_live_evidence_rejects_small_effective_calibration_samples() -> None:
 
     assert evidence.calibration_status == "unavailable"
     assert "minimum_effective_calibration_sample" in evidence.reasons
+
+
+def test_sealed_component_rejects_bar_profitability_probability_definition() -> None:
+    payload = component("macd_histogram_trend", "0.5").model_dump()
+    payload["probability_definition"] = "positive_strategy_return_after_costs"
+    with pytest.raises(ValidationError, match="probability_definition"):
+        SealedComponent.model_validate(payload)
 
 
 def test_live_evidence_rejects_nonpositive_lower_net_edge() -> None:

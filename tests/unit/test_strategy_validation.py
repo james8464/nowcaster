@@ -387,13 +387,13 @@ def test_small_fold_calibration_cannot_become_live_eligible() -> None:
     assert first.uncertainty == second.uncertainty
 
 
-def test_strategy_oof_calibration_emits_promotion_grade_receipt() -> None:
-    decisions = pd.date_range("2026-01-01", periods=120, freq="min", tz="UTC")
-    favorable = pd.Series([index % 2 == 0 for index in range(120)])
+def _calibration_fixture(count: int = 480, signal: int = 1) -> tuple[StrategyRunEvidence, pd.DataFrame]:
+    decisions = pd.date_range("2026-01-01", periods=count, freq="min", tz="UTC")
+    favorable = pd.Series([index % 2 == 0 for index in range(count)])
     signals = pd.DataFrame(
         {
             "decision_timestamp": decisions,
-            "signal": 1,
+            "signal": signal,
             "strength": favorable.map({True: 0.8, False: 0.1}),
         }
     )
@@ -420,6 +420,17 @@ def test_strategy_oof_calibration_emits_promotion_grade_receipt() -> None:
             ),
         ),
     )
+    return evidence, curve
+
+
+def _fit_calibration(evidence: StrategyRunEvidence, curve: pd.DataFrame):
+    return fit_strategy_oof_calibration(
+        evidence, curve, pd.Series(True, index=curve.index), current_signal=1, current_strength=0.8
+    )
+
+
+def test_strategy_oof_calibration_emits_chronological_confirmation_receipt() -> None:
+    evidence, curve = _calibration_fixture()
 
     status, probability, edge, cost, uncertainty, receipt = fit_strategy_oof_calibration(
         evidence,
@@ -432,9 +443,151 @@ def test_strategy_oof_calibration_emits_promotion_grade_receipt() -> None:
     assert status == "calibrated"
     assert receipt["method"] == "oof_sigmoid_v2"
     assert receipt["effective_observations"] == pytest.approx(120)
+    assert receipt["probability_definition"] == "positive_strategy_return_after_costs"
+    assert receipt["report_scope"] == "chronological_confirmation"
+    assert receipt["phases"]["fit"]["observations"] == 239
+    assert receipt["phases"]["selection"]["observations"] == 119
+    assert receipt["phases"]["confirmation"]["observations"] == 120
     assert receipt["lower_expected_net_edge"] > 0
     assert probability >= receipt["selective_threshold"]
     assert edge - cost - uncertainty == pytest.approx(receipt["lower_expected_net_edge"])
+
+
+def test_strategy_profitability_is_independent_of_long_short_direction() -> None:
+    long, curve = _calibration_fixture(signal=1)
+    short, _ = _calibration_fixture(signal=-1)
+    long_result = _fit_calibration(long, curve)
+    short_result = _fit_calibration(short, curve)
+    assert short_result[0] == long_result[0] == "calibrated"
+    assert short_result[1:5] == pytest.approx(long_result[1:5])
+    assert short_result[5]["successes"] == long_result[5]["successes"]
+
+
+def test_high_strength_losing_short_cannot_be_a_calibration_win() -> None:
+    evidence, curve = _calibration_fixture(signal=-1)
+    curve["net_return"] = [-0.005, 0.001] * 240
+    curve["gross_return"] = [-0.004, 0.002] * 240
+    status, probability, edge, cost, uncertainty, receipt = _fit_calibration(evidence, curve)
+    assert probability < 0.5
+    if status == "calibrated":
+        assert edge == pytest.approx(0.002)
+        assert edge - cost - uncertainty <= 0.001 + 1e-12
+        assert receipt["probability_definition"] == "positive_strategy_return_after_costs"
+
+
+@pytest.mark.parametrize(
+    "column,value",
+    [("cost_return", -0.001), ("cost_return", 0.002), ("gross_return", float("inf")), ("net_return", float("nan"))],
+)
+def test_malformed_calibration_economics_are_unavailable(column: str, value: float) -> None:
+    evidence, curve = _calibration_fixture()
+    curve.loc[0, column] = value
+    result = _fit_calibration(evidence, curve)
+    assert result[0] == "unavailable"
+    assert "economic" in result[5]["reason"]
+
+
+def test_profitable_selection_does_not_hide_losing_confirmation() -> None:
+    evidence, curve = _calibration_fixture()
+    curve.loc[360:, "net_return"] = -0.005
+    curve.loc[360:, "gross_return"] = -0.004
+    result = _fit_calibration(evidence, curve)
+    assert result[0] == "unavailable"
+    assert "confirmation" in result[5]["reason"]
+    assert result[5]["selection"]["lower_net_edge"] > 0
+    assert result[5]["confirmation"]["lower_net_edge"] < 0
+
+
+def test_cross_boundary_outcomes_are_purged_before_fit_and_selection() -> None:
+    evidence, curve = _calibration_fixture()
+    curve.loc[0, "outcome_available_at"] = curve.loc[240, "decision_timestamp"]
+    curve.loc[240, "outcome_available_at"] = curve.loc[360, "decision_timestamp"]
+    result = _fit_calibration(evidence, curve)
+    assert result[0] == "calibrated"
+    assert result[5]["phases"]["fit"]["purged_observations"] == 2
+    assert result[5]["phases"]["selection"]["purged_observations"] == 2
+    curve.loc[[0, 240], "net_return"] = -0.5
+    curve.loc[[0, 240], "gross_return"] = -0.499
+    changed = _fit_calibration(evidence, curve)
+    assert changed[1:5] == pytest.approx(result[1:5])
+    assert changed[5]["selection"] == result[5]["selection"]
+
+
+def test_confirmation_mutation_cannot_change_fit_or_threshold() -> None:
+    evidence, curve = _calibration_fixture()
+    original = _fit_calibration(evidence, curve)
+    curve.loc[360:, "net_return"] *= 0.6
+    curve.loc[360:, "gross_return"] = curve.loc[360:, "net_return"] + 0.001
+    changed = _fit_calibration(evidence, curve)
+    assert changed[0] == original[0] == "calibrated"
+    assert changed[1] == original[1]
+    assert changed[5]["selection"] == original[5]["selection"]
+    assert changed[5]["brier_score"] == original[5]["brier_score"]
+    assert changed[2] != original[2]
+    curve.loc[360:, "net_return"] = [-0.005, 0.001] * 60
+    curve.loc[360:, "gross_return"] = curve.loc[360:, "net_return"] + 0.001
+    flipped = _fit_calibration(evidence, curve)
+    assert flipped[0] == "unavailable"
+    assert flipped[5]["fit_diagnostics"] == original[5]["fit_diagnostics"]
+    assert flipped[5]["selection"] == original[5]["selection"]
+
+
+def test_inadequate_confirmation_sample_is_unavailable() -> None:
+    evidence, curve = _calibration_fixture(count=360)
+    result = _fit_calibration(evidence, curve)
+    assert result[0] == "unavailable"
+    assert "confirmation" in result[5]["reason"]
+    assert result[5]["phases"]["confirmation"]["observations"] == 90
+
+
+@pytest.mark.parametrize("phase,start,stop", [("fit", 0, 240), ("confirmation", 360, 480)])
+def test_clustered_phase_below_effective_calibration_floor_abstains(phase: str, start: int, stop: int) -> None:
+    evidence, curve = _calibration_fixture()
+    half = (stop - start) // 2
+    curve.loc[start : stop - 1, "net_return"] = [0.005] * half + [-0.001] * half
+    curve.loc[start : stop - 1, "gross_return"] = curve.loc[start : stop - 1, "net_return"] + 0.001
+    result = _fit_calibration(evidence, curve)
+    assert result[0] == "unavailable"
+    assert phase in result[5]["reason"]
+    assert result[5]["phases"][phase]["effective_observations"] < 100
+
+
+def test_confirmation_requires_thirty_selected_observations() -> None:
+    evidence, curve = _calibration_fixture()
+    signals = evidence.signals.copy()
+    signals.loc[400:, "strength"] = 0.1
+    result = _fit_calibration(replace(evidence, signals=signals), curve)
+    assert result[0] == "unavailable"
+    assert "confirmation" in result[5]["reason"]
+    assert result[5]["confirmation"]["observations"] == 20
+
+
+def test_report_scores_confirmation_outcomes_not_fit_outcomes() -> None:
+    evidence, curve = _calibration_fixture()
+    curve.loc[361::2, "net_return"] = 0.001
+    curve.loc[361::2, "gross_return"] = 0.002
+    result = _fit_calibration(evidence, curve)
+    assert result[0] == "calibrated"
+    assert result[5]["successes"] == 120
+    assert result[5]["brier_score"] > 0.4
+    assert result[5]["fit_diagnostics"]["brier_score"] < 0.01
+
+
+def test_insufficient_fit_still_reports_available_phase_counts() -> None:
+    evidence, curve = _calibration_fixture(count=80)
+    result = _fit_calibration(evidence, curve)
+    assert result[0] == "unavailable"
+    assert result[5]["phases"]["fit"]["observations"] == 39
+    assert result[5]["phases"]["confirmation"]["observations"] == 20
+
+
+def test_outcome_availability_is_bound_into_evidence_hash() -> None:
+    evidence, curve = _calibration_fixture()
+    original = _fit_calibration(evidence, curve)
+    curve.loc[400, "outcome_available_at"] += pd.Timedelta(seconds=1)
+    changed = _fit_calibration(evidence, curve)
+    assert changed[0] == original[0] == "calibrated"
+    assert changed[5]["decision_rows_hash"] != original[5]["decision_rows_hash"]
 
 
 def test_fold_calibration_is_scored_at_mapped_outcome_rows() -> None:
@@ -456,7 +609,7 @@ def test_fold_calibration_is_scored_at_mapped_outcome_rows() -> None:
 
     error = calculate_fold_calibration_error(signals, outcomes, decisions)
 
-    assert error == pytest.approx(0.025)
+    assert error == pytest.approx(0.325)
 
 
 def test_fold_calibration_causally_carries_sparse_transition_signals() -> None:

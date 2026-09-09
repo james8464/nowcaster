@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from types import MappingProxyType
@@ -20,7 +20,7 @@ from src.backtest.robustness import (
     lower_mean_confidence_bound,
     run_block_bootstrap,
 )
-from src.models.calibration import fit_out_of_fold_calibration, selective_threshold
+from src.models.calibration import calibration_report, fit_out_of_fold_calibration, selective_threshold
 from src.strategies.registry import StrategyRegistry
 from src.strategies.types import BarInterval, StrategyFamily, StrategyMode, canonical_hash
 
@@ -298,7 +298,7 @@ def calculate_fold_calibration_error(
     outcomes: pd.DataFrame,
     decision_timestamps: Sequence[pd.Timestamp | datetime],
 ) -> float:
-    """Score directional confidence against causally mapped fold outcomes."""
+    """Score profitability confidence against mapped directional portfolio returns."""
     required_signals = {"decision_timestamp", "signal", "strength"}
     required_outcomes = {"decision_timestamp", "outcome_available_at", "net_return"}
     if missing := required_signals - set(signals.columns):
@@ -339,7 +339,7 @@ def calculate_fold_calibration_error(
     if not directions.isin((-1, 0, 1)).all() or not strengths.between(0, 1).all():
         raise ValueError("fold signals contain invalid direction or strength")
     probability = 0.5 + 0.5 * strengths.where(directions != 0, 0.0)
-    favorable = ((directions * returns) > 0).astype(float)
+    favorable = (returns > 0).astype(float)
     return float(np.mean(np.square(probability - favorable)))
 
 
@@ -1033,10 +1033,32 @@ def fit_strategy_oof_calibration(
     minimum_effective_observations: int = 100,
     isotonic_minimum: int = 1_000,
 ) -> tuple[str, float, float, float, float, Mapping[str, Any]]:
+    receipt: dict[str, Any] = {
+        "probability_definition": "positive_strategy_return_after_costs",
+        "report_scope": "chronological_confirmation",
+        "confidence_scope": "selection_candidate_family_then_independent_fixed_threshold_confirmation",
+        "minimum_observations": minimum_observations,
+        "minimum_effective_observations": minimum_effective_observations,
+        "phases": {},
+    }
+
+    def unavailable(reason: str) -> tuple[str, float, float, float, float, Mapping[str, Any]]:
+        return "unavailable", 0.5, 0.0, 0.0, 0.0, {**receipt, "reason": reason}
+
     signals = evidence.signals.copy()
     required = {"decision_timestamp", "signal", "strength"}
     if missing := required - set(signals.columns):
-        return "unavailable", 0.5, 0.0, 0.0, 0.0, {"reason": f"missing signal fields: {sorted(missing)}"}
+        return unavailable(f"missing signal fields: {sorted(missing)}")
+    required_outcomes = {
+        "decision_timestamp",
+        "outcome_available_at",
+        "cost_decision_timestamp",
+        "net_return",
+        "gross_return",
+        "cost_return",
+    }
+    if missing := required_outcomes - set(mapped_curve.columns):
+        return unavailable(f"missing economic outcome fields: {sorted(missing)}")
     signals["decision_timestamp"] = pd.to_datetime(signals["decision_timestamp"], utc=True)
     outcomes = mapped_curve.loc[development_mask].copy()
     outcomes["decision_timestamp"] = pd.to_datetime(outcomes["decision_timestamp"], utc=True)
@@ -1046,117 +1068,165 @@ def fit_strategy_oof_calibration(
         how="inner",
         validate="one_to_one",
     )
-    joined["net_return"] = pd.to_numeric(joined["net_return"], errors="coerce")
     joined["signal"] = pd.to_numeric(joined["signal"], errors="coerce")
     joined["strength"] = pd.to_numeric(joined["strength"], errors="coerce")
-    joined = joined.loc[joined["signal"].isin((-1, 1)) & joined["net_return"].notna()].copy()
+    joined = joined.loc[joined["signal"].isin((-1, 1))].copy()
     fold_mask = pd.Series(False, index=joined.index)
     for fold in evidence.fold_evidence:
         start = pd.Timestamp(fold.validation_start)
         end = pd.Timestamp(fold.validation_end)
         fold_mask |= joined["decision_timestamp"].between(start, end, inclusive="both")
     joined = joined.loc[fold_mask].sort_values("decision_timestamp", kind="stable")
-    if len(joined) < minimum_observations:
-        return (
-            "unavailable",
-            0.5,
-            0.0,
-            0.0,
-            0.0,
-            {
-                "reason": (
-                    f"promotion-grade calibration requires at least {minimum_observations} out-of-fold observations"
-                ),
-                "observations": len(joined),
-            },
+    receipt["observations"] = len(joined)
+    if joined.empty:
+        return unavailable(f"calibration requires at least {minimum_observations} out-of-fold observations")
+
+    economic_columns = ["net_return", "gross_return", "cost_return"]
+    joined[economic_columns] = joined[economic_columns].apply(pd.to_numeric, errors="coerce")
+    if (
+        not np.isfinite(joined[economic_columns].to_numpy(dtype=float)).all()
+        or (joined["cost_return"] < 0).any()
+        or not np.allclose(joined["gross_return"] - joined["cost_return"], joined["net_return"], rtol=1e-9, atol=1e-12)
+    ):
+        return unavailable("invalid economic evidence: finite returns, nonnegative costs and gross-cost=net required")
+    if not np.isfinite(joined["strength"]).all():
+        return unavailable("signal strengths must be finite")
+    joined["outcome_available_at"] = pd.to_datetime(joined["outcome_available_at"], utc=True, errors="coerce")
+    joined["cost_decision_timestamp"] = pd.to_datetime(joined["cost_decision_timestamp"], utc=True, errors="coerce")
+    if (
+        joined["outcome_available_at"].isna().any()
+        or (joined["outcome_available_at"] < joined["decision_timestamp"]).any()
+        or not joined["cost_decision_timestamp"].equals(joined["decision_timestamp"])
+    ):
+        return unavailable("economic outcome availability or cost decision chronology is invalid")
+    receipt["decision_rows_hash"] = canonical_hash(
+        joined[
+            [
+                "decision_timestamp",
+                "outcome_available_at",
+                "cost_decision_timestamp",
+                "signal",
+                "strength",
+                *economic_columns,
+            ]
+        ].to_dict("records")
+    )
+    fit_end, selection_end = len(joined) // 2, 3 * len(joined) // 4
+    selection_start = joined.iloc[fit_end]["decision_timestamp"]
+    confirmation_start = joined.iloc[selection_end]["decision_timestamp"]
+    receipt["boundaries"] = {
+        "fit_end": fit_end,
+        "selection_end": selection_end,
+        "selection_start": selection_start.to_pydatetime(),
+        "confirmation_start": confirmation_start.to_pydatetime(),
+    }
+    fit = joined.iloc[:fit_end]
+    selection_rows = joined.iloc[fit_end:selection_end]
+    confirmation_rows = joined.iloc[selection_end:]
+    fit = fit.loc[fit["outcome_available_at"] < selection_start]
+    selection_rows = selection_rows.loc[selection_rows["outcome_available_at"] < confirmation_start]
+
+    def phase_report(rows: pd.DataFrame, input_count: int) -> dict[str, Any]:
+        diagnostics = (
+            calibration_report(
+                (0.5 + 0.5 * rows["strength"].clip(0, 1)).to_numpy(),
+                (rows["net_return"] > 0).astype(int).to_numpy(),
+            )
+            if len(rows)
+            else None
         )
-    signed_returns = joined["signal"] * joined["net_return"]
-    favorable = (signed_returns > 0).astype(int)
-    if favorable.nunique() < 2:
-        return "unavailable", 0.5, 0.0, 0.0, 0.0, {"reason": "development outcomes contain one class"}
-    raw_probabilities = 0.5 + 0.5 * joined["strength"].clip(0, 1)
-    timestamps = tuple(joined["decision_timestamp"].dt.to_pydatetime())
+        return {
+            "input_observations": input_count,
+            "observations": len(rows),
+            "effective_observations": diagnostics.effective_sample_size if diagnostics else 0.0,
+            "purged_observations": input_count - len(rows),
+        }
+
+    phases = {
+        "fit": phase_report(fit, fit_end),
+        "selection": phase_report(selection_rows, selection_end - fit_end),
+        "confirmation": phase_report(confirmation_rows, len(joined) - selection_end),
+    }
+    receipt["phases"] = phases
+    if len(fit) < minimum_observations or phases["fit"]["effective_observations"] < minimum_effective_observations:
+        return unavailable(
+            f"fit requires {minimum_observations} nominal and {minimum_effective_observations} effective observations"
+        )
+    if (fit["net_return"] > 0).nunique() < 2:
+        return unavailable("fit outcomes contain one class")
     calibration = fit_out_of_fold_calibration(
-        raw_probabilities.to_numpy(dtype=float),
-        favorable.to_numpy(dtype=int),
-        timestamps,
+        (0.5 + 0.5 * fit["strength"].clip(0, 1)).to_numpy(dtype=float),
+        (fit["net_return"] > 0).astype(int).to_numpy(),
+        tuple(fit["decision_timestamp"].dt.to_pydatetime()),
         minimum_observations=minimum_observations,
         isotonic_minimum=isotonic_minimum,
     )
-    if calibration.status != "calibrated" or calibration.report.effective_sample_size < minimum_effective_observations:
-        return (
-            "unavailable",
-            0.5,
-            0.0,
-            0.0,
-            0.0,
-            {
-                "reason": (
-                    "promotion-grade calibration requires at least "
-                    f"{minimum_effective_observations} effective out-of-fold observations"
-                ),
-                "observations": len(joined),
-                "effective_observations": calibration.report.effective_sample_size,
-            },
-        )
-    calibrated = calibration.predict(raw_probabilities.to_numpy(dtype=float))
-    selection = selective_threshold(calibrated, signed_returns.to_numpy(dtype=float))
+    if calibration.status != "calibrated":
+        return unavailable("fit calibrator is insufficient")
+    receipt["fit_diagnostics"] = asdict(calibration.report)
+    if len(selection_rows) < 30:
+        return unavailable("selection requires at least 30 nominal and effective selected observations")
+    selection = selective_threshold(
+        calibration.predict((0.5 + 0.5 * selection_rows["strength"].clip(0, 1)).to_numpy()),
+        selection_rows["net_return"].to_numpy(dtype=float),
+    )
+    receipt["selection"] = asdict(selection)
     if selection.status != "selected":
-        return (
-            "unavailable",
-            0.5,
-            0.0,
-            0.0,
-            0.0,
-            {
-                "reason": "no selective threshold has a positive lower net-edge confidence bound",
-                "observations": len(joined),
-                "effective_observations": calibration.report.effective_sample_size,
-            },
+        return unavailable(
+            "selection has no positive adjusted lower net-edge bound "
+            "with 30 nominal/effective selected rows and 5% coverage"
         )
-    selected_mask = calibrated >= selection.threshold
-    selected = joined.loc[selected_mask]
-    selected_signed_net = signed_returns.loc[selected_mask]
-    gross = pd.to_numeric(selected.get("gross_return", selected["net_return"]), errors="coerce")
-    selected_signed_gross = selected["signal"] * gross
-    costs = pd.to_numeric(selected.get("cost_return", 0.0), errors="coerce").abs()
-    expected_edge = max(float(selected_signed_gross.mean()), 0.0)
-    expected_cost = float(costs.mean()) if hasattr(costs, "mean") else 0.0
-    uncertainty = max(expected_edge - expected_cost - selection.lower_net_edge, 0.0)
+    calibrated = calibration.predict((0.5 + 0.5 * confirmation_rows["strength"].clip(0, 1)).to_numpy())
+    report = calibration_report(
+        calibrated,
+        (confirmation_rows["net_return"] > 0).astype(int).to_numpy(),
+        method=calibration.method,
+        report_scope="chronological_confirmation",
+    )
+    receipt["observations"] = report.sample_size
+    receipt["effective_observations"] = report.effective_sample_size
+    confirmation = selective_threshold(
+        calibrated,
+        confirmation_rows["net_return"].to_numpy(dtype=float),
+        candidates=[selection.threshold],
+    )
+    receipt["confirmation"] = asdict(confirmation)
+    if report.sample_size < minimum_observations or report.effective_sample_size < minimum_effective_observations:
+        return unavailable(
+            f"confirmation requires {minimum_observations} nominal and "
+            f"{minimum_effective_observations} effective observations"
+        )
+    if confirmation.status != "selected":
+        return unavailable(
+            "confirmation has no positive fixed-threshold lower net-edge bound "
+            "with 30 nominal/effective selected rows and 5% coverage"
+        )
+    selected = confirmation_rows.loc[calibrated >= selection.threshold]
+    expected_edge = float(selected["gross_return"].mean())
+    expected_cost = float(selected["cost_return"].mean())
+    uncertainty = max(expected_edge - expected_cost - confirmation.lower_net_edge, 0.0)
     current_raw_probability = 0.5 + 0.5 * min(max(current_strength, 0.0), 1.0) if current_signal else 0.5
     probability = float(calibration.predict(np.asarray([current_raw_probability]))[0])
-    report = calibration.report
-    receipt = {
-        "method": calibration.method,
-        "observations": len(joined),
-        "effective_observations": report.effective_sample_size,
-        "outcomes_through": pd.to_datetime(joined["outcome_available_at"], utc=True).max().to_pydatetime(),
-        "successes": int(favorable.sum()),
-        "probability": probability,
-        "confidence_low": report.confidence_low,
-        "confidence_high": report.confidence_high,
-        "brier_score": report.brier_score,
-        "log_loss": report.log_loss,
-        "expected_calibration_error": report.expected_calibration_error,
-        "slice_identity": report.slice_identity,
-        "probability_definition": "target_before_stop_after_costs",
-        "selective_threshold": selection.threshold,
-        "selective_coverage": selection.coverage,
-        "lower_expected_net_edge": selection.lower_net_edge,
-        "selected_observations": len(selected_signed_net),
-        "decision_rows_hash": canonical_hash(
-            joined[
-                [
-                    "decision_timestamp",
-                    "cost_decision_timestamp",
-                    "signal",
-                    "strength",
-                    "net_return",
-                    "cost_return",
-                ]
-            ].to_dict("records")
-        ),
-    }
+    receipt.update(
+        {
+            "method": calibration.method,
+            "observations": report.sample_size,
+            "effective_observations": report.effective_sample_size,
+            "outcomes_through": pd.to_datetime(joined["outcome_available_at"], utc=True).max().to_pydatetime(),
+            "successes": report.positive_count,
+            "probability": probability,
+            "confidence_low": report.confidence_low,
+            "confidence_high": report.confidence_high,
+            "brier_score": report.brier_score,
+            "log_loss": report.log_loss,
+            "expected_calibration_error": report.expected_calibration_error,
+            "slice_identity": report.slice_identity,
+            "selective_threshold": selection.threshold,
+            "selective_coverage": confirmation.coverage,
+            "lower_expected_net_edge": confirmation.lower_net_edge,
+            "selected_observations": len(selected),
+        }
+    )
     return "calibrated", probability, expected_edge, expected_cost, uncertainty, receipt
 
 

@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 import numpy as np
 from scipy.stats import beta as beta_distribution
-from scipy.stats import norm
+from scipy.stats import t as student_t
 from sklearn.isotonic import IsotonicRegression
 from sklearn.linear_model import LogisticRegression
 
@@ -28,6 +28,7 @@ class CalibrationReport:
     confidence_low: float
     confidence_high: float
     slice_identity: str
+    report_scope: str = "sample_diagnostics"
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +61,9 @@ class SelectiveThreshold:
     mean_net_edge: float
     lower_net_edge: float
     confidence: float
+    candidate_count: int = 1
+    bound_method: str = "bonferroni_student_t_effective_sample_approximation"
+    minimum_effective_observations: float = 30
 
 
 def _probabilities(values: Sequence[float] | np.ndarray) -> np.ndarray:
@@ -108,6 +112,7 @@ def calibration_report(
     bins: int = 10,
     confidence: float = 0.95,
     slice_identity: str = "global",
+    report_scope: str = "sample_diagnostics",
 ) -> CalibrationReport:
     probability_values = _probabilities(probabilities)
     outcome_values = _outcomes(outcomes, expected=len(probability_values))
@@ -149,6 +154,7 @@ def calibration_report(
         confidence_low=low,
         confidence_high=high,
         slice_identity=slice_identity,
+        report_scope=report_scope,
     )
 
 
@@ -182,6 +188,7 @@ def fit_out_of_fold_calibration(
     isotonic_minimum: int = 1_000,
     slice_identity: str = "global",
 ) -> FittedProbabilityCalibration:
+    """Fit a calibrator to OOF predictions; its report is in-sample fit diagnostics."""
     probability_values = _probabilities(probabilities)
     outcome_values = _outcomes(outcomes, expected=len(probability_values))
     _validate_timestamps(timestamps, expected=len(probability_values))
@@ -204,6 +211,7 @@ def fit_out_of_fold_calibration(
         outcome_values,
         method=method_name,
         slice_identity=slice_identity,
+        report_scope="fit_diagnostics",
     )
     if len(probability_values) < minimum_observations or len(np.unique(outcome_values)) < 2:
         return FittedProbabilityCalibration(method_name, "insufficient", raw_report)
@@ -223,6 +231,7 @@ def fit_out_of_fold_calibration(
         outcome_values,
         method=method_name,
         slice_identity=slice_identity,
+        report_scope="fit_diagnostics",
     )
     return FittedProbabilityCalibration(method_name, "calibrated", report, model)
 
@@ -233,15 +242,26 @@ def selective_threshold(
     *,
     minimum_coverage: float = 0.05,
     minimum_observations: int = 30,
+    minimum_effective_observations: float | None = None,
     confidence: float = 0.95,
     candidates: Sequence[float] | None = None,
 ) -> SelectiveThreshold:
+    """Screen unique thresholds with approximate multiplicity-adjusted t bounds.
+
+    Effective sample size is an autocorrelation heuristic, not a dependence-robust
+    guarantee. The confidence scope is this call's candidate set only.
+    """
     probability_values = _probabilities(probabilities)
     returns = np.asarray(net_returns, dtype=float)
     if returns.ndim != 1 or len(returns) != len(probability_values) or not np.isfinite(returns).all():
         raise ValueError("net returns must be finite and align with probabilities")
     if not 0 < minimum_coverage <= 1 or minimum_observations < 2 or not 0.5 < confidence < 1:
         raise ValueError("selective prediction policy is invalid")
+    effective_minimum = (
+        float(minimum_observations) if minimum_effective_observations is None else float(minimum_effective_observations)
+    )
+    if not math.isfinite(effective_minimum) or effective_minimum <= 1:
+        raise ValueError("effective observation minimum must be finite and greater than one")
     thresholds = (
         np.asarray(tuple(candidates), dtype=float)
         if candidates is not None
@@ -249,23 +269,34 @@ def selective_threshold(
     )
     if thresholds.ndim != 1 or not len(thresholds) or not np.isfinite(thresholds).all():
         raise ValueError("candidate thresholds must be finite")
-
-    z_score = float(norm.ppf(0.5 + confidence / 2.0))
+    if np.any((thresholds < 0) | (thresholds > 1)):
+        raise ValueError("candidate thresholds must be in [0, 1]")
+    thresholds = np.unique(thresholds)
+    candidate_count = len(thresholds)
+    alpha = (1.0 - confidence) / candidate_count
     viable: list[SelectiveThreshold] = []
     for threshold in thresholds:
-        if not 0 <= threshold <= 1:
-            raise ValueError("candidate thresholds must be in [0, 1]")
         selected = returns[probability_values >= threshold]
         coverage = len(selected) / len(returns)
-        if coverage < minimum_coverage or len(selected) < minimum_observations:
+        if len(selected) < 2:
             continue
         effective = _effective_sample_size(selected)
+        if effective <= 1:
+            continue
         mean = float(selected.mean())
         standard_error = float(selected.std(ddof=1) / math.sqrt(effective)) if len(selected) > 1 else math.inf
-        lower = mean - z_score * standard_error
+        critical = float(student_t.isf(alpha / 2.0, df=effective - 1.0))
+        lower = mean - critical * standard_error
         viable.append(
             SelectiveThreshold(
-                status="selected" if lower > 0 else "abstain",
+                status=(
+                    "selected"
+                    if lower > 0
+                    and effective >= effective_minimum
+                    and len(selected) >= minimum_observations
+                    and coverage >= minimum_coverage
+                    else "abstain"
+                ),
                 threshold=float(threshold),
                 coverage=coverage,
                 observations=len(selected),
@@ -273,12 +304,27 @@ def selective_threshold(
                 mean_net_edge=mean,
                 lower_net_edge=lower,
                 confidence=confidence,
+                candidate_count=candidate_count,
+                minimum_effective_observations=effective_minimum,
             )
         )
-    positive = [item for item in viable if item.lower_net_edge > 0]
+    positive = [item for item in viable if item.status == "selected"]
     if positive:
         return max(positive, key=lambda item: (item.lower_net_edge, item.coverage, -item.threshold))
-    return SelectiveThreshold("abstain", 1.0, 0.0, 0, 0.0, 0.0, 0.0, confidence)
+    if viable:
+        return max(viable, key=lambda item: (item.lower_net_edge, item.coverage, -item.threshold))
+    return SelectiveThreshold(
+        "abstain",
+        1.0,
+        0.0,
+        0,
+        0.0,
+        0.0,
+        0.0,
+        confidence,
+        candidate_count=candidate_count,
+        minimum_effective_observations=effective_minimum,
+    )
 
 
 class RollingProbabilityCalibrator:

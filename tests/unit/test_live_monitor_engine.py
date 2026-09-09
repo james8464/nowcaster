@@ -261,6 +261,12 @@ def test_eligibility_abstains_for_each_fail_closed_boundary() -> None:
             "selective_threshold",
         ),
         (evidence(drift_status="confirmed"), quote(), MonitorHealth.HEALTHY, "material_model_drift"),
+        (
+            evidence(probability_definition="positive_strategy_return_after_costs"),
+            quote(),
+            MonitorHealth.HEALTHY,
+            "probability_definition_required",
+        ),
     ]
     for item, market_quote, health, reason in cases:
         decision = evaluate_alert_eligibility(item, market_quote, health=health, now=NOW + timedelta(seconds=5))
