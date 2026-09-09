@@ -38,7 +38,9 @@ The existing study monitor runs an audit for a new completed trade or a changed 
 
 The audit reads one consistent SQLite snapshot in read-only mode. It checks journal sequence and content hashes, the state/head link and manifest binding before interpreting results. These checks detect inconsistency, not malicious edits followed by recomputing every hash.
 
-For each actual trade it matches the original decision to its entry and all exits. It checks quantities, frozen levels and expiry, entry timing, and recorded versus independently reconstructed after-cost results. Fees and modeled slippage are disclosed without being subtracted twice. Partial exits, open positions, rejected decisions and post-study-window liquidation remain distinct. Losing and gap-tainted trades are kept; neither can disappear from the scorecard.
+For each actual trade it matches the original decision to its entry and all exits. It checks quantities, frozen levels and expiry, entry timing, and recorded versus independently reconstructed after-cost results. Entry spread and size must match the frozen limits, including the cash available after earlier trades and the market's quantity increments. End-of-study accounting must include every candidate account. Fees and modeled slippage are disclosed without being subtracted twice. Partial exits, open positions, rejected decisions and post-study-window liquidation remain distinct. Losing and gap-tainted trades are kept; neither can disappear from the scorecard.
+
+The first live audit at **07:12:39 UTC on 9 September** checked 1,628 journal events and their links to the saved state and indexes. It found the same open BTC trade, three rejected overlapping decisions, no completed trade and no overdue exit. Both latest quotes were less than half a second old at inspection. The BTC trade's data-gap warning remained attached. This verifies retained-record consistency at that snapshot; it does not fill missing observations or create a realized profit.
 
 For a completed long trade:
 
