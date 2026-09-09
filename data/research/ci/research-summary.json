@@ -70,7 +70,7 @@
       "symbol": "BTCUSDT"
     }
   ],
-  "code_hash": "8d4ffcbd170e5e8bcf762e14271a7cc2768146f7366ca10019d77823a28d4e03",
+  "code_hash": "138e36d957c35608770c6eebe895ab4785e0b8b0c101a67c2c19e95761ea3e33",
   "config_hash": "0107032d52995d9f13c666d47f4f0c998e54c7e40a0fcd04e96b9fbd11ca013e",
   "cutoff": "2026-08-20T00:00:00Z",
   "data_quality": {
@@ -163,7 +163,7 @@
     "ETHUSDT": "ETHUSDT"
   },
   "schema_version": 1,
-  "semantic_snapshot_hash": "9eb7de8b68c671972621bf5d83b6102f023826b96a467c3595528e5e09b89011",
+  "semantic_snapshot_hash": "e7b6410df5735b905c73ff57bc076f8891b8dc44d055908f2138053583346833",
   "snapshot_counts": {
     "causal_audits": 36,
     "ensemble_components": 36,
