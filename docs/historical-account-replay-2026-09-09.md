@@ -8,14 +8,16 @@ The replay is a separate research tool in the project, not a new button in the n
 
 ## Evaluation status
 
-The runner is being implemented and checked. No result from this account replay is claimed yet. This section will record the completed attempt and its actual outcomes, including losses, after the evaluation finishes.
+The first actual attempt failed safely on 9 September at 09:54 UTC when it reached archived bars that did not start on the UTC hourly clock. Its source and partial trading records are retained; it has no completed performance result. A separately recorded amended attempt is being prepared. Its results will appear here only after completion and independent reconciliation.
+
+The archive parser had accepted 42 one-hour bars per asset with shifted timestamps during a February 2018 outage. The replay engine correctly refused them under its stricter clock rule. The correction does not round their timestamps or relax the engine. It preserves those rows in a quarantine record and treats the interval as missing execution data. This choice is based on timestamp quality, not on whether those trades would win or lose.
 
 ## What is fixed before seeing the results
 
 - Two assets: Bitcoin (`BTCUSDT`) and Ether (`ETHUSDT`), on Binance spot. These are independent accounts, not a combined portfolio.
 - Two unchanged rules from the [8 September study](holding-period-search-2026-09-08.md): volatility-scaled trend for Bitcoin and Bollinger/Keltner squeeze for Ether. Both are long-only: they can buy and later sell, not borrow an asset to sell it short.
 - Each account starts with 10,000 simulated USDT. A normal entry risks at most 25 USDT at the modeled stop and spends at most a quarter of available cash. Gaps can make the actual modeled loss larger than that budget.
-- The data selection is fixed: 260 checksum-pinned public archives, containing 79,270 valid hourly bars per asset. The requested window is 17 August 2017 through 7 September 2026 inclusive; the first available hour opens at 04:00 UTC on 17 August 2017.
+- The original data selection is fixed: 260 checksum-pinned public archives, containing 79,270 parser-valid hourly intervals per asset. The amended selection retains 79,228 clock-aligned bars per asset and quarantines 42 shifted intervals. Another 15 invalid-duration rows per asset were already excluded by the original parser; they remain in the raw archives. The requested window is 17 August 2017 through 7 September 2026 inclusive; the first available hour opens at 04:00 UTC on 17 August 2017.
 - Base costs are a 0.10% fee, 0.02% half-spread and 0.05% slippage on each purchase or sale. A second account doubles all three costs. This is different from the live study's flat extra-cost calculation.
 
 The earlier search examined 24 configurations, and all lost on average after its modeled costs. Those failures remain in the record. These two rules were retained for diagnosis, not approved for real trading. Replaying already-inspected history does not turn it into an independent test.
@@ -44,7 +46,9 @@ Monthly and yearly changes carry the actual balance forward rather than starting
 
 ## Evidence and limitations
 
-Each attempt gets a new directory and an entry in a separate, hash-chained campaign record before outcomes are evaluated. Its protocol binds the source code, runtime, selected rules, original discovery file, exact archives and execution assumptions. The runner refuses to overwrite an earlier attempt. Failed and interrupted attempts retain their status and partial event files; only a completed run publishes successful results.
+Each attempt gets a new directory and an entry in a separate, hash-chained campaign record before outcomes are evaluated. Its protocol binds the source code, runtime, selected rules, original discovery file, exact archives and execution assumptions. The runner refuses to overwrite an earlier attempt. Failed and interrupted attempts retain their status and partial event files; only a completed run publishes successful results. The amended hypothesis explicitly records the first failure and the changed input-quality rule. It is not presented as an untouched continuation of the first attempt.
+
+Before account calculations, a separate `data-quality.json` retains the original quarantined rows and fingerprints, and distinguishes raw input, excluded invalid-duration rows and executable bars. Its hash is bound into the run's status and result. The amended data have 188 missing hours per asset in the requested window: four leading hours and 184 internal hours across 31 gaps. Those exclusions and gaps must accompany any performance numbers.
 
 After archive verification, evaluation runs without network access. Two optional workers can process the independent assets, but neither can split or reorder an asset's timeline. Every decision, entry, exit and valuation is journaled. These hashes help detect inconsistent evidence; they are not independent third-party attestation.
 
@@ -64,4 +68,4 @@ Use the project's installed Python environment, with a new output directory outs
 
 `--allow-download` permits restoring only the exact original public archive files. Omit it for a wholly offline run with an already complete cache. A changed or missing required archive causes failure, not substitution. Once verification is finished, the evaluation loader forbids network requests. The default is one calculation worker; two workers can handle the independent assets when the computer has sufficient processors.
 
-Read `status.json` first: it must say `succeeded` before interpreting `result.json` or `report.md` as a completed run. A failure can leave partial files, which are deliberately retained. The separate `campaigns.jsonl`, `protocol.json`, original `discovery.json`, status journal and per-asset `events.jsonl` preserve the attempt's history. Running the same experiment again records another attempt; it does not create another independent piece of market evidence.
+Read `status.json` first: it must say `succeeded` before interpreting `result.json` or `report.md` as a completed run. A failure can leave partial files, which are deliberately retained. The separate `campaigns.jsonl`, `protocol.json`, original `discovery.json`, `data-quality.json`, status journal and per-asset `events.jsonl` preserve the attempt's history. Running the same experiment again records another attempt; it does not create another independent piece of market evidence.
