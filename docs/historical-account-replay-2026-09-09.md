@@ -49,3 +49,19 @@ Each attempt gets a new directory and an entry in a separate, hash-chained campa
 After archive verification, evaluation runs without network access. Two optional workers can process the independent assets, but neither can split or reorder an asset's timeline. Every decision, entry, exit and valuation is journaled. These hashes help detect inconsistent evidence; they are not independent third-party attestation.
 
 This test assumes full fills and specified costs. It does not recreate historical order books, queue position, latency, partial fills, changing exchange size rules, taxes or outages that are absent from the source. It evaluates these two rules on these two assets, not every strategy in the app. A favorable result would describe this simulation—not demonstrate an executable, reliably profitable live strategy or unlock alerts.
+
+## Running a separately recorded reproduction
+
+Use the project's installed Python environment, with a new output directory outside the source checkout, archive cache and live study. Replace these example paths with actual locations:
+
+```sh
+/path/to/nowcaster/.venv/bin/python -u -m scripts.run_historical_replay \
+  --root /path/to/nowcaster \
+  --cache-dir /path/to/HistoricalReplayArchives \
+  --output-dir /path/to/HistoricalReplays/new-round \
+  --allow-download --workers 2
+```
+
+`--allow-download` permits restoring only the exact original public archive files. Omit it for a wholly offline run with an already complete cache. A changed or missing required archive causes failure, not substitution. Once verification is finished, the evaluation loader forbids network requests. The default is one calculation worker; two workers can handle the independent assets when the computer has sufficient processors.
+
+Read `status.json` first: it must say `succeeded` before interpreting `result.json` or `report.md` as a completed run. A failure can leave partial files, which are deliberately retained. The separate `campaigns.jsonl`, `protocol.json`, original `discovery.json`, status journal and per-asset `events.jsonl` preserve the attempt's history. Running the same experiment again records another attempt; it does not create another independent piece of market evidence.
