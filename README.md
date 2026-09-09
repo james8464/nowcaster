@@ -6,7 +6,7 @@ It collects historical market and company information, asks models what that inf
 
 Nowcaster is a research and risk-control tool. It can monitor **shadow** decisions and submit separately configured **Alpaca paper** orders, but real-money trading remains hard-locked unless every forward-evidence, security, signing, account, and manual-arming gate passes. It cannot guarantee profit and is not investment advice.
 
-For intraday research, the main probability means “the target is reached before the protective stop within the declared horizon, after the entry decision.” It is a target-before-stop estimate—not a promise that a whole account will make money.
+For a qualified intraday alert, the required probability means “the target is reached before the protective stop within the declared horizon, after the entry decision.” A research model that only measures positive strategy returns cannot supply that probability: it remains research-only. Neither kind of estimate is a promise that a whole account will make money.
 
 ![Nowcaster Today view](docs/images/macos/today-light.png)
 
@@ -84,8 +84,8 @@ The app keeps the last known good snapshot if a refresh fails. Broker credential
 
 ### How to read an accuracy card
 
-- **Calibrated probability** compares this setup with genuinely out-of-fold past outcomes.
-- **Probability range** shows uncertainty around that estimate. A narrow-looking range can still be wrong after a regime change.
+- **Calibrated probability** must name the outcome being measured. Strategy-return calibration now fits on earlier data, chooses its threshold on a separate middle block, and checks it on a later confirmation block. If there is too little usable evidence, it is unavailable.
+- **Probability range** describes uncertainty in the stated evidence, not a guaranteed interval for the next trade. A narrow-looking range can still be wrong after a market change.
 - **Brier score** and calibration error measure whether historical probabilities matched observed frequencies.
 - **Lower net edge** is the conservative return estimate after modeled fees, spread, slippage, execution uncertainty, and statistical uncertainty. A non-positive value forces Abstain.
 - **Coverage** is the fraction of otherwise eligible observations on which the selective model was willing to speak. Higher confidence often means lower coverage.
@@ -224,6 +224,8 @@ make release-archive     # Build the app ZIP and SHA-256 checksum
 ```
 
 The latest [8 September longer-holding-period study](docs/holding-period-search-2026-09-08.md) tested 24 variations against verified hourly BTC/ETH history. Every variation lost on average after modeled costs. The earlier [1 September day-trading opportunity audit](docs/day-trading-opportunity-audit-2026-09-01.md) tested 2,689,416 candles and also selected zero reliable rules. The [1 September live validation report](docs/live-validation-2026-09-01.md) separately covers packaged-app feed, timing, continuity, and fail-closed behavior. These tests do not establish a profitable strategy or promise future profitability.
+
+The [9 September live paper review](docs/live-paper-review-2026-09-09.md) explains what the first open BTC position actually showed: no completed trades yet, gaps in observation, and a target whose apparent 1.5-to-1 reward/risk fell below 1-to-1 after modeled costs. The resulting improvements correct short-return calibration, separate training from confirmation, and make open-position warnings and after-cost outcomes clearer. The ongoing frozen study is not modified by these software changes. No profitable strategy has been established.
 
 ## Project layout
 
