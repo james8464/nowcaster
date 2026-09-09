@@ -227,8 +227,10 @@ def _validate_trial(row: Any, *, definition_hashes: dict[str, str]) -> None:
     if row.get("candidate_id") != canonical_hash(definition):
         raise ValueError("discovery candidate ID is not canonical")
     fingerprint = row.get("signal_prefix_hash")
-    if not isinstance(fingerprint, str) or len(fingerprint) != 64 or any(
-        character not in "0123456789abcdef" for character in fingerprint
+    if (
+        not isinstance(fingerprint, str)
+        or len(fingerprint) != 64
+        or any(character not in "0123456789abcdef" for character in fingerprint)
     ):
         raise ValueError("discovery signal prefix fingerprint must be lowercase SHA-256")
     folds = row.get("folds")
