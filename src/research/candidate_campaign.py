@@ -28,9 +28,10 @@ class CampaignAsset(BaseModel):
 
     @model_validator(mode="after")
     def require_future_identity_for_wti(self) -> CampaignAsset:
-        if self.symbol in {"CL", "WTI"}:
-            if not self.contract_identity or not self.session_calendar or not self.roll_policy:
-                raise ValueError("WTI requires a futures contract identity, session calendar, and roll policy")
+        if self.symbol in {"CL", "WTI"} and (
+            not self.contract_identity or not self.session_calendar or not self.roll_policy
+        ):
+            raise ValueError("WTI requires a futures contract identity, session calendar, and roll policy")
         return self
 
 

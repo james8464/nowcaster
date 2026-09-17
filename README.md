@@ -119,6 +119,7 @@ Backtests use only the data actually ingested and verified. Historical candles d
 - **Signals** — long, short, and abstain postures with supporting and invalidating evidence.
 - **Backtests** — returns, risk, drawdowns, costs, and development versus final-test results.
 - **Strategy Lab** — compare intraday rules, run bounded learning, or start multi-generation Deep Research. It shows research evidence only and never places an order.
+- **Candidate markets** — Strategy Lab labels new markets such as WTI crude oil as **Research only** until a named, verified intraday contract dataset passes intake. An unavailable or rejected market cannot produce a signal, notification, or order.
 - **Live Monitor** — watch Alpaca stocks and Binance spot crypto through finalized bars; eligible promoted cohorts can issue hypothetical entry, SL, TP, and close notifications. It cannot place orders.
 - **Model Lab** — model comparisons, calibration, and diagnostic information.
 - **Data Quality** — missing, late, or invalid information that could weaken a result.
@@ -258,7 +259,7 @@ scripts/            native app build and visual-verification tools
 .github/workflows/  continuous integration and macOS release packaging
 ```
 
-For deeper technical detail, see the [Live Monitor guide](docs/live-monitor.md), [strategy methodology](docs/strategy-methodology.md), [provider guide](docs/data-providers.md), [research results](docs/research-results.md), [architecture](docs/architecture.md), [earnings/daily methodology](docs/methodology.md), [backtest protocol](docs/backtest_protocol.md), [data dictionary](docs/data_dictionary.md), [macOS guide](docs/macos_app.md), [privacy policy](docs/privacy.md), [current contextual verification](docs/contextual-release-verification.md), and [historical native audit](docs/native_verification.md).
+For deeper technical detail, see the [Live Monitor guide](docs/live-monitor.md), [strategy methodology](docs/strategy-methodology.md), [provider guide](docs/data-providers.md), [research results](docs/research-results.md), [WTI candidate campaign](docs/research/multi-asset-candidate-campaign-2026-09-17.md), [architecture](docs/architecture.md), [earnings/daily methodology](docs/methodology.md), [backtest protocol](docs/backtest_protocol.md), [data dictionary](docs/data_dictionary.md), [macOS guide](docs/macos_app.md), [privacy policy](docs/privacy.md), [current contextual verification](docs/contextual-release-verification.md), and [historical native audit](docs/native_verification.md).
 
 ## Data, privacy, and limitations
 
