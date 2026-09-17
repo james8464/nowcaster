@@ -27,6 +27,8 @@ from src.live_monitor.control_input import read_bootstrap_line
 from src.live_monitor.evidence import load_sealed_cohorts, select_monitor_cohorts
 from src.reporting.research_report import generate_research_report
 from src.research import run_full_strategy_research
+from src.research.candidate_campaign import CandidateCampaignDefinition
+from src.research.candidate_campaign_runtime import register_campaign
 from src.strategies.datasets import BarRepository
 from src.strategies.pipeline import (
     BarProviderName,
@@ -513,6 +515,21 @@ def _run_contextual_stage(stage: str, operation: Callable[[], object]) -> None:
         )
         raise typer.Exit(code=1) from error
     _emit_strategy_event(PipelineEvent(event="complete", stage=stage, progress=1, message=f"{stage} completed"))
+
+
+@strategy_app.command("register-campaign")
+def strategy_register_campaign(
+    definition: Annotated[Path, typer.Option(exists=True, dir_okay=False)],
+    output_directory: Annotated[Path, typer.Option(file_okay=False)],
+) -> None:
+    """Retain a research-only candidate-market source receipt without starting a monitor."""
+    try:
+        campaign = CandidateCampaignDefinition.model_validate_json(definition.read_bytes())
+        receipt = register_campaign(campaign, output_directory)
+    except (OSError, ValueError) as error:
+        typer.echo(json.dumps({"event": "campaign_rejected", "reason": str(error)}), err=True)
+        raise typer.Exit(code=2) from error
+    typer.echo(receipt.model_dump_json())
 
 
 @strategy_app.command("screen-universe")

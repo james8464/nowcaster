@@ -285,6 +285,15 @@ struct StrategyLabView: View {
             Divider()
             contextualActionBar
             Divider()
+            CandidateCampaignView(
+                presentation: CandidateCampaignPresentation(
+                    assetName: "WTI crude oil",
+                    status: .unavailable,
+                    reason: "Verified intraday contract data is required before research can begin."
+                )
+            )
+            .padding(.horizontal)
+            .padding(.vertical, 8)
             if presentation.strategies.isEmpty {
                 EmptyStateView(
                     title: presentation.strategyEmptyTitle,
