@@ -417,6 +417,8 @@ struct ExperimentalOpportunity: Identifiable, Equatable, Sendable {
               let policyHash = payload["policy_hash"]?.stringValue,
               let configHash = payload["config_hash"]?.stringValue,
               let qualificationReasons = payload["qualification_reasons"]?.stringArrayValue,
+              !qualificationReasons.isEmpty,
+              posture == "long" || posture == "short",
               payload["experimental_paper_only"]?.boolValue == true,
               payload["qualification_status"]?.stringValue == "unqualified",
               let strategyVersions = Self.strategyVersions(from: payload["strategy_versions"]),

@@ -50,3 +50,30 @@ Build complete! (4.47 secs)
 ## Concern
 
 The worktree has a pre-existing untracked `docs/superpowers/plans/2026-09-18-experimental-opportunity-feed.md`; it is intentionally excluded from this task's commit.
+
+## Review fix round 1
+
+### Red proof
+
+Command: `swift test --filter LiveMonitorModelsTests`
+
+```text
+✘ Test experimentalOpportunityRequiresTheCompletePaperOnlyWirePayload() recorded an issue at LiveMonitorModelsTests.swift:150:5: Expectation failed: ExperimentalOpportunity(payload: unsafePayload, updatedAt: .now) == nil
+↳ posture: "neutral"
+✘ Test experimentalOpportunityRequiresTheCompletePaperOnlyWirePayload() recorded an issue at LiveMonitorModelsTests.swift:153:5: Expectation failed: ExperimentalOpportunity(payload: unsafePayload, updatedAt: .now) == nil
+↳ qualificationReasons: []
+✘ Test run with 7 tests in 0 suites failed after 0.004 seconds with 2 issues.
+```
+
+### Green proof
+
+Command: `swift test --filter LiveMonitor`
+
+```text
+Build complete! (4.28 secs)
+✔ Test experimentalOpportunityRequiresTheCompletePaperOnlyWirePayload() passed after 0.001 seconds.
+✔ Test experimentalOpportunityPresentationIsExplicitlyPaperOnlyAndViewOnly() passed after 0.001 seconds.
+✔ Test run with 15 tests in 0 suites passed after 0.004 seconds.
+```
+
+The strict parser now rejects every direction except `long` and `short`, and rejects empty `qualification_reasons` arrays. `git diff --check` passed.

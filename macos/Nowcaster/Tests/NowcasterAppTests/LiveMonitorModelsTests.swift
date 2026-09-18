@@ -145,6 +145,12 @@ import Testing
     unsafePayload = payload
     unsafePayload.removeValue(forKey: "risk_per_unit")
     #expect(ExperimentalOpportunity(payload: unsafePayload, updatedAt: .now) == nil)
+    unsafePayload = payload
+    unsafePayload["direction"] = .string("neutral")
+    #expect(ExperimentalOpportunity(payload: unsafePayload, updatedAt: .now) == nil)
+    unsafePayload = payload
+    unsafePayload["qualification_reasons"] = .array([])
+    #expect(ExperimentalOpportunity(payload: unsafePayload, updatedAt: .now) == nil)
 }
 
 @Test func mixedProviderHealthUsesWorstSeverityInsteadOfLastWriter() {
