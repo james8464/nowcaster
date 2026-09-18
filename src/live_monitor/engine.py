@@ -642,6 +642,42 @@ class LiveMonitorEngine:
             self.persistence.record_decision(self.session_id, payload)
         active = self._active.get(scope)
         if decision.direction is None:
+            if self._experimental_requirements_met(
+                evidence=evidence,
+                decision=decision,
+                quote=quote,
+                effective_health=effective_health,
+                bars=decision_bars if len(decision_bars) >= 2 else bars,
+            ):
+                risk = self._risk_inputs(decision_bars if len(decision_bars) >= 2 else bars, evidence.direction)
+                assert risk is not None
+                plan = plan_trade_levels(
+                    quote,
+                    evidence.direction,
+                    atr=risk[0],
+                    structural_invalidation=risk[1],
+                    expected_targets=risk[2],
+                    empirical_evidence=evidence.empirical_levels,
+                    decision_interval=self.decision_interval,
+                    decision_time=aggregated.end,
+                    policy=self._level_policy,
+                    identity_context={
+                        "cohort_id": evidence.cohort_id,
+                        "dataset_hash": evidence.dataset_hash,
+                        "evidence_hash": evidence.evidence_hash,
+                        "policy_hash": canonical_hash(
+                            {
+                                "evidence_policy_hash": evidence.policy_hash,
+                                "level_policy": self._level_policy.model_dump(mode="json"),
+                            }
+                        ),
+                        "strategy_versions": evidence.strategy_versions,
+                        "config_hash": self.config_hash,
+                    },
+                )
+                if plan is not None:
+                    result.append(self._experimental_opportunity(plan, decision, now))
+                    return result
             operational = {
                 "market_data_unhealthy",
                 "stale_evidence",
@@ -728,6 +764,60 @@ class LiveMonitorEngine:
         result.extend(self._transition(lifecycle, AlertState.UNTRACKED, now, "awaiting_operator_fill_tracking"))
         result.append(self._notification(plan, "entry", now, "eligible_closed_bar_decision"))
         return result
+
+    @staticmethod
+    def _experimental_requirements_met(
+        *,
+        evidence: EligibilityEvidence,
+        decision: MonitorDecision,
+        quote: MarketQuote,
+        effective_health: MonitorHealth,
+        bars: tuple[MarketBar, ...],
+    ) -> bool:
+        allowed_qualification_reasons = {
+            "promotion_required",
+            "calibration_required",
+            "promotion_grade_calibration_required",
+            "minimum_effective_calibration_sample",
+            "probability_definition_required",
+            "brier_quality",
+            "calibration_error",
+            "probability_calibration",
+            "probability_lower_bound",
+            "selective_threshold",
+            "portfolio_selection_required",
+            "portfolio_evidence_required",
+        }
+        return (
+            decision.status == "abstain"
+            and evidence.direction is not None
+            and evidence.no_repaint_passed
+            and "current_signal_unavailable" not in decision.reasons
+            and effective_health is MonitorHealth.HEALTHY
+            and all(bar.finalized for bar in bars)
+            and (evidence.provider, evidence.feed, evidence.symbol) == (quote.provider, quote.feed, quote.symbol)
+            and (evidence.direction is not Direction.SHORT or evidence.shortable)
+            and (evidence.provider != "alpaca" or evidence.direction is not Direction.SHORT or evidence.easy_to_borrow)
+            and all(
+                reason in allowed_qualification_reasons or reason.startswith("contextual_")
+                for reason in decision.reasons
+            )
+            and LiveMonitorEngine._risk_inputs(bars, evidence.direction) is not None
+        )
+
+    def _experimental_opportunity(
+        self, plan: TradePlan, decision: MonitorDecision, now: datetime
+    ) -> MonitorWireEvent:
+        return self.emit(
+            "experimental_opportunity",
+            {
+                **plan.model_dump(mode="json"),
+                "experimental_paper_only": True,
+                "qualification_status": "unqualified",
+                "qualification_reasons": list(decision.reasons),
+            },
+            emitted_at=now,
+        )
 
     @staticmethod
     def _contiguous_tail(bars: tuple[MarketBar, ...]) -> tuple[MarketBar, ...]:

@@ -434,6 +434,7 @@ class MonitorWireEvent(LiveMonitorModel):
         "quote",
         "bar_finalized",
         "decision",
+        "experimental_opportunity",
         "setup_snapshot",
         "lifecycle_transition",
         "notification_request",

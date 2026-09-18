@@ -376,6 +376,90 @@ def test_engine_emits_entry_plan_then_conservative_stop_lifecycle() -> None:
     assert notifications[0].payload["reason"] == "protective_stop_touched"
 
 
+def test_unqualified_fresh_directional_evidence_emits_paper_only_opportunity() -> None:
+    engine = LiveMonitorEngine(
+        session_id="experimental-opportunity",
+        evidence_resolver=lambda _bars, _quote: evidence(
+            promoted=False,
+            data_through=NOW + timedelta(minutes=5),
+        ),
+    )
+    for minute in range(5):
+        engine.accept_market_event(bar(minute))
+
+    at = NOW + timedelta(minutes=5, seconds=2)
+    events = engine.accept_market_event(quote(provider_time=at, received_at=at))
+
+    opportunity = next(event for event in events if event.event_type == "experimental_opportunity")
+    assert opportunity.payload["experimental_paper_only"] is True
+    assert opportunity.payload["qualification_status"] == "unqualified"
+    assert "promotion_required" in opportunity.payload["qualification_reasons"]
+    assert not [
+        event
+        for event in events
+        if event.event_type in {"setup_snapshot", "lifecycle_transition", "notification_request"}
+    ]
+
+
+@pytest.mark.parametrize(
+    ("updates", "bars", "reason"),
+    [
+        ({"data_through": NOW}, {}, "stale_evidence"),
+        ({"no_repaint_passed": False}, {}, "no_repaint_required"),
+        ({"reasons": ("current_signal_unavailable",)}, {}, "current_signal_unavailable"),
+        ({"direction": Direction.SHORT, "shortable": False}, {}, "shortability_required"),
+        ({}, {"high": Decimal("100"), "low": Decimal("100")}, "promotion_required"),
+    ],
+)
+def test_experimental_opportunity_requires_fresh_directional_available_evidence_and_feasible_levels(
+    updates: dict, bars: dict, reason: str
+) -> None:
+    engine = LiveMonitorEngine(
+        session_id=f"experimental-opportunity-{reason}",
+        evidence_resolver=lambda _bars, _quote: evidence(
+            **{"data_through": NOW + timedelta(minutes=5), "promoted": False, **updates}
+        ),
+    )
+    for minute in range(5):
+        engine.accept_market_event(bar(minute, **bars))
+
+    at = NOW + timedelta(minutes=5, seconds=2)
+    events = engine.accept_market_event(quote(provider_time=at, received_at=at))
+
+    decision = next(event for event in events if event.event_type == "decision")
+    assert reason in decision.payload["reasons"]
+    assert not [event for event in events if event.event_type == "experimental_opportunity"]
+
+
+def test_experimental_opportunity_requires_healthy_continuous_market_data() -> None:
+    engine = LiveMonitorEngine(
+        session_id="experimental-opportunity-unhealthy",
+        evidence_resolver=lambda _bars, _quote: evidence(
+            promoted=False,
+            data_through=NOW + timedelta(minutes=5),
+        ),
+    )
+    engine.accept_market_event(
+        ProviderHealthEvent(
+            provider="alpaca",
+            feed="iex",
+            status=MonitorHealth.RECONNECTING,
+            reason="stream_disconnected",
+            occurred_at=NOW + timedelta(minutes=5),
+        )
+    )
+
+    at = NOW + timedelta(minutes=5, seconds=2)
+    engine.accept_market_event(quote(provider_time=at, received_at=at))
+    events = []
+    for minute in range(5):
+        events.extend(engine.accept_market_event(bar(minute)))
+
+    decision = next(event for event in events if event.event_type == "decision")
+    assert "market_data_unhealthy" in decision.payload["reasons"]
+    assert not [event for event in events if event.event_type == "experimental_opportunity"]
+
+
 def test_a_quote_that_became_stale_in_the_processing_queue_cannot_authorize_an_entry() -> None:
     engine = LiveMonitorEngine(
         session_id="delayed-quote",
@@ -517,9 +601,8 @@ def test_active_setup_remains_open_when_qualified_evidence_becomes_unavailable()
         item for item in emitted if item.event_type == "notification_request" and item.payload["category"] == "close"
     ]
     assert close == []
-    assert any(
-        item.event_type == "provider_health" and item.payload["reason"] == "monitoring_unavailable" for item in emitted
-    )
+    assert any(item.event_type == "experimental_opportunity" for item in emitted)
+    assert not [item for item in emitted if item.event_type == "provider_health"]
 
 
 def test_pre_close_quote_is_never_used_and_late_revision_is_not_redecided() -> None:
