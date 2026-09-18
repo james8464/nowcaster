@@ -121,6 +121,7 @@ Backtests use only the data actually ingested and verified. Historical candles d
 - **Strategy Lab** — compare intraday rules, run bounded learning, or start multi-generation Deep Research. It shows research evidence only and never places an order.
 - **Candidate markets** — Strategy Lab labels new markets such as WTI crude oil as **Research only** until a named, verified intraday contract dataset passes intake. An unavailable or rejected market cannot produce a signal, notification, or order.
 - **Live Monitor** — watch Alpaca stocks and Binance spot crypto through finalized bars; eligible promoted cohorts can issue hypothetical entry, SL, TP, and close notifications. It cannot place orders.
+- **Experimental opportunities** — a separate, view-only part of Live Monitor for fresh directional research that has not passed promotion. It can show deterministic paper-only reference levels, but it is unqualified and cannot create a setup, lifecycle record, notification, or order.
 - **Model Lab** — model comparisons, calibration, and diagnostic information.
 - **Data Quality** — missing, late, or invalid information that could weaken a result.
 - **Pipeline Runs** — the steps used to rebuild the local research snapshot.
@@ -137,6 +138,14 @@ An alert contains a hypothetical entry range, stop-loss (SL), two take-profit le
 Contextual checks are an additional restriction: research mode, strategy versions, source batch, policy, complete allocation and portfolio selection must match. The running monitor refreshes this evidence and checks expiry for every decision. Later deterioration blocks new entries; pressing Assess Markets does not erase that warning. Fresh Binance order books and exchange size rules support a stated hypothetical order-size check, including estimated price impact. Missing or stale depth is never replaced with zero impact.
 
 Disconnects clear pending decisions and reset continuity. Bounded gaps of up to 1,000 expected market minutes use exact read-only provider repair; XNYS closed hours are excluded. Incomplete or oversized gaps retain their durable watermark, retry, and stay fail-closed even if transport heartbeats resume. Repaired stop/target crossings are disclosed as delayed observations. Active hypothetical setups and tracked fills are stored independently of the rolling activity feed, recovered only for the exact unchanged provider/feed/cohort/configuration before expiry, and can produce target, stop, expiry, reversal, or close updates.
+
+### Experimental opportunities are research reference levels, not alerts
+
+The **Experimental opportunities** section may show a long or short research posture with an entry range, protective stop, targets, expiry, and the reasons the item remains unqualified. It is useful for studying how the same level policy behaves under live monitoring; it is not a recommendation or a claim that the levels will be reached.
+
+An item is emitted only from finalized, contiguous market bars when the monitor is healthy, the quote and research source agree, the research is fresh and directional, and the no-repaint check passes. The app derives the reference levels deterministically from that verified bar tail and the fixed level policy. If the signal is unavailable, data is stale or unhealthy, a bar is not finalized, continuity is missing, a short is not supportable, or the levels cannot be formed, the monitor abstains instead.
+
+Every displayed item is explicitly marked **Experimental — paper only** and **unqualified**. It does not create an active setup or lifecycle record, send a notification, submit an order, count as a fill, or contribute to forward evidence, readiness, promotion, or any profitability conclusion. The normal qualified-alert path remains separately gated and notification-only; neither path guarantees profit or provides investment advice.
 
 Live Monitor is notification-only: it has no order API and cannot guarantee profit. It stops while the Mac sleeps, is offline, the app is quit, or the machine is shut down. See the [beginner Live Monitor guide](docs/live-monitor.md) for setup, terminology, safety boundaries, and troubleshooting.
 
