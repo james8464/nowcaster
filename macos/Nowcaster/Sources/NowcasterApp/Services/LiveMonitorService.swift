@@ -17,6 +17,21 @@ enum LiveMonitorHealthAggregation {
     }
 }
 
+enum LiveMonitorExperimentalOpportunityHistory {
+    static func upserting(
+        _ opportunities: [ExperimentalOpportunity],
+        with opportunity: ExperimentalOpportunity,
+        maximumRecords: Int = 100
+    ) -> [ExperimentalOpportunity] {
+        var updated = opportunities.filter { $0.id != opportunity.id }
+        updated.append(opportunity)
+        if updated.count > maximumRecords {
+            updated.removeFirst(updated.count - maximumRecords)
+        }
+        return updated
+    }
+}
+
 @MainActor
 @Observable
 final class LiveMonitorController {
@@ -243,12 +258,10 @@ final class LiveMonitorController {
         guard event.type == .experimentalOpportunity,
               let opportunity = ExperimentalOpportunity(payload: event.payload, updatedAt: event.emittedAt)
         else { return }
-        if let index = experimentalOpportunities.firstIndex(where: { $0.id == opportunity.id }) {
-            experimentalOpportunities[index] = opportunity
-        } else {
-            experimentalOpportunities.append(opportunity)
-        }
-        experimentalOpportunities.sort { ($0.symbol, $0.id) < ($1.symbol, $1.id) }
+        experimentalOpportunities = LiveMonitorExperimentalOpportunityHistory.upserting(
+            experimentalOpportunities,
+            with: opportunity
+        )
     }
 
     private func upsert(_ setup: LiveSetup) {

@@ -601,14 +601,18 @@ def test_engine_abstains_without_quote_evidence_or_feasible_levels() -> None:
     assert not [item for item in emitted if item.event_type == "notification_request"]
 
 
-def test_active_setup_remains_open_when_qualified_evidence_becomes_unavailable() -> None:
-    latest = {"minute": 5, "promoted": True, "direction": Direction.LONG}
+def test_experimental_opportunity_does_not_bypass_active_setup_closure() -> None:
+    latest = {
+        "minute": 5,
+        "direction": Direction.LONG,
+        "probability_lower_bound": Decimal("0.58"),
+    }
 
     def resolver(_bars: tuple[MarketBar, ...], _quote: MarketQuote) -> EligibilityEvidence:
         return evidence(
             data_through=NOW + timedelta(minutes=latest["minute"]),
-            promoted=latest["promoted"],
             direction=latest["direction"],
+            probability_lower_bound=latest["probability_lower_bound"],
         )
 
     engine = LiveMonitorEngine(session_id="session-1", evidence_resolver=resolver)
@@ -621,7 +625,7 @@ def test_active_setup_remains_open_when_qualified_evidence_becomes_unavailable()
         )
     )
 
-    latest.update(minute=10, promoted=False, direction=Direction.SHORT)
+    latest.update(minute=10, probability_lower_bound=Decimal("0.54"))
     emitted = []
     for minute in range(5, 10):
         emitted.extend(engine.accept_market_event(bar(minute)))
@@ -637,7 +641,11 @@ def test_active_setup_remains_open_when_qualified_evidence_becomes_unavailable()
     close = [
         item for item in emitted if item.event_type == "notification_request" and item.payload["category"] == "close"
     ]
-    assert close == []
+    assert len(close) == 1
+    assert close[0].payload["reason"] == "evidence_gate_failed"
+    transitions = [item for item in emitted if item.event_type == "lifecycle_transition"]
+    assert transitions[-1].payload["to_state"] == "closed"
+    assert transitions[-1].payload["reason"] == "evidence_gate_failed"
     assert any(item.event_type == "experimental_opportunity" for item in emitted)
     assert not [item for item in emitted if item.event_type == "provider_health"]
 

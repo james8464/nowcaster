@@ -678,7 +678,6 @@ class LiveMonitorEngine:
                 )
                 if plan is not None:
                     result.append(self._experimental_opportunity(plan, decision, now))
-                    return result
             operational = {
                 "market_data_unhealthy",
                 "stale_evidence",

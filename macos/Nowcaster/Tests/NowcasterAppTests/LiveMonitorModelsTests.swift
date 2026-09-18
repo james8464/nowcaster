@@ -153,6 +153,67 @@ import Testing
     #expect(ExperimentalOpportunity(payload: unsafePayload, updatedAt: .now) == nil)
 }
 
+@Test func experimentalOpportunitiesKeepTheNewestHundredRecords() throws {
+    let start = Date(timeIntervalSince1970: 1_000)
+    var opportunities: [ExperimentalOpportunity] = []
+    for offset in 0 ... 100 {
+        opportunities = LiveMonitorExperimentalOpportunityHistory.upserting(
+            opportunities,
+            with: try experimentalOpportunity(id: experimentalOpportunityID(offset), updatedAt: start.addingTimeInterval(Double(offset)))
+        )
+    }
+
+    #expect(opportunities.count == 100)
+    #expect(opportunities.first?.id == experimentalOpportunityID(1))
+    #expect(opportunities.last?.id == experimentalOpportunityID(100))
+
+    let refreshed = try experimentalOpportunity(
+        id: experimentalOpportunityID(1),
+        updatedAt: start.addingTimeInterval(101)
+    )
+    opportunities = LiveMonitorExperimentalOpportunityHistory.upserting(opportunities, with: refreshed)
+
+    #expect(opportunities.count == 100)
+    #expect(opportunities.first?.id == experimentalOpportunityID(2))
+    #expect(opportunities.last == refreshed)
+}
+
+private func experimentalOpportunityID(_ value: Int) -> String {
+    String(format: "%064x", value)
+}
+
+private func experimentalOpportunity(id: String, updatedAt: Date) throws -> ExperimentalOpportunity {
+    let payload: [String: JSONValue] = [
+        "plan_id": .string(id),
+        "provider": .string("alpaca"),
+        "feed": .string("iex"),
+        "symbol": .string("AAPL"),
+        "decision_interval": .string("5m"),
+        "direction": .string("long"),
+        "decision_time": .string("2026-09-18T10:00:00Z"),
+        "expires_at": .string("2026-09-18T10:25:00Z"),
+        "entry_low": .string("100"),
+        "entry_high": .string("100.10"),
+        "stop": .string("99"),
+        "target_1": .string("102"),
+        "target_2": .string("103"),
+        "risk_per_unit": .string("1"),
+        "reward_to_risk_1": .string("2"),
+        "reward_to_risk_2": .string("3"),
+        "venue_note": .null,
+        "cohort_id": .string(String(repeating: "a", count: 64)),
+        "dataset_hash": .string(String(repeating: "b", count: 64)),
+        "evidence_hash": .string(String(repeating: "c", count: 64)),
+        "policy_hash": .string(String(repeating: "d", count: 64)),
+        "config_hash": .string(String(repeating: "f", count: 64)),
+        "strategy_versions": .array([.array([.string("trend"), .string("v1")])]),
+        "experimental_paper_only": .bool(true),
+        "qualification_status": .string("unqualified"),
+        "qualification_reasons": .array([.string("promotion_required")]),
+    ]
+    return try #require(ExperimentalOpportunity(payload: payload, updatedAt: updatedAt))
+}
+
 @Test func mixedProviderHealthUsesWorstSeverityInsteadOfLastWriter() {
     #expect(LiveMonitorHealthAggregation.aggregate([.stale, .healthy]) == .stale)
     #expect(LiveMonitorHealthAggregation.aggregate([.warming, .healthy]) == .warming)
