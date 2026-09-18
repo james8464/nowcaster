@@ -23,6 +23,7 @@ final class LiveMonitorController {
     private(set) var status: LiveMonitorStatus = .stopped
     private(set) var events: [LiveMonitorEvent] = []
     private(set) var activeSetups: [LiveSetup] = []
+    private(set) var experimentalOpportunities: [ExperimentalOpportunity] = []
     private(set) var errorMessage: String?
     private var process: Process?
     @ObservationIgnored private var readerTask: Task<Void, Never>?
@@ -76,6 +77,7 @@ final class LiveMonitorController {
             inputHandle = input.fileHandleForWriting
             process = launched
             activeSetups = []
+            experimentalOpportunities = []
             providerStatuses = [:]
             if !configuration.stocks.isEmpty { providerStatuses["alpaca|\(configuration.stockFeed)"] = .warming }
             if !configuration.crypto.isEmpty { providerStatuses["binance|spot"] = .warming }
@@ -178,6 +180,7 @@ final class LiveMonitorController {
         default: break
         }
         updateActiveSetups(with: event)
+        updateExperimentalOpportunities(with: event)
         if event.type == .notificationRequest {
             let category = LiveNotificationCategory(rawValue: event.payload["category"]?.stringValue ?? "") ?? .health
             let delivered = await notifications.deliver(
@@ -234,6 +237,18 @@ final class LiveMonitorController {
             reason: event.payload["reason"]?.stringValue ?? target,
             at: event.emittedAt
         )
+    }
+
+    private func updateExperimentalOpportunities(with event: LiveMonitorEvent) {
+        guard event.type == .experimentalOpportunity,
+              let opportunity = ExperimentalOpportunity(payload: event.payload, updatedAt: event.emittedAt)
+        else { return }
+        if let index = experimentalOpportunities.firstIndex(where: { $0.id == opportunity.id }) {
+            experimentalOpportunities[index] = opportunity
+        } else {
+            experimentalOpportunities.append(opportunity)
+        }
+        experimentalOpportunities.sort { ($0.symbol, $0.id) < ($1.symbol, $1.id) }
     }
 
     private func upsert(_ setup: LiveSetup) {

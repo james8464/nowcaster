@@ -30,6 +30,38 @@ enum LiveMonitorPresentation {
     }
 }
 
+struct ExperimentalOpportunityPresentation: Equatable, Sendable {
+    let paperOnlyLabel = "Experimental — paper only"
+    let symbol: String
+    let posture: String
+    let entryRange: String
+    let stop: String
+    let targets: String
+    let expiry: String
+    let blockers: String
+    let permitsAction = false
+
+    init(
+        symbol: String,
+        posture: String,
+        entryLow: String,
+        entryHigh: String,
+        stop: String,
+        target1: String,
+        target2: String,
+        expiry: String,
+        qualificationReasons: [String]
+    ) {
+        self.symbol = symbol
+        self.posture = posture
+        entryRange = "\(entryLow)–\(entryHigh)"
+        self.stop = stop
+        targets = "\(target1) / \(target2)"
+        self.expiry = expiry
+        blockers = qualificationReasons.prefix(3).map { $0.replacingOccurrences(of: "_", with: " ") }.joined(separator: " · ")
+    }
+}
+
 struct LiveMonitorView: View {
     @Bindable var model: AppModel
     let settings: AppSettings
@@ -41,7 +73,7 @@ struct LiveMonitorView: View {
         VStack(spacing: 0) {
             header
             Divider()
-            if model.liveMonitor.events.isEmpty && model.liveMonitor.activeSetups.isEmpty {
+            if model.liveMonitor.events.isEmpty && model.liveMonitor.activeSetups.isEmpty && model.liveMonitor.experimentalOpportunities.isEmpty {
                 ContentUnavailableView(
                     "No Live Events",
                     systemImage: "dot.radiowaves.left.and.right",
@@ -54,13 +86,26 @@ struct LiveMonitorView: View {
                             ForEach(model.liveMonitor.activeSetups) { setup in setupRow(setup) }
                         }
                     }
+                    Section("Experimental opportunities") {
+                        if model.liveMonitor.experimentalOpportunities.isEmpty {
+                            ContentUnavailableView(
+                                "No experimental opportunities",
+                                systemImage: "flask",
+                                description: Text("Fresh, directional research that remains unqualified will appear here as paper-only reference levels.")
+                            )
+                        } else {
+                            ForEach(model.liveMonitor.experimentalOpportunities) { opportunity in
+                                experimentalOpportunityRow(opportunity)
+                            }
+                        }
+                    }
                     if !latestAbstentions.isEmpty {
                         Section("Why Nowcaster is abstaining") {
                             ForEach(latestAbstentions) { event in eventRow(event) }
                         }
                     }
                     Section("Recent monitor activity") {
-                        ForEach(model.liveMonitor.events.reversed().prefix(100)) { event in
+                        ForEach(model.liveMonitor.events.reversed().filter { $0.type != .experimentalOpportunity }.prefix(100)) { event in
                             eventRow(event)
                         }
                     }
@@ -166,6 +211,42 @@ struct LiveMonitorView: View {
         .padding(.vertical, 6)
     }
 
+    private func experimentalOpportunityRow(_ opportunity: ExperimentalOpportunity) -> some View {
+        let presentation = ExperimentalOpportunityPresentation(
+            symbol: opportunity.symbol,
+            posture: opportunity.posture,
+            entryLow: opportunity.entryLow,
+            entryHigh: opportunity.entryHigh,
+            stop: opportunity.stop,
+            target1: opportunity.target1,
+            target2: opportunity.target2,
+            expiry: opportunity.expiry,
+            qualificationReasons: opportunity.qualificationReasons
+        )
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label(
+                    "\(presentation.symbol) · \(presentation.posture.capitalized)",
+                    systemImage: presentation.posture == "short" ? "arrow.down.right" : "arrow.up.right"
+                )
+                .font(.headline)
+                Spacer()
+                Text(presentation.paperOnlyLabel).font(.caption).foregroundStyle(.orange)
+            }
+            Grid(alignment: .leading, horizontalSpacing: 24, verticalSpacing: 4) {
+                GridRow { Text("Entry").foregroundStyle(.secondary); Text(presentation.entryRange) }
+                GridRow { Text("Protective stop").foregroundStyle(.secondary); Text(presentation.stop) }
+                GridRow { Text("Targets").foregroundStyle(.secondary); Text(presentation.targets) }
+                GridRow { Text("Expiry").foregroundStyle(.secondary); Text(presentation.expiry) }
+            }
+            .font(.callout.monospacedDigit())
+            Text("Unqualified: \(presentation.blockers)")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 6)
+        .accessibilityLabel("\(presentation.symbol), \(presentation.posture), \(presentation.paperOnlyLabel). Unqualified because \(presentation.blockers).")
+    }
+
     private var latestAbstentions: [LiveMonitorEvent] {
         model.liveMonitor.events.reversed().filter {
             $0.type == .decision && $0.payload["status"]?.stringValue == "abstain"
@@ -201,6 +282,7 @@ struct LiveMonitorView: View {
         switch type {
         case .decision, .notificationRequest: "bell.badge"
         case .setupSnapshot: "rectangle.stack.badge.person.crop"
+        case .experimentalOpportunity: "flask"
         case .barFinalized: "chart.bar"
         case .quote: "dollarsign.arrow.circlepath"
         case .providerHealth, .heartbeat, .ready: "antenna.radiowaves.left.and.right"

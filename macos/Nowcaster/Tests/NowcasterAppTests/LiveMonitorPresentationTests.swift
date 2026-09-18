@@ -45,6 +45,26 @@ import UserNotifications
     #expect(summary.contains("binance/spot"))
 }
 
+@Test func experimentalOpportunityPresentationIsExplicitlyPaperOnlyAndViewOnly() {
+    let presentation = ExperimentalOpportunityPresentation(
+        symbol: "AAPL",
+        posture: "long",
+        entryLow: "100",
+        entryHigh: "100.10",
+        stop: "99",
+        target1: "102",
+        target2: "103",
+        expiry: "2026-09-18T10:25:00Z",
+        qualificationReasons: ["promotion_required", "calibration_required", "evidence_required", "readiness_required"]
+    )
+
+    #expect(presentation.paperOnlyLabel == "Experimental — paper only")
+    #expect(presentation.entryRange == "100–100.10")
+    #expect(presentation.targets == "102 / 103")
+    #expect(presentation.blockers == "promotion required · calibration required · evidence required")
+    #expect(!presentation.permitsAction)
+}
+
 @Test func notificationPolicyDeduplicatesAndSuppressesOnlyForegroundOrQuietEntryEvents() {
     var policy = LiveNotificationPolicy()
     let entry = LiveNotificationCandidate(id: "entry-1", category: .entry, title: "AAPL Long Setup", body: "Research alert")

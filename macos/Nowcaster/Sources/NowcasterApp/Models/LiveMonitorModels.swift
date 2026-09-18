@@ -8,6 +8,7 @@ enum LiveMonitorEventType: String, Codable, Sendable {
     case barFinalized = "bar_finalized"
     case decision
     case setupSnapshot = "setup_snapshot"
+    case experimentalOpportunity = "experimental_opportunity"
     case lifecycleTransition = "lifecycle_transition"
     case notificationRequest = "notification_request"
     case providerHealth = "provider_health"
@@ -46,6 +47,17 @@ extension JSONValue {
     var stringValue: String? {
         guard case let .string(value) = self else { return nil }
         return value
+    }
+
+    var boolValue: Bool? {
+        guard case let .bool(value) = self else { return nil }
+        return value
+    }
+
+    var stringArrayValue: [String]? {
+        guard case let .array(values) = self else { return nil }
+        let strings = values.compactMap(\.stringValue)
+        return strings.count == values.count ? strings : nil
     }
 }
 
@@ -350,5 +362,105 @@ struct LiveSetup: Identifiable, Equatable, Sendable {
             reason: reason,
             updatedAt: at
         )
+    }
+}
+
+struct ExperimentalOpportunity: Identifiable, Equatable, Sendable {
+    let id: String
+    let provider: String
+    let feed: String
+    let symbol: String
+    let decisionInterval: String
+    let posture: String
+    let decisionTime: String
+    let expiry: String
+    let entryLow: String
+    let entryHigh: String
+    let stop: String
+    let target1: String
+    let target2: String
+    let riskPerUnit: String
+    let rewardToRisk1: String
+    let rewardToRisk2: String
+    let venueNote: String?
+    let cohortID: String
+    let datasetHash: String
+    let evidenceHash: String
+    let policyHash: String
+    let configHash: String
+    let strategyVersions: [[String]]
+    let qualificationReasons: [String]
+    let updatedAt: Date
+
+    var isPaperOnly: Bool { true }
+
+    init?(payload: [String: JSONValue], updatedAt: Date) {
+        guard let id = payload["plan_id"]?.stringValue,
+              let provider = payload["provider"]?.stringValue,
+              let feed = payload["feed"]?.stringValue,
+              let symbol = payload["symbol"]?.stringValue,
+              let decisionInterval = payload["decision_interval"]?.stringValue,
+              let posture = payload["direction"]?.stringValue,
+              let decisionTime = payload["decision_time"]?.stringValue,
+              let expiry = payload["expires_at"]?.stringValue,
+              let entryLow = payload["entry_low"]?.stringValue,
+              let entryHigh = payload["entry_high"]?.stringValue,
+              let stop = payload["stop"]?.stringValue,
+              let target1 = payload["target_1"]?.stringValue,
+              let target2 = payload["target_2"]?.stringValue,
+              let riskPerUnit = payload["risk_per_unit"]?.stringValue,
+              let rewardToRisk1 = payload["reward_to_risk_1"]?.stringValue,
+              let rewardToRisk2 = payload["reward_to_risk_2"]?.stringValue,
+              let cohortID = payload["cohort_id"]?.stringValue,
+              let datasetHash = payload["dataset_hash"]?.stringValue,
+              let evidenceHash = payload["evidence_hash"]?.stringValue,
+              let policyHash = payload["policy_hash"]?.stringValue,
+              let configHash = payload["config_hash"]?.stringValue,
+              let qualificationReasons = payload["qualification_reasons"]?.stringArrayValue,
+              payload["experimental_paper_only"]?.boolValue == true,
+              payload["qualification_status"]?.stringValue == "unqualified",
+              let strategyVersions = Self.strategyVersions(from: payload["strategy_versions"]),
+              let venueNote = Self.venueNote(from: payload["venue_note"])
+        else { return nil }
+        self.id = id
+        self.provider = provider
+        self.feed = feed
+        self.symbol = symbol
+        self.decisionInterval = decisionInterval
+        self.posture = posture
+        self.decisionTime = decisionTime
+        self.expiry = expiry
+        self.entryLow = entryLow
+        self.entryHigh = entryHigh
+        self.stop = stop
+        self.target1 = target1
+        self.target2 = target2
+        self.riskPerUnit = riskPerUnit
+        self.rewardToRisk1 = rewardToRisk1
+        self.rewardToRisk2 = rewardToRisk2
+        self.venueNote = venueNote
+        self.cohortID = cohortID
+        self.datasetHash = datasetHash
+        self.evidenceHash = evidenceHash
+        self.policyHash = policyHash
+        self.configHash = configHash
+        self.strategyVersions = strategyVersions
+        self.qualificationReasons = qualificationReasons
+        self.updatedAt = updatedAt
+    }
+
+    private static func strategyVersions(from value: JSONValue?) -> [[String]]? {
+        guard case let .array(entries)? = value else { return nil }
+        let versions = entries.compactMap { $0.stringArrayValue }
+        return versions.count == entries.count ? versions : nil
+    }
+
+    private static func venueNote(from value: JSONValue?) -> String?? {
+        guard let value else { return nil }
+        switch value {
+        case let .string(note): return .some(note)
+        case .null: return .some(nil)
+        default: return nil
+        }
     }
 }

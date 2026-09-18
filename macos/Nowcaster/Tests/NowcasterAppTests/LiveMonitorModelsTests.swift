@@ -102,6 +102,51 @@ import Testing
     #expect(tracked.actualFill == "100.04")
 }
 
+@Test func experimentalOpportunityRequiresTheCompletePaperOnlyWirePayload() throws {
+    let payload: [String: JSONValue] = [
+        "plan_id": .string(String(repeating: "e", count: 64)),
+        "provider": .string("alpaca"),
+        "feed": .string("iex"),
+        "symbol": .string("AAPL"),
+        "decision_interval": .string("5m"),
+        "direction": .string("long"),
+        "decision_time": .string("2026-09-18T10:00:00Z"),
+        "expires_at": .string("2026-09-18T10:25:00Z"),
+        "entry_low": .string("100"),
+        "entry_high": .string("100.10"),
+        "stop": .string("99"),
+        "target_1": .string("102"),
+        "target_2": .string("103"),
+        "risk_per_unit": .string("1"),
+        "reward_to_risk_1": .string("2"),
+        "reward_to_risk_2": .string("3"),
+        "venue_note": .null,
+        "cohort_id": .string(String(repeating: "a", count: 64)),
+        "dataset_hash": .string(String(repeating: "b", count: 64)),
+        "evidence_hash": .string(String(repeating: "c", count: 64)),
+        "policy_hash": .string(String(repeating: "d", count: 64)),
+        "config_hash": .string(String(repeating: "f", count: 64)),
+        "strategy_versions": .array([.array([.string("trend"), .string("v1")])]),
+        "experimental_paper_only": .bool(true),
+        "qualification_status": .string("unqualified"),
+        "qualification_reasons": .array([.string("promotion_required")]),
+    ]
+
+    let opportunity = try #require(ExperimentalOpportunity(payload: payload, updatedAt: .now))
+
+    #expect(opportunity.isPaperOnly)
+    #expect(opportunity.symbol == "AAPL")
+    #expect(opportunity.expiry == "2026-09-18T10:25:00Z")
+    #expect(opportunity.qualificationReasons == ["promotion_required"])
+
+    var unsafePayload = payload
+    unsafePayload["experimental_paper_only"] = .bool(false)
+    #expect(ExperimentalOpportunity(payload: unsafePayload, updatedAt: .now) == nil)
+    unsafePayload = payload
+    unsafePayload.removeValue(forKey: "risk_per_unit")
+    #expect(ExperimentalOpportunity(payload: unsafePayload, updatedAt: .now) == nil)
+}
+
 @Test func mixedProviderHealthUsesWorstSeverityInsteadOfLastWriter() {
     #expect(LiveMonitorHealthAggregation.aggregate([.stale, .healthy]) == .stale)
     #expect(LiveMonitorHealthAggregation.aggregate([.warming, .healthy]) == .warming)
