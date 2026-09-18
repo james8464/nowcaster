@@ -642,14 +642,15 @@ class LiveMonitorEngine:
             self.persistence.record_decision(self.session_id, payload)
         active = self._active.get(scope)
         if decision.direction is None:
+            experimental_bars = self._contiguous_tail(tuple(sorted(bars, key=lambda item: item.start)))
             if self._experimental_requirements_met(
                 evidence=evidence,
                 decision=decision,
                 quote=quote,
                 effective_health=effective_health,
-                bars=decision_bars if len(decision_bars) >= 2 else bars,
+                bars=experimental_bars,
             ):
-                risk = self._risk_inputs(decision_bars if len(decision_bars) >= 2 else bars, evidence.direction)
+                risk = self._risk_inputs(experimental_bars, evidence.direction)
                 assert risk is not None
                 plan = plan_trade_levels(
                     quote,
@@ -787,6 +788,16 @@ class LiveMonitorEngine:
             "selective_threshold",
             "portfolio_selection_required",
             "portfolio_evidence_required",
+            "contextual_evidence_required",
+            "contextual_evidence_mismatch",
+            "contextual_evidence_not_effective",
+            "contextual_evidence_expired",
+            "contextual_asset_not_eligible",
+            "contextual_material_drift",
+            "contextual_drift_warning",
+            "contextual_drift_evidence_required",
+            "contextual_covariance_required",
+            "contextual_weight_required",
         }
         return (
             decision.status == "abstain"
@@ -798,10 +809,7 @@ class LiveMonitorEngine:
             and (evidence.provider, evidence.feed, evidence.symbol) == (quote.provider, quote.feed, quote.symbol)
             and (evidence.direction is not Direction.SHORT or evidence.shortable)
             and (evidence.provider != "alpaca" or evidence.direction is not Direction.SHORT or evidence.easy_to_borrow)
-            and all(
-                reason in allowed_qualification_reasons or reason.startswith("contextual_")
-                for reason in decision.reasons
-            )
+            and all(reason in allowed_qualification_reasons for reason in decision.reasons)
             and LiveMonitorEngine._risk_inputs(bars, evidence.direction) is not None
         )
 

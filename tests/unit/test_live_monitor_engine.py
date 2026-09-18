@@ -401,6 +401,43 @@ def test_unqualified_fresh_directional_evidence_emits_paper_only_opportunity() -
     ]
 
 
+def test_experimental_opportunity_uses_only_the_verified_contiguous_bar_tail() -> None:
+    engine = LiveMonitorEngine(
+        session_id="experimental-opportunity-contiguous-tail",
+        evidence_resolver=lambda _bars, _quote: evidence(
+            promoted=False,
+            data_through=NOW + timedelta(minutes=5),
+        ),
+    )
+    engine.accept_market_event(bar(-10, high=Decimal("110"), low=Decimal("90")))
+    for minute in range(5):
+        engine.accept_market_event(bar(minute))
+
+    at = NOW + timedelta(minutes=5, seconds=2)
+    events = engine.accept_market_event(quote(provider_time=at, received_at=at))
+
+    opportunity = next(event for event in events if event.event_type == "experimental_opportunity")
+    assert opportunity.payload["stop"] == "99.2"
+
+
+def test_experimental_opportunity_rejects_unknown_contextual_failure() -> None:
+    engine = LiveMonitorEngine(
+        session_id="experimental-opportunity-unknown-contextual-failure",
+        evidence_resolver=lambda _bars, _quote: evidence(
+            promoted=False,
+            data_through=NOW + timedelta(minutes=5),
+            reasons=("contextual_unknown_failure",),
+        ),
+    )
+    for minute in range(5):
+        engine.accept_market_event(bar(minute))
+
+    at = NOW + timedelta(minutes=5, seconds=2)
+    events = engine.accept_market_event(quote(provider_time=at, received_at=at))
+
+    assert not [event for event in events if event.event_type == "experimental_opportunity"]
+
+
 @pytest.mark.parametrize(
     ("updates", "bars", "reason"),
     [
