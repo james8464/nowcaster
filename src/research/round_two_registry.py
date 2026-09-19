@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import os
 import tempfile
+from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 from src.research.round_two_contracts import ResearchRoundProtocol
 from src.strategies.types import canonical_json
@@ -35,6 +37,20 @@ def _write_first_manifest(manifest: Path, payload: bytes) -> bool:
         return True
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def append_jsonl_fsync(path: Path, rows: Sequence[dict[str, Any]]) -> None:
+    """Durably append already-validated ledger rows without rewriting history."""
+    if not rows:
+        return
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = "".join(canonical_json(row) + "\n" for row in rows).encode("utf-8")
+    with path.open("ab") as stream:
+        stream.write(payload)
+        stream.flush()
+        os.fsync(stream.fileno())
+    _fsync_directory(path.parent)
 
 
 def register_round(protocol: ResearchRoundProtocol, directory: Path) -> Path:
