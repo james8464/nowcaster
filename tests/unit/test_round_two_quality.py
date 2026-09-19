@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -73,7 +74,7 @@ def test_gap_and_late_bar_force_warmup_abstention(tmp_path):
     assert "available_after_decision" in validate_observation(
         observation(available_at=UTC_T + timedelta(minutes=2)), UTC_T
     )
-    assert eligible_segments(load_observations(directory), protocol) == ()
+    assert eligible_segments(load_observations(directory), protocol, UTC_T + timedelta(minutes=63)) == ()
 
 
 def test_rejects_unfinalized_quote_and_records_provider_error_as_ineligible(tmp_path):
@@ -92,5 +93,61 @@ def test_eligible_segment_needs_clean_coverage_spread_and_warmup(tmp_path):
     bars = continuous_bars(minutes=61)
     append_observations(directory, protocol, bars)
 
-    assert len(eligible_segments(load_observations(directory), protocol)) == 1
+    assert len(eligible_segments(load_observations(directory), protocol, UTC_T + timedelta(minutes=60))) == 1
     assert append_observations(directory, protocol, []).reasons_for(UTC_T + timedelta(minutes=60)) == ()
+
+
+def test_late_backfill_cannot_repair_a_recorded_gap(tmp_path):
+    protocol, directory = registered_round(tmp_path)
+    append_observations(directory, protocol, continuous_bars(minutes=60))
+    append_observations(directory, protocol, [observation(at=UTC_T + timedelta(minutes=61))])
+    append_observations(directory, protocol, [observation(at=UTC_T + timedelta(minutes=60))])
+
+    summary = append_observations(directory, protocol, [])
+    decision_at = UTC_T + timedelta(minutes=61)
+    assert "continuity_warmup" in summary.reasons_for(decision_at)
+    assert eligible_segments(load_observations(directory), protocol, decision_at) == ()
+
+
+def test_fold_coverage_below_threshold_excludes_the_fold(tmp_path):
+    protocol, directory = registered_round(tmp_path)
+    bars = continuous_bars(minutes=201)
+    retained = [bar for index, bar in enumerate(bars) if index not in {100, 101}]
+    append_observations(directory, protocol, retained)
+
+    summary = append_observations(directory, protocol, [])
+    assert "coverage_below_minimum" in summary.reasons_for(
+        UTC_T + timedelta(minutes=200),
+        fold_starts_at=UTC_T,
+        fold_ends_at=UTC_T + timedelta(minutes=200),
+    )
+
+
+def test_future_available_observations_cannot_create_a_segment(tmp_path):
+    protocol, directory = registered_round(tmp_path)
+    decision_at = UTC_T + timedelta(minutes=60)
+    bars = continuous_bars(minutes=61)
+    future = [bar.model_copy(update={"available_at": decision_at + timedelta(seconds=1)}) for bar in bars]
+    append_observations(directory, protocol, future)
+
+    assert eligible_segments(load_observations(directory), protocol, decision_at) == ()
+
+
+def test_concurrent_conflicting_source_keys_are_serialized(tmp_path):
+    protocol, directory = registered_round(tmp_path)
+    first = observation(source_key="binance:concurrent", close="100")
+    conflicting = observation(source_key="binance:concurrent", close="101")
+
+    def append(item):
+        try:
+            append_observations(directory, protocol, [item])
+            return "appended"
+        except ValueError as error:
+            return str(error)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(append, (first, conflicting)))
+
+    assert results.count("appended") == 1
+    assert any("conflicting source key" in result for result in results)
+    assert len(load_observations(directory)) == 1

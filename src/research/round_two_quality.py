@@ -10,7 +10,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.research.round_two_contracts import ResearchRoundProtocol, RoundObservation
-from src.research.round_two_registry import append_jsonl_fsync, load_round_protocol
+from src.research.round_two_registry import append_jsonl_fsync, jsonl_writer_lock, load_round_protocol
 
 OBSERVATIONS_FILE = "observations.jsonl"
 _ONE_MINUTE = timedelta(minutes=1)
@@ -35,8 +35,20 @@ class QualitySummary(BaseModel):
     protocol: ResearchRoundProtocol
     observations: tuple[RoundObservation, ...]
 
-    def reasons_for(self, decision_at: datetime) -> tuple[str, ...]:
-        return _reasons_for(self.observations, self.protocol, decision_at)
+    def reasons_for(
+        self,
+        decision_at: datetime,
+        *,
+        fold_starts_at: datetime | None = None,
+        fold_ends_at: datetime | None = None,
+    ) -> tuple[str, ...]:
+        return _reasons_for(
+            self.observations,
+            self.protocol,
+            decision_at,
+            fold_starts_at=fold_starts_at,
+            fold_ends_at=fold_ends_at,
+        )
 
 
 def _utc_decision(decision_at: datetime) -> datetime:
@@ -99,58 +111,71 @@ def append_observations(
     retained_protocol = load_round_protocol(directory)
     if retained_protocol.identity_hash != protocol.identity_hash:
         raise ValueError("protocol identity does not match retained round")
-    existing_observations = load_observations(directory)
-    existing = {item.source_key: item for item in existing_observations}
-    pending: dict[str, RoundObservation] = {}
-    for item in observations:
-        item.validate_for(protocol)
-        reason = _intrinsic_reason(item, protocol)
-        if reason == "unfinalized_input":
-            raise ValueError("finalized input is required")
-        retained = existing.get(item.source_key) or pending.get(item.source_key)
-        if retained is not None:
-            if retained != item:
-                raise ValueError("conflicting source key")
-            continue
-        pending[item.source_key] = item
-    append_jsonl_fsync(
-        directory / OBSERVATIONS_FILE,
-        [item.model_dump(mode="json") for item in pending.values()],
-    )
+    ledger_path = directory / OBSERVATIONS_FILE
+    with jsonl_writer_lock(ledger_path):
+        existing_observations = load_observations(directory)
+        existing = {item.source_key: item for item in existing_observations}
+        pending: dict[str, RoundObservation] = {}
+        for item in observations:
+            item.validate_for(protocol)
+            reason = _intrinsic_reason(item, protocol)
+            if reason == "unfinalized_input":
+                raise ValueError("finalized input is required")
+            retained = existing.get(item.source_key) or pending.get(item.source_key)
+            if retained is not None:
+                if retained != item:
+                    raise ValueError("conflicting source key")
+                continue
+            pending[item.source_key] = item
+        append_jsonl_fsync(
+            ledger_path,
+            [item.model_dump(mode="json") for item in pending.values()],
+            writer_lock_held=True,
+        )
     return summarize_quality(load_observations(directory), protocol)
 
 
 def _clean_runs(
-    observations: Sequence[RoundObservation], protocol: ResearchRoundProtocol
+    observations: Sequence[RoundObservation], protocol: ResearchRoundProtocol, decision_at: datetime
 ) -> dict[str, list[list[RoundObservation]]]:
+    """Build runs in retained arrival order so late backfills remain exclusion evidence."""
     runs: dict[str, list[list[RoundObservation]]] = {symbol: [] for symbol in protocol.symbols}
     for symbol in protocol.symbols:
-        bars = sorted((item for item in observations if item.symbol == symbol), key=lambda item: item.provider_at)
+        bars = (item for item in observations if item.symbol == symbol and item.available_at <= decision_at)
         current: list[RoundObservation] = []
+        last_provider_at: datetime | None = None
         for item in bars:
             clean = _intrinsic_reason(item, protocol) is None
-            contiguous = bool(current) and item.provider_at == current[-1].provider_at + _ONE_MINUTE
             if not clean:
                 if current:
                     runs[symbol].append(current)
                     current = []
+                last_provider_at = item.provider_at
                 continue
-            if current and not contiguous:
-                runs[symbol].append(current)
+            if last_provider_at is not None and item.provider_at <= last_provider_at:
+                if current:
+                    runs[symbol].append(current)
+                current = []
+                continue
+            if last_provider_at is not None and item.provider_at != last_provider_at + _ONE_MINUTE:
+                if current:
+                    runs[symbol].append(current)
                 current = []
             current.append(item)
+            last_provider_at = item.provider_at
         if current:
             runs[symbol].append(current)
     return runs
 
 
 def eligible_segments(
-    observations: Sequence[RoundObservation], protocol: ResearchRoundProtocol
+    observations: Sequence[RoundObservation], protocol: ResearchRoundProtocol, decision_at: datetime
 ) -> tuple[EligibleSegment, ...]:
     """Return complete clean runs; no interpolation, gap fill, or backfill is performed."""
     protocol = protocol.validated()
+    decision_at = _utc_decision(decision_at)
     segments: list[EligibleSegment] = []
-    for symbol, runs in _clean_runs(observations, protocol).items():
+    for symbol, runs in _clean_runs(observations, protocol, decision_at).items():
         for run in runs:
             elapsed = run[-1].provider_at - run[0].provider_at
             if elapsed < timedelta(minutes=protocol.warmup_minutes):
@@ -170,38 +195,50 @@ def eligible_segments(
 
 
 def _reasons_for(
-    observations: Sequence[RoundObservation], protocol: ResearchRoundProtocol, decision_at: datetime
+    observations: Sequence[RoundObservation],
+    protocol: ResearchRoundProtocol,
+    decision_at: datetime,
+    *,
+    fold_starts_at: datetime | None,
+    fold_ends_at: datetime | None,
 ) -> tuple[str, ...]:
     decision_at = _utc_decision(decision_at)
+    if (fold_starts_at is None) != (fold_ends_at is None):
+        raise ValueError("fold_starts_at and fold_ends_at must be supplied together")
+    if fold_starts_at is not None and fold_ends_at is not None:
+        fold_starts_at = _utc_decision(fold_starts_at)
+        fold_ends_at = _utc_decision(fold_ends_at)
+        if fold_ends_at < fold_starts_at or fold_ends_at > decision_at:
+            raise ValueError("fold must end on or before decision_at")
     reasons: set[str] = set()
+    causal_runs = _clean_runs(observations, protocol, decision_at)
     for symbol in protocol.symbols:
-        visible = sorted(
-            (item for item in observations if item.symbol == symbol and item.available_at <= decision_at),
-            key=lambda item: item.provider_at,
-        )
+        visible = [item for item in observations if item.symbol == symbol and item.available_at <= decision_at]
         if not visible:
             reasons.add("no_available_observations")
             continue
-        latest = visible[-1]
+        latest = max(visible, key=lambda item: item.available_at)
         if decision_at - latest.available_at > timedelta(seconds=protocol.maximum_observation_age_seconds):
             reasons.add("observation_stale")
         if _intrinsic_reason(latest, protocol) is not None:
             reasons.add(_intrinsic_reason(latest, protocol) or "")
             continue
-        clean_end = latest.provider_at
-        clean_start = clean_end - timedelta(minutes=protocol.warmup_minutes)
-        window = [
-            item
-            for item in visible
-            if clean_start <= item.provider_at <= clean_end and _intrinsic_reason(item, protocol) is None
-        ]
-        expected = protocol.warmup_minutes + 1
-        continuous = len(window) == expected and all(
-            window[index].provider_at == clean_start + index * _ONE_MINUTE for index in range(expected)
+        active_run = causal_runs[symbol][-1] if causal_runs[symbol] else []
+        warm_enough = bool(active_run) and active_run[-1].provider_at == latest.provider_at and (
+            active_run[-1].provider_at - active_run[0].provider_at >= timedelta(minutes=protocol.warmup_minutes)
         )
-        if not continuous:
+        if not warm_enough:
             reasons.add("continuity_warmup")
-            reasons.add("coverage_below_minimum")
+        if fold_starts_at is not None and fold_ends_at is not None:
+            expected = int((fold_ends_at - fold_starts_at) / _ONE_MINUTE) + 1
+            retained_times = {
+                item.provider_at
+                for run in causal_runs[symbol]
+                for item in run
+                if fold_starts_at <= item.provider_at <= fold_ends_at
+            }
+            if Decimal(len(retained_times)) / Decimal(expected) < protocol.minimum_coverage:
+                reasons.add("coverage_below_minimum")
     return tuple(sorted(reasons))
 
 

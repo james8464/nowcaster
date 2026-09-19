@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import fcntl
 import os
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -39,11 +41,28 @@ def _write_first_manifest(manifest: Path, payload: bytes) -> bool:
         temporary.unlink(missing_ok=True)
 
 
-def append_jsonl_fsync(path: Path, rows: Sequence[dict[str, Any]]) -> None:
+@contextmanager
+def jsonl_writer_lock(path: Path) -> Iterator[None]:
+    """Serialize validation and durable writes for one append-only JSONL ledger."""
+    lock_path = Path(path).with_name(f".{Path(path).name}.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+b") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+def append_jsonl_fsync(path: Path, rows: Sequence[dict[str, Any]], *, writer_lock_held: bool = False) -> None:
     """Durably append already-validated ledger rows without rewriting history."""
     if not rows:
         return
     path = Path(path)
+    if not writer_lock_held:
+        with jsonl_writer_lock(path):
+            append_jsonl_fsync(path, rows, writer_lock_held=True)
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = "".join(canonical_json(row) + "\n" for row in rows).encode("utf-8")
     with path.open("ab") as stream:
