@@ -40,6 +40,41 @@ def test_spot_protocol_rejects_short_candidate_and_unknown_symbol():
         protocol.model_copy(update={"symbols": ("SOLUSDT",)}).validated()
 
 
+def test_round_two_rejects_non_binance_or_non_spot_sources():
+    """Would fail if this Binance-spot-only round accepted another venue or product."""
+    with pytest.raises(ValueError, match="Binance spot"):
+        RoundSource(provider="kraken", feed="spot")
+    with pytest.raises(ValueError, match="Binance spot"):
+        RoundSource(provider="binance", feed="futures")
+
+
+def test_candidate_parameters_are_deeply_immutable():
+    """Would fail if mutating caller-owned nested parameters could alter round identity."""
+    parameters = {"fast": 5, "rules": {"threshold": 2}}
+    candidate = RoundCandidate(symbol="BTCUSDT", strategy_id="ema", parameters=parameters)
+
+    parameters["rules"]["threshold"] = 3
+
+    assert candidate.parameters == (("fast", 5), ("rules", (("threshold", 2),)))
+    with pytest.raises(TypeError):
+        candidate.parameters[0] = ("fast", 6)
+
+
+def test_protocol_with_frozen_parameters_round_trips_through_registry(tmp_path):
+    """Would fail if canonical parameter serialization could not reload a retained protocol."""
+    protocol = ResearchRoundProtocol.default(round_id="round-002", starts_at=UTC_START).model_copy(
+        update={
+            "candidates": (
+                RoundCandidate(symbol="BTCUSDT", strategy_id="ema", parameters={"fast": 5, "slow": 20}),
+            )
+        }
+    )
+
+    directory = register_round(protocol, tmp_path / "round-002")
+
+    assert load_round_protocol(directory).identity_hash == protocol.identity_hash
+
+
 def test_default_protocol_is_frozen_and_binds_source_cost_and_schedule_identity():
     """Would fail if future source, cost, or sealed-window edits reused a round identity."""
     protocol = ResearchRoundProtocol.default(round_id="round-002", starts_at=UTC_START)

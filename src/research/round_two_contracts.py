@@ -38,6 +38,23 @@ class RoundSource(BaseModel):
             raise ValueError("source identifiers must not be empty")
         return normalized
 
+    @model_validator(mode="after")
+    def binance_spot_only(self) -> RoundSource:
+        if self.provider != "binance" or self.feed != "spot":
+            raise ValueError("Research Round 2 source must be Binance spot")
+        return self
+
+
+def _freeze_parameter(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        ordered = sorted(value.items(), key=lambda item: str(item[0]))
+        return tuple((str(key), _freeze_parameter(item)) for key, item in ordered)
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_parameter(item) for item in value)
+    if value is None or type(value) in (str, int, float, bool):
+        return value
+    raise ValueError("candidate parameters must be JSON scalar, list, or object values")
+
 
 class RoundCandidate(BaseModel):
     """A retained candidate identity; status is decided only by later evaluation."""
@@ -48,7 +65,7 @@ class RoundCandidate(BaseModel):
     strategy_id: str
     direction: str = "long"
     strategy_version: str = "v1"
-    parameters: Mapping[str, str | int | float | bool] = Field(default_factory=dict)
+    parameters: tuple[tuple[str, Any], ...] = ()
 
     @field_validator("symbol")
     @classmethod
@@ -70,6 +87,23 @@ class RoundCandidate(BaseModel):
         if normalized not in {"long", "abstain", "short"}:
             raise ValueError("candidate direction must be long, abstain, or short")
         return normalized
+
+    @field_validator("parameters", mode="before")
+    @classmethod
+    def freeze_parameters(cls, value: Any) -> tuple[tuple[str, Any], ...]:
+        if value is None:
+            return ()
+        if isinstance(value, Mapping):
+            return _freeze_parameter(value)
+        if not isinstance(value, (list, tuple)) or any(
+            not isinstance(pair, (list, tuple)) or len(pair) != 2 for pair in value
+        ):
+            raise ValueError("candidate parameters must be an object")
+        items = [(str(pair[0]), pair[1]) for pair in value]
+        keys = [key for key, _ in items]
+        if len(keys) != len(set(keys)):
+            raise ValueError("candidate parameter names must be unique")
+        return tuple((key, _freeze_parameter(item)) for key, item in sorted(items))
 
 
 class WalkForwardSchedule(BaseModel):
