@@ -66,6 +66,8 @@ class RoundCandidate(BaseModel):
     direction: str = "long"
     strategy_version: str = "v1"
     parameters: tuple[tuple[str, Any], ...] = ()
+    stop_loss_bps: Decimal = Field(default=Decimal("100"), gt=0, lt=10000)
+    target_bps: Decimal = Field(default=Decimal("150"), gt=0)
 
     @field_validator("symbol")
     @classmethod
@@ -148,6 +150,12 @@ class ResearchRoundProtocol(BaseModel):
     fee_bps: Decimal = Field(default=Decimal("10"), ge=0)
     slippage_bps: Decimal = Field(default=Decimal("5"), ge=0)
     latency_ms: int = Field(default=250, ge=0)
+    minimum_closed_trades: int = Field(default=100, gt=0)
+    maximum_drawdown: Decimal = Field(default=Decimal("0.10"), gt=0, le=1)
+    minimum_stressed_lower_edge: Decimal = Field(default=Decimal("0"), ge=0)
+    maximum_volume_participation: Decimal = Field(default=Decimal("0.01"), gt=0, le=1)
+    maximum_initial_cash_exposure: Decimal = Field(default=Decimal("0.25"), gt=0, le=1)
+    maximum_feature_bars: int = Field(default=1000, gt=0)
 
     @field_validator("round_id")
     @classmethod
