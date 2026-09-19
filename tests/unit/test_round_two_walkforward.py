@@ -423,3 +423,62 @@ def test_consumed_seal_without_complete_results_cannot_be_replayed(tmp_path):
     (tmp_path / "candidate-results.jsonl").unlink()
     with pytest.raises(ValueError, match="sealed test has no complete retained results"):
         evaluate(tmp_path)
+
+
+@pytest.mark.parametrize("blocked_volume", (Decimal("0"), Decimal("1")))
+@pytest.mark.parametrize("trigger", ("stop_loss", "target", "signal"))
+def test_triggered_exit_survives_failed_fill_and_price_recovery(tmp_path, blocked_volume, trigger):
+    def always_long(spec, frame, context):
+        return pd.DataFrame(
+            {
+                "signal": (
+                    pd.to_datetime(frame["available_at"]).dt.minute.ne(3).astype(int) if trigger == "signal" else 1
+                ),
+                "decision_timestamp": frame["available_at"],
+                "data_through": frame["available_at"],
+            }
+        )
+
+    obs = list(bars((100,) * 8) + bars((100,) * 8, day=1) + bars((100,) * 8, day=2) + bars((100,), day=3))
+    obs[3] = obs[3].model_copy(
+        update={
+            "low": Decimal("90") if trigger == "stop_loss" else Decimal("100"),
+            "high": Decimal("110") if trigger == "target" else Decimal("100"),
+        }
+    )
+    obs[4] = obs[4].model_copy(update={"volume": blocked_volume})
+    (result,) = evaluate(tmp_path, obs=obs, reg=registry(always_long))
+    trade = result.train.trades[0]
+    assert trade.exit_reason == trigger
+    assert trade.exit_at == START + timedelta(minutes=5)
+    assert trade.exit_price == Decimal("99.9500")
+
+
+def test_pending_stop_survives_a_gap_until_the_next_executable_quote(tmp_path):
+    def always_long(spec, frame, context):
+        return pd.DataFrame(
+            {"signal": 1, "decision_timestamp": frame["available_at"], "data_through": frame["available_at"]}
+        )
+
+    obs = list(bars((100,) * 8) + bars((100,) * 8, day=1) + bars((100,) * 8, day=2) + bars((100,), day=3))
+    obs[3] = obs[3].model_copy(update={"low": Decimal("90"), "high": Decimal("100")})
+    del obs[4]
+    (result,) = evaluate(tmp_path, obs=obs, reg=registry(always_long))
+    assert result.train.trades[0].exit_at == START + timedelta(minutes=5)
+    assert result.train.trades[0].exit_reason == "stop_loss"
+    assert "gap_with_open_position" in result.train.reasons
+
+
+def test_helper_only_source_change_invalidates_sealed_result_reuse(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    evaluate(tmp_path)
+    read_bytes = Path.read_bytes
+
+    def changed_helper_source(path):
+        original = read_bytes(path)
+        return original + b"\n# changed indicator implementation\n" if path.name == "indicators.py" else original
+
+    monkeypatch.setattr(Path, "read_bytes", changed_helper_source)
+    with pytest.raises(ValueError, match="evaluation identity changed"):
+        evaluate(tmp_path)

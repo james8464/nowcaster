@@ -203,6 +203,14 @@ def persist_sealed_test_receipt(
 def _bind_evaluation(directory: Path, protocol: ResearchRoundProtocol, registry: StrategyRegistry) -> None:
     if load_round_protocol(directory).identity_hash != protocol.identity_hash:
         raise ValueError("protocol identity does not match retained round")
+    # Registry generators can be identical wrappers around different rules.
+    # Bind the entire static strategy package, including indicator/session/pair
+    # helpers, plus the generator's defining module for custom registrations.
+    strategy_root = Path(inspect.getfile(StrategySpec)).resolve().parent
+    strategy_sources = {
+        path.relative_to(strategy_root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in sorted(strategy_root.rglob("*.py"))
+    }
     definitions = {}
     for candidate in protocol.candidates:
         try:
@@ -210,6 +218,9 @@ def _bind_evaluation(directory: Path, protocol: ResearchRoundProtocol, registry:
             definitions[candidate.strategy_id] = {
                 "spec": item.spec.model_dump(mode="json"),
                 "generator": hashlib.sha256(inspect.getsource(item.generator).encode()).hexdigest(),
+                "generator_module": hashlib.sha256(
+                    Path(inspect.getsourcefile(item.generator)).read_bytes()
+                ).hexdigest(),
             }
         except KeyError:
             definitions[candidate.strategy_id] = None
@@ -218,6 +229,7 @@ def _bind_evaluation(directory: Path, protocol: ResearchRoundProtocol, registry:
             {
                 "protocol_hash": protocol.identity_hash,
                 "strategies": definitions,
+                "strategy_sources": strategy_sources,
                 "evaluator": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
             }
         )
@@ -352,13 +364,17 @@ def _simulate(rows, signals, protocol, *, multiplier, candidate=None):
         at = row.available_at
         gap = index > 0 and row.provider_at != rows[index - 1].provider_at + MINUTE
         if gap:
-            pending = None
+            if pending is not None and pending[0] == 1:
+                pending = None
             if quantity:
                 reasons.add("gap_with_open_position")
         executable = row.bid is not None and row.ask is not None and row.volume is not None and row.volume > 0
         if pending is not None and at >= pending[1] + timedelta(milliseconds=protocol.latency_ms):
             desired, decision_at, exit_reason = pending
-            pending = None
+            # Failed entries may be reconsidered; triggered exits must survive
+            # missing liquidity, gaps, and subsequent price/signal recovery.
+            if desired == 1:
+                pending = None
             if not executable:
                 reasons.add("execution_unavailable")
             else:
@@ -430,6 +446,7 @@ def _simulate(rows, signals, protocol, *, multiplier, candidate=None):
                         gross_pnl += gross
                         daily[at.date()] = daily.get(at.date(), D(0)) + pnl / INITIAL_CASH
                         quantity, entry = D(0), None
+                        pending = None
         if quantity:
             # Missing quotes cannot improve equity: conservatively keep the prior
             # mark, and withhold eligibility until executable evidence returns.
@@ -456,7 +473,7 @@ def _simulate(rows, signals, protocol, *, multiplier, candidate=None):
             stopped = low <= entry[2] * (1 - candidate.stop_loss_bps / 10000)
             targeted = high >= entry[2] * (1 + candidate.target_bps / 10000)
             if (stopped or targeted) and (pending is None or pending[2] == "signal"):
-                pending = (0, at, "stop_loss" if stopped else "target")
+                pending = (0, pending[1] if pending is not None else at, "stop_loss" if stopped else "target")
     if quantity:
         reasons.add("open_position_at_boundary")
     lower = None
