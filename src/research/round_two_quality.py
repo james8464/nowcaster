@@ -213,6 +213,16 @@ def _reasons_for(
     reasons: set[str] = set()
     causal_runs = _clean_runs(observations, protocol, decision_at)
     for symbol in protocol.symbols:
+        if fold_starts_at is not None and fold_ends_at is not None:
+            expected = int((fold_ends_at - fold_starts_at) / _ONE_MINUTE) + 1
+            retained_times = {
+                item.provider_at
+                for run in causal_runs[symbol]
+                for item in run
+                if fold_starts_at <= item.provider_at <= fold_ends_at
+            }
+            if Decimal(len(retained_times)) / Decimal(expected) < protocol.minimum_coverage:
+                reasons.add("coverage_below_minimum")
         visible = [item for item in observations if item.symbol == symbol and item.available_at <= decision_at]
         if not visible:
             reasons.add("no_available_observations")
@@ -229,16 +239,6 @@ def _reasons_for(
         )
         if not warm_enough:
             reasons.add("continuity_warmup")
-        if fold_starts_at is not None and fold_ends_at is not None:
-            expected = int((fold_ends_at - fold_starts_at) / _ONE_MINUTE) + 1
-            retained_times = {
-                item.provider_at
-                for run in causal_runs[symbol]
-                for item in run
-                if fold_starts_at <= item.provider_at <= fold_ends_at
-            }
-            if Decimal(len(retained_times)) / Decimal(expected) < protocol.minimum_coverage:
-                reasons.add("coverage_below_minimum")
     return tuple(sorted(reasons))
 
 

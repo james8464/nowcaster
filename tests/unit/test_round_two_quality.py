@@ -123,6 +123,29 @@ def test_fold_coverage_below_threshold_excludes_the_fold(tmp_path):
     )
 
 
+def test_fold_with_no_visible_observations_reports_coverage_exclusion(tmp_path):
+    protocol, directory = registered_round(tmp_path)
+    summary = append_observations(directory, protocol, [])
+
+    assert "coverage_below_minimum" in summary.reasons_for(
+        UTC_T + timedelta(minutes=60),
+        fold_starts_at=UTC_T,
+        fold_ends_at=UTC_T + timedelta(minutes=60),
+    )
+
+
+def test_fold_with_only_invalid_observations_reports_coverage_exclusion(tmp_path):
+    protocol, directory = registered_round(tmp_path)
+    append_observations(directory, protocol, [observation(close=None, provider_error="upstream timeout")])
+    summary = append_observations(directory, protocol, [])
+
+    assert "coverage_below_minimum" in summary.reasons_for(
+        UTC_T,
+        fold_starts_at=UTC_T,
+        fold_ends_at=UTC_T,
+    )
+
+
 def test_future_available_observations_cannot_create_a_segment(tmp_path):
     protocol, directory = registered_round(tmp_path)
     decision_at = UTC_T + timedelta(minutes=60)
