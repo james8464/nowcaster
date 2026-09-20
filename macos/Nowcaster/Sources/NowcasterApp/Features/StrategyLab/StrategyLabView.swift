@@ -295,6 +295,7 @@ struct StrategyLabView: View {
             .padding(.horizontal)
             .padding(.vertical, 8)
             ResearchRoundView(model: model)
+            TrendAdvisorView(suggestions: model.trendAdvisorSuggestions)
             .padding(.horizontal)
             .padding(.bottom, 8)
             if presentation.strategies.isEmpty {

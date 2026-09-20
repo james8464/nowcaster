@@ -45,13 +45,14 @@ struct ResearchRoundSnapshot: Decodable, Equatable, Sendable {
     let qualificationStatus: String
     let reasons: [String]
     let candidates: [ResearchRoundCandidate]
+    let trendAdvisor: [TrendAdvisorSuggestion]
     let providerHealth: ResearchRoundProviderHealth = .notPublished
 
     init(from decoder: Decoder) throws {
         let value = try JSONValue(from: decoder)
         guard case let .object(root) = value else { throw invalid("round root") }
         try validateKeys(root, allowed: [
-            "roundId", "protocolHash", "status", "paperOnly", "qualificationStatus", "reasons", "candidates",
+            "roundId", "protocolHash", "status", "paperOnly", "qualificationStatus", "reasons", "candidates", "trendAdvisor",
         ], context: "round")
 
         roundID = try requiredString(root, "roundId", context: "round")
@@ -61,6 +62,12 @@ struct ResearchRoundSnapshot: Decodable, Equatable, Sendable {
         qualificationStatus = try requiredString(root, "qualificationStatus", context: "round")
         reasons = try reasonList(root, "reasons", context: "round")
         candidates = try candidateList(root)
+        if let raw = root["trendAdvisor"] {
+            guard case let .array(items) = raw, items.count <= 100 else { throw invalid("trend advisor bounds") }
+            trendAdvisor = try items.map { try TrendAdvisorSuggestion(value: $0) }
+        } else {
+            trendAdvisor = []
+        }
         try validate()
     }
 
@@ -73,6 +80,16 @@ struct ResearchRoundSnapshot: Decodable, Equatable, Sendable {
         }
         guard !roundID.isEmpty, roundID.utf8.count <= 256, candidates.count <= 100 else {
             throw invalid("round bounds")
+        }
+        guard Set(trendAdvisor.map(\.id)).count == trendAdvisor.count else { throw invalid("duplicate advisor decisions") }
+        for advisor in trendAdvisor {
+            guard advisor.roundID == roundID, advisor.protocolHash == protocolHash else { throw invalid("advisor identity") }
+            if advisor.posture == "long_research" {
+                guard status == .experimentalPaperOnly, candidates.contains(where: {
+                    $0.symbol == advisor.symbol && $0.strategyID == advisor.strategyID && $0.direction == .long
+                        && $0.status == .experimentalPaperOnly
+                }) else { throw invalid("advisor candidate is unavailable") }
+            }
         }
     }
 }

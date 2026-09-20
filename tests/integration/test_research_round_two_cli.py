@@ -71,6 +71,7 @@ def test_cli_register_ingest_evaluate_and_status_are_paper_only(tmp_path, capsys
         "qualificationStatus",
         "reasons",
         "candidates",
+        "trendAdvisor",
     }
     assert payload["paperOnly"] is True
     assert payload["qualificationStatus"] == "unqualified"

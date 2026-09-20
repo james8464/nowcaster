@@ -47,6 +47,7 @@ final class AppModel {
     var selectedDeepResearchRunID: String?
     private(set) var snapshot: NowcasterSnapshot?
     private(set) var researchRoundSnapshot: ResearchRoundSnapshot?
+    var trendAdvisorSuggestions: [TrendAdvisorSuggestion] { researchRoundSnapshot?.trendAdvisor ?? [] }
     private(set) var researchRoundLoadMessage: String?
     private(set) var loadState: SnapshotLoadState = .idle
     private(set) var isRunningJob = false

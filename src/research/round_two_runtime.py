@@ -17,8 +17,20 @@ import yaml
 from src.config.settings import StrategiesConfig
 from src.research.round_two_contracts import ResearchRoundProtocol, RoundObservation, RoundReport, RoundStatus
 from src.research.round_two_quality import append_observations, load_observations, summarize_quality
-from src.research.round_two_registry import load_round_protocol, register_round
-from src.research.round_two_walkforward import CandidateResult, evaluate_round, validate_retained_candidate_results
+from src.research.round_two_registry import (
+    _write_first_manifest,
+    append_jsonl_fsync,
+    jsonl_writer_lock,
+    load_round_protocol,
+    register_round,
+)
+from src.research.round_two_walkforward import (
+    CandidateResult,
+    _bind_evaluation,
+    evaluate_round,
+    validate_retained_candidate_results,
+)
+from src.research.trend_advisor import AdvisorRoundReport, TrendAdvisorSuggestion, advise
 from src.strategies.library import build_strategy_registry
 
 SUMMARY_FILE = "research-round-2-summary.json"
@@ -212,7 +224,12 @@ def _native_round_payload(report: RoundReport) -> dict[str, Any]:
             raise ValueError("native wire candidate must remain unqualified paper-only")
         metrics = candidate["sealed_metrics"]
         if not isinstance(metrics, Mapping) or set(metrics) != {
-            "net_return", "stressed_net_return", "lower_edge", "trade_count", "maximum_drawdown", "coverage"
+            "net_return",
+            "stressed_net_return",
+            "lower_edge",
+            "trade_count",
+            "maximum_drawdown",
+            "coverage",
         }:
             raise ValueError("native wire sealedMetrics contains unsupported fields")
         trade_count = metrics["trade_count"]
@@ -238,8 +255,11 @@ def _native_round_payload(report: RoundReport) -> dict[str, Any]:
 
     round_id = _bounded_string(report.round_id, "roundId")
     protocol_hash = report.protocol_hash
-    if not isinstance(protocol_hash, str) or len(protocol_hash) != 64 or protocol_hash != protocol_hash.lower() or any(
-        character not in "0123456789abcdef" for character in protocol_hash
+    if (
+        not isinstance(protocol_hash, str)
+        or len(protocol_hash) != 64
+        or protocol_hash != protocol_hash.lower()
+        or any(character not in "0123456789abcdef" for character in protocol_hash)
     ):
         raise ValueError("native wire protocolHash must be a lowercase SHA-256 hash")
     status = report.status.value if isinstance(report.status, RoundStatus) else report.status
@@ -260,6 +280,11 @@ def _native_round_payload(report: RoundReport) -> dict[str, Any]:
     }
     if set(payload) != _WIRE_ROOT_KEYS:
         raise ValueError("native wire root contains unsupported fields")
+    if isinstance(report, AdvisorRoundReport):
+        payload["trendAdvisor"] = [
+            TrendAdvisorSuggestion.model_validate(item.model_dump()).model_dump(mode="json", by_alias=True)
+            for item in report.trend_advisor
+        ]
     return payload
 
 
@@ -281,12 +306,33 @@ def build_round_report(directory: Path) -> RoundReport:
         status, reasons = RoundStatus.EXPERIMENTAL_PAPER_ONLY, ("experimental_paper_only",)
     else:
         status, reasons = RoundStatus.REJECTED, ("all_candidates_rejected",)
-    return RoundReport(
+    observations = load_observations(directory)
+    quality = summarize_quality(observations, protocol)
+    registry = _strategy_registry()
+    if any(result.status == RoundStatus.EXPERIMENTAL_PAPER_ONLY for result in results):
+        try:
+            if not (Path(directory) / "evaluation-manifest.json").is_file():
+                raise ValueError("evaluation_manifest_missing")
+            _bind_evaluation(Path(directory), protocol, registry)
+        except ValueError:
+            results = ()
+            status, reasons = RoundStatus.REJECTED, ("evaluation_identity_unavailable",)
+    decision_at = datetime.now(UTC)
+    suggestions = []
+    for candidate in protocol.candidates[:100]:
+        result = next((result for result in results if result.candidate == candidate), None)
+        if result is None:
+            result = CandidateResult(
+                candidate=candidate, status=RoundStatus.INSUFFICIENT_DATA, reasons=("not_evaluated",)
+            )
+        suggestions.append(advise(protocol, result, quality, observations, registry=registry, decision_at=decision_at))
+    return AdvisorRoundReport(
         round_id=protocol.round_id,
         protocol_hash=protocol.identity_hash,
         status=status,
         reasons=reasons,
         candidates=tuple(_candidate_snapshot(result) for result in results),
+        trend_advisor=tuple(suggestions),
     )
 
 
@@ -307,6 +353,33 @@ def _write_atomic_json(path: Path, payload: dict[str, Any]) -> None:
 def write_round_report(directory: Path) -> Path:
     """Atomically publish the bounded paper-only app snapshot for this round."""
     report = build_round_report(directory)
+    if report.trend_advisor:
+        identity = (
+            json.dumps(
+                {"protocol_hash": report.protocol_hash, "policy_hash": report.trend_advisor[0].policy_hash},
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n"
+        )
+        manifest = Path(directory) / "trend-advisor-manifest.json"
+        if not _write_first_manifest(manifest, identity.encode()) and manifest.read_text() != identity:
+            raise ValueError("advisor policy changed; register a new round")
+    ledger = Path(directory) / "trend-advisor-decisions.jsonl"
+    with jsonl_writer_lock(ledger):
+        existing = {}
+        if ledger.exists():
+            for line in ledger.read_text().splitlines():
+                item = TrendAdvisorSuggestion.model_validate_json(line)
+                existing[(item.protocol_hash, item.candidate_hash, item.decision_at)] = item
+        novel = []
+        for item in report.trend_advisor:
+            previous = existing.get((item.protocol_hash, item.candidate_hash, item.decision_at))
+            if previous is not None and previous != item:
+                raise ValueError("published advisor decision cannot be revised")
+            if previous is None:
+                novel.append(item.model_dump(mode="json"))
+        append_jsonl_fsync(ledger, novel, writer_lock_held=True)
     path = Path(directory) / SUMMARY_FILE
     _write_atomic_json(path, _native_round_payload(report))
     return path
