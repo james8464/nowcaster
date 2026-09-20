@@ -6,6 +6,18 @@ from pathlib import Path
 import yaml
 
 
+def test_research_round_two_documentation_and_fixture_are_explicitly_unqualified() -> None:
+    root = Path(__file__).resolve().parents[2]
+    text = (root / "docs" / "research" / "research-round-2.md").read_text(encoding="utf-8")
+    fixture = json.loads((root / "data" / "demo" / "intraday" / "research-fixture.json").read_text(encoding="utf-8"))
+
+    assert "not proof of profitability" in text
+    assert "paper-only" in text
+    assert fixture["research_round_2"]["paper_only"] is True
+    assert fixture["research_round_2"]["qualification_status"] == "unqualified"
+    assert fixture["research_round_2"]["provider_health"] == "unavailable"
+
+
 def test_readme_is_native_first_and_documents_no_web_runtime():
     root = Path(__file__).resolve().parents[2]
     text = (root / "README.md").read_text(encoding="utf-8")

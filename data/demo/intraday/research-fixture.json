@@ -4,6 +4,12 @@
   "generator": "intraday-strategy-research-v1",
   "intervals": ["5m", "15m", "1h", "4h"],
   "network_required": false,
+  "research_round_2": {
+    "paper_only": true,
+    "qualification_status": "unqualified",
+    "provider_health": "unavailable",
+    "reason": "Fixture metadata has no provider observations or evaluated candidate."
+  },
   "symbols": ["BTCUSDT", "ETHUSDT"],
   "warning": "Generated deterministic CI bars validate software behavior only and are never live research evidence."
 }

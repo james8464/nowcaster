@@ -184,6 +184,12 @@ In plain language:
 
 No bundled strategy is considered ready for real-money decisions. The newer intraday CI fixture validates deterministic software behavior and is not market-performance evidence. Historical patterns can be overfit and can stop working.
 
+## Research Round 2: a separate paper-only check
+
+[Research Round 2](docs/research/research-round-2.md) is a small, separate crypto research protocol for Binance spot Bitcoin and Ether. It records data quality, uses fixed walk-forward windows, retains failed candidates, and seals each final test window so that later tuning cannot rewrite it. A gap, late bar, stale price, provider error, or failed check leads to **Stand aside** rather than a repaired result.
+
+Its strongest label is **Experimental paper-only**. That means a declared simulation gate passed for retained evidence; it is not proof of profitability, a trade instruction, an alert, or a reason to use money. The included fixture contains no market result or candidate: it is an offline software check marked paper-only, unqualified, and unavailable.
+
 ## Install and run
 
 ### Open a built copy
