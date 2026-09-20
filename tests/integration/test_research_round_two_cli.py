@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 from datetime import timedelta
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
@@ -16,6 +19,7 @@ from src.research.round_two_runtime import (
     build_round_report,
     ingest_file,
     register_default_round,
+    write_round_report,
 )
 from src.research.round_two_walkforward import (
     CandidateResult,
@@ -57,8 +61,18 @@ def test_cli_register_ingest_evaluate_and_status_are_paper_only(tmp_path, capsys
     assert main(["status", "--directory", str(tmp_path)]) == 0
 
     payload = json.loads((tmp_path / "research-round-2-summary.json").read_text(encoding="utf-8"))
-    assert payload["paper_only"] is True
-    assert payload["qualification_status"] == "unqualified"
+    assert set(payload) == {
+        "roundId",
+        "protocolHash",
+        "status",
+        "paperOnly",
+        "qualificationStatus",
+        "reasons",
+        "candidates",
+    }
+    assert payload["paperOnly"] is True
+    assert payload["qualificationStatus"] == "unqualified"
+    assert all("strategyId" in candidate and "sealedMetrics" in candidate for candidate in payload["candidates"])
     assert "order" not in json.dumps(payload).lower()
     assert "notification" not in json.dumps(payload).lower()
     assert "lifecycle" not in json.dumps(payload).lower()
@@ -68,6 +82,25 @@ def test_premium_adapter_requires_explicit_configuration():
     """Would fail if an undeclared premium feed silently became usable."""
     with pytest.raises(RuntimeError, match="not configured"):
         UnconfiguredPremiumProviderAdapter().observations(("BTCUSDT",))
+
+
+def test_runtime_summary_decodes_with_the_strict_native_parser(tmp_path):
+    """Would fail if Python's published report drifted from the native wire contract."""
+    register_default_round(tmp_path, main_starts_at(), round_id="round-two-native-wire")
+    report_path = write_round_report(tmp_path)
+    environment = {**os.environ, "NOWCASTER_RESEARCH_ROUND_REPORT_PATH": str(report_path)}
+    package_directory = Path(__file__).resolve().parents[2] / "macos" / "Nowcaster"
+
+    completed = subprocess.run(
+        ["swift", "test", "--filter", "decodesRuntimeOutputWireFormat"],
+        cwd=package_directory,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
 
 
 def test_ingest_rejects_action_shaped_input(tmp_path):

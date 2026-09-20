@@ -66,6 +66,25 @@ private func decodeResearchRound(_ payload: [String: Any]) throws -> ResearchRou
     #expect(ResearchRoundPresentation(snapshot: snapshot).statusTitle == "Insufficient data — stand aside")
 }
 
+@Test func decodesRuntimeOutputWireFormat() throws {
+    let url: URL
+    if let runtimePath = ProcessInfo.processInfo.environment["NOWCASTER_RESEARCH_ROUND_REPORT_PATH"] {
+        url = URL(fileURLWithPath: runtimePath)
+    } else {
+        url = try #require(
+            Bundle.module.url(
+                forResource: "research-round-2-summary",
+                withExtension: "json",
+                subdirectory: "Fixtures"
+            )
+        )
+    }
+
+    let snapshot = try JSONDecoder.nowcaster.decode(ResearchRoundSnapshot.self, from: Data(contentsOf: url))
+    #expect(snapshot.paperOnly)
+    #expect(snapshot.qualificationStatus == "unqualified")
+}
+
 @Test func rejectsQualifiedOrderOrShortSpotCandidate() throws {
     var payload = validResearchRoundPayload()
     payload["qualification_status"] = "qualified"

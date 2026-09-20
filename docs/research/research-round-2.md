@@ -28,7 +28,7 @@ The app can load a retained `research-round-2-summary.json` file in Strategy Lab
 - **Rejected** means the declared gates did not pass. It is not hidden or converted into a more favourable label.
 - **Experimental paper-only** means the fixed gates passed for retained simulated evidence. It remains unqualified research, not a trade instruction, alert, or proof that a future result will be positive.
 
-The summary identifies the protocol hash, reasons, and sealed metrics so that it can be checked later. The retained protocol manifest and registry identify the provider, feed, and source revision; the current bounded app summary intentionally does not repeat source identity. It accepts no account, broker, order, notification, alert, or position field. A malformed or action-shaped import is rejected by the native app.
+The summary identifies the protocol hash, reasons, and sealed metrics so that it can be checked later. The protocol manifest and retained evidence identify the provider, feed, and source revision; the current bounded app summary intentionally does not repeat source identity. It accepts no account, broker, order, notification, alert, or position field. A malformed or action-shaped import is rejected by the native app.
 
 ## Provider boundary
 

@@ -139,6 +139,40 @@ def _candidate_snapshot(result: CandidateResult) -> dict[str, Any]:
     }
 
 
+def _native_round_payload(report: RoundReport) -> dict[str, Any]:
+    """Project a retained report into the exact, bounded native import schema."""
+
+    def native_candidate(candidate: Mapping[str, Any]) -> dict[str, Any]:
+        metrics = candidate["sealed_metrics"]
+        return {
+            "symbol": candidate["symbol"],
+            "strategyId": candidate["strategy_id"],
+            "direction": candidate["direction"],
+            "status": candidate["status"],
+            "paperOnly": True,
+            "qualificationStatus": "unqualified",
+            "reasons": candidate["reasons"],
+            "sealedMetrics": {
+                "netReturn": metrics["net_return"],
+                "stressedNetReturn": metrics["stressed_net_return"],
+                "lowerEdge": metrics["lower_edge"],
+                "tradeCount": metrics["trade_count"],
+                "maximumDrawdown": metrics["maximum_drawdown"],
+                "coverage": metrics["coverage"],
+            },
+        }
+
+    return {
+        "roundId": report.round_id,
+        "protocolHash": report.protocol_hash,
+        "status": report.status.value,
+        "paperOnly": True,
+        "qualificationStatus": "unqualified",
+        "reasons": list(report.reasons),
+        "candidates": [native_candidate(candidate) for candidate in report.candidates],
+    }
+
+
 def build_round_report(directory: Path) -> RoundReport:
     """Build a bounded, fail-closed snapshot from retained Round 2 evidence only."""
     protocol = load_round_protocol(directory)
@@ -184,7 +218,7 @@ def write_round_report(directory: Path) -> Path:
     """Atomically publish the bounded paper-only app snapshot for this round."""
     report = build_round_report(directory)
     path = Path(directory) / SUMMARY_FILE
-    _write_atomic_json(path, report.model_dump(mode="json"))
+    _write_atomic_json(path, _native_round_payload(report))
     return path
 
 
