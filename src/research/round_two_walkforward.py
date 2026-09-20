@@ -666,6 +666,11 @@ def validate_retained_candidate_results(
             continue
         if not result.folds:
             raise ValueError("candidate_evidence_missing")
+        fold_ids = tuple(fold.fold.fold_id for fold in result.folds)
+        if len(fold_ids) != len(set(fold_ids)) or tuple(result.folds) != tuple(
+            sorted(result.folds, key=lambda fold: (fold.fold.train_start, fold.fold.fold_id))
+        ):
+            raise ValueError("candidate_evidence_missing")
         retained_folds: set[str] = set()
         for fold_result in result.folds:
             receipt = receipt_by_fold.get(fold_result.fold.fold_id)

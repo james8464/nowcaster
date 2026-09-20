@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import timedelta
+from decimal import Decimal
 
 import pytest
 
@@ -16,7 +17,16 @@ from src.research.round_two_runtime import (
     ingest_file,
     register_default_round,
 )
-from src.research.round_two_walkforward import CandidateResult, FoldResult, SealedTestReceipt, WalkForwardFold
+from src.research.round_two_walkforward import (
+    CandidateResult,
+    EvaluationMetrics,
+    FoldResult,
+    SealedTestReceipt,
+    SimulatedTrade,
+    TrainingTrial,
+    WalkForwardFold,
+    _aggregate,
+)
 from src.strategies.types import canonical_hash
 
 
@@ -194,6 +204,87 @@ def test_report_rejects_experimental_result_without_matching_execution_ledger(tm
 
     assert report.status == RoundStatus.REJECTED
     assert report.reasons == ("candidate_evidence_missing",)
+
+
+def test_report_rejects_duplicate_fold_even_when_aggregate_matches(tmp_path):
+    """Would fail if a duplicate consumed fold could inflate an experimental aggregate."""
+    starts_at = main_starts_at()
+    register_default_round(tmp_path, starts_at)
+    protocol = load_round_protocol(tmp_path)
+    candidate = protocol.candidates[0]
+    validation_end = starts_at + timedelta(days=protocol.schedule.train_days + protocol.schedule.validation_days)
+    fold = WalkForwardFold(
+        fold_id=validation_end.isoformat(),
+        train_start=starts_at,
+        train_end=starts_at + timedelta(days=protocol.schedule.train_days),
+        validation_end=validation_end,
+        test_end=validation_end + timedelta(days=protocol.schedule.sealed_test_days),
+    )
+    metrics = sufficient_metrics(starts_at)
+    selection = {"candidate": candidate.model_dump(mode="json"), "parameters": {}, "reasons": []}
+    initial_receipt = SealedTestReceipt(
+        round_hash=protocol.identity_hash,
+        fold_id=fold.fold_id,
+        sealed_at=starts_at,
+        selections=(selection,),
+    )
+    receipt = initial_receipt.model_copy(update={"selection_hash": canonical_hash(initial_receipt.selections)})
+    retained_fold = FoldResult(
+        fold=fold,
+        selected_parameters={},
+        training_trials=(TrainingTrial(parameters={}, metrics=metrics),),
+        train=metrics,
+        validation=metrics,
+        sealed_test=metrics,
+        status=RoundStatus.EXPERIMENTAL_PAPER_ONLY,
+        receipt=receipt,
+    )
+    aggregate = _aggregate([metrics, metrics])
+    duplicate = CandidateResult(
+        candidate=candidate,
+        selected_parameters={},
+        train=aggregate,
+        validation=aggregate,
+        sealed_test=aggregate,
+        folds=(retained_fold, retained_fold),
+        status=RoundStatus.EXPERIMENTAL_PAPER_ONLY,
+    )
+    append_jsonl_fsync(tmp_path / "sealed-test-receipts.jsonl", [receipt.model_dump(mode="json")])
+    append_jsonl_fsync(
+        tmp_path / "sealed-test-results.jsonl",
+        [{"candidate": candidate.model_dump(mode="json"), "result": retained_fold.model_dump(mode="json")}],
+    )
+    append_jsonl_fsync(tmp_path / "candidate-results.jsonl", [duplicate.model_dump(mode="json")])
+
+    report = build_round_report(tmp_path)
+
+    assert report.status == RoundStatus.REJECTED
+    assert report.reasons == ("candidate_evidence_missing",)
+
+
+def sufficient_metrics(at):
+    trade = SimulatedTrade(
+        decision_at=at,
+        entry_at=at,
+        exit_at=at,
+        entry_price=Decimal("100"),
+        exit_price=Decimal("101"),
+        quantity=Decimal("1"),
+        net_pnl=Decimal("1"),
+        gross_pnl=Decimal("1"),
+        fees=Decimal("0"),
+        spread_cost=Decimal("0"),
+        slippage_cost=Decimal("0"),
+    )
+    trades = (trade,) * 100
+    return EvaluationMetrics(
+        net_return=Decimal("0.01"),
+        stressed_net_return=Decimal("0.01"),
+        lower_edge=Decimal("0.01"),
+        trade_count=len(trades),
+        coverage=Decimal("1"),
+        trades=trades,
+    )
 
 
 def main_starts_at():
