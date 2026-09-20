@@ -595,6 +595,82 @@ def _retained_folds(directory, protocol, folds):
     return retained
 
 
+def validate_retained_candidate_results(
+    directory: Path, protocol: ResearchRoundProtocol
+) -> tuple[CandidateResult, ...]:
+    """Read-only validation before a retained result can be displayed as experimental.
+
+    The evaluator writes these records, but a report must independently bind an
+    experimental label back to the immutable candidate, consumed receipt,
+    selected parameters, fold identity, and simulated trade ledger.  A missing
+    or malformed record is evidence of an unavailable result, not a reason to
+    trust a stored status string.
+    """
+    protocol = protocol.validated()
+    path = Path(directory) / "candidate-results.jsonl"
+    if not path.is_file():
+        return ()
+    lines = path.read_text().splitlines()
+    if any(not line for line in lines):
+        raise ValueError("candidate_results_corrupt")
+    try:
+        rows = tuple(CandidateResult.model_validate_json(line) for line in lines)
+    except ValueError as error:
+        raise ValueError("candidate_results_corrupt") from error
+    candidates = {canonical_hash(item.model_dump(mode="json")): item for item in protocol.candidates}
+    latest: dict[str, CandidateResult] = {}
+    for result in rows:
+        identity = canonical_hash(result.candidate.model_dump(mode="json"))
+        if identity not in candidates:
+            raise ValueError("candidate_evidence_missing")
+        latest[identity] = result
+    receipts = _receipts(Path(directory))
+    receipt_by_fold = {receipt.fold_id: receipt for receipt in receipts}
+    if len(receipt_by_fold) != len(receipts) or any(
+        receipt.round_hash != protocol.identity_hash or receipt.selection_hash != canonical_hash(receipt.selections)
+        for receipt in receipts
+    ):
+        raise ValueError("candidate_evidence_missing")
+    for identity, result in latest.items():
+        if result.status != RoundStatus.EXPERIMENTAL_PAPER_ONLY:
+            continue
+        if not result.folds:
+            raise ValueError("candidate_evidence_missing")
+        retained_folds: set[str] = set()
+        for fold_result in result.folds:
+            receipt = receipt_by_fold.get(fold_result.fold.fold_id)
+            if (
+                receipt is None
+                or fold_result.receipt != receipt
+                or fold_result.status != RoundStatus.EXPERIMENTAL_PAPER_ONLY
+                or fold_result.sealed_test.trade_count != len(fold_result.sealed_test.trades)
+            ):
+                raise ValueError("candidate_evidence_missing")
+            selection = next(
+                (
+                    item
+                    for item in receipt.selections
+                    if canonical_hash(item.get("candidate")) == identity
+                ),
+                None,
+            )
+            if selection is None or dict(fold_result.selected_parameters) != selection.get("parameters"):
+                raise ValueError("candidate_evidence_missing")
+            retained_folds.add(receipt.fold_id)
+        selected_receipts = {
+            receipt.fold_id
+            for receipt in receipts
+            if any(canonical_hash(item.get("candidate")) == identity for item in receipt.selections)
+        }
+        if retained_folds != selected_receipts:
+            raise ValueError("candidate_evidence_missing")
+    return tuple(
+        latest[canonical_hash(candidate.model_dump(mode="json"))]
+        for candidate in protocol.candidates
+        if canonical_hash(candidate.model_dump(mode="json")) in latest
+    )
+
+
 def evaluate_round(
     protocol: ResearchRoundProtocol,
     observations: Sequence[RoundObservation],

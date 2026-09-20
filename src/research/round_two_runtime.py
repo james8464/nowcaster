@@ -16,14 +16,12 @@ from src.config.settings import StrategiesConfig
 from src.research.round_two_contracts import ResearchRoundProtocol, RoundObservation, RoundReport, RoundStatus
 from src.research.round_two_quality import append_observations, load_observations, summarize_quality
 from src.research.round_two_registry import load_round_protocol, register_round
-from src.research.round_two_walkforward import CandidateResult, evaluate_round
+from src.research.round_two_walkforward import CandidateResult, evaluate_round, validate_retained_candidate_results
 from src.strategies.library import build_strategy_registry
 
 SUMMARY_FILE = "research-round-2-summary.json"
-RESULTS_FILE = "candidate-results.jsonl"
 _ACTION_SHAPED_KEYS = frozenset({"order", "notification", "alert", "lifecycle", "qualified", "position"})
-_MAX_REPORT_RESULTS = 16
-_MAX_REPORT_BYTES = 64 * 1024
+_MAX_REASON_CHARACTERS = 256
 
 
 class PremiumProviderAdapter(Protocol):
@@ -75,7 +73,7 @@ def _contains_action_shape(value: Any) -> bool:
 def _load_input_rows(path: Path) -> tuple[dict[str, Any], ...]:
     """Read a local finalized-observation fixture without accepting action payloads."""
     content = Path(path).read_text(encoding="utf-8")
-    if content.lstrip().startswith(("[", "{")):
+    if content.lstrip().startswith("["):
         decoded = json.loads(content)
     else:
         decoded = [json.loads(line) for line in content.splitlines() if line]
@@ -115,27 +113,8 @@ def evaluate_registered_round(directory: Path) -> tuple[CandidateResult, ...]:
 
 
 def _recent_candidate_results(directory: Path) -> tuple[CandidateResult, ...]:
-    path = Path(directory) / RESULTS_FILE
-    if not path.is_file():
-        return ()
-    payload = path.read_bytes()[-_MAX_REPORT_BYTES:]
-    lines = payload.splitlines()[-_MAX_REPORT_RESULTS:]
-    results: list[CandidateResult] = []
-    for line in lines:
-        try:
-            results.append(CandidateResult.model_validate_json(line))
-        except ValueError:
-            continue
-    protocol = load_round_protocol(directory)
-    latest: dict[tuple[str, str, str], CandidateResult] = {}
-    for result in results:
-        identity = (result.candidate.symbol, result.candidate.strategy_id, result.candidate.direction)
-        latest[identity] = result
-    return tuple(
-        latest[identity]
-        for identity in ((c.symbol, c.strategy_id, c.direction) for c in protocol.candidates)
-        if identity in latest
-    )
+    """Read every retained record; only the later display projection is bounded."""
+    return validate_retained_candidate_results(Path(directory), load_round_protocol(directory))
 
 
 def _candidate_snapshot(result: CandidateResult) -> dict[str, Any]:
@@ -148,7 +127,7 @@ def _candidate_snapshot(result: CandidateResult) -> dict[str, Any]:
         "status": result.status.value,
         "paper_only": True,
         "qualification_status": "unqualified",
-        "reasons": list(result.reasons[:16]),
+        "reasons": [reason[:_MAX_REASON_CHARACTERS] for reason in result.reasons[:16]],
         "sealed_metrics": {
             "net_return": str(metrics.net_return),
             "stressed_net_return": str(metrics.stressed_net_return),
@@ -163,8 +142,14 @@ def _candidate_snapshot(result: CandidateResult) -> dict[str, Any]:
 def build_round_report(directory: Path) -> RoundReport:
     """Build a bounded, fail-closed snapshot from retained Round 2 evidence only."""
     protocol = load_round_protocol(directory)
-    results = _recent_candidate_results(directory)
-    if not results:
+    evidence_error: str | None = None
+    try:
+        results = _recent_candidate_results(directory)
+    except ValueError as error:
+        results, evidence_error = (), str(error)
+    if evidence_error is not None:
+        status, reasons = RoundStatus.REJECTED, (evidence_error,)
+    elif not results:
         status, reasons = RoundStatus.INSUFFICIENT_DATA, ("not_evaluated",)
     elif all(result.status == RoundStatus.INSUFFICIENT_DATA for result in results):
         status, reasons = RoundStatus.INSUFFICIENT_DATA, ("insufficient_data",)
