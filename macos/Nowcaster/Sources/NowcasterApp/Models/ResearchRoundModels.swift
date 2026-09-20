@@ -101,6 +101,31 @@ struct ResearchRoundPresentation: Equatable, Sendable {
     }
 }
 
+struct ResearchRoundCandidatePresentation: Equatable, Sendable {
+    let statusTitle: String
+    let directionTitle: String
+    let reasonTitle: String
+    let systemImage: String
+
+    init(candidate: ResearchRoundCandidate) {
+        statusTitle = switch candidate.status {
+        case .experimentalPaperOnly: "Experimental paper-only"
+        case .insufficientData: "Insufficient data"
+        case .rejected: "Rejected"
+        }
+        if candidate.status == .experimentalPaperOnly, candidate.direction == .long {
+            directionTitle = "Long research only"
+            systemImage = "flask"
+        } else {
+            directionTitle = "Stand aside"
+            systemImage = "pause.circle"
+        }
+        reasonTitle = candidate.reasons.isEmpty
+            ? "No retained reason was published."
+            : candidate.reasons.map { $0.replacingOccurrences(of: "_", with: " ") }.joined(separator: " · ")
+    }
+}
+
 private let researchRoundActionTerms: Set<String> = [
     "order", "notification", "alert", "lifecycle", "position", "broker", "execution", "setup",
 ]

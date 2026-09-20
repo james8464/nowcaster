@@ -294,10 +294,7 @@ struct StrategyLabView: View {
             )
             .padding(.horizontal)
             .padding(.vertical, 8)
-            ResearchRoundView(
-                snapshot: model.researchRoundSnapshot,
-                loadMessage: model.researchRoundLoadMessage
-            )
+            ResearchRoundView(model: model)
             .padding(.horizontal)
             .padding(.bottom, 8)
             if presentation.strategies.isEmpty {

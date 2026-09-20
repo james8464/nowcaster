@@ -85,3 +85,48 @@ private func decodeResearchRound(_ payload: [String: Any]) throws -> ResearchRou
         try decodeResearchRound(payload)
     }
 }
+
+@Test func candidatePresentationFailsClosedForRejectedAndInsufficientEvidence() throws {
+    var payload = validResearchRoundPayload()
+    payload["candidates"] = [
+        [
+            "symbol": "BTCUSDT", "strategy_id": "ema", "direction": "long",
+            "status": "experimental_paper_only", "paper_only": true,
+            "qualification_status": "unqualified", "reasons": ["gates_passed"],
+            "sealed_metrics": ["net_return": "0", "stressed_net_return": "0", "lower_edge": NSNull(),
+                               "trade_count": 100, "maximum_drawdown": "0", "coverage": "1"],
+        ],
+        [
+            "symbol": "ETHUSDT", "strategy_id": "ema", "direction": "long",
+            "status": "rejected", "paper_only": true,
+            "qualification_status": "unqualified", "reasons": ["validation_lower_edge"],
+            "sealed_metrics": ["net_return": "-0.01", "stressed_net_return": "-0.02", "lower_edge": "-0.03",
+                               "trade_count": 100, "maximum_drawdown": "0.05", "coverage": "1"],
+        ],
+    ]
+    let snapshot = try decodeResearchRound(payload)
+
+    #expect(ResearchRoundCandidatePresentation(candidate: snapshot.candidates[0]).directionTitle == "Long research only")
+    let rejected = ResearchRoundCandidatePresentation(candidate: snapshot.candidates[1])
+    #expect(rejected.directionTitle == "Stand aside")
+    #expect(rejected.reasonTitle.contains("validation lower edge"))
+}
+
+@Test @MainActor func modelRetainsOnlyAValidatedResearchRoundReport() async throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appending(path: "NowcasterResearchRound-\(UUID().uuidString)", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let report = directory.appending(path: "research-round-2-summary.json")
+    try JSONSerialization.data(withJSONObject: validResearchRoundPayload()).write(to: report)
+
+    let model = AppModel()
+    await model.loadResearchRound(url: report)
+    #expect(model.researchRoundSnapshot?.roundID == "round-two-demo")
+    #expect(model.researchRoundLoadMessage == nil)
+
+    try Data("{\"qualification_status\":\"qualified\"}".utf8).write(to: report)
+    await model.loadResearchRound(url: report)
+    #expect(model.researchRoundSnapshot == nil)
+    #expect(model.researchRoundLoadMessage?.contains("rejected") == true)
+}

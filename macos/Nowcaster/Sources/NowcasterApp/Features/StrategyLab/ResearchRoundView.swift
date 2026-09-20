@@ -1,9 +1,11 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ResearchRoundView: View {
-    let snapshot: ResearchRoundSnapshot?
-    let loadMessage: String?
+    @Bindable var model: AppModel
+    @State private var showingReportImporter = false
 
+    private var snapshot: ResearchRoundSnapshot? { model.researchRoundSnapshot }
     private var presentation: ResearchRoundPresentation { ResearchRoundPresentation(snapshot: snapshot) }
 
     var body: some View {
@@ -11,6 +13,10 @@ struct ResearchRoundView: View {
             VStack(alignment: .leading, spacing: 10) {
                 Label(presentation.title, systemImage: "flask")
                     .font(.headline)
+                Button("Open Research Round 2 Report", systemImage: "folder") {
+                    showingReportImporter = true
+                }
+                .help("Open a retained paper-only Research Round 2 JSON report. This does not place orders or start monitoring.")
                 Text(presentation.subtitle)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -31,12 +37,20 @@ struct ResearchRoundView: View {
                     ContentUnavailableView(
                         "No Research Round 2 report",
                         systemImage: "doc.questionmark",
-                        description: Text(loadMessage ?? presentation.abstentionTitle ?? "No retained research report is available.")
+                        description: Text(model.researchRoundLoadMessage ?? presentation.abstentionTitle ?? "No retained research report is available.")
                     )
                 }
             }
         }
         .accessibilityIdentifier("strategyLab.researchRound")
+        .fileImporter(
+            isPresented: $showingReportImporter,
+            allowedContentTypes: [.json],
+            allowsMultipleSelection: false
+        ) { result in
+            guard case let .success(urls) = result, let url = urls.first else { return }
+            Task { await model.loadResearchRound(url: url) }
+        }
     }
 
     @ViewBuilder private func candidateList(_ candidates: [ResearchRoundCandidate]) -> some View {
@@ -47,11 +61,13 @@ struct ResearchRoundView: View {
                 description: Text("The round has no bounded candidate result to present."))
         } else {
             ForEach(candidates) { candidate in
+                let candidatePresentation = ResearchRoundCandidatePresentation(candidate: candidate)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("\(candidate.symbol) · \(candidate.strategyID)").fontWeight(.medium)
-                    LabeledContent("Direction", value: candidate.direction == .long ? "Long research only" : "Stand aside")
+                    LabeledContent("Status", value: candidatePresentation.statusTitle)
+                    LabeledContent("Direction", value: candidatePresentation.directionTitle)
                     LabeledContent("Coverage", value: candidate.sealedMetrics.coverage)
-                    LabeledContent("Recorded reasons", value: candidate.reasons.joined(separator: " · "))
+                    LabeledContent("Recorded reasons", value: candidatePresentation.reasonTitle)
                 }
                 .padding(.vertical, 4)
             }
