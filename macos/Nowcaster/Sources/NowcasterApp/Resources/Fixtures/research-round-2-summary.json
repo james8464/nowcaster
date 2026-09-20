@@ -1,0 +1,9 @@
+{
+  "roundId": "round-two-fixture",
+  "protocolHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "status": "insufficient_data",
+  "paperOnly": true,
+  "qualificationStatus": "unqualified",
+  "reasons": ["fixture_no_provider_observations"],
+  "candidates": []
+}

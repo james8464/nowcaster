@@ -13,9 +13,11 @@ def test_research_round_two_documentation_and_fixture_are_explicitly_unqualified
 
     assert "not proof of profitability" in text
     assert "paper-only" in text
-    assert fixture["research_round_2"]["paper_only"] is True
-    assert fixture["research_round_2"]["qualification_status"] == "unqualified"
-    assert fixture["research_round_2"]["provider_health"] == "unavailable"
+    metadata = fixture["research_round_2_fixture_metadata"]
+    assert metadata["paper_only"] is True
+    assert metadata["qualification_status"] == "unqualified"
+    assert metadata["provider_health"] == "unavailable"
+    assert metadata["app_report_fixture"].endswith("research-round-2-summary.json")
 
 
 def test_readme_is_native_first_and_documents_no_web_runtime():

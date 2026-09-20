@@ -28,7 +28,7 @@ The app can load a retained `research-round-2-summary.json` file in Strategy Lab
 - **Rejected** means the declared gates did not pass. It is not hidden or converted into a more favourable label.
 - **Experimental paper-only** means the fixed gates passed for retained simulated evidence. It remains unqualified research, not a trade instruction, alert, or proof that a future result will be positive.
 
-The summary identifies the protocol hash, source, reasons, and sealed metrics so that it can be checked later. It accepts no account, broker, order, notification, alert, or position field. A malformed or action-shaped import is rejected by the native app.
+The summary identifies the protocol hash, reasons, and sealed metrics so that it can be checked later. The retained protocol manifest and registry identify the provider, feed, and source revision; the current bounded app summary intentionally does not repeat source identity. It accepts no account, broker, order, notification, alert, or position field. A malformed or action-shaped import is rejected by the native app.
 
 ## Provider boundary
 
@@ -36,7 +36,7 @@ The public Binance source is identified as public research data. It is not prese
 
 ## Included fixture
 
-`data/demo/intraday/research-fixture.json` contains deterministic test metadata only. Its Round 2 section is visibly `paper_only`, `unqualified`, and `unavailable` because it has no provider observations and no evaluated candidate. It exists to check software behaviour offline; it does not contain a return, a signal, a target, or a claim about market performance.
+`data/demo/intraday/research-fixture.json` contains legacy deterministic intraday-generator metadata only; it is not a Research Round 2 app report. Its clearly named metadata block is visibly `paper_only`, `unqualified`, and `unavailable` because it has no provider observations and no evaluated candidate. The separately bundled `research-round-2-summary.json` is a valid bounded app import fixture and records an insufficient-data, Stand aside state. Neither fixture contains a return, a signal, a target, or a claim about market performance.
 
 ## Practical limit
 
