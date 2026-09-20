@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import tempfile
 from collections.abc import Mapping
 from datetime import UTC, datetime
@@ -24,6 +25,10 @@ SUMMARY_FILE = "research-round-2-summary.json"
 _ACTION_SHAPED_KEYS = frozenset({"order", "notification", "alert", "lifecycle", "qualified", "position"})
 _WIRE_ROOT_KEYS = frozenset(
     {"roundId", "protocolHash", "status", "paperOnly", "qualificationStatus", "reasons", "candidates"}
+)
+_ASCII_SWIFT_DOUBLE = re.compile(
+    r"[+-]?(?:(?:[0-9]+(?:\.[0-9]*)?)|(?:\.[0-9]+))(?:[eE][+-]?[0-9]+)?",
+    re.ASCII,
 )
 
 
@@ -158,6 +163,8 @@ def _numeric_string(value: Any, field: str, *, nullable: bool = False) -> str | 
     if nullable and value is None:
         return None
     text = _bounded_string(value, field, maximum=64)
+    if _ASCII_SWIFT_DOUBLE.fullmatch(text) is None:
+        raise ValueError(f"native wire {field} must use an ASCII numeric spelling")
     try:
         numeric = float(text)
     except ValueError as error:

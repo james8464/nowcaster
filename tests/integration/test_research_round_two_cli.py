@@ -185,6 +185,37 @@ def test_native_wire_publisher_rejects_values_the_native_parser_would_refuse(rep
         _native_round_payload(report)
 
 
+@pytest.mark.parametrize("value", ("1_0", " 1 ", "1\n", "٠١"))
+def test_native_wire_publisher_rejects_non_swift_numeric_spellings(value):
+    """Would fail if Python float parsing accepted a spelling unavailable to native decoding."""
+    report = RoundReport(
+        round_id="round",
+        protocol_hash="a" * 64,
+        status=RoundStatus.INSUFFICIENT_DATA,
+        candidates=(
+            _native_candidate(sealed_metrics={**_native_candidate()["sealed_metrics"], "net_return": value}),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="netReturn"):
+        _native_round_payload(report)
+
+
+@pytest.mark.parametrize("value", ("0", "-0", "1.25", ".5", "1.", "1e-3", "-2E+4"))
+def test_native_wire_publisher_accepts_ascii_swift_numeric_spellings(value):
+    report = RoundReport(
+        round_id="round",
+        protocol_hash="a" * 64,
+        status=RoundStatus.INSUFFICIENT_DATA,
+        candidates=(
+            _native_candidate(sealed_metrics={**_native_candidate()["sealed_metrics"], "net_return": value}),
+        ),
+    )
+
+    payload = _native_round_payload(report)
+    assert payload["candidates"][0]["sealedMetrics"]["netReturn"] == value
+
+
 def test_ingest_rejects_action_shaped_input(tmp_path):
     """Would fail if an imported action payload could cross the research boundary."""
     fixture = tmp_path / "unsafe-observations.json"
