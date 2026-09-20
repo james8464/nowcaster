@@ -32,6 +32,7 @@ from src.research.round_two_walkforward import (
 )
 from src.research.trend_advisor import AdvisorRoundReport, TrendAdvisorSuggestion, advise
 from src.strategies.library import build_strategy_registry
+from src.strategies.types import canonical_hash
 
 SUMMARY_FILE = "research-round-2-summary.json"
 _ACTION_SHAPED_KEYS = frozenset({"order", "notification", "alert", "lifecycle", "qualified", "position"})
@@ -143,6 +144,7 @@ def _candidate_snapshot(result: CandidateResult) -> dict[str, Any]:
     return {
         "symbol": result.candidate.symbol,
         "strategy_id": result.candidate.strategy_id,
+        "candidate_hash": canonical_hash(result.candidate.model_dump(mode="json")),
         "direction": result.candidate.direction,
         "status": result.status.value,
         "paper_only": True,
@@ -208,7 +210,7 @@ def _native_round_payload(report: RoundReport) -> dict[str, Any]:
             "reasons",
             "sealed_metrics",
         }
-        if set(candidate) != expected:
+        if set(candidate) not in (expected, expected | {"candidate_hash"}):
             raise ValueError("native wire candidate contains unsupported fields")
         symbol = _bounded_string(candidate["symbol"], "symbol")
         if symbol not in {"BTCUSDT", "ETHUSDT"}:
@@ -235,7 +237,7 @@ def _native_round_payload(report: RoundReport) -> dict[str, Any]:
         trade_count = metrics["trade_count"]
         if type(trade_count) is not int or not 0 <= trade_count <= 1_000_000:
             raise ValueError("native wire tradeCount must be a bounded integer")
-        return {
+        output = {
             "symbol": symbol,
             "strategyId": strategy_id,
             "direction": direction,
@@ -252,6 +254,12 @@ def _native_round_payload(report: RoundReport) -> dict[str, Any]:
                 "coverage": _bounded_fraction(metrics["coverage"], "coverage"),
             },
         }
+        if "candidate_hash" in candidate:
+            identity = _bounded_string(candidate["candidate_hash"], "candidateHash")
+            if len(identity) != 64 or any(character not in "0123456789abcdef" for character in identity):
+                raise ValueError("native wire candidateHash must be a lowercase SHA-256 hash")
+            output["candidateHash"] = identity
+        return output
 
     round_id = _bounded_string(report.round_id, "roundId")
     protocol_hash = report.protocol_hash

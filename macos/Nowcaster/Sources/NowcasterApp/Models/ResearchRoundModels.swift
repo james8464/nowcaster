@@ -29,6 +29,7 @@ struct ResearchRoundSealedMetrics: Equatable, Sendable {
 struct ResearchRoundCandidate: Identifiable, Equatable, Sendable {
     let symbol: String
     let strategyID: String
+    let candidateHash: String?
     let direction: ResearchRoundDirection
     let status: ResearchRoundCandidateStatus
     let reasons: [String]
@@ -87,7 +88,7 @@ struct ResearchRoundSnapshot: Decodable, Equatable, Sendable {
             if advisor.posture == "long_research" {
                 guard status == .experimentalPaperOnly, candidates.contains(where: {
                     $0.symbol == advisor.symbol && $0.strategyID == advisor.strategyID && $0.direction == .long
-                        && $0.status == .experimentalPaperOnly
+                        && $0.status == .experimentalPaperOnly && $0.candidateHash == advisor.candidateHash
                 }) else { throw invalid("advisor candidate is unavailable") }
             }
         }
@@ -203,7 +204,7 @@ private func candidateList(_ values: [String: JSONValue]) throws -> [ResearchRou
     return try items.map { item in
         guard case let .object(candidate) = item else { throw invalid("candidate") }
         try validateKeys(candidate, allowed: [
-            "symbol", "strategyId", "direction", "status", "paperOnly", "qualificationStatus", "reasons", "sealedMetrics",
+            "symbol", "strategyId", "direction", "status", "paperOnly", "qualificationStatus", "reasons", "sealedMetrics", "candidateHash",
         ], context: "candidate")
         let directionValue = try requiredString(candidate, "direction", context: "candidate")
         guard let direction = ResearchRoundDirection(rawValue: directionValue) else { throw invalid("spot short or direction") }
@@ -213,12 +214,22 @@ private func candidateList(_ values: [String: JSONValue]) throws -> [ResearchRou
         return ResearchRoundCandidate(
             symbol: try requiredSymbol(candidate),
             strategyID: try requiredString(candidate, "strategyId", context: "candidate"),
+            candidateHash: try candidateIdentity(candidate),
             direction: direction,
             status: try candidateStatus(candidate, "status", context: "candidate"),
             reasons: try reasonList(candidate, "reasons", context: "candidate"),
             sealedMetrics: try sealedMetrics(candidate)
         )
     }
+}
+
+private func candidateIdentity(_ values: [String: JSONValue]) throws -> String? {
+    guard values["candidateHash"] != nil else { return nil }
+    let identity = try requiredString(values, "candidateHash", context: "candidate")
+    guard identity.utf8.count == 64, identity.allSatisfy({ "0123456789abcdef".contains($0) }) else {
+        throw invalid("candidate identity")
+    }
+    return identity
 }
 
 private func requiredSymbol(_ values: [String: JSONValue]) throws -> String {

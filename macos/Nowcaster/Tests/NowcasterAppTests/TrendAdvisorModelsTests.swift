@@ -53,10 +53,22 @@ private func decodeAdvisor(_ payload: [String: Any]) throws -> TrendAdvisorSugge
         #expect(!TrendAdvisorPresentation(suggestion: item, now: item.decisionAt).showsLevels)
     }
 
+    @Test func delayedDecisionCannotRenewEvidenceAndRenderingExpiresAtEvidenceDeadline() throws {
+        var payload = advisorPayload()
+        payload["decision_at"] = "2026-09-20T12:00:14Z"
+        payload["expires_at"] = "2026-09-20T12:00:29Z"
+        #expect(throws: SnapshotValidationError.self) { try decodeAdvisor(payload) }
+        payload["expires_at"] = "2026-09-20T12:00:15Z"
+        let item = try decodeAdvisor(payload)
+        #expect(TrendAdvisorPresentation(suggestion: item, now: item.decisionAt).showsLevels)
+        #expect(!TrendAdvisorPresentation(suggestion: item, now: item.availableAt!.addingTimeInterval(15)).showsLevels)
+    }
+
     @Test func reportBindsAdvisorIdentityAndCandidateStatus() throws {
         var payload: [String: Any] = ["round_id": "round", "protocol_hash": String(repeating: "a", count: 64),
             "status": "experimental_paper_only", "paper_only": true, "qualification_status": "unqualified",
             "reasons": [], "candidates": [["symbol": "BTCUSDT", "strategy_id": "trend", "direction": "long",
+                "candidate_hash": String(repeating: "c", count: 64),
                 "status": "experimental_paper_only", "paper_only": true, "qualification_status": "unqualified",
                 "reasons": [], "sealed_metrics": ["net_return": "0.1", "stressed_net_return": "0.05", "lower_edge": "0.01",
                 "trade_count": 100, "maximum_drawdown": "0.05", "coverage": "1"]]], "trend_advisor": [advisorPayload()]]
@@ -64,6 +76,11 @@ private func decodeAdvisor(_ payload: [String: Any]) throws -> TrendAdvisorSugge
             try JSONDecoder.nowcaster.decode(ResearchRoundSnapshot.self, from: JSONSerialization.data(withJSONObject: payload))
         }
         #expect(try decode().trendAdvisor.count == 1)
+        var mismatchedAdvisor = advisorPayload()
+        mismatchedAdvisor["candidate_hash"] = String(repeating: "f", count: 64)
+        payload["trend_advisor"] = [mismatchedAdvisor]
+        #expect(throws: SnapshotValidationError.self) { try decode() }
+        payload["trend_advisor"] = [advisorPayload()]
         payload["protocol_hash"] = String(repeating: "f", count: 64)
         #expect(throws: SnapshotValidationError.self) { try decode() }
         payload["protocol_hash"] = String(repeating: "a", count: 64)

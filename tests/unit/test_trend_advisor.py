@@ -302,3 +302,43 @@ def test_default_unconfigured_strategy_is_explained_in_the_app_report(tmp_path):
     payload = json.loads(write_round_report(tmp_path).read_text())
     assert all(item["posture"] == "stand_aside" for item in payload["trendAdvisor"])
     assert all("candidate_confirmation_unavailable" in item["reasons"] for item in payload["trendAdvisor"])
+
+
+def test_delayed_decision_expires_when_its_evidence_expires():
+    p, result, rows, registry = fixture()
+    delayed = run_advice(p, result, rows, registry, decision_at=rows[-1].available_at + timedelta(seconds=14))
+    assert delayed.posture == "long_research"
+    assert delayed.expires_at == rows[-1].available_at + timedelta(seconds=15)
+    boundary = run_advice(p, result, rows, registry, decision_at=rows[-1].available_at + timedelta(seconds=15))
+    assert boundary.posture == "stand_aside"
+    assert "evidence_expired" in boundary.reasons
+
+
+def test_long_payload_cannot_extend_its_evidence_freshness():
+    from src.research.trend_advisor import TrendAdvisorSuggestion
+
+    p, result, rows, registry = fixture()
+    payload = run_advice(p, result, rows, registry).model_dump()
+    payload.update(
+        decision_at=rows[-1].available_at + timedelta(seconds=14),
+        expires_at=rows[-1].available_at + timedelta(seconds=29),
+    )
+    with pytest.raises(ValueError, match="expiry|stale"):
+        TrendAdvisorSuggestion.model_validate(payload)
+
+
+def test_native_candidate_projection_includes_exact_canonical_identity():
+    from src.research.round_two_contracts import RoundReport
+    from src.research.round_two_runtime import _candidate_snapshot, _native_round_payload
+    from src.strategies.types import canonical_hash
+
+    p, result, _, _ = fixture()
+    snapshot = _native_round_payload(
+        RoundReport(
+            round_id=p.round_id,
+            protocol_hash=p.identity_hash,
+            status=result.status,
+            candidates=(_candidate_snapshot(result),),
+        )
+    )
+    assert snapshot["candidates"][0]["candidateHash"] == canonical_hash(result.candidate.model_dump(mode="json"))

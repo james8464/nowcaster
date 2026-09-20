@@ -77,10 +77,12 @@ class TrendAdvisorSuggestion(BaseModel):
 
     @model_validator(mode="after")
     def valid_posture(self):
-        if not self.decision_at < self.expires_at <= self.decision_at + timedelta(seconds=15):
+        if self.expires_at > self.decision_at + timedelta(seconds=15):
             raise ValueError("advisor expiry must be bounded")
         if self.available_at is not None and self.available_at > self.decision_at:
             raise ValueError("advisor evidence must be available")
+        if self.available_at is not None and self.expires_at > self.available_at + timedelta(seconds=15):
+            raise ValueError("advisor expiry must not extend evidence freshness")
         levels = (self.invalidation, self.entry_low, self.entry_high, self.target)
         if self.posture == "long_research":
             if self.available_at is None or any(
@@ -89,7 +91,7 @@ class TrendAdvisorSuggestion(BaseModel):
                 raise ValueError("long research requires finite positive levels and evidence")
             if not self.invalidation < self.entry_low <= self.entry_high < self.target:
                 raise ValueError("long research levels are inconsistent")
-            if self.decision_at - self.available_at > timedelta(seconds=15):
+            if self.expires_at <= self.decision_at or self.decision_at - self.available_at >= timedelta(seconds=15):
                 raise ValueError("long research evidence is stale")
             if self.reasons != ("trend_aligned", "candidate_confirmed"):
                 raise ValueError("long research confirmation missing")
@@ -132,6 +134,10 @@ def advise(
     visible = tuple(row for row in observations if row.symbol == candidate.symbol and row.available_at <= decision_at)
     latest = max(visible, key=lambda row: row.available_at, default=None)
     reasons = set(quality.reasons_for(decision_at))
+    ttl = timedelta(seconds=min(protocol.maximum_observation_age_seconds, 15))
+    expires_at = min(decision_at + ttl, latest.available_at + ttl) if latest else decision_at + ttl
+    if expires_at <= decision_at:
+        reasons.add("evidence_expired")
     try:
         registry.resolve(candidate.strategy_id)
     except KeyError:
@@ -225,7 +231,7 @@ def advise(
         policy_hash=_policy_hash(),
         decision_at=decision_at,
         available_at=latest.available_at if latest else None,
-        expires_at=decision_at + timedelta(seconds=min(protocol.maximum_observation_age_seconds, 15)),
+        expires_at=expires_at,
     )
     if reasons:
         return TrendAdvisorSuggestion(**base, posture="stand_aside", reasons=tuple(sorted(reasons))[:16])

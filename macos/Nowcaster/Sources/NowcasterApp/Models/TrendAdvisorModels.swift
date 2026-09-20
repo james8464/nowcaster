@@ -49,8 +49,9 @@ struct TrendAdvisorSuggestion: Decodable, Equatable, Sendable, Identifiable {
         decisionAt = try advisorDate(root, "decisionAt")
         expiresAt = try advisorDate(root, "expiresAt")
         availableAt = if case .null = root["availableAt"] { nil } else { try advisorDate(root, "availableAt") }
-        guard expiresAt > decisionAt, expiresAt.timeIntervalSince(decisionAt) <= 15 else { throw advisorInvalid("causal timestamps") }
+        guard expiresAt.timeIntervalSince(decisionAt) <= 15 else { throw advisorInvalid("causal timestamps") }
         if let availableAt, availableAt > decisionAt { throw advisorInvalid("causal timestamps") }
+        if let availableAt, expiresAt.timeIntervalSince(availableAt) > 15 { throw advisorInvalid("evidence expiry") }
         entryLow = try advisorLevel(root, "entryLow")
         entryHigh = try advisorLevel(root, "entryHigh")
         invalidation = try advisorLevel(root, "invalidation")
@@ -61,7 +62,7 @@ struct TrendAdvisorSuggestion: Decodable, Equatable, Sendable, Identifiable {
             throw advisorInvalid("close reasons")
         }
         if posture == "long_research" {
-            guard let availableAt, decisionAt.timeIntervalSince(availableAt) <= 15,
+            guard expiresAt > decisionAt, let availableAt, decisionAt.timeIntervalSince(availableAt) < 15,
                   let entryLow, let entryHigh, let invalidation, let target,
                   let low = Double(entryLow), let high = Double(entryHigh), let stop = Double(invalidation), let goal = Double(target),
                   stop < low, low <= high, high < goal, reasons == ["trend_aligned", "candidate_confirmed"]
@@ -79,9 +80,10 @@ struct TrendAdvisorPresentation: Equatable, Sendable {
     let showsLevels: Bool
     let reasons: String
     init(suggestion: TrendAdvisorSuggestion, now: Date) {
-        showsLevels = suggestion.posture == "long_research" && now >= suggestion.decisionAt && now < suggestion.expiresAt
+        let evidenceIsFresh = suggestion.availableAt.map { now >= $0 && now.timeIntervalSince($0) < 15 } ?? false
+        showsLevels = suggestion.posture == "long_research" && evidenceIsFresh && now >= suggestion.decisionAt && now < suggestion.expiresAt
         postureTitle = showsLevels ? "Long research posture" : "Stand aside"
-        reasons = (now >= suggestion.expiresAt ? ["evidence_expired"] :
+        reasons = (now >= suggestion.expiresAt || !evidenceIsFresh ? ["evidence_expired"] :
                     now < suggestion.decisionAt ? ["decision_not_yet_available"] : suggestion.reasons)
             .map { $0.replacingOccurrences(of: "_", with: " ") }.joined(separator: " · ")
     }
