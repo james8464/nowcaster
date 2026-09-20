@@ -12,11 +12,13 @@ from pathlib import Path
 import pytest
 
 from scripts.run_research_round_two import main
-from src.research.round_two_contracts import RoundStatus
+from src.research.round_two_contracts import RoundReport, RoundStatus
 from src.research.round_two_registry import append_jsonl_fsync, load_round_protocol
 from src.research.round_two_runtime import (
     UnconfiguredPremiumProviderAdapter,
+    _native_round_payload,
     build_round_report,
+    evaluate_registered_round,
     ingest_file,
     register_default_round,
     write_round_report,
@@ -87,7 +89,25 @@ def test_premium_adapter_requires_explicit_configuration():
 def test_runtime_summary_decodes_with_the_strict_native_parser(tmp_path):
     """Would fail if Python's published report drifted from the native wire contract."""
     register_default_round(tmp_path, main_starts_at(), round_id="round-two-native-wire")
+    observation_path = tmp_path / "one-finalized-observation.json"
+    observation_path.write_text(
+        json.dumps(
+            [{
+                "provider": "binance", "feed": "spot", "symbol": "BTCUSDT",
+                "provider_at": "2026-01-01T00:00:00Z", "received_at": "2026-01-01T00:00:00Z",
+                "available_at": "2026-01-01T00:00:00Z", "source_key": "native-wire:btc:one", "close": "100",
+            }]
+        ),
+        encoding="utf-8",
+    )
+    ingest_file(tmp_path, observation_path)
+    evaluate_registered_round(tmp_path)
     report_path = write_round_report(tmp_path)
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    assert payload["candidates"]
+    assert {"symbol", "strategyId", "sealedMetrics", "paperOnly", "qualificationStatus"} <= set(
+        payload["candidates"][0]
+    )
     environment = {**os.environ, "NOWCASTER_RESEARCH_ROUND_REPORT_PATH": str(report_path)}
     package_directory = Path(__file__).resolve().parents[2] / "macos" / "Nowcaster"
 
@@ -101,6 +121,68 @@ def test_runtime_summary_decodes_with_the_strict_native_parser(tmp_path):
     )
 
     assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
+def _native_candidate(**updates):
+    candidate = {
+        "symbol": "BTCUSDT",
+        "strategy_id": "ema",
+        "direction": "long",
+        "status": "insufficient_data",
+        "paper_only": True,
+        "qualification_status": "unqualified",
+        "reasons": ["insufficient_data"],
+        "sealed_metrics": {
+            "net_return": "0", "stressed_net_return": "0", "lower_edge": None,
+            "trade_count": 0, "maximum_drawdown": "0", "coverage": "0",
+        },
+    }
+    candidate.update(updates)
+    return candidate
+
+
+@pytest.mark.parametrize(
+    ("report", "message"),
+    [
+        (RoundReport(round_id="r" * 257, protocol_hash="a" * 64, status=RoundStatus.INSUFFICIENT_DATA), "roundId"),
+        (
+            RoundReport(
+                round_id="round", protocol_hash="a" * 64, status=RoundStatus.INSUFFICIENT_DATA,
+                reasons=tuple("reason" for _ in range(17)),
+            ),
+            "reasons",
+        ),
+        (
+            RoundReport(
+                round_id="round", protocol_hash="a" * 64, status=RoundStatus.INSUFFICIENT_DATA,
+                candidates=tuple(_native_candidate() for _ in range(101)),
+            ),
+            "candidates",
+        ),
+        (
+            RoundReport(
+                round_id="round", protocol_hash="a" * 64, status=RoundStatus.INSUFFICIENT_DATA,
+                candidates=(_native_candidate(strategy_id="s" * 257),),
+            ),
+            "strategyId",
+        ),
+        (
+            RoundReport(
+                round_id="round", protocol_hash="a" * 64, status=RoundStatus.INSUFFICIENT_DATA,
+                candidates=(
+                    _native_candidate(
+                        sealed_metrics={**_native_candidate()["sealed_metrics"], "net_return": "nan"}
+                    ),
+                ),
+            ),
+            "netReturn",
+        ),
+    ],
+)
+def test_native_wire_publisher_rejects_values_the_native_parser_would_refuse(report, message):
+    """Would fail if retained evidence were silently truncated or made import-incompatible."""
+    with pytest.raises(ValueError, match=message):
+        _native_round_payload(report)
 
 
 def test_ingest_rejects_action_shaped_input(tmp_path):
@@ -156,8 +238,8 @@ def test_ingest_accepts_multiple_jsonl_observations(tmp_path):
     assert ingest_file(tmp_path, fixture) == 2
 
 
-def test_report_retains_a_complete_large_result_record_before_bounding_output(tmp_path):
-    """Would fail if a byte-tail dropped a valid candidate record before parsing it."""
+def test_report_retains_a_complete_large_result_record_and_refuses_an_unimportable_publication(tmp_path):
+    """Would fail if a byte-tail dropped or silently truncated retained candidate evidence."""
     register_default_round(tmp_path, main_starts_at())
     protocol = load_round_protocol(tmp_path)
     result = CandidateResult(
@@ -170,7 +252,9 @@ def test_report_retains_a_complete_large_result_record_before_bounding_output(tm
     report = build_round_report(tmp_path)
 
     assert report.candidates[0]["symbol"] == "BTCUSDT"
-    assert len(report.candidates[0]["reasons"][0]) < 1024
+    assert len(report.candidates[0]["reasons"][0]) == 65 * 1024
+    with pytest.raises(ValueError, match="candidate reasons reason"):
+        _native_round_payload(report)
 
 
 def test_report_rejects_unsealed_experimental_result(tmp_path):

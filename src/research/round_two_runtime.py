@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import tempfile
 from collections.abc import Mapping
@@ -21,7 +22,9 @@ from src.strategies.library import build_strategy_registry
 
 SUMMARY_FILE = "research-round-2-summary.json"
 _ACTION_SHAPED_KEYS = frozenset({"order", "notification", "alert", "lifecycle", "qualified", "position"})
-_MAX_REASON_CHARACTERS = 256
+_WIRE_ROOT_KEYS = frozenset(
+    {"roundId", "protocolHash", "status", "paperOnly", "qualificationStatus", "reasons", "candidates"}
+)
 
 
 class PremiumProviderAdapter(Protocol):
@@ -127,7 +130,7 @@ def _candidate_snapshot(result: CandidateResult) -> dict[str, Any]:
         "status": result.status.value,
         "paper_only": True,
         "qualification_status": "unqualified",
-        "reasons": [reason[:_MAX_REASON_CHARACTERS] for reason in result.reasons[:16]],
+        "reasons": list(result.reasons),
         "sealed_metrics": {
             "net_return": str(metrics.net_return),
             "stressed_net_return": str(metrics.stressed_net_return),
@@ -139,38 +142,118 @@ def _candidate_snapshot(result: CandidateResult) -> dict[str, Any]:
     }
 
 
+def _bounded_string(value: Any, field: str, *, maximum: int = 256) -> str:
+    if not isinstance(value, str) or not value or len(value.encode("utf-8")) > maximum:
+        raise ValueError(f"native wire {field} must be a nonempty string of at most {maximum} bytes")
+    return value
+
+
+def _bounded_reasons(value: Any, field: str) -> list[str]:
+    if not isinstance(value, (list, tuple)) or len(value) > 16:
+        raise ValueError(f"native wire {field} must contain at most 16 reasons")
+    return [_bounded_string(reason, f"{field} reason") for reason in value]
+
+
+def _numeric_string(value: Any, field: str, *, nullable: bool = False) -> str | None:
+    if nullable and value is None:
+        return None
+    text = _bounded_string(value, field, maximum=64)
+    try:
+        numeric = float(text)
+    except ValueError as error:
+        raise ValueError(f"native wire {field} must be finite") from error
+    if not math.isfinite(numeric):
+        raise ValueError(f"native wire {field} must be finite")
+    return text
+
+
+def _bounded_fraction(value: Any, field: str) -> str:
+    text = _numeric_string(value, field)
+    assert text is not None
+    if not 0 <= float(text) <= 1:
+        raise ValueError(f"native wire {field} must be between zero and one")
+    return text
+
+
 def _native_round_payload(report: RoundReport) -> dict[str, Any]:
     """Project a retained report into the exact, bounded native import schema."""
 
     def native_candidate(candidate: Mapping[str, Any]) -> dict[str, Any]:
+        expected = {
+            "symbol",
+            "strategy_id",
+            "direction",
+            "status",
+            "paper_only",
+            "qualification_status",
+            "reasons",
+            "sealed_metrics",
+        }
+        if set(candidate) != expected:
+            raise ValueError("native wire candidate contains unsupported fields")
+        symbol = _bounded_string(candidate["symbol"], "symbol")
+        if symbol not in {"BTCUSDT", "ETHUSDT"}:
+            raise ValueError("native wire symbol is unsupported")
+        strategy_id = _bounded_string(candidate["strategy_id"], "strategyId")
+        direction = candidate["direction"]
+        if direction not in {"long", "abstain"}:
+            raise ValueError("native wire direction is unsupported")
+        status = candidate["status"]
+        if status not in {item.value for item in RoundStatus}:
+            raise ValueError("native wire candidate status is unsupported")
+        if candidate["paper_only"] is not True or candidate["qualification_status"] != "unqualified":
+            raise ValueError("native wire candidate must remain unqualified paper-only")
         metrics = candidate["sealed_metrics"]
+        if not isinstance(metrics, Mapping) or set(metrics) != {
+            "net_return", "stressed_net_return", "lower_edge", "trade_count", "maximum_drawdown", "coverage"
+        }:
+            raise ValueError("native wire sealedMetrics contains unsupported fields")
+        trade_count = metrics["trade_count"]
+        if type(trade_count) is not int or not 0 <= trade_count <= 1_000_000:
+            raise ValueError("native wire tradeCount must be a bounded integer")
         return {
-            "symbol": candidate["symbol"],
-            "strategyId": candidate["strategy_id"],
-            "direction": candidate["direction"],
-            "status": candidate["status"],
+            "symbol": symbol,
+            "strategyId": strategy_id,
+            "direction": direction,
+            "status": status,
             "paperOnly": True,
             "qualificationStatus": "unqualified",
-            "reasons": candidate["reasons"],
+            "reasons": _bounded_reasons(candidate["reasons"], "candidate reasons"),
             "sealedMetrics": {
-                "netReturn": metrics["net_return"],
-                "stressedNetReturn": metrics["stressed_net_return"],
-                "lowerEdge": metrics["lower_edge"],
-                "tradeCount": metrics["trade_count"],
-                "maximumDrawdown": metrics["maximum_drawdown"],
-                "coverage": metrics["coverage"],
+                "netReturn": _numeric_string(metrics["net_return"], "netReturn"),
+                "stressedNetReturn": _numeric_string(metrics["stressed_net_return"], "stressedNetReturn"),
+                "lowerEdge": _numeric_string(metrics["lower_edge"], "lowerEdge", nullable=True),
+                "tradeCount": trade_count,
+                "maximumDrawdown": _bounded_fraction(metrics["maximum_drawdown"], "maximumDrawdown"),
+                "coverage": _bounded_fraction(metrics["coverage"], "coverage"),
             },
         }
 
-    return {
-        "roundId": report.round_id,
-        "protocolHash": report.protocol_hash,
-        "status": report.status.value,
+    round_id = _bounded_string(report.round_id, "roundId")
+    protocol_hash = report.protocol_hash
+    if not isinstance(protocol_hash, str) or len(protocol_hash) != 64 or protocol_hash != protocol_hash.lower() or any(
+        character not in "0123456789abcdef" for character in protocol_hash
+    ):
+        raise ValueError("native wire protocolHash must be a lowercase SHA-256 hash")
+    status = report.status.value if isinstance(report.status, RoundStatus) else report.status
+    if status not in {item.value for item in RoundStatus}:
+        raise ValueError("native wire status is unsupported")
+    if report.paper_only is not True or report.qualification_status != "unqualified":
+        raise ValueError("native wire report must remain unqualified paper-only")
+    if len(report.candidates) > 100:
+        raise ValueError("native wire candidates must contain at most 100 candidates")
+    payload = {
+        "roundId": round_id,
+        "protocolHash": protocol_hash,
+        "status": status,
         "paperOnly": True,
         "qualificationStatus": "unqualified",
-        "reasons": list(report.reasons),
+        "reasons": _bounded_reasons(report.reasons, "reasons"),
         "candidates": [native_candidate(candidate) for candidate in report.candidates],
     }
+    if set(payload) != _WIRE_ROOT_KEYS:
+        raise ValueError("native wire root contains unsupported fields")
+    return payload
 
 
 def build_round_report(directory: Path) -> RoundReport:
