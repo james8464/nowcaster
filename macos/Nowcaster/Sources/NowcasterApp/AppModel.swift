@@ -46,6 +46,8 @@ final class AppModel {
     var selectedLearningRunID: String?
     var selectedDeepResearchRunID: String?
     private(set) var snapshot: NowcasterSnapshot?
+    private(set) var researchRoundSnapshot: ResearchRoundSnapshot?
+    private(set) var researchRoundLoadMessage: String?
     private(set) var loadState: SnapshotLoadState = .idle
     private(set) var isRunningJob = false
     private(set) var progressEvents: [EngineProgressEvent] = []
@@ -209,6 +211,20 @@ final class AppModel {
             loadState = snapshot == nil ? .incompatible(version) : .stale("Snapshot schema \(version) is incompatible")
         } catch {
             loadState = snapshot == nil ? .failure(error.localizedDescription) : .stale(error.localizedDescription)
+        }
+    }
+
+    func loadResearchRound(url: URL) async {
+        do {
+            let data = try Data(contentsOf: url, options: [.mappedIfSafe])
+            guard data.count <= 1_024 * 1_024 else {
+                throw SnapshotValidationError.invalidResearchEvidence("Research Round 2 report exceeds the 1 MiB limit")
+            }
+            researchRoundSnapshot = try JSONDecoder.nowcaster.decode(ResearchRoundSnapshot.self, from: data)
+            researchRoundLoadMessage = nil
+        } catch {
+            researchRoundSnapshot = nil
+            researchRoundLoadMessage = "Research Round 2 report was rejected: \(error.localizedDescription)"
         }
     }
 
