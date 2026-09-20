@@ -48,8 +48,16 @@ struct ResearchRoundView: View {
             allowedContentTypes: [.json],
             allowsMultipleSelection: false
         ) { result in
-            guard case let .success(urls) = result, let url = urls.first else { return }
-            Task { await model.loadResearchRound(url: url) }
+            switch result {
+            case let .success(urls):
+                guard let url = urls.first else {
+                    model.rejectResearchRoundImport(CocoaError(.fileReadUnknown))
+                    return
+                }
+                Task { await model.loadResearchRound(url: url) }
+            case let .failure(error):
+                model.rejectResearchRoundImport(error)
+            }
         }
     }
 

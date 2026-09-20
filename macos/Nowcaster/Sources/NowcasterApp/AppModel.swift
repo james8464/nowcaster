@@ -223,9 +223,13 @@ final class AppModel {
             researchRoundSnapshot = try JSONDecoder.nowcaster.decode(ResearchRoundSnapshot.self, from: data)
             researchRoundLoadMessage = nil
         } catch {
-            researchRoundSnapshot = nil
-            researchRoundLoadMessage = "Research Round 2 report was rejected: \(error.localizedDescription)"
+            rejectResearchRoundImport(error)
         }
+    }
+
+    func rejectResearchRoundImport(_ error: Error) {
+        researchRoundSnapshot = nil
+        researchRoundLoadMessage = "Research Round 2 report was rejected: \(error.localizedDescription)"
     }
 
     func run(_ job: EngineJob, configuration: EngineConfiguration) async {

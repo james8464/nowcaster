@@ -125,6 +125,10 @@ private func decodeResearchRound(_ payload: [String: Any]) throws -> ResearchRou
     #expect(model.researchRoundSnapshot?.roundID == "round-two-demo")
     #expect(model.researchRoundLoadMessage == nil)
 
+    model.rejectResearchRoundImport(CocoaError(.fileReadNoPermission))
+    #expect(model.researchRoundSnapshot == nil)
+    #expect(model.researchRoundLoadMessage?.contains("rejected") == true)
+
     try Data("{\"qualification_status\":\"qualified\"}".utf8).write(to: report)
     await model.loadResearchRound(url: report)
     #expect(model.researchRoundSnapshot == nil)
