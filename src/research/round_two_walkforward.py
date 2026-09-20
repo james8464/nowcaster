@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+import json
 import math
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
@@ -631,6 +632,35 @@ def validate_retained_candidate_results(
         for receipt in receipts
     ):
         raise ValueError("candidate_evidence_missing")
+    sealed_path = Path(directory) / "sealed-test-results.jsonl"
+    if sealed_path.is_file():
+        try:
+            sealed_rows = tuple(json.loads(line) for line in sealed_path.read_text().splitlines() if line)
+            sealed_results = {}
+            for row in sealed_rows:
+                if set(row) != {"candidate", "result"}:
+                    raise ValueError
+                sealed_candidate = RoundCandidate.model_validate(row["candidate"])
+                sealed_result = FoldResult.model_validate(row["result"])
+                sealed_identity = canonical_hash(sealed_candidate.model_dump(mode="json"))
+                key = (sealed_identity, sealed_result.fold.fold_id)
+                if key in sealed_results and sealed_results[key] != sealed_result:
+                    raise ValueError
+                sealed_results[key] = sealed_result
+        except (TypeError, ValueError, json.JSONDecodeError) as error:
+            raise ValueError("candidate_results_corrupt") from error
+    else:
+        sealed_results = {}
+    experimental_test_ends = [
+        fold_result.fold.test_end
+        for result in latest.values()
+        if result.status == RoundStatus.EXPERIMENTAL_PAPER_ONLY
+        for fold_result in result.folds
+    ]
+    expected_folds = {
+        fold.fold_id: fold
+        for fold in walk_forward_folds(protocol, max(experimental_test_ends, default=protocol.schedule.starts_at))
+    }
     for identity, result in latest.items():
         if result.status != RoundStatus.EXPERIMENTAL_PAPER_ONLY:
             continue
@@ -641,9 +671,20 @@ def validate_retained_candidate_results(
             receipt = receipt_by_fold.get(fold_result.fold.fold_id)
             if (
                 receipt is None
+                or fold_result.fold != expected_folds.get(fold_result.fold.fold_id)
                 or fold_result.receipt != receipt
                 or fold_result.status != RoundStatus.EXPERIMENTAL_PAPER_ONLY
                 or fold_result.sealed_test.trade_count != len(fold_result.sealed_test.trades)
+                or sealed_results.get((identity, fold_result.fold.fold_id)) != fold_result
+                or fold_result.reasons
+                or _gate(fold_result.train, protocol, "train")
+                or _gate(fold_result.validation, protocol, "validation")
+                or _gate(fold_result.sealed_test, protocol, "sealed_test")
+                or not fold_result.training_trials
+                or not any(
+                    trial.parameters == fold_result.selected_parameters and trial.metrics == fold_result.train
+                    for trial in fold_result.training_trials
+                )
             ):
                 raise ValueError("candidate_evidence_missing")
             selection = next(
@@ -654,7 +695,11 @@ def validate_retained_candidate_results(
                 ),
                 None,
             )
-            if selection is None or dict(fold_result.selected_parameters) != selection.get("parameters"):
+            if (
+                selection is None
+                or dict(fold_result.selected_parameters) != selection.get("parameters")
+                or selection.get("reasons") != []
+            ):
                 raise ValueError("candidate_evidence_missing")
             retained_folds.add(receipt.fold_id)
         selected_receipts = {
@@ -663,6 +708,16 @@ def validate_retained_candidate_results(
             if any(canonical_hash(item.get("candidate")) == identity for item in receipt.selections)
         }
         if retained_folds != selected_receipts:
+            raise ValueError("candidate_evidence_missing")
+        aggregate_reasons = tuple(sorted({reason for fold in result.folds for reason in fold.reasons}))
+        if (
+            result.reasons != aggregate_reasons
+            or result.selected_parameters != result.folds[-1].selected_parameters
+            or any(
+                getattr(result, phase) != _aggregate([getattr(fold, phase) for fold in result.folds])
+                for phase in ("train", "validation", "sealed_test")
+            )
+        ):
             raise ValueError("candidate_evidence_missing")
     return tuple(
         latest[canonical_hash(candidate.model_dump(mode="json"))]

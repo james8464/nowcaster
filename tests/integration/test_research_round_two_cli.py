@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 
 import pytest
 
@@ -15,7 +16,8 @@ from src.research.round_two_runtime import (
     ingest_file,
     register_default_round,
 )
-from src.research.round_two_walkforward import CandidateResult
+from src.research.round_two_walkforward import CandidateResult, FoldResult, SealedTestReceipt, WalkForwardFold
+from src.strategies.types import canonical_hash
 
 
 def test_cli_register_ingest_evaluate_and_status_are_paper_only(tmp_path, capsys):
@@ -150,6 +152,48 @@ def test_report_labels_corrupt_retained_result_evidence(tmp_path):
 
     assert report.status == RoundStatus.REJECTED
     assert report.reasons == ("candidate_results_corrupt",)
+
+
+def test_report_rejects_experimental_result_without_matching_execution_ledger(tmp_path):
+    """Would fail if a self-consistent receipt/result could replace simulated evidence."""
+    starts_at = main_starts_at()
+    register_default_round(tmp_path, starts_at)
+    protocol = load_round_protocol(tmp_path)
+    candidate = protocol.candidates[0]
+    validation_end = starts_at + timedelta(days=protocol.schedule.train_days + protocol.schedule.validation_days)
+    fold = WalkForwardFold(
+        fold_id=validation_end.isoformat(),
+        train_start=starts_at,
+        train_end=starts_at + timedelta(days=protocol.schedule.train_days),
+        validation_end=validation_end,
+        test_end=validation_end + timedelta(days=protocol.schedule.sealed_test_days),
+    )
+    selection = {"candidate": candidate.model_dump(mode="json"), "parameters": {}, "reasons": []}
+    initial_receipt = SealedTestReceipt(
+        round_hash=protocol.identity_hash,
+        fold_id=fold.fold_id,
+        sealed_at=starts_at,
+        selections=(selection,),
+    )
+    receipt = initial_receipt.model_copy(update={"selection_hash": canonical_hash(initial_receipt.selections)})
+    forged_fold = FoldResult(
+        fold=fold,
+        selected_parameters={},
+        status=RoundStatus.EXPERIMENTAL_PAPER_ONLY,
+        receipt=receipt,
+    )
+    forged = CandidateResult(
+        candidate=candidate,
+        status=RoundStatus.EXPERIMENTAL_PAPER_ONLY,
+        folds=(forged_fold,),
+    )
+    append_jsonl_fsync(tmp_path / "sealed-test-receipts.jsonl", [receipt.model_dump(mode="json")])
+    append_jsonl_fsync(tmp_path / "candidate-results.jsonl", [forged.model_dump(mode="json")])
+
+    report = build_round_report(tmp_path)
+
+    assert report.status == RoundStatus.REJECTED
+    assert report.reasons == ("candidate_evidence_missing",)
 
 
 def main_starts_at():
