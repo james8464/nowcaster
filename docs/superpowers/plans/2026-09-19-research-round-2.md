@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build an isolated, paper-only crypto research protocol that retains provider health and data quality, evaluates fixed walk-forward candidates without leakage, and exposes only experimental research status to the macOS app.
+**Goal:** Build an isolated, paper-only crypto research protocol that retains provider health and data quality, evaluates fixed walk-forward candidates without leakage, and exposes experimental research status plus an explainable Trend Advisor posture to the macOS app.
 
-**Architecture:** New `src/research/round_two_*` modules own immutable round contracts, append-only evidence, data-quality segmentation, and sealed evaluation. A command-line runner produces a bounded JSON report/snapshot; a new Swift model and view present its status separately from qualified live-monitor setups. Existing `study-001-20260908` code and files are not read or written by the new runtime.
+**Architecture:** New `src/research/round_two_*` modules own immutable round contracts, append-only evidence, data-quality segmentation, and sealed evaluation. A command-line runner produces a bounded JSON report/snapshot; `trend_advisor` derives a causal, deterministic research posture only from retained experimental candidates and finalized quality-clean evidence. New Swift models and views present both separately from qualified live-monitor setups. Existing `study-001-20260908` code and files are not read or written by the new runtime.
 
 **Tech Stack:** Python 3.13, Pydantic 2, Pandas/NumPy, existing strategy registry and historical replay execution model, JSONL/fsync evidence records, Swift 6/SwiftUI, Swift Testing, pytest.
 
@@ -38,10 +38,12 @@
 - Create `src/research/round_two_quality.py`: observation validation, duplicate/conflict checks, contiguous segment construction, per-fold coverage/freshness/spread/health gates, and append-only quality events.
 - Create `src/research/round_two_walkforward.py`: causal signal evaluation, rolling fold boundaries, candidate/baseline comparison, sealed-test ledger protection, and conservative status decision.
 - Create `src/research/round_two_runtime.py`: round registration, ingestion, evaluation orchestration, JSON report/snapshot serialization, and no-op premium adapter contract.
+- Create `src/research/trend_advisor.py`: deterministic, causal paper-only trend posture derived from a Round 2 experimental candidate and finalized observations.
 - Create `scripts/run_research_round_two.py`: `register`, `ingest`, `evaluate`, and `status` commands without any credentials.
 - Create `tests/unit/test_round_two_contracts.py`, `tests/unit/test_round_two_quality.py`, `tests/unit/test_round_two_walkforward.py`, and `tests/integration/test_research_round_two_cli.py`: deterministic unit and command-level coverage.
 - Create `macos/Nowcaster/Sources/NowcasterApp/Models/ResearchRoundModels.swift`: strict `ResearchRoundSnapshot` decoding and fail-closed experimental result model.
 - Create `macos/Nowcaster/Sources/NowcasterApp/Features/StrategyLab/ResearchRoundView.swift`: a research-only status card and candidate rows with no trade-action controls.
+- Create `macos/Nowcaster/Sources/NowcasterApp/Models/TrendAdvisorModels.swift` and `macos/Nowcaster/Sources/NowcasterApp/Features/StrategyLab/TrendAdvisorView.swift`: strict paper-only posture decoding and a read-only explanatory view.
 - Modify `macos/Nowcaster/Sources/NowcasterApp/AppModel.swift`, `macos/Nowcaster/Sources/NowcasterApp/Features/StrategyLab/StrategyLabView.swift`, and `macos/Nowcaster/Tests/NowcasterAppTests/ResearchRoundModelsTests.swift`: load, present, and test a user-selected report while keeping it separate from Live Monitor.
 - Modify `README.md` and create `docs/research/research-round-2.md`: beginner documentation, protocol limits, and premium-provider boundary.
 
@@ -436,9 +438,69 @@ git add README.md docs/research/research-round-2.md data/demo/intraday/research-
 git commit -m "docs: explain Research Round 2 evidence limits"
 ```
 
+### Task 7: Causal, paper-only Trend Advisor
+
+**Files:**
+- Create: `src/research/trend_advisor.py`
+- Modify: `src/research/round_two_runtime.py`
+- Create: `tests/unit/test_trend_advisor.py`
+- Create: `macos/Nowcaster/Sources/NowcasterApp/Models/TrendAdvisorModels.swift`
+- Create: `macos/Nowcaster/Sources/NowcasterApp/Features/StrategyLab/TrendAdvisorView.swift`
+- Modify: `macos/Nowcaster/Sources/NowcasterApp/Models/ResearchRoundModels.swift`, `macos/Nowcaster/Sources/NowcasterApp/AppModel.swift`, and `macos/Nowcaster/Sources/NowcasterApp/Features/StrategyLab/StrategyLabView.swift`
+- Test: `macos/Nowcaster/Tests/NowcasterAppTests/TrendAdvisorModelsTests.swift`
+
+**Interfaces:**
+- Consumes only `CandidateResult`/round identity, a `QualitySummary`, and finalized observations from Tasks 1–4.
+- Produces `TrendAdvisorSuggestion` with `posture` (`long_research`, `short_research`, or `stand_aside`), entry zone, invalidation, targets, expiry, reason codes, causal timestamps, and fixed evidence identities.
+- Extends the bounded Research Round 2 report with an optional `trend_advisor` payload. It never consumes Live Monitor, notification, broker, order, or lifecycle types.
+
+- [ ] **Step 1: Write failing causal and fail-closed tests**
+
+```python
+def test_emits_long_research_only_for_clean_finalized_experimental_candidate():
+    suggestion = advise(protocol, experimental_candidate(), clean_quality(), finalized_uptrend())
+    assert suggestion.posture == "long_research"
+    assert suggestion.paper_only is True
+    assert suggestion.entry_low < suggestion.entry_high < suggestion.target
+
+def test_spot_short_and_rejected_or_gapped_candidate_stand_aside():
+    assert advise(spot_protocol(), short_candidate(), clean_quality(), bars()).posture == "stand_aside"
+    assert "spot_short_unsupported" in advise(spot_protocol(), short_candidate(), clean_quality(), bars()).reasons
+    assert advise(spot_protocol(), rejected_candidate(), gapped_quality(), bars()).posture == "stand_aside"
+```
+
+Run: `pytest tests/unit/test_trend_advisor.py -q`
+
+Expected: FAIL because no Trend Advisor exists.
+
+- [ ] **Step 2: Implement deterministic causal posture selection**
+
+`TrendAdvisor` must require all of: `experimental_paper_only` status; available/finalized data at or before the decision timestamp; no quality exclusion; an upward/downward aligned moving-average slope; declared trend-strength threshold; bounded realised volatility and liquidity; and confirmation from the selected candidate. It derives entry/invalidation/target from the hash-bound candidate barriers and the last executable observation, never from future bars. Missing, stale, gapped, weak, contradictory, or non-executable evidence produces `stand_aside` with reasons. Binance spot short requests always produce `stand_aside`.
+
+- [ ] **Step 3: Extend the bounded runtime report**
+
+Include `trend_advisor` only as a paper-only, `unqualified` structure. Persist the round hash, source identity, candidate identity, decision/availability timestamps, expiry, and reason codes. Reject any payload that contains an order, notification, lifecycle, `qualified` label, or an executable short under the spot protocol.
+
+- [ ] **Step 4: Implement the strict native read-only display**
+
+Decode the posture fail-closed. Present `Stand aside` prominently when it cannot be established, and otherwise display the research posture, timeframe, evidence summary, entry zone, invalidation, target, expiry, and close reasons under the exact label "Paper-only trend research — not a trade instruction." Do not add a button, notification, or execution route.
+
+- [ ] **Step 5: Run focused verification**
+
+Run: `pytest tests/unit/test_trend_advisor.py tests/integration/test_research_round_two_cli.py -q && cd macos/Nowcaster && swift test --filter TrendAdvisorModelsTests`
+
+Expected: PASS. Record any pre-existing platform limitation without calling this a clean full suite.
+
+- [ ] **Step 6: Commit Trend Advisor**
+
+```bash
+git add src/research/trend_advisor.py src/research/round_two_runtime.py tests/unit/test_trend_advisor.py macos/Nowcaster/Sources/NowcasterApp/Models/TrendAdvisorModels.swift macos/Nowcaster/Sources/NowcasterApp/Features/StrategyLab/TrendAdvisorView.swift macos/Nowcaster/Sources/NowcasterApp/Models/ResearchRoundModels.swift macos/Nowcaster/Sources/NowcasterApp/AppModel.swift macos/Nowcaster/Sources/NowcasterApp/Features/StrategyLab/StrategyLabView.swift macos/Nowcaster/Tests/NowcasterAppTests/TrendAdvisorModelsTests.swift
+git commit -m "feat: add paper-only Trend Advisor"
+```
+
 ## Plan self-review
 
-- Spec coverage: Task 1 implements immutable protocol/identity; Task 2 implements provenance and fail-closed data quality; Task 3 implements fixed causal walk-forward evaluation, baselines, retention, costs, and sealed testing; Task 4 implements the isolated runtime/provider boundary/report; Task 5 implements separate native research status; Task 6 implements beginner documentation and end-to-end verification.
+- Spec coverage: Task 1 implements immutable protocol/identity; Task 2 implements provenance and fail-closed data quality; Task 3 implements fixed causal walk-forward evaluation, baselines, retention, costs, and sealed testing; Task 4 implements the isolated runtime/provider boundary/report; Task 5 implements separate native research status; Task 6 implements beginner documentation and end-to-end verification; Task 7 implements the separately presented causal Trend Advisor posture.
 - Placeholder scan: no deferred or unspecified implementation steps remain; every code step names its types, commands, tests, and expected result.
 - Type consistency: `ResearchRoundProtocol`, `RoundObservation`, `QualitySummary`, `CandidateResult`, and `ResearchRoundSnapshot` are introduced before their consumers and preserve paper-only/unqualified status across Python and Swift.
 - Review focus coverage: Tasks 2, 3, and 5 contain an explicit test for each listed failure mode.

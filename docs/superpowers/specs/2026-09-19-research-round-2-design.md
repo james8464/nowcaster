@@ -44,6 +44,14 @@ A candidate can be `insufficient_data`, `rejected`, or `experimental_paper_only`
 
 An app-facing `ResearchRoundSnapshot` exposes current provider health, coverage, candidate status, reasons, and bounded experimental observations. It must distinguish an unavailable signal from an abstention, display the provider and last successful observation, and keep experimental results separate from promoted live-monitor setups.
 
+### 5. Trend Advisor (paper-only posture)
+
+`TrendAdvisor` is a separate, explanatory view over a retained `experimental_paper_only` candidate and its finalized causal observations. It may show **Long research posture**, **Short research posture**, or **Stand aside** together with a timeframe, bounded entry zone, invalidation level, research target levels, expiry, close conditions, and machine-readable reason codes. These are simulated research parameters derived deterministically from the hash-bound candidate barriers and finalized market state; they are not orders, personalised advice, an alert lifecycle, or a promise of profit.
+
+The initial Binance spot protocol can only produce Long research posture or Stand aside. A requested short posture must fail closed to Stand aside with `spot_short_unsupported`; a short-capable venue requires a separately registered protocol, source contract, cost model, and replay evidence. The advisor requires a clean quality segment, a retained experimental candidate, and aligned finalized trend evidence (directional moving-average slope, trend-strength threshold, realised volatility/liquidity bounds, and candidate confirmation). Any unavailable, stale, gapped, contradictory, or weak condition produces Stand aside. It must never infer a trend from an unfinished bar, revise a published posture after the decision timestamp, or create a posture from a candidate rejected by the sealed evaluation.
+
+The app keeps advisor output visibly separate from Live Monitor and labels it "Paper-only trend research — not a trade instruction." It records the round/protocol/candidate identity, decision and availability times, source identity, quality reasons, and close/invalidation reason codes so that a user can replay each posture causally. A future alert or execution capability is explicitly out of scope.
+
 ## Data flow
 
 ```mermaid
@@ -73,7 +81,8 @@ The implementation must demonstrate all of the following:
 3. Walk-forward selection uses only prior data, runs each sealed test once, accounts for adverse execution and costs, and retains rejected candidates.
 4. Data-quality exclusions prevent experimental observations even if historical returns are favorable.
 5. The macOS snapshot parser rejects anything that tries to label a round candidate qualified or attach it to an order/alert lifecycle.
-6. Documentation explains that results are simulated research evidence, not a way to guarantee income.
+6. Trend Advisor emits a posture only for a causally available, quality-clean, experimental candidate; it emits Stand aside for spot shorts, gaps, stale data, weak/contradictory trend evidence, or rejected candidates.
+7. Documentation explains that results are simulated research evidence, not a way to guarantee income.
 
 ## Success criteria
 
