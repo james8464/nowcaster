@@ -66,6 +66,9 @@ private func decodeAdvisor(_ payload: [String: Any]) throws -> TrendAdvisorSugge
 
     @Test func reportBindsAdvisorIdentityAndCandidateStatus() throws {
         var payload: [String: Any] = ["round_id": "round", "protocol_hash": String(repeating: "a", count: 64),
+            "provider_health": ["provider": "binance", "feed": "spot", "revision": "binance-spot-public-v1",
+                "reported_at": "2026-09-20T12:00:00Z", "last_successful_observation_at": NSNull(),
+                "maximum_age_seconds": 15, "state": "unavailable", "exclusions": ["no_available_observations"]],
             "status": "experimental_paper_only", "paper_only": true, "qualification_status": "unqualified",
             "reasons": [], "candidates": [["symbol": "BTCUSDT", "strategy_id": "trend", "direction": "long",
                 "candidate_hash": String(repeating: "c", count: 64),

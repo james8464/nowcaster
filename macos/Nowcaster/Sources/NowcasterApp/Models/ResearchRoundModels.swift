@@ -1,9 +1,51 @@
 import Foundation
 
-enum ResearchRoundProviderHealth: String, Equatable, Sendable {
-    case notPublished = "not_published"
+struct ResearchRoundProviderHealth: Equatable, Sendable {
+    let provider: String
+    let feed: String
+    let revision: String
+    let reportedAt: Date
+    let lastSuccessfulObservationAt: Date?
+    let maximumAgeSeconds: Int
+    let state: String
+    let exclusions: [String]
 
-    var title: String { "Not published by this report" }
+    init(value: JSONValue) throws {
+        guard case let .object(values) = value else { throw invalid("provider health") }
+        try validateKeys(values, allowed: ["provider", "feed", "revision", "reportedAt",
+            "lastSuccessfulObservationAt", "maximumAgeSeconds", "state", "exclusions"], context: "provider health")
+        provider = try requiredString(values, "provider", context: "provider health")
+        feed = try requiredString(values, "feed", context: "provider health")
+        revision = try requiredString(values, "revision", context: "provider health")
+        state = try requiredString(values, "state", context: "provider health")
+        exclusions = try reasonList(values, "exclusions", context: "provider health")
+        guard provider == "binance", feed == "spot",
+              ["healthy", "degraded", "stale", "error", "unavailable"].contains(state),
+              case let .number(age) = try requiredValue(values, "maximumAgeSeconds", context: "provider health"),
+              age.isFinite, age.rounded() == age, (1 ... 86_400).contains(age)
+        else { throw invalid("provider health identity or bounds") }
+        maximumAgeSeconds = Int(age)
+        reportedAt = try healthDate(values, "reportedAt")
+        let last = try requiredValue(values, "lastSuccessfulObservationAt", context: "provider health")
+        if case .null = last { lastSuccessfulObservationAt = nil }
+        else { lastSuccessfulObservationAt = try healthDate(values, "lastSuccessfulObservationAt") }
+        if let last = lastSuccessfulObservationAt, last > reportedAt { throw invalid("future provider success") }
+        if state == "healthy" {
+            guard let last = lastSuccessfulObservationAt, exclusions.isEmpty,
+                  reportedAt.timeIntervalSince(last) <= Double(maximumAgeSeconds)
+            else { throw invalid("healthy provider lacks fresh evidence") }
+        }
+        if state == "unavailable", lastSuccessfulObservationAt != nil { throw invalid("unavailable provider success") }
+    }
+
+    func title(now: Date) -> String {
+        if now < reportedAt { return "Unavailable — report time is in the future" }
+        if state == "error" { return "Feed error" }
+        guard let last = lastSuccessfulObservationAt else { return "Unavailable" }
+        if now.timeIntervalSince(last) > Double(maximumAgeSeconds)
+            || now.timeIntervalSince(reportedAt) > Double(maximumAgeSeconds) { return "Stale" }
+        return ["healthy": "Healthy", "degraded": "Degraded", "stale": "Stale"][state] ?? "Unavailable"
+    }
 }
 
 enum ResearchRoundDirection: String, Equatable, Sendable {
@@ -47,13 +89,13 @@ struct ResearchRoundSnapshot: Decodable, Equatable, Sendable {
     let reasons: [String]
     let candidates: [ResearchRoundCandidate]
     let trendAdvisor: [TrendAdvisorSuggestion]
-    let providerHealth: ResearchRoundProviderHealth = .notPublished
+    let providerHealth: ResearchRoundProviderHealth
 
     init(from decoder: Decoder) throws {
         let value = try JSONValue(from: decoder)
         guard case let .object(root) = value else { throw invalid("round root") }
         try validateKeys(root, allowed: [
-            "roundId", "protocolHash", "status", "paperOnly", "qualificationStatus", "reasons", "candidates", "trendAdvisor",
+            "roundId", "protocolHash", "status", "paperOnly", "qualificationStatus", "reasons", "candidates", "trendAdvisor", "providerHealth",
         ], context: "round")
 
         roundID = try requiredString(root, "roundId", context: "round")
@@ -63,6 +105,7 @@ struct ResearchRoundSnapshot: Decodable, Equatable, Sendable {
         qualificationStatus = try requiredString(root, "qualificationStatus", context: "round")
         reasons = try reasonList(root, "reasons", context: "round")
         candidates = try candidateList(root)
+        providerHealth = try ResearchRoundProviderHealth(value: requiredValue(root, "providerHealth", context: "round"))
         if let raw = root["trendAdvisor"] {
             guard case let .array(items) = raw, items.count <= 100 else { throw invalid("trend advisor bounds") }
             trendAdvisor = try items.map { try TrendAdvisorSuggestion(value: $0) }
@@ -102,10 +145,10 @@ struct ResearchRoundPresentation: Equatable, Sendable {
     let providerHealthTitle: String
     let abstentionTitle: String?
 
-    init(snapshot: ResearchRoundSnapshot?) {
+    init(snapshot: ResearchRoundSnapshot?, now: Date = Date()) {
         guard let snapshot else {
             statusTitle = "No research report loaded"
-            providerHealthTitle = ResearchRoundProviderHealth.notPublished.title
+            providerHealthTitle = "No provider report loaded"
             abstentionTitle = "Load a retained Research Round 2 summary to view its evidence."
             return
         }
@@ -114,7 +157,7 @@ struct ResearchRoundPresentation: Equatable, Sendable {
         case .insufficientData: "Insufficient data — stand aside"
         case .rejected: "Rejected — stand aside"
         }
-        providerHealthTitle = snapshot.providerHealth.title
+        providerHealthTitle = snapshot.providerHealth.title(now: now)
         abstentionTitle = snapshot.status == .experimentalPaperOnly ? nil : snapshot.reasons.joined(separator: " · ")
     }
 }
@@ -177,6 +220,17 @@ private func requiredString(_ values: [String: JSONValue], _ key: String, contex
 private func requiredBool(_ values: [String: JSONValue], _ key: String, context: String) throws -> Bool {
     guard case let .bool(value) = try requiredValue(values, key, context: context) else { throw invalid("\(context) \(key)") }
     return value
+}
+
+private func healthDate(_ values: [String: JSONValue], _ key: String) throws -> Date {
+    let text = try requiredString(values, key, context: "provider health")
+    guard text.hasSuffix("Z") || text.hasSuffix("+00:00") else { throw invalid("provider health UTC timestamp") }
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    if let date = formatter.date(from: text) { return date }
+    formatter.formatOptions = [.withInternetDateTime]
+    guard let date = formatter.date(from: text) else { throw invalid("provider health timestamp") }
+    return date
 }
 
 private func candidateStatus(_ values: [String: JSONValue], _ key: String, context: String) throws -> ResearchRoundCandidateStatus {

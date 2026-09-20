@@ -258,6 +258,13 @@ class RoundObservation(BaseModel):
             raise ValueError("observation chronology must be provider, receipt, availability")
         if self.high is not None and self.low is not None and self.high < self.low:
             raise ValueError("high must not be below low")
+        for name in ("open", "close"):
+            value = getattr(self, name)
+            if value is not None and (
+                (self.low is not None and value < self.low)
+                or (self.high is not None and value > self.high)
+            ):
+                raise ValueError(f"{name} must be within the observed low/high range")
         if self.bid is not None and self.ask is not None and self.ask < self.bid:
             raise ValueError("ask must not be below bid")
         if self.close is None and (self.bid is None or self.ask is None) and self.provider_error is None:
@@ -265,6 +272,7 @@ class RoundObservation(BaseModel):
         return self
 
     def validate_for(self, protocol: ResearchRoundProtocol) -> RoundObservation:
+        type(self).model_validate(self.model_dump(mode="python"))
         protocol = protocol.validated()
         if self.provider.lower() != protocol.source.provider or self.feed.lower() != protocol.source.feed:
             raise ValueError("observation provider/feed does not match protocol")
@@ -272,6 +280,47 @@ class RoundObservation(BaseModel):
             raise ValueError("observation symbol does not match protocol")
         if self.interval != protocol.interval:
             raise ValueError("observation interval does not match protocol")
+        return self
+
+
+class RoundProviderHealth(BaseModel):
+    """Bounded provider status derived from retained, causally available evidence."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    provider: Literal["binance"]
+    feed: Literal["spot"]
+    revision: str = Field(min_length=1, max_length=256)
+    reported_at: datetime
+    last_successful_observation_at: datetime | None
+    maximum_age_seconds: int = Field(gt=0, le=86400)
+    state: Literal["healthy", "degraded", "stale", "error", "unavailable"]
+    exclusions: tuple[str, ...] = Field(max_length=16)
+
+    @field_validator("reported_at", "last_successful_observation_at")
+    @classmethod
+    def utc_health_time(cls, value: datetime | None, info: Any) -> datetime | None:
+        return _utc(value, info.field_name) if value is not None else None
+
+    @field_validator("revision", "exclusions")
+    @classmethod
+    def bounded_health_strings(cls, value: Any) -> Any:
+        strings = (value,) if isinstance(value, str) else value
+        if any(not item or len(item.encode("utf-8")) > 256 for item in strings):
+            raise ValueError("provider health strings must contain 1 to 256 bytes")
+        return value
+
+    @model_validator(mode="after")
+    def coherent_health(self) -> RoundProviderHealth:
+        last = self.last_successful_observation_at
+        if last is not None and last > self.reported_at:
+            raise ValueError("provider health success cannot follow report time")
+        if self.state == "healthy" and (
+            last is None or self.exclusions or (self.reported_at - last).total_seconds() > self.maximum_age_seconds
+        ):
+            raise ValueError("healthy provider requires fresh success without exclusions")
+        if self.state == "unavailable" and last is not None:
+            raise ValueError("unavailable provider cannot claim successful observations")
         return self
 
 
@@ -283,6 +332,7 @@ class RoundReport(BaseModel):
     round_id: str
     protocol_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     status: RoundStatus
+    provider_health: RoundProviderHealth
     paper_only: Literal[True] = True
     qualification_status: Literal["unqualified"] = "unqualified"
     reasons: tuple[str, ...] = ()

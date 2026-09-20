@@ -16,6 +16,26 @@ from src.research.round_two_registry import register_round
 UTC_T = datetime(2026, 1, 1, tzinfo=UTC)
 
 
+@pytest.mark.parametrize("changes", [
+    {"high": "99", "low": "101"},
+    {"high": "110", "low": "90", "open": "111"},
+    {"high": "110", "low": "90", "open": "89"},
+    {"high": "99", "low": "90"},
+    {"high": "110", "low": "101"},
+])
+def test_impossible_ohlc_is_rejected_at_construction_and_ingestion(tmp_path, changes):
+    protocol, directory = registered_round(tmp_path)
+    valid = observation()
+    data = {**valid.model_dump(), **changes}
+    with pytest.raises(ValueError):
+        RoundObservation.model_validate(data)
+    # model_copy intentionally bypasses Pydantic validation; ingestion must not.
+    corrupt = valid.model_copy(update={key: Decimal(value) for key, value in changes.items()})
+    with pytest.raises(ValueError):
+        append_observations(directory, protocol, [corrupt])
+    assert load_observations(directory) == ()
+
+
 def registered_round(tmp_path):
     protocol = ResearchRoundProtocol.default(round_id="round-002", starts_at=UTC_T).model_copy(
         update={

@@ -5,5 +5,10 @@
   "paperOnly": true,
   "qualificationStatus": "unqualified",
   "reasons": ["fixture_no_provider_observations"],
+  "providerHealth": {
+    "provider": "binance", "feed": "spot", "revision": "binance-spot-public-v1",
+    "reportedAt": "2026-09-20T12:00:00Z", "lastSuccessfulObservationAt": null,
+    "maximumAgeSeconds": 15, "state": "unavailable", "exclusions": ["no_available_observations"]
+  },
   "candidates": []
 }

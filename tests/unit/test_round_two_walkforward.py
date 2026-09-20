@@ -25,6 +25,24 @@ from src.strategies.types import BarInterval, StrategyFamily, StrategySpec
 START = datetime(2026, 1, 1, tzinfo=UTC)
 
 
+@pytest.mark.parametrize("extreme", ({"high": Decimal("120")}, {"low": Decimal("80")}))
+def test_range_partly_before_entry_cannot_trigger_a_barrier(extreme):
+    from src.research.round_two_walkforward import _simulate
+
+    rows = list(bars((100,) * 5))
+    # Entry at 00:01:02. The next minute range started at 00:01,
+    # so its extreme could predate the entry. Following quotes stay at 100.
+    rows[1] = rows[1].model_copy(update={
+        "received_at": rows[1].provider_at + timedelta(seconds=2),
+        "available_at": rows[1].provider_at + timedelta(seconds=2),
+    })
+    rows[2] = rows[2].model_copy(update={"high": Decimal("100"), "low": Decimal("100"), **extreme})
+    metrics = _simulate(rows, [1] * len(rows), protocol(), multiplier=1,
+                        candidate=RoundCandidate(symbol="BTCUSDT", strategy_id="ema"))
+    assert metrics.trade_count == 0
+    assert metrics.open_quantity > 0
+
+
 def protocol(**updates):
     return (
         ResearchRoundProtocol.default(round_id="test-round", starts_at=START)

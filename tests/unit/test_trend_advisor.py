@@ -335,6 +335,11 @@ def test_native_candidate_projection_includes_exact_canonical_identity():
     p, result, _, _ = fixture()
     snapshot = _native_round_payload(
         RoundReport(
+            provider_health={
+                "provider": "binance", "feed": "spot", "revision": "binance-spot-public-v1",
+                "reported_at": "2026-01-01T00:00:00Z", "last_successful_observation_at": None,
+                "maximum_age_seconds": 15, "state": "unavailable", "exclusions": ["no_available_observations"],
+            },
             round_id=p.round_id,
             protocol_hash=p.identity_hash,
             status=result.status,

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -34,6 +34,12 @@ from src.research.round_two_walkforward import (
     _aggregate,
 )
 from src.strategies.types import canonical_hash
+
+HEALTH = {
+    "provider": "binance", "feed": "spot", "revision": "binance-spot-public-v1",
+    "reported_at": "2026-01-01T00:00:00Z", "last_successful_observation_at": None,
+    "maximum_age_seconds": 15, "state": "unavailable", "exclusions": ["no_available_observations"],
+}
 
 
 def test_cli_register_ingest_evaluate_and_status_are_paper_only(tmp_path, capsys):
@@ -72,6 +78,7 @@ def test_cli_register_ingest_evaluate_and_status_are_paper_only(tmp_path, capsys
         "reasons",
         "candidates",
         "trendAdvisor",
+        "providerHealth",
     }
     assert payload["paperOnly"] is True
     assert payload["qualificationStatus"] == "unqualified"
@@ -85,6 +92,90 @@ def test_premium_adapter_requires_explicit_configuration():
     """Would fail if an undeclared premium feed silently became usable."""
     with pytest.raises(RuntimeError, match="not configured"):
         UnconfiguredPremiumProviderAdapter().observations(("BTCUSDT",))
+
+
+def test_report_requires_source_backed_health_and_retains_error_exclusions(tmp_path):
+    register_default_round(tmp_path, main_starts_at())
+    empty = _native_round_payload(build_round_report(tmp_path))
+    assert empty["providerHealth"]["provider"] == "binance"
+    assert empty["providerHealth"]["feed"] == "spot"
+    assert empty["providerHealth"]["state"] == "unavailable"
+    assert empty["providerHealth"]["lastSuccessfulObservationAt"] is None
+    fixture = tmp_path / "health.json"
+    fixture.write_text(json.dumps([
+        {"provider": "binance", "feed": "spot", "symbol": "BTCUSDT",
+         "provider_at": "2026-01-01T00:00:00Z", "received_at": "2026-01-01T00:00:00Z",
+         "available_at": "2026-01-01T00:00:00Z", "source_key": "health:ok", "close": "100"},
+        {"provider": "binance", "feed": "spot", "symbol": "BTCUSDT",
+         "provider_at": "2026-01-01T00:01:00Z", "received_at": "2026-01-01T00:01:00Z",
+         "available_at": "2026-01-01T00:01:00Z", "source_key": "health:error", "provider_error": "disconnected"},
+    ]))
+    ingest_file(tmp_path, fixture)
+    health = _native_round_payload(build_round_report(tmp_path))["providerHealth"]
+    assert health["state"] == "error"
+    assert health["lastSuccessfulObservationAt"] == "2026-01-01T00:00:00Z"
+    assert "provider_error" in health["exclusions"]
+    assert "observation_stale" in health["exclusions"]
+    assert "no_available_observations" in health["exclusions"]
+
+
+def test_recent_receipt_of_old_market_data_cannot_claim_healthy_provider(tmp_path):
+    from src.research.round_two_contracts import RoundObservation
+    from src.research.round_two_quality import append_observations
+
+    register_default_round(tmp_path, main_starts_at())
+    protocol = load_round_protocol(tmp_path)
+    now = datetime.now(UTC)
+    rows = [RoundObservation(
+        provider="binance", feed="spot", symbol=symbol, source_key=f"old:{symbol}:{index}",
+        provider_at=main_starts_at() + timedelta(minutes=index), received_at=now, available_at=now, close="100",
+    ) for symbol in protocol.symbols for index in range(61)]
+    append_observations(tmp_path, protocol, rows)
+    health = _native_round_payload(build_round_report(tmp_path))["providerHealth"]
+    assert health["state"] == "stale"
+    assert health["lastSuccessfulObservationAt"] == "2026-01-01T01:00:00Z"
+    assert "observation_stale" in health["exclusions"]
+
+
+def test_provider_health_becomes_healthy_only_with_current_clean_data(tmp_path):
+    from src.research.round_two_contracts import RoundObservation
+    from src.research.round_two_quality import append_observations
+
+    register_default_round(tmp_path, main_starts_at())
+    protocol = load_round_protocol(tmp_path)
+    now = datetime.now(UTC)
+    rows = [RoundObservation(
+        provider="binance", feed="spot", symbol=symbol, source_key=f"fresh:{symbol}:{index}",
+        provider_at=now - timedelta(minutes=60-index), received_at=now - timedelta(minutes=60-index),
+        available_at=now - timedelta(minutes=60-index), close="100",
+    ) for symbol in protocol.symbols for index in range(61)]
+    append_observations(tmp_path, protocol, rows)
+    health = _native_round_payload(build_round_report(tmp_path))["providerHealth"]
+    assert health["state"] == "healthy"
+    assert health["exclusions"] == []
+
+
+def test_health_cannot_attribute_another_provider_to_the_registered_source(tmp_path):
+    register_default_round(tmp_path, main_starts_at())
+    append_jsonl_fsync(tmp_path / "observations.jsonl", [{
+        "provider": "other", "feed": "spot", "symbol": "BTCUSDT", "source_key": "wrong-source",
+        "provider_at": "2026-01-01T00:00:00Z", "received_at": "2026-01-01T00:00:00Z",
+        "available_at": "2026-01-01T00:00:00Z", "close": "100",
+    }])
+    with pytest.raises(ValueError, match="provider/feed"):
+        build_round_report(tmp_path)
+
+
+@pytest.mark.parametrize("update", [
+    {"maximum_age_seconds": 0}, {"maximum_age_seconds": 86401}, {"exclusions": ["x"] * 17},
+    {"revision": "é" * 129}, {"state": "qualified"}, {"feed": "margin"},
+    {"reported_at": "2026-01-01T00:00:00"}, {"state": "healthy"},
+])
+def test_provider_health_rejects_unbounded_or_unsubstantiated_claims(update):
+    from src.research.round_two_contracts import RoundProviderHealth
+
+    with pytest.raises(ValueError):
+        RoundProviderHealth.model_validate({**HEALTH, **update})
 
 
 def test_runtime_summary_decodes_with_the_strict_native_parser(tmp_path):
@@ -145,9 +236,11 @@ def _native_candidate(**updates):
 @pytest.mark.parametrize(
     ("report", "message"),
     [
-        (RoundReport(round_id="r" * 257, protocol_hash="a" * 64, status=RoundStatus.INSUFFICIENT_DATA), "roundId"),
+        (RoundReport(provider_health=HEALTH, round_id="r" * 257,
+                     protocol_hash="a" * 64, status=RoundStatus.INSUFFICIENT_DATA), "roundId"),
         (
             RoundReport(
+                provider_health=HEALTH,
                 round_id="round", protocol_hash="a" * 64, status=RoundStatus.INSUFFICIENT_DATA,
                 reasons=tuple("reason" for _ in range(17)),
             ),
@@ -155,6 +248,7 @@ def _native_candidate(**updates):
         ),
         (
             RoundReport(
+                provider_health=HEALTH,
                 round_id="round", protocol_hash="a" * 64, status=RoundStatus.INSUFFICIENT_DATA,
                 candidates=tuple(_native_candidate() for _ in range(101)),
             ),
@@ -162,6 +256,7 @@ def _native_candidate(**updates):
         ),
         (
             RoundReport(
+                provider_health=HEALTH,
                 round_id="round", protocol_hash="a" * 64, status=RoundStatus.INSUFFICIENT_DATA,
                 candidates=(_native_candidate(strategy_id="s" * 257),),
             ),
@@ -169,6 +264,7 @@ def _native_candidate(**updates):
         ),
         (
             RoundReport(
+                provider_health=HEALTH,
                 round_id="round", protocol_hash="a" * 64, status=RoundStatus.INSUFFICIENT_DATA,
                 candidates=(
                     _native_candidate(
@@ -190,6 +286,7 @@ def test_native_wire_publisher_rejects_values_the_native_parser_would_refuse(rep
 def test_native_wire_publisher_rejects_non_swift_numeric_spellings(value):
     """Would fail if Python float parsing accepted a spelling unavailable to native decoding."""
     report = RoundReport(
+        provider_health=HEALTH,
         round_id="round",
         protocol_hash="a" * 64,
         status=RoundStatus.INSUFFICIENT_DATA,
@@ -205,6 +302,7 @@ def test_native_wire_publisher_rejects_non_swift_numeric_spellings(value):
 @pytest.mark.parametrize("value", ("0", "-0", "1.25", ".5", "1.", "1e-3", "-2E+4"))
 def test_native_wire_publisher_accepts_ascii_swift_numeric_spellings(value):
     report = RoundReport(
+        provider_health=HEALTH,
         round_id="round",
         protocol_hash="a" * 64,
         status=RoundStatus.INSUFFICIENT_DATA,

@@ -12,11 +12,11 @@ Every round has a source identity and a protocol hash. The source identity says 
 
 ## How the evidence is protected
 
-1. **Capture only finalized observations.** Each recorded bar carries provider, receipt, and availability times. A bar that was not available when a decision would have been made cannot support that decision.
+1. **Capture only finalized observations.** Each recorded bar carries provider, receipt, and availability times. A bar that was not available when a decision would have been made cannot support that decision. Impossible price ranges are rejected: the high cannot be below the low, and opening and closing prices must lie inside the recorded range.
 2. **Record quality problems instead of repairing them.** Missing minutes, late data, stale prices, high spreads, provider errors, and conflicting duplicate records are retained as exclusions. The system does not fill a gap with later data. After a gap, it waits for a continuous 60-minute warm-up before considering observations again.
 3. **Use fixed walk-forward windows.** A candidate first uses an earlier training window, then a later validation window, and finally one untouched sealed test window. The sealed window is used once and its receipt is retained; it cannot be reused to tune parameters.
 4. **Keep every candidate.** Rejected and insufficient-data candidates stay in the report beside any experimental result. This prevents a favourable-looking result from being shown without the failed alternatives that were tested too.
-5. **Model friction.** The replay declares fees, spread, slippage, latency, participation, cash exposure, and conservative stop/target handling before it evaluates a candidate. If executable evidence is unavailable, the result is no trade rather than a guessed fill.
+5. **Model friction.** The replay declares fees, spread, slippage, latency, participation, cash exposure, and conservative stop/target handling before it evaluates a candidate. A minute's high and low can trigger a stop or target only if the whole minute occurred after entry; otherwise only a later observed quote can establish the crossing. Exits use a subsequent executable observation. Unavailable execution evidence prevents guessed fills and pending exits remain recorded until an executable observation arrives.
 
 Default quality checks require 99.5% expected one-minute coverage for each evaluated fold, observations no older than 15 seconds, observed spread at most 25 basis points, no unresolved provider error in the decision interval, and the continuous warm-up described above. These are safeguards, not a way to make a strategy profitable.
 
@@ -28,7 +28,7 @@ The app can load a retained `research-round-2-summary.json` file in Strategy Lab
 - **Rejected** means the declared gates did not pass. It is not hidden or converted into a more favourable label.
 - **Experimental paper-only** means the fixed gates passed for retained simulated evidence. It remains unqualified research, not a trade instruction, alert, or proof that a future result will be positive.
 
-The summary identifies the protocol hash, reasons, and sealed metrics so that it can be checked later. The protocol manifest and retained evidence identify the provider, feed, and source revision; the current bounded app summary intentionally does not repeat source identity. It accepts no account, broker, order, notification, alert, or position field. A malformed or action-shaped import is rejected by the native app.
+The summary identifies the protocol hash, reasons, and sealed metrics so that it can be checked later. It also requires a bounded provider-health record: provider, feed, source revision, report time, last successful market observation, freshness limit, health state, and data exclusions. The Mac app shows that source and timestamp, and changes the displayed health to Stale as the observation ages. Importing old bars today does not make them fresh market data. It accepts no account, broker, order, notification, alert, or position field. A malformed or action-shaped import is rejected by the native app.
 
 ## Provider boundary
 

@@ -15,7 +15,13 @@ from typing import Any, Protocol
 import yaml
 
 from src.config.settings import StrategiesConfig
-from src.research.round_two_contracts import ResearchRoundProtocol, RoundObservation, RoundReport, RoundStatus
+from src.research.round_two_contracts import (
+    ResearchRoundProtocol,
+    RoundObservation,
+    RoundProviderHealth,
+    RoundReport,
+    RoundStatus,
+)
 from src.research.round_two_quality import append_observations, load_observations, summarize_quality
 from src.research.round_two_registry import (
     _write_first_manifest,
@@ -37,7 +43,7 @@ from src.strategies.types import canonical_hash
 SUMMARY_FILE = "research-round-2-summary.json"
 _ACTION_SHAPED_KEYS = frozenset({"order", "notification", "alert", "lifecycle", "qualified", "position"})
 _WIRE_ROOT_KEYS = frozenset(
-    {"roundId", "protocolHash", "status", "paperOnly", "qualificationStatus", "reasons", "candidates"}
+    {"roundId", "protocolHash", "status", "paperOnly", "qualificationStatus", "reasons", "candidates", "providerHealth"}
 )
 _ASCII_SWIFT_DOUBLE = re.compile(
     r"[+-]?(?:(?:[0-9]+(?:\.[0-9]*)?)|(?:\.[0-9]+))(?:[eE][+-]?[0-9]+)?",
@@ -285,6 +291,7 @@ def _native_round_payload(report: RoundReport) -> dict[str, Any]:
         "qualificationStatus": "unqualified",
         "reasons": _bounded_reasons(report.reasons, "reasons"),
         "candidates": [native_candidate(candidate) for candidate in report.candidates],
+        "providerHealth": _native_provider_health(report.provider_health),
     }
     if set(payload) != _WIRE_ROOT_KEYS:
         raise ValueError("native wire root contains unsupported fields")
@@ -294,6 +301,50 @@ def _native_round_payload(report: RoundReport) -> dict[str, Any]:
             for item in report.trend_advisor
         ]
     return payload
+
+
+def _native_provider_health(health: RoundProviderHealth) -> dict[str, Any]:
+    health = RoundProviderHealth.model_validate(health.model_dump())
+    return {
+        "provider": health.provider, "feed": health.feed, "revision": health.revision,
+        "reportedAt": health.reported_at.isoformat().replace("+00:00", "Z"),
+        "lastSuccessfulObservationAt": (
+            health.last_successful_observation_at.isoformat().replace("+00:00", "Z")
+            if health.last_successful_observation_at else None
+        ),
+        "maximumAgeSeconds": health.maximum_age_seconds,
+        "state": health.state, "exclusions": list(health.exclusions),
+    }
+
+
+def _provider_health(protocol, observations, quality, decision_at) -> RoundProviderHealth:
+    for item in observations:
+        item.validate_for(protocol)
+    visible = [item for item in observations if item.available_at <= decision_at]
+    successes = [item for item in visible if item.close is not None and item.provider_error is None]
+    # A newly imported old bar is not a fresh market observation. Keep provider
+    # event time as freshness evidence, independently of receipt/publication.
+    last = max((item.provider_at for item in successes), default=None)
+    exclusions = set(quality.reasons_for(decision_at))
+    for symbol in protocol.symbols:
+        latest = max((item.provider_at for item in visible if item.symbol == symbol), default=None)
+        if latest is not None and (decision_at - latest).total_seconds() > protocol.maximum_observation_age_seconds:
+            exclusions.add("observation_stale")
+    if "provider_error" in exclusions:
+        state = "error"
+    elif last is None:
+        state = "unavailable"
+    elif "observation_stale" in exclusions:
+        state = "stale"
+    elif exclusions:
+        state = "degraded"
+    else:
+        state = "healthy"
+    return RoundProviderHealth(
+        provider=protocol.source.provider, feed=protocol.source.feed, revision=protocol.source.revision,
+        reported_at=decision_at, last_successful_observation_at=last,
+        maximum_age_seconds=protocol.maximum_observation_age_seconds, state=state, exclusions=tuple(sorted(exclusions)),
+    )
 
 
 def build_round_report(directory: Path) -> RoundReport:
@@ -338,6 +389,7 @@ def build_round_report(directory: Path) -> RoundReport:
         round_id=protocol.round_id,
         protocol_hash=protocol.identity_hash,
         status=status,
+        provider_health=_provider_health(protocol, observations, quality, decision_at),
         reasons=reasons,
         candidates=tuple(_candidate_snapshot(result) for result in results),
         trend_advisor=tuple(suggestions),

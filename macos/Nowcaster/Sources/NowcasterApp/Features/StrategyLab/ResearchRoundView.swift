@@ -22,7 +22,19 @@ struct ResearchRoundView: View {
                     .foregroundStyle(.secondary)
                 if let snapshot {
                     LabeledContent("Status", value: presentation.statusTitle)
-                    LabeledContent("Provider health", value: presentation.providerHealthTitle)
+                    TimelineView(.periodic(from: .now, by: 1)) { timeline in
+                        LabeledContent("Provider health", value: snapshot.providerHealth.title(now: timeline.date))
+                    }
+                    LabeledContent("Data source", value: "\(snapshot.providerHealth.provider) · \(snapshot.providerHealth.feed)")
+                    if let last = snapshot.providerHealth.lastSuccessfulObservationAt {
+                        LabeledContent("Last successful observation", value: last.formatted(date: .abbreviated, time: .standard))
+                    } else {
+                        LabeledContent("Last successful observation", value: "None recorded")
+                    }
+                    if !snapshot.providerHealth.exclusions.isEmpty {
+                        LabeledContent("Data exclusions", value: snapshot.providerHealth.exclusions
+                            .map { $0.replacingOccurrences(of: "_", with: " ") }.joined(separator: " · "))
+                    }
                     LabeledContent("Protocol", value: snapshot.protocolHash.prefix(12) + "…")
                     if let abstentionTitle = presentation.abstentionTitle {
                         ContentUnavailableView(

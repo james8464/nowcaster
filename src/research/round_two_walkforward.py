@@ -469,10 +469,16 @@ def _simulate(rows, signals, protocol, *, multiplier, candidate=None):
         if quantity and candidate is not None and at > entry[1]:
             # A finalized range can establish a crossing, not its intrabar order
             # or a historical fill. Queue the stop first and use a later quote.
-            low = row.low if row.low is not None else row.close
-            high = row.high if row.high is not None else row.close
-            stopped = low <= entry[2] * (1 - candidate.stop_loss_bps / 10000)
-            targeted = high >= entry[2] * (1 + candidate.target_bps / 10000)
+            if row.provider_at - MINUTE >= entry[1]:
+                low = row.low if row.low is not None else row.close
+                high = row.high if row.high is not None else row.close
+            else:
+                # Receipt latency can put entry inside this bar's interval.
+                # Its extrema may precede entry; only a later provider quote
+                # can then establish a crossing for the held position.
+                low = high = row.bid if row.provider_at > entry[1] else None
+            stopped = low is not None and low <= entry[2] * (1 - candidate.stop_loss_bps / 10000)
+            targeted = high is not None and high >= entry[2] * (1 + candidate.target_bps / 10000)
             if (stopped or targeted) and (pending is None or pending[2] == "signal"):
                 pending = (0, pending[1] if pending is not None else at, "stop_loss" if stopped else "target")
     if quantity:

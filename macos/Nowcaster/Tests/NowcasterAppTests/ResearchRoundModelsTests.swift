@@ -11,6 +11,9 @@ private func validResearchRoundPayload() -> [String: Any] {
         "paper_only": true,
         "qualification_status": "unqualified",
         "reasons": ["experimental_paper_only"],
+        "provider_health": ["provider": "binance", "feed": "spot", "revision": "binance-spot-public-v1",
+            "reported_at": "2026-09-20T12:00:00Z", "last_successful_observation_at": NSNull(),
+            "maximum_age_seconds": 15, "state": "unavailable", "exclusions": ["no_available_observations"]],
         "candidates": [[
             "symbol": "BTCUSDT",
             "strategy_id": "ema",
@@ -43,10 +46,36 @@ private func decodeResearchRound(_ payload: [String: Any]) throws -> ResearchRou
 
     #expect(snapshot.paperOnly)
     #expect(snapshot.qualificationStatus == "unqualified")
-    #expect(snapshot.providerHealth == .notPublished)
+    #expect(snapshot.providerHealth.state == "unavailable")
     #expect(snapshot.candidates.count == 1)
     #expect(snapshot.candidates[0].direction == .long)
     #expect(ResearchRoundPresentation(snapshot: snapshot).title.contains("paper-only"))
+}
+
+@Test func providerHealthMustBePublishedBoundedAndExpireWhenViewed() throws {
+    var payload = validResearchRoundPayload()
+    var health: [String: Any] = [
+        "provider": "binance", "feed": "spot", "revision": "binance-spot-public-v1",
+        "reported_at": "2026-09-20T12:00:00Z", "last_successful_observation_at": "2026-09-20T12:00:00Z",
+        "maximum_age_seconds": 15, "state": "healthy", "exclusions": [],
+    ]
+    payload["provider_health"] = health
+    let snapshot = try decodeResearchRound(payload)
+    let now = ISO8601DateFormatter().date(from: "2026-09-20T12:00:00Z")!
+    #expect(ResearchRoundPresentation(snapshot: snapshot, now: now).providerHealthTitle == "Healthy")
+    #expect(ResearchRoundPresentation(snapshot: snapshot, now: now.addingTimeInterval(16)).providerHealthTitle == "Stale")
+    for (key, value) in [("state", "qualified"), ("feed", "margin"), ("reported_at", "yesterday"),
+                         ("last_successful_observation_at", "2026-09-20T13:00:00Z")] {
+        var invalidHealth = health
+        invalidHealth[key] = value
+        payload["provider_health"] = invalidHealth
+        #expect(throws: SnapshotValidationError.self) { try decodeResearchRound(payload) }
+    }
+    health["exclusions"] = Array(repeating: "error", count: 17)
+    payload["provider_health"] = health
+    #expect(throws: SnapshotValidationError.self) { try decodeResearchRound(payload) }
+    payload.removeValue(forKey: "provider_health")
+    #expect(throws: SnapshotValidationError.self) { try decodeResearchRound(payload) }
 }
 
 @Test func decodesBundledRoundTwoStandAsideFixture() throws {
