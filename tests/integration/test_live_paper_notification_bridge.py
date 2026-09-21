@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
@@ -6,7 +7,11 @@ from pathlib import Path
 
 import pytest
 
-from src.research.live_paper_notification_bridge import record_notification_outcome, reserve_notification
+from src.research.live_paper_notification_bridge import (
+    read_notification_evidence,
+    record_notification_outcome,
+    reserve_notification,
+)
 from src.research.live_paper_signals import LiveSignalState, SignalEventLedger
 from src.research.round_two_contracts import ResearchRoundProtocol
 from src.research.round_two_registry import register_round
@@ -14,6 +19,48 @@ from src.research.trend_advisor import TrendAdvisorSuggestion
 from src.strategies.types import canonical_hash
 
 NOW = datetime(2026, 9, 21, 12, tzinfo=UTC)
+
+
+def test_historical_notification_lookup_is_exact_and_read_only(published):
+    directory, identity = published
+    notice = reserve_notification(directory, enabled=True, protocol_hash=identity, now=NOW)
+    record_notification_outcome(
+        directory,
+        protocol_hash=identity,
+        material_key=notice.material_key,
+        outcome="delivered",
+        now=NOW + timedelta(seconds=1),
+    )
+    before = {path.name: path.read_bytes() for path in directory.iterdir() if path.is_file()}
+    result = read_notification_evidence(directory, protocol_hash=identity, material_key=notice.material_key)
+    assert result["notification"]["material_key"] == notice.material_key
+    assert result["suggestion"]["candidate_hash"] == notice.candidate_hash
+    assert result["outcome"] == "delivered"
+    for key, protocol in [("f" * 64, identity), (notice.material_key, "f" * 64)]:
+        with pytest.raises(ValueError):
+            read_notification_evidence(directory, protocol_hash=protocol, material_key=key)
+    assert before == {path.name: path.read_bytes() for path in directory.iterdir() if path.is_file()}
+    helper = os.environ.get("NOWCASTER_PAPER_HELPER")
+    executable = [str(Path(helper).resolve())] if helper else [sys.executable, "scripts/run_live_paper_signals.py"]
+    response = subprocess.run(
+        [
+            *executable,
+            "notification-evidence",
+            "--directory",
+            str(directory),
+            "--protocol-hash",
+            identity,
+            "--material-key",
+            notice.material_key,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        cwd=directory if helper else None,
+        env={"PATH": "/usr/bin:/bin", "HOME": str(directory), "TMPDIR": str(directory)} if helper else None,
+    )
+    assert json.loads(response.stdout) == result
+    assert before == {path.name: path.read_bytes() for path in directory.iterdir() if path.is_file()}
 
 
 @pytest.fixture

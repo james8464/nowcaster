@@ -74,6 +74,9 @@ final class LivePaperSignalService {
     private(set) var message: String?
     private(set) var directory: URL?
     private(set) var providerHealth: ResearchRoundProviderHealth?
+    private(set) var notificationEvidence: LivePaperNotificationEvidence?
+    private(set) var notificationEvidenceDirectory: URL?
+    private(set) var notificationEvidenceMessage: String?
     @ObservationIgnored private var process: Process?
     @ObservationIgnored private var monitor: Task<Void, Never>?
     @ObservationIgnored private var configuration: LivePaperSignalConfiguration?
@@ -81,9 +84,56 @@ final class LivePaperSignalService {
     @ObservationIgnored private var terminationObserver: (any NSObjectProtocol)?
     @ObservationIgnored private let notifications: any PaperResearchNotifying
     @ObservationIgnored private var authorizationRequest = UUID()
+    @ObservationIgnored private var evidenceRequest = UUID()
+    @ObservationIgnored private let evidenceStore: PaperNotificationEvidenceStore
 
-    init(notifications: any PaperResearchNotifying = NotificationService()) {
+    init(notifications: any PaperResearchNotifying = NotificationService(),
+         evidenceStore: PaperNotificationEvidenceStore = PaperNotificationEvidenceStore()) {
         self.notifications = notifications
+        self.evidenceStore = evidenceStore
+    }
+
+    func openNotificationEvidence(materialKey: String, sourceRoot: URL, sourcePython: URL) async {
+        let request = UUID()
+        evidenceRequest = request
+        notificationEvidence = nil; notificationEvidenceDirectory = nil
+        notificationEvidenceMessage = "Loading retained notification evidence…"
+        do {
+            let location = try evidenceStore.lookup(materialKey)
+            let config = try LivePaperSignalConfiguration.application(directory: location.directory,
+                protocolHash: location.protocolHash, sourceRoot: sourceRoot, sourcePython: sourcePython)
+            try config.validate()
+            let evidence = try await Self.retainedNotification(location, configuration: config)
+            guard evidenceRequest == request else { return }
+            notificationEvidence = evidence; notificationEvidenceDirectory = location.directory
+            notificationEvidenceMessage = nil
+        } catch {
+            guard evidenceRequest == request else { return }
+            notificationEvidenceMessage = "The exact retained notification evidence is unavailable. Its folder may have moved or failed validation."
+        }
+    }
+
+    func canPresentPaperNotification(materialKey: String) async -> Bool {
+        guard notificationsEnabled, let config = configuration, let child = process, child.isRunning else { return false }
+        do {
+            let location = try evidenceStore.lookup(materialKey)
+            guard location.protocolHash == config.protocolHash,
+                  location.directory.resolvingSymlinksInPath() == config.directory.resolvingSymlinksInPath() else { return false }
+            let evidence = try await Self.retainedNotification(location, configuration: config)
+            let data = try await Self.command(config, "status")
+            let current = try LivePaperSignalState.decode(data, protocolHash: config.protocolHash, now: Date())
+            return notificationsEnabled && !Task.isCancelled && process === child && child.isRunning
+                && configuration?.directory == config.directory && configuration?.protocolHash == config.protocolHash
+                && current.currentSuggestion(now: Date(), isRunning: isRunning) == evidence.suggestion
+                && evidence.notification.isFresh(at: Date())
+        } catch { return false }
+    }
+
+    private static func retainedNotification(_ location: PaperNotificationLocation,
+        configuration: LivePaperSignalConfiguration) async throws -> LivePaperNotificationEvidence {
+        let data = try await command(configuration, "notification-evidence", extra: ["--protocol-hash",
+            location.protocolHash, "--material-key", location.materialKey])
+        return try LivePaperNotificationEvidence.decode(data, location: location)
     }
 
     func open(directory: URL, sourceRoot: URL, sourcePython: URL) async {
@@ -215,6 +265,7 @@ final class LivePaperSignalService {
                     && status.suggestion?.symbol == notice.symbol && status.suggestion?.expiresAt == notice.expiresAt
                     && status.currentSuggestion(now: Date(), isRunning: isRunning) != nil
                 if accepted {
+                    try evidenceStore.record(notice, directory: configuration.directory)
                     delivered = await notifications.deliverPaperResearch(notice) { [weak self] in
                         guard let self else { return false }
                         do {

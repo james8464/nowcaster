@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import UserNotifications
 @testable import NowcasterApp
 
 private let liveNow = ISO8601DateFormatter().date(from: "2026-09-21T12:00:01Z")!
@@ -23,6 +24,118 @@ private func liveDecode(_ payload: [String: Any], now: Date = liveNow) throws ->
 }
 
 @Suite struct LivePaperSignalModelsTests {
+    @Test func foregroundPolicyPreservesExistingCategoriesAndRequiresPaperAdmission() {
+        for category in LiveNotificationCategory.allCases {
+            #expect(NotificationForegroundPolicy.options(category: category.rawValue, paper: false, paperAllowed: false).contains(.banner))
+        }
+        #expect(NotificationForegroundPolicy.options(category: "", paper: true, paperAllowed: false).isEmpty)
+        #expect(NotificationForegroundPolicy.options(category: "", paper: true, paperAllowed: true).contains(.banner))
+        #expect(NotificationForegroundPolicy.options(category: "unknown", paper: false, paperAllowed: true).isEmpty)
+    }
+
+    @Test @MainActor func coldLaunchNotificationLookupUsesOriginalFolderWithoutSwitchingActiveSelection() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let first = root.appending(path: "first"), second = root.appending(path: "second")
+        for directory in [first, second, root.appending(path: "scripts")] {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try Data("{}".utf8).write(to: directory.appending(path: "protocol.json"))
+        }
+        let payload = paperNoticePayload()
+        let notice = try LivePaperNotification.decodeReservation(JSONSerialization.data(withJSONObject: payload), protocolHash: liveHash)
+        let evidence: [String: Any] = ["notification": payload, "suggestion": livePayload()["suggestion"]!, "outcome": "delivered"]
+        try JSONSerialization.data(withJSONObject: evidence).write(to: first.appending(path: "evidence.json"))
+        let script = root.appending(path: "scripts/run_live_paper_signals.py")
+        try """
+        case "$1" in
+          status) printf '%s\\n' '{"kind":"stopped","protocol_hash":"\(liveHash)","updated_at":"2026-09-21T12:00:00Z","evaluated_at":null,"reasons":[],"suggestion":null}' ;;
+          notification-evidence) cat "$3/evidence.json" ;;
+          *) exit 99 ;;
+        esac
+        """.write(to: script, atomically: true, encoding: .utf8)
+        let storeDirectory = root.appending(path: "notification-index")
+        try PaperNotificationEvidenceStore(directory: storeDirectory).record(notice, directory: first)
+        let relaunched = LivePaperSignalService(evidenceStore: PaperNotificationEvidenceStore(directory: storeDirectory))
+        await relaunched.open(directory: second, sourceRoot: root, sourcePython: URL(fileURLWithPath: "/bin/sh"))
+        #expect(relaunched.directory == second)
+        await relaunched.openNotificationEvidence(materialKey: notice.materialKey, sourceRoot: root, sourcePython: URL(fileURLWithPath: "/bin/sh"))
+        #expect(relaunched.notificationEvidence?.notification.materialKey == notice.materialKey)
+        #expect(relaunched.notificationEvidence?.suggestion.candidateHash == notice.candidateHash)
+        #expect(relaunched.notificationEvidenceDirectory == first.resolvingSymlinksInPath())
+        #expect(relaunched.directory == second)
+        #expect(!relaunched.isRunning)
+        #expect(!relaunched.notificationsEnabled)
+        #expect(!FileManager.default.fileExists(atPath: first.appending(path: "signal-events.jsonl").path))
+        await relaunched.openNotificationEvidence(materialKey: String(repeating: "f", count: 64), sourceRoot: root, sourcePython: URL(fileURLWithPath: "/bin/sh"))
+        #expect(relaunched.notificationEvidence == nil)
+        #expect(relaunched.notificationEvidenceMessage != nil)
+    }
+
+    @Test @MainActor func foregroundDelegateRechecksOptInExpiryAndCurrentEvidence() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("{}".utf8).write(to: root.appending(path: "protocol.json"))
+        let script = root.appending(path: "run_live_paper_signals.py")
+        try """
+        case "$1" in
+          start) while [ ! -f "$3/stop" ]; do sleep 0.1; done ;;
+          stop) touch "$3/stop"; cat "$3/status.json" ;;
+          status) cat "$3/status.json" ;;
+          notification) printf 'null\\n' ;;
+          notification-evidence) cat "$3/evidence.json" ;;
+          *) exit 99 ;;
+        esac
+        """.write(to: script, atomically: true, encoding: .utf8)
+        let stopped: [String: Any] = ["kind": "stopped", "protocol_hash": liveHash,
+            "updated_at": "2020-01-01T00:00:00Z", "evaluated_at": NSNull(), "reasons": [], "suggestion": NSNull()]
+        try JSONSerialization.data(withJSONObject: stopped).write(to: root.appending(path: "status.json"))
+        let store = PaperNotificationEvidenceStore(directory: root.appending(path: "notification-index"))
+        let service = LivePaperSignalService(notifications: PausedPaperDelivery(), evidenceStore: store)
+        await service.start(configuration: LivePaperSignalConfiguration(projectRoot: root, executable: URL(fileURLWithPath: "/bin/sh"),
+            script: script, directory: root, protocolHash: liveHash))
+        #expect(service.isRunning)
+        let formatter = ISO8601DateFormatter(), now = Date()
+        let generated = formatter.string(from: now), expiry = formatter.string(from: now.addingTimeInterval(15))
+        var payload = livePayload(), notice = paperNoticePayload()
+        var suggestion = try #require(payload["suggestion"] as? [String: Any])
+        suggestion["decision_at"] = generated; suggestion["available_at"] = generated; suggestion["expires_at"] = expiry
+        payload["suggestion"] = suggestion; payload["updated_at"] = generated; payload["evaluated_at"] = generated
+        notice["generated_at"] = generated; notice["expires_at"] = expiry
+        notice["body"] = "Paper-only research posture — not a trade instruction. BTCUSDT. Expires \(expiry)."
+        try JSONSerialization.data(withJSONObject: payload).write(to: root.appending(path: "status.json"), options: .atomic)
+        try JSONSerialization.data(withJSONObject: ["notification": notice, "suggestion": suggestion, "outcome": "delivered"])
+            .write(to: root.appending(path: "evidence.json"))
+        let decoded = try LivePaperNotification.decodeReservation(JSONSerialization.data(withJSONObject: notice), protocolHash: liveHash)
+        try store.record(decoded, directory: root)
+        let delegate = NowcasterApplicationDelegate(), model = AppModel(paperSignals: service)
+        delegate.model = model
+        await service.setNotificationsEnabled(true)
+        let identifier = "paper-research-" + decoded.materialKey
+        #expect(await delegate.foregroundPresentationOptions(identifier: identifier, category: "", destination: "strategy_lab_evidence", materialKey: decoded.materialKey).contains(.banner))
+        await service.setNotificationsEnabled(false)
+        #expect(await delegate.foregroundPresentationOptions(identifier: identifier, category: "", destination: "strategy_lab_evidence", materialKey: decoded.materialKey).isEmpty)
+        await service.setNotificationsEnabled(true)
+        try JSONSerialization.data(withJSONObject: livePayload()).write(to: root.appending(path: "status.json"), options: .atomic)
+        #expect(await delegate.foregroundPresentationOptions(identifier: identifier, category: "", destination: "strategy_lab_evidence", materialKey: decoded.materialKey).isEmpty)
+        #expect(await delegate.foregroundPresentationOptions(identifier: "existing-health", category: "health", destination: nil, materialKey: nil).contains(.banner))
+        await service.stop()
+    }
+
+    @Test func notificationIndexRejectsRedirectAndHistoricalIdentityMismatch() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let notice = try LivePaperNotification.decodeReservation(JSONSerialization.data(withJSONObject: paperNoticePayload()), protocolHash: liveHash)
+        let store = PaperNotificationEvidenceStore(directory: root.appending(path: "index"))
+        try store.record(notice, directory: root.appending(path: "original"))
+        #expect(throws: LivePaperServiceError.self) { try store.record(notice, directory: root.appending(path: "other")) }
+        let location = try store.lookup(notice.materialKey)
+        var payload = paperNoticePayload(); payload["candidate_hash"] = String(repeating: "b", count: 64)
+        let evidence: [String: Any] = ["notification": payload, "suggestion": livePayload()["suggestion"]!, "outcome": "delivered"]
+        #expect(throws: LivePaperServiceError.self) {
+            try LivePaperNotificationEvidence.decode(JSONSerialization.data(withJSONObject: evidence), location: location)
+        }
+    }
     @Test func rejectsActionsFutureAndExpiredPublishedState() throws {
         #expect(try liveDecode(livePayload()).suggestion?.symbol == "BTCUSDT")
         for key in ["order_id", "execution", "account", "quantity", "qualified_alert"] {
@@ -158,7 +271,8 @@ private func liveDecode(_ payload: [String: Any], now: Date = liveNow) throws ->
             esac
             """.write(to: script, atomically: true, encoding: .utf8)
             let delivery = PausedPaperDelivery()
-            let service = LivePaperSignalService(notifications: delivery)
+            let service = LivePaperSignalService(notifications: delivery,
+                evidenceStore: PaperNotificationEvidenceStore(directory: directory.appending(path: "notification-index")))
             let config = LivePaperSignalConfiguration(projectRoot: directory, executable: URL(fileURLWithPath: "/bin/sh"),
                 script: script, directory: directory, protocolHash: liveHash)
             await service.start(configuration: config)
@@ -200,6 +314,14 @@ private func liveDecode(_ payload: [String: Any], now: Date = liveNow) throws ->
             #expect(try String(contentsOf: outcomes, encoding: .utf8) == "failed\n")
         }
     }
+}
+
+private func paperNoticePayload() -> [String: Any] {
+    ["protocol_hash": liveHash, "candidate_hash": String(repeating: "c", count: 64),
+     "material_key": String(repeating: "d", count: 64), "symbol": "BTCUSDT", "generated_at": "2026-09-21T12:00:01Z",
+     "expires_at": "2026-09-21T12:00:15Z", "cooldown_key": liveHash + ":BTCUSDT", "paper_only": true,
+     "destination": "strategy_lab_evidence", "title": "Nowcaster paper research",
+     "body": "Paper-only research posture — not a trade instruction. BTCUSDT. Expires 2026-09-21T12:00:15Z."]
 }
 
 @MainActor private final class PendingPaperAuthorizer: PaperResearchNotifying {

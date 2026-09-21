@@ -42,6 +42,29 @@ struct LivePaperSignalsView: View {
                 }
                 Text("Automatic trend research for Bitcoin and Ether · Binance spot")
                     .foregroundStyle(.secondary)
+                if let evidence = service.notificationEvidence {
+                    GroupBox("Historical notification evidence") {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("\(evidence.suggestion.symbol) · Retained paper research").font(.headline)
+                            Text("This is the original saved evidence, not a current signal.").font(.caption).foregroundStyle(.secondary)
+                            LabeledContent("Research folder", value: service.notificationEvidenceDirectory?.lastPathComponent ?? "Unavailable")
+                            LabeledContent("Protocol", value: String(evidence.notification.protocolHash.prefix(12)))
+                            LabeledContent("Candidate", value: String(evidence.notification.candidateHash.prefix(12)))
+                            LabeledContent("Notification", value: String(evidence.notification.materialKey.prefix(12)))
+                            LabeledContent("Decision", value: evidence.suggestion.decisionAt.formatted(date: .abbreviated, time: .standard))
+                            LabeledContent("Expired after", value: evidence.notification.expiresAt.formatted(date: .abbreviated, time: .standard))
+                            LabeledContent("Original research zone", value: "\(evidence.suggestion.entryLow ?? "—") – \(evidence.suggestion.entryHigh ?? "—")")
+                            LabeledContent("Original invalidation", value: evidence.suggestion.invalidation ?? "—")
+                            LabeledContent("Original research target", value: evidence.suggestion.target ?? "—")
+                            LabeledContent("Delivery record", value: evidence.outcome.capitalized)
+                            if let directory = service.notificationEvidenceDirectory {
+                                Button("Show Original Evidence Folder", systemImage: "folder") { NSWorkspace.shared.open(directory) }
+                            }
+                        }.textSelection(.enabled)
+                    }.accessibilityIdentifier("paperSignals.notificationEvidence")
+                } else if let message = service.notificationEvidenceMessage {
+                    Label(message, systemImage: "doc.text.magnifyingglass").font(.caption).foregroundStyle(.secondary)
+                }
                 ViewThatFits(in: .horizontal) {
                     HStack { controls }
                     VStack(alignment: .leading) { controls }

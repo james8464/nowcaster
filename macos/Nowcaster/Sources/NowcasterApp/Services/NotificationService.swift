@@ -8,6 +8,13 @@ enum NotificationAuthorizationPolicy {
     }
 }
 
+enum NotificationForegroundPolicy {
+    static func options(category: String, paper: Bool, paperAllowed: Bool) -> UNNotificationPresentationOptions {
+        if paper { return paperAllowed ? [.banner, .list, .sound] : [] }
+        return LiveNotificationCategory(rawValue: category) != nil ? [.banner, .list, .sound] : []
+    }
+}
+
 enum LiveNotificationCategory: String, CaseIterable, Sendable {
     case entry, target, stop, close, health
 }

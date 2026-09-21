@@ -25,6 +25,24 @@ final class NowcasterApplicationDelegate: NSObject, NSApplicationDelegate, UNUse
         else { pendingPaperResearch = (destination, materialKey) }
     }
 
+    func foregroundPresentationOptions(identifier: String, category: String, destination: String?, materialKey: String?) async -> UNNotificationPresentationOptions {
+        let paper = destination != nil || identifier.hasPrefix("paper-research-")
+        var allowed = false
+        if paper, destination == "strategy_lab_evidence", let materialKey,
+           identifier == "paper-research-" + materialKey, let model {
+            allowed = await model.livePaperSignals.canPresentPaperNotification(materialKey: materialKey)
+        }
+        return NotificationForegroundPolicy.options(category: category, paper: paper, paperAllowed: allowed)
+    }
+
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
+        let info = notification.request.content.userInfo
+        return await foregroundPresentationOptions(identifier: notification.request.identifier,
+            category: notification.request.content.categoryIdentifier,
+            destination: info["paper_research_destination"] as? String, materialKey: info["material_key"] as? String)
+    }
+
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
         let info = response.notification.request.content.userInfo

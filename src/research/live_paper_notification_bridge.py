@@ -93,6 +93,23 @@ def _bound(directory: Path, identity: str):
     return SignalEventLedger(directory, protocol_hash=identity), protocol
 
 
+def read_notification_evidence(directory: Path, *, protocol_hash: str, material_key: str) -> dict:
+    """Resolve one retained reservation without changing any research evidence."""
+    directory = Path(directory)
+    protocol = load_round_protocol(directory)
+    if protocol.identity_hash != protocol_hash:
+        raise ValueError("notification protocol mismatch")
+    rows = _read(directory / "paper-notification-delivery.jsonl", protocol)
+    matches = [row for row in rows if row.payload.material_key == material_key]
+    if not matches or matches[0].kind != "attempt":
+        raise ValueError("unknown notification evidence")
+    return {
+        "notification": matches[0].payload.model_dump(mode="json"),
+        "suggestion": matches[0].suggestion.model_dump(mode="json"),
+        "outcome": matches[-1].outcome or "pending",
+    }
+
+
 def reserve_notification(
     directory: Path, *, enabled: bool, protocol_hash: str, now: datetime | None = None
 ) -> PaperResearchNotification | None:

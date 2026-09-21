@@ -31,14 +31,22 @@ result correctly remains Stand aside.
    notifications. Permission is requested at that point. Notifications are
    deduplicated, expire quickly, and open Strategy Lab evidence. They are not
    instructions to trade. Turning this off stops future scheduling; macOS may
-   still show an already delivered notification. Always check current evidence.
+   still show an already delivered notification. Foreground banners recheck your
+   opt-in, running collector and fresh matching evidence before presentation.
+   Clicking a notice opens its original retained evidence, even after restarting
+   the app or choosing a different folder. This historical view does not start
+   collection, change your selected folder or enable notifications. If the
+   original evidence is unavailable, the app says so rather than substituting a
+   newer suggestion. Always check current evidence.
 6. Select **Stop** to end collection. **Show Evidence** opens the retained folder;
    **Recent evidence** displays up to 200 recent events. Earlier events remain
    on disk. macOS accepting a notification does not prove that anyone read it.
 
 An entry zone is a range used by the research hypothesis; invalidation is the
 price at which that hypothesis fails; the target is its hypothetical objective.
-The view hides all levels after expiry, feed failure or stopping. It does not
+The current-posture view hides levels after expiry, feed failure or stopping.
+Historical notification evidence retains its original levels and expiry, clearly
+marked as historical and not a current suggestion. The app does not
 track your holdings, open or close positions, send orders, connect to accounts,
 or use broker credentials. Its future broker interface is disabled. Other app
 features and the frozen prospective study are independent of this service.
@@ -80,3 +88,8 @@ same folder. Logs are retained in `paper-signal-app.log`, event history in
 `signal-events.jsonl`, and notification delivery attempts in
 `paper-notification-delivery.jsonl`. The fixed protocol identity must match on
 every resume. Stop and investigate a rejected directory rather than resetting it.
+
+The native app keeps a local notification-to-evidence index in
+`~/Library/Application Support/Nowcaster/PaperNotificationIndex`. Each notification
+identity is permanently bound to its original folder, protocol and candidate.
+Opening that evidence is read-only; it never rewrites the research ledger.

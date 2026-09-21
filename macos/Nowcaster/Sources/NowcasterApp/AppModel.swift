@@ -35,7 +35,7 @@ enum EngineJobOutcome: Equatable, Sendable {
 @MainActor
 @Observable
 final class AppModel {
-    let livePaperSignals = LivePaperSignalService()
+    let livePaperSignals: LivePaperSignalService
     let liveMonitor = LiveMonitorController()
     var destination: AppDestination = .today
     var paperResearchEvidenceRequested = false
@@ -45,6 +45,9 @@ final class AppModel {
               materialKey.count == 64, materialKey.allSatisfy({ "0123456789abcdef".contains($0) }) else { return }
         self.destination = .strategyLab
         paperResearchEvidenceRequested = true
+        let configuration = AppSettings().configuration
+        Task { await livePaperSignals.openNotificationEvidence(materialKey: materialKey,
+            sourceRoot: configuration.projectRoot, sourcePython: configuration.pythonExecutable) }
     }
     var searchText = ""
     var selectedInstrumentID: String?
@@ -73,8 +76,10 @@ final class AppModel {
     init(
         snapshot: NowcasterSnapshot? = nil,
         repository: SnapshotRepository = SnapshotRepository(),
-        runner: any EngineRunning = EngineRunner()
+        runner: any EngineRunning = EngineRunner(),
+        paperSignals: LivePaperSignalService? = nil
     ) {
+        self.livePaperSignals = paperSignals ?? LivePaperSignalService()
         self.snapshot = snapshot
         self.repository = repository
         self.runner = runner
