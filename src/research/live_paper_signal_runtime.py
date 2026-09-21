@@ -332,7 +332,34 @@ class LivePaperSignalRunner:
                 result = CandidateResult(
                     candidate=candidate, status=RoundStatus.INSUFFICIENT_DATA, reasons=("live_collection_gate",)
                 )
-            suggestions.append(advise(protocol, result, quality, observations, decision_at=now, registry=registry))
+            suggestion = advise(protocol, result, quality, observations, decision_at=now, registry=registry)
+            # Receipt-time freshness cannot extend the lifetime of a provider
+            # event. Carry the stricter deadline in the shared suggestion itself
+            # so the report, persisted state and downstream consumers agree.
+            latest_by_symbol = [
+                max(
+                    (row.provider_at for row in observations if row.symbol == symbol and row.available_at <= now),
+                    default=None,
+                )
+                for symbol in protocol.symbols
+            ]
+            if all(stamp is not None for stamp in latest_by_symbol):
+                source_deadline = min(latest_by_symbol) + timedelta(
+                    seconds=min(15, protocol.maximum_observation_age_seconds)
+                )
+                fields = suggestion.model_dump()
+                fields["expires_at"] = min(suggestion.expires_at, source_deadline)
+                if fields["expires_at"] <= now and suggestion.posture == "long_research":
+                    fields.update(
+                        posture="stand_aside",
+                        entry_low=None,
+                        entry_high=None,
+                        invalidation=None,
+                        target=None,
+                        reasons=("evidence_expired",),
+                    )
+                suggestion = TrendAdvisorSuggestion.model_validate(fields)
+            suggestions.append(suggestion)
         identity = (
             json.dumps(
                 {"protocol_hash": protocol.identity_hash, "policy_hash": suggestions[0].policy_hash},

@@ -216,3 +216,55 @@ def test_slow_evaluation_does_not_refresh_expired_source(registered):
     state = LivePaperSignalRunner(Feed([bar(), bar("ETHUSDT")]), clock=lambda: next(times)).run_once(registered)
     assert state.kind == "stale"
     assert state.suggestion is None
+
+
+@pytest.mark.parametrize("maximum_age", [5, 15])
+def test_delayed_receipt_publication_expires_at_provider_deadline(tmp_path, monkeypatch, maximum_age):
+    """A synthetic passing advisor decision exercises real publication and status.
+
+    Scoring is isolated here: the regression is the service extending the scorer's
+    receipt-based expiry past the supporting feed's provider-time deadline.
+    """
+    from src.research import live_paper_signal_runtime as runtime
+    from src.research.trend_advisor import TrendAdvisorSuggestion
+
+    protocol = ResearchRoundProtocol.default(round_id="expiry-test", starts_at=NOW - timedelta(days=200))
+    protocol = protocol.model_copy(
+        update={"warmup_minutes": 1, "maximum_observation_age_seconds": maximum_age}
+    ).validated()
+    register_round(protocol, tmp_path)
+    clock = NOW - timedelta(minutes=1)
+    feed = Feed([bar(symbol, clock, bid="100.99", ask="101.01") for symbol in protocol.symbols])
+    runner = LivePaperSignalRunner(feed, clock=lambda: clock)
+    assert runner.run_once(tmp_path).kind == "warming"
+    template = json.loads((tmp_path / "research-round-2-summary.json").read_text())["trendAdvisor"][0]
+
+    def passing_advice(protocol, result, quality, observations, *, decision_at, registry):
+        fields = TrendAdvisorSuggestion.model_validate(template).model_dump()
+        fields.update(
+            symbol=result.candidate.symbol,
+            posture="long_research",
+            decision_at=decision_at,
+            available_at=decision_at,
+            expires_at=decision_at + timedelta(seconds=maximum_age),
+            entry_low="100",
+            entry_high="101",
+            invalidation="99",
+            target="103",
+            reasons=("trend_aligned", "candidate_confirmed"),
+        )
+        return TrendAdvisorSuggestion.model_validate(fields)
+
+    monkeypatch.setattr(runtime, "advise", passing_advice)
+    clock = NOW
+    feed.rows = [bar(symbol, clock, bid="100.99", ask="101.01") for symbol in protocol.symbols]
+    state = runner.run_once(tmp_path)
+    assert state.kind == "published"
+    assert any(event.kind == "published" for event in events(tmp_path))
+    deadline = NOW.replace(second=maximum_age)
+    assert state.suggestion.expires_at == deadline
+    report = json.loads((tmp_path / "research-round-2-summary.json").read_text())
+    assert all(TrendAdvisorSuggestion.model_validate(item).expires_at == deadline for item in report["trendAdvisor"])
+    assert read_live_signal_status(tmp_path, now=deadline - timedelta(microseconds=1)).kind == "published"
+    assert read_live_signal_status(tmp_path, now=deadline).kind == "stale"
+    assert read_live_signal_status(tmp_path, now=deadline).suggestion is None
