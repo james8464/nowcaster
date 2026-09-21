@@ -1,0 +1,398 @@
+"""Explicitly started, credential-free public spot research collection.
+
+Only recent closed candles are collected: there is deliberately no historical
+backfill here. HTTP endpoints follow Binance's public Spot market-data API.
+"""
+
+from __future__ import annotations
+
+import fcntl
+import json
+import time
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Protocol
+from urllib.parse import urlencode
+from urllib.request import urlopen
+
+from src.research.live_paper_signals import LiveSignalEvent, LiveSignalState, SignalEventLedger, should_publish
+from src.research.round_two_contracts import RoundObservation, RoundStatus, _utc
+from src.research.round_two_quality import append_observations, load_observations, summarize_quality
+from src.research.round_two_registry import (
+    _write_first_manifest,
+    append_jsonl_fsync,
+    jsonl_writer_lock,
+    load_round_protocol,
+)
+from src.research.round_two_runtime import (
+    SUMMARY_FILE,
+    _bind_evaluation,
+    _candidate_snapshot,
+    _native_round_payload,
+    _provider_health,
+    _recent_candidate_results,
+    _strategy_registry,
+    _write_atomic_json,
+)
+from src.research.round_two_walkforward import CandidateResult
+from src.research.trend_advisor import AdvisorRoundReport, TrendAdvisorSuggestion, advise
+
+STATE_FILE = "live-paper-signal-state.json"
+CURSOR_FILE = "live-paper-signal-cursor.json"
+STOP_FILE = "live-paper-signal-stop.json"
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+class SpotFeed(Protocol):
+    def observations(self, symbols: tuple[str, ...]) -> tuple[RoundObservation, ...]: ...
+
+
+def _public_json(path: str, params: dict) -> object:
+    # Fixed host and allowlisted read-only paths; no environment/auth configuration.
+    if path not in {"/api/v3/klines", "/api/v3/ticker/bookTicker", "/api/v3/time"}:
+        raise ValueError("unsupported public endpoint")
+    with urlopen("https://data-api.binance.vision" + path + "?" + urlencode(params), timeout=4) as response:
+        payload = response.read(262145)
+    if len(payload) > 262144:
+        raise ValueError("oversized public response")
+    return json.loads(payload)
+
+
+class FinalizedSpotFeed:
+    """Poll the latest closed one-minute candle and a contemporaneous public quote."""
+
+    def __init__(self, *, fetch_json: Callable = _public_json, clock: Callable = _now):
+        self.fetch_json, self.clock = fetch_json, clock
+
+    def observations(self, symbols: tuple[str, ...]) -> tuple[RoundObservation, ...]:
+        rows = []
+        server = self.fetch_json("/api/v3/time", {})
+        if not isinstance(server, dict) or type(server.get("serverTime")) is not int:
+            raise ValueError("invalid server clock")
+        server_at = datetime.fromtimestamp(server["serverTime"] / 1000, UTC)
+        for symbol in symbols:
+            if symbol not in {"BTCUSDT", "ETHUSDT"}:
+                raise ValueError("unsupported symbol")
+            candles = self.fetch_json("/api/v3/klines", {"symbol": symbol, "interval": "1m", "limit": 2})
+            candle_received = _utc(self.clock(), "receipt")
+            if not isinstance(candles, list) or len(candles) > 2:
+                raise ValueError("invalid candle response")
+            finalized = []
+            for candle in candles:
+                if not isinstance(candle, list) or len(candle) != 12:
+                    raise ValueError("invalid candle shape")
+                opened, closed = candle[0], candle[6]
+                if type(opened) is not int or type(closed) is not int or opened % 60000 or closed != opened + 59999:
+                    raise ValueError("invalid candle interval")
+                boundary = datetime.fromtimestamp((closed + 1) / 1000, UTC)
+                if boundary <= min(candle_received, server_at):
+                    finalized.append((boundary, candle))
+            if not finalized:
+                continue
+            boundary, candle = max(finalized, key=lambda item: item[0])
+            # Old candles remain absent, never re-labelled as fresh on receipt.
+            if candle_received - boundary >= timedelta(seconds=15):
+                continue
+            quote = self.fetch_json("/api/v3/ticker/bookTicker", {"symbol": symbol})
+            received = _utc(self.clock(), "receipt")
+            if received < candle_received:
+                raise ValueError("clock regression")
+            if not isinstance(quote, dict) or quote.get("symbol") != symbol:
+                raise ValueError("quote symbol mismatch")
+            rows.append(
+                RoundObservation(
+                    provider="binance",
+                    feed="spot",
+                    symbol=symbol,
+                    provider_at=boundary,
+                    received_at=received,
+                    available_at=received,
+                    source_key=f"binance:spot:{symbol}:1m:{candle[0]}",
+                    open=candle[1],
+                    high=candle[2],
+                    low=candle[3],
+                    close=candle[4],
+                    volume=candle[5],
+                    bid=quote["bidPrice"],
+                    ask=quote["askPrice"],
+                )
+            )
+        return tuple(rows)
+
+
+@contextmanager
+def _service_lock(directory: Path) -> Iterator[None]:
+    with (directory / "live-paper-signal.lock").open("a+b") as lock:
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise RuntimeError("live paper signal service already running") from error
+        try:
+            yield
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+def _retained_state(directory: Path, protocol_hash: str) -> LiveSignalState | None:
+    path = directory / STATE_FILE
+    state = LiveSignalState.model_validate_json(path.read_text()) if path.exists() else None
+    if state is not None and state.protocol_hash != protocol_hash:
+        raise ValueError("live state protocol mismatch")
+    return state
+
+
+def read_live_signal_status(directory: Path, *, now: datetime | None = None) -> LiveSignalState:
+    """Read-only freshness projection; reading never makes old evidence current."""
+    directory, now = Path(directory), _utc(now or _now(), "status timestamp")
+    protocol = load_round_protocol(directory)
+    state = _retained_state(directory, protocol.identity_hash)
+    if state is None:
+        return LiveSignalState(kind="stopped", protocol_hash=protocol.identity_hash, updated_at=now)
+    if now < state.updated_at:
+        return LiveSignalState(
+            kind="failed", protocol_hash=protocol.identity_hash, updated_at=now, reasons=("clock_regression",)
+        )
+    if state.kind not in {"stopped", "failed"} and (
+        now - state.updated_at >= timedelta(seconds=min(15, protocol.maximum_observation_age_seconds))
+        or (state.suggestion is not None and now >= state.suggestion.expires_at)
+    ):
+        return LiveSignalState(
+            kind="stale",
+            protocol_hash=protocol.identity_hash,
+            updated_at=state.updated_at,
+            evaluated_at=state.evaluated_at,
+            reasons=("evidence_expired",),
+        )
+    return state
+
+
+def request_stop(directory: Path) -> None:
+    directory = Path(directory)
+    protocol = load_round_protocol(directory)
+    _write_atomic_json(directory / STOP_FILE, {"protocol_hash": protocol.identity_hash})
+
+
+class LivePaperSignalRunner:
+    def __init__(self, feed: SpotFeed | None = None, *, clock: Callable = _now):
+        self.feed, self.clock = feed or FinalizedSpotFeed(clock=clock), clock
+
+    def run_once(self, directory: Path) -> LiveSignalState:
+        directory = Path(directory)
+        load_round_protocol(directory)  # Refuse unregistered locations before any write.
+        with _service_lock(directory):
+            return self._run_once(directory)
+
+    def _run_once(self, directory: Path) -> LiveSignalState:
+        protocol = load_round_protocol(directory)
+        ledger = SignalEventLedger(directory, protocol_hash=protocol.identity_hash)
+        previous = _retained_state(directory, protocol.identity_hash)
+        now = _utc(self.clock(), "evaluation timestamp")
+
+        def save(kind, reasons=(), suggestion=None, evaluated_at=None):
+            state = LiveSignalState(
+                kind=kind,
+                protocol_hash=protocol.identity_hash,
+                updated_at=now,
+                evaluated_at=evaluated_at,
+                reasons=tuple(reasons)[:16],
+                suggestion=suggestion,
+            )
+            _write_atomic_json(directory / STATE_FILE, state.model_dump(mode="json"))
+            return state
+
+        if previous is not None and now < previous.updated_at:
+            return save("failed", ("clock_regression",))
+        if (directory / STOP_FILE).exists():
+            if json.loads((directory / STOP_FILE).read_text()) != {"protocol_hash": protocol.identity_hash}:
+                raise ValueError("stop control protocol mismatch")
+            ledger.append(LiveSignalEvent.stopped(now=now, reason="user_stopped"))
+            return save("stopped", ("user_stopped",))
+        if previous is None or previous.kind == "stopped":
+            ledger.append(LiveSignalEvent.started(now=now))
+        try:
+            fetched = tuple(self.feed.observations(protocol.symbols))
+            now_after = _utc(self.clock(), "evaluation timestamp")
+            if now_after < now:
+                return save("failed", ("clock_regression",))
+            now = now_after
+        except (OSError, ValueError, KeyError, TypeError, TimeoutError):
+            ledger.append(LiveSignalEvent(kind="provider_health", at=now, detail="provider_unavailable"))
+            return save("failed", ("provider_unavailable",))
+        retained = load_observations(directory)
+        existing = {row.source_key: row for row in retained}
+        novel = []
+        try:
+            for row in fetched:
+                row.validate_for(protocol)
+                if (
+                    row.close is None
+                    or row.provider_error is not None
+                    or row.available_at > now
+                    or now - row.provider_at >= timedelta(seconds=min(15, protocol.maximum_observation_age_seconds))
+                ):
+                    raise ValueError("invalid observation timing or finality")
+                old = existing.get(row.source_key)
+                if old is not None:
+                    # Re-polling does not revise the first receipt or its quote.
+                    fields = {"received_at", "available_at", "bid", "ask"}
+                    if old.model_dump(exclude=fields) != row.model_dump(exclude=fields):
+                        raise ValueError("conflicting finalized candle")
+                    continue
+                latest = max((item.provider_at for item in retained if item.symbol == row.symbol), default=None)
+                if latest is not None and row.provider_at <= latest:
+                    raise ValueError("late observation")
+                novel.append(row)
+            append_observations(directory, protocol, novel)
+        except (ValueError, AttributeError):
+            ledger.append(LiveSignalEvent(kind="gap", at=now, detail="invalid_observation"))
+            return save("abstaining", ("invalid_observation",))
+        if previous is not None and previous.kind == "failed" and fetched:
+            ledger.append(LiveSignalEvent(kind="reconnect", at=now, detail="reconnect_warmup"))
+        observations = load_observations(directory)
+        quality = summarize_quality(observations, protocol)
+        reasons = set(quality.reasons_for(now))
+        health = _provider_health(protocol, observations, quality, now)
+        reasons.update(health.exclusions)
+        markers = [event.at for event in ledger.events() if event.kind in {"started", "reconnect", "gap"}]
+        if markers and now - max(markers) < timedelta(minutes=protocol.warmup_minutes):
+            reasons.add("reconnect_warmup")
+        if not novel:
+            if reasons:
+                return save("stale" if "observation_stale" in reasons else "warming", sorted(reasons))
+            return read_live_signal_status(directory, now=now)
+        cursor_path = directory / CURSOR_FILE
+        cursor = (
+            json.loads(cursor_path.read_text())
+            if cursor_path.exists()
+            else {"protocol_hash": protocol.identity_hash, "keys": []}
+        )
+        if cursor.get("protocol_hash") != protocol.identity_hash:
+            raise ValueError("evaluation cursor protocol mismatch")
+        latest_keys = [
+            max((row for row in observations if row.symbol == symbol), key=lambda row: row.provider_at).source_key
+            for symbol in protocol.symbols
+            if any(row.symbol == symbol for row in observations)
+        ]
+        if latest_keys == cursor["keys"]:
+            return read_live_signal_status(directory, now=now)
+        # Reserve once before evaluation: a crash can skip, never repeat, a decision.
+        _write_atomic_json(cursor_path, {"protocol_hash": protocol.identity_hash, "keys": latest_keys})
+        ledger.append(LiveSignalEvent(kind="provider_health", at=now, detail=health.state))
+        try:
+            report = self._report(directory, protocol, observations, quality, health, now, reasons)
+        except (ValueError, OSError):
+            ledger.append(LiveSignalEvent(kind="abstaining", at=now, detail="retained_evidence_unavailable"))
+            return save("failed", ("retained_evidence_unavailable",))
+        ledger.append(LiveSignalEvent(kind="evaluated", at=now, detail="finalized_observation_evaluated"))
+        evaluated_at = now
+        now = _utc(self.clock(), "publication timestamp")
+        if now < evaluated_at:
+            return save("failed", ("clock_regression",))
+        if any(
+            now - row.provider_at >= timedelta(seconds=min(15, protocol.maximum_observation_age_seconds))
+            for row in novel
+        ):
+            return save("stale", ("evidence_expired",), evaluated_at=evaluated_at)
+        suggestions = [item for item in report.trend_advisor if item.posture == "long_research"]
+        if not reasons and suggestions:
+            suggestion = suggestions[0]
+            if should_publish(previous.suggestion if previous else None, suggestion, now):
+                ledger.append(
+                    LiveSignalEvent(
+                        kind="published", at=now, posture="long_research", candidate_hash=suggestion.candidate_hash
+                    )
+                )
+            return save("published", suggestion=suggestion, evaluated_at=now)
+        reasons.update(reason for item in report.trend_advisor for reason in item.reasons)
+        ledger.append(LiveSignalEvent(kind="abstaining", at=now, posture="stand_aside", detail="research_gates_unmet"))
+        kind = (
+            "warming"
+            if {"reconnect_warmup", "continuity_warmup", "insufficient_trend_history"} & reasons
+            else "abstaining"
+        )
+        return save(kind, sorted(reasons), evaluated_at=now)
+
+    @staticmethod
+    def _report(directory, protocol, observations, quality, health, now, exclusions):
+        registry = _strategy_registry()
+        results = _recent_candidate_results(directory)
+        if any(item.status == RoundStatus.EXPERIMENTAL_PAPER_ONLY for item in results):
+            if not (directory / "evaluation-manifest.json").exists():
+                raise ValueError("evaluation manifest missing")
+            _bind_evaluation(directory, protocol, registry)
+        suggestions = []
+        for candidate in protocol.candidates[:100]:
+            result = next((item for item in results if item.candidate == candidate), None)
+            if result is None or exclusions:
+                result = CandidateResult(
+                    candidate=candidate, status=RoundStatus.INSUFFICIENT_DATA, reasons=("live_collection_gate",)
+                )
+            suggestions.append(advise(protocol, result, quality, observations, decision_at=now, registry=registry))
+        identity = (
+            json.dumps(
+                {"protocol_hash": protocol.identity_hash, "policy_hash": suggestions[0].policy_hash},
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n"
+        )
+        manifest = directory / "trend-advisor-manifest.json"
+        if not _write_first_manifest(manifest, identity.encode()) and manifest.read_text() != identity:
+            raise ValueError("advisor policy changed; register a new round")
+        decisions = directory / "trend-advisor-decisions.jsonl"
+        with jsonl_writer_lock(decisions):
+            if decisions.exists():
+                data = decisions.read_bytes()
+                if data and not data.endswith(b"\n"):
+                    raise ValueError("unterminated advisor decision")
+                for line in data.splitlines():
+                    retained = TrendAdvisorSuggestion.model_validate_json(line)
+                    if retained.protocol_hash != protocol.identity_hash:
+                        raise ValueError("advisor decision protocol mismatch")
+            append_jsonl_fsync(decisions, [item.model_dump(mode="json") for item in suggestions], writer_lock_held=True)
+        status = (
+            RoundStatus.EXPERIMENTAL_PAPER_ONLY
+            if any(item.posture == "long_research" for item in suggestions)
+            else RoundStatus.INSUFFICIENT_DATA
+            if not results
+            else RoundStatus.REJECTED
+        )
+        report = AdvisorRoundReport(
+            round_id=protocol.round_id,
+            protocol_hash=protocol.identity_hash,
+            status=status,
+            reasons=("live_paper_research",),
+            provider_health=health,
+            candidates=tuple(_candidate_snapshot(item) for item in results),
+            trend_advisor=tuple(suggestions),
+        )
+        _write_atomic_json(directory / SUMMARY_FILE, _native_round_payload(report))
+        return report
+
+    def start(self, directory: Path, *, poll_seconds: float = 5) -> LiveSignalState:
+        """Foreground process, supervised by the app; no daemon or detached spawn."""
+        directory = Path(directory)
+        protocol = load_round_protocol(directory)
+        if not 1 <= poll_seconds <= 60:
+            raise ValueError("poll interval must be between 1 and 60 seconds")
+        with _service_lock(directory):
+            (directory / STOP_FILE).unlink(missing_ok=True)
+            ledger = SignalEventLedger(directory, protocol_hash=protocol.identity_hash)
+            ledger.append(LiveSignalEvent(kind="reconnect", at=self.clock(), detail="process_start_warmup"))
+            try:
+                while True:
+                    state = self._run_once(directory)
+                    if state.kind == "stopped":
+                        return state
+                    time.sleep(poll_seconds)
+            except KeyboardInterrupt:
+                request_stop(directory)
+                return self._run_once(directory)
+
+
+__all__ = ["FinalizedSpotFeed", "LivePaperSignalRunner", "read_live_signal_status", "request_stop"]
