@@ -6,6 +6,15 @@ It collects historical market and company information, asks models what that inf
 
 Nowcaster is a research and risk-control tool. It can monitor **shadow** decisions and submit separately configured **Alpaca paper** orders, but real-money trading remains hard-locked unless every forward-evidence, security, signing, account, and manual-arming gate passes. It cannot guarantee profit and is not investment advice.
 
+**Live paper signals:** Strategy Lab now includes Start/Stop controls for automatic
+public Bitcoin and Ether trend research. Choose a registered Research Round 2
+folder, start collection, and inspect the current research posture, data
+freshness, reasons to stand aside and retained history. Optional macOS
+notifications open the evidence. The Mac release includes its own collector.
+This separate service never connects to an account or makes trades; it can
+remain silent while evidence is insufficient. Paper results are not proof of
+profitability. [Read the beginner-friendly guide](docs/research/live-paper-signals.md).
+
 For a qualified intraday alert, the required probability means “the target is reached before the protective stop within the declared horizon, after the entry decision.” A research model that only measures positive strategy returns cannot supply that probability: it remains research-only. Neither kind of estimate is a promise that a whole account will make money.
 
 ![Nowcaster Today view](docs/images/macos/today-light.png)

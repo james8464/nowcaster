@@ -1,10 +1,41 @@
 import AppKit
 import SwiftUI
+import UserNotifications
 
 @MainActor
-final class NowcasterApplicationDelegate: NSObject, NSApplicationDelegate {
+final class NowcasterApplicationDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     weak var liveMonitor: LiveMonitorController?
+    weak var model: AppModel? {
+        didSet {
+            if let model, let pendingPaperResearch {
+                model.openPaperResearchNotification(destination: pendingPaperResearch.0, materialKey: pendingPaperResearch.1)
+                self.pendingPaperResearch = nil
+            }
+        }
+    }
+    private var pendingPaperResearch: (String?, String?)?
     private var terminationPending = false
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        UNUserNotificationCenter.current().delegate = self
+    }
+
+    func receivePaperResearchNotification(destination: String?, materialKey: String?) {
+        if let model { model.openPaperResearchNotification(destination: destination, materialKey: materialKey) }
+        else { pendingPaperResearch = (destination, materialKey) }
+    }
+
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
+        let info = response.notification.request.content.userInfo
+        let destination = info["paper_research_destination"] as? String
+        let key = info["material_key"] as? String
+        Task { @MainActor [weak self] in
+            self?.receivePaperResearchNotification(destination: destination, materialKey: key)
+            if destination == "strategy_lab_evidence" { NSApplication.shared.activate(ignoringOtherApps: true) }
+        }
+        completionHandler()
+    }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let liveMonitor, liveMonitor.isRunning else { return .terminateNow }
@@ -66,7 +97,7 @@ struct NowcasterApp: App {
     var body: some Scene {
         WindowGroup(id: "main") {
             RootView(model: model, settings: settings)
-            .onAppear { appDelegate.liveMonitor = model.liveMonitor }
+            .onAppear { appDelegate.liveMonitor = model.liveMonitor; appDelegate.model = model }
             .preferredColorScheme(forcedColorScheme)
             .frame(minWidth: windowPresentation.minimumWidth, minHeight: windowPresentation.minimumHeight)
         }

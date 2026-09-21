@@ -14,6 +14,20 @@ struct LivePaperSignalConfiguration: Sendable {
     let directory: URL
     let protocolHash: String
 
+    static func application(directory: URL, protocolHash: String, bundleURL: URL = Bundle.main.bundleURL,
+                            sourceRoot: URL, sourcePython: URL) throws -> Self {
+        let helper = bundleURL.appending(path: "Contents/Helpers/nowcaster-paper-signals.app/Contents/MacOS/nowcaster-paper-signals")
+        if FileManager.default.isExecutableFile(atPath: helper.path) {
+            return Self(projectRoot: bundleURL, executable: helper, script: nil,
+                        directory: directory, protocolHash: protocolHash)
+        }
+        // A packaged app must never silently fall back to a source checkout.
+        guard bundleURL.pathExtension != "app" else { throw LivePaperServiceError.invalidConfiguration }
+        return Self(projectRoot: sourceRoot, executable: sourcePython,
+                    script: sourceRoot.appending(path: "scripts/run_live_paper_signals.py"),
+                    directory: directory, protocolHash: protocolHash)
+    }
+
     func arguments(for command: String, extra: [String] = []) -> [String] {
         (script.map { ["-u", $0.path] } ?? []) + [command, "--directory", directory.path] + extra
     }
@@ -59,6 +73,7 @@ final class LivePaperSignalService {
     private(set) var events: [LivePaperSignalEvent] = []
     private(set) var message: String?
     private(set) var directory: URL?
+    private(set) var providerHealth: ResearchRoundProviderHealth?
     @ObservationIgnored private var process: Process?
     @ObservationIgnored private var monitor: Task<Void, Never>?
     @ObservationIgnored private var configuration: LivePaperSignalConfiguration?
@@ -71,11 +86,39 @@ final class LivePaperSignalService {
         self.notifications = notifications
     }
 
+    func open(directory: URL, sourceRoot: URL, sourcePython: URL) async {
+        guard !isRunning, !isBusy else { return }
+        isBusy = true
+        defer { isBusy = false }
+        state = nil; events = []; providerHealth = nil; configuration = nil; self.directory = nil
+        do {
+            let provisional = try LivePaperSignalConfiguration.application(directory: directory,
+                protocolHash: String(repeating: "0", count: 64), sourceRoot: sourceRoot, sourcePython: sourcePython)
+            try provisional.validate()
+            let data = try await Self.command(provisional, "status")
+            guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let identity = root["protocol_hash"] as? String else { throw LivePaperServiceError.invalidConfiguration }
+            let current = try LivePaperSignalState.decode(data, protocolHash: identity, now: Date())
+            configuration = try LivePaperSignalConfiguration.application(directory: directory,
+                protocolHash: current.protocolHash, sourceRoot: sourceRoot, sourcePython: sourcePython)
+            self.directory = directory
+            state = current
+            events = try Self.readHistory(directory)
+            providerHealth = try Self.readProviderHealth(directory, protocolHash: current.protocolHash)
+            message = nil
+        } catch { configuration = nil; self.directory = nil; state = nil; events = []; message = error.localizedDescription }
+    }
+
+    func startSelected() async {
+        guard let configuration else { return }
+        await start(configuration: configuration)
+    }
+
     func start(configuration: LivePaperSignalConfiguration) async {
         guard !isRunning, !isBusy else { return }
         isBusy = true
         defer { isBusy = false }
-        state = nil; events = []; message = nil
+        state = nil; events = []; providerHealth = nil; message = nil
         do {
             try configuration.validate()
             let initial = try await Self.command(configuration, "status")
@@ -146,11 +189,12 @@ final class LivePaperSignalService {
             guard !Task.isCancelled, process?.isRunning == true else { return }
             state = try LivePaperSignalState.decode(data, protocolHash: configuration.protocolHash, now: Date())
             events = try Self.readHistory(configuration.directory)
+            providerHealth = try Self.readProviderHealth(configuration.directory, protocolHash: configuration.protocolHash)
             message = nil
             if notificationsEnabled, state?.currentSuggestion(now: Date(), isRunning: isRunning) != nil {
                 await notify(configuration)
             }
-        } catch { state = nil; message = error.localizedDescription }
+        } catch { state = nil; providerHealth = nil; message = error.localizedDescription }
     }
 
     private func notify(_ configuration: LivePaperSignalConfiguration) async {
@@ -221,6 +265,18 @@ final class LivePaperSignalService {
             data = data.subdata(in: data.index(after: newline) ..< data.endIndex)
         }
         return Array(try LivePaperSignalEvent.decodeHistory(data, now: Date()).suffix(200))
+    }
+
+    private static func readProviderHealth(_ directory: URL, protocolHash: String) throws -> ResearchRoundProviderHealth? {
+        let url = directory.appending(path: "research-round-2-summary.json")
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        let data = try handle.read(upToCount: 1_048_577) ?? Data()
+        guard data.count <= 1_048_576 else { throw LivePaperServiceError.outputTooLarge }
+        let report = try JSONDecoder.nowcaster.decode(ResearchRoundSnapshot.self, from: data)
+        guard report.protocolHash == protocolHash else { throw LivePaperServiceError.invalidConfiguration }
+        return report.providerHealth
     }
 
     nonisolated static func command(_ configuration: LivePaperSignalConfiguration, _ command: String, extra: [String] = []) async throws -> Data {

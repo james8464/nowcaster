@@ -201,7 +201,9 @@ struct RootView: View {
     }
 
     @ViewBuilder private var destinationContent: some View {
-        if let snapshot = model.snapshot {
+        if model.destination == .strategyLab, model.snapshot == nil {
+            ScrollView { LivePaperSignalsView(model: model, settings: settings).padding() }
+        } else if let snapshot = model.snapshot {
             switch model.destination {
             case .today:
                 TodayView(snapshot: snapshot, selectSignal: model.selectSignal)

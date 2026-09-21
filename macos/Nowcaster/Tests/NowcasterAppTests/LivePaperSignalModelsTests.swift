@@ -52,6 +52,17 @@ private func liveDecode(_ payload: [String: Any], now: Date = liveNow) throws ->
         #expect(state.currentSuggestion(now: liveNow.addingTimeInterval(15), isRunning: true) == nil)
     }
 
+    @Test func statusExpiresAtSuggestionDeadlineBeforeServiceAgeLimit() throws {
+        var payload = livePayload()
+        var suggestion = payload["suggestion"] as! [String: Any]
+        suggestion["expires_at"] = "2026-09-21T12:00:05Z"
+        payload["suggestion"] = suggestion
+        let state = try liveDecode(payload)
+        let display = LivePaperSignalsPresentation(state: state, isRunning: true, now: liveNow.addingTimeInterval(5))
+        #expect(display.suggestion == nil)
+        #expect(display.status == "Stale")
+    }
+
     @Test func eventHistoryRejectsTornFutureAndActionRecords() throws {
         let good = "{\"kind\":\"started\",\"at\":\"2026-09-21T12:00:00Z\"}\n"
         #expect(try LivePaperSignalEvent.decodeHistory(Data(good.utf8), now: liveNow).count == 1)

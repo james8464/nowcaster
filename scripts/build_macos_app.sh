@@ -45,6 +45,15 @@ if [[ "${NOWCASTER_SKIP_ENGINE_BUNDLE:-0}" != "1" ]]; then
     "$PYTHON" "$PROJECT_ROOT/scripts/engine_manifest.py" --root "$PROJECT_ROOT" \
       --executable "$CONTENTS_PATH/Helpers/nowcaster-engine" \
       --output "$CONTENTS_PATH/Resources/engine-manifest.json"
+    PAPER_ROOT=$(zsh "$PROJECT_ROOT/scripts/build_paper_signals_bundle.sh")
+    # A nested app separates signed code from Python resources using Apple's
+    # bundle layout, without extracting a runtime on every freshness check.
+    cp -R "$PAPER_ROOT" "$CONTENTS_PATH/Helpers/nowcaster-paper-signals.app"
+    /usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" \
+      "$CONTENTS_PATH/Helpers/nowcaster-paper-signals.app/Contents/Info.plist"
+    codesign --force --options runtime "${SIGN_OPTIONS[@]}" \
+      --entitlements "$PACKAGE_ROOT/Resources/Engine.entitlements" \
+      --sign "$IDENTITY" "$CONTENTS_PATH/Helpers/nowcaster-paper-signals.app"
 fi
 
 codesign --force --options runtime "${SIGN_OPTIONS[@]}" --sign "$IDENTITY" "$APP_PATH"

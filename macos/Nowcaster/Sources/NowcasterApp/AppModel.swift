@@ -38,6 +38,14 @@ final class AppModel {
     let livePaperSignals = LivePaperSignalService()
     let liveMonitor = LiveMonitorController()
     var destination: AppDestination = .today
+    var paperResearchEvidenceRequested = false
+
+    func openPaperResearchNotification(destination: String?, materialKey: String?) {
+        guard destination == "strategy_lab_evidence", let materialKey,
+              materialKey.count == 64, materialKey.allSatisfy({ "0123456789abcdef".contains($0) }) else { return }
+        self.destination = .strategyLab
+        paperResearchEvidenceRequested = true
+    }
     var searchText = ""
     var selectedInstrumentID: String?
     var selectedEarningsID: String?

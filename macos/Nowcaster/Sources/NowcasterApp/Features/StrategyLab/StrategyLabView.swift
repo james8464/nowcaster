@@ -285,6 +285,9 @@ struct StrategyLabView: View {
             Divider()
             contextualActionBar
             Divider()
+            ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+            LivePaperSignalsView(model: model, settings: settings)
             CandidateCampaignView(
                 presentation: CandidateCampaignPresentation(
                     assetName: "WTI crude oil",
@@ -298,6 +301,9 @@ struct StrategyLabView: View {
             TrendAdvisorView(suggestions: model.trendAdvisorSuggestions)
             .padding(.horizontal)
             .padding(.bottom, 8)
+            }
+            }
+            .frame(minHeight: 180, idealHeight: 340, maxHeight: 420)
             if presentation.strategies.isEmpty {
                 EmptyStateView(
                     title: presentation.strategyEmptyTitle,
@@ -306,7 +312,7 @@ struct StrategyLabView: View {
                 )
             } else {
                 VSplitView {
-                    strategyTable.frame(minHeight: 250)
+                    strategyTable.frame(minHeight: 120)
                     TabView {
                         DeepResearchWorkspaceView(model: model, runs: presentation.deepResearchRuns)
                             .tabItem { Label("Deep Research", systemImage: "cpu") }
@@ -318,7 +324,7 @@ struct StrategyLabView: View {
                         )
                         .tabItem { Label("Bounded Learning", systemImage: "wand.and.stars") }
                     }
-                    .frame(minHeight: 250)
+                    .frame(minHeight: 120)
                 }
             }
         }
