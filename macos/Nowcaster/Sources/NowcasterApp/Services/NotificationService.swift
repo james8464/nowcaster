@@ -31,8 +31,37 @@ struct LiveNotificationPolicy: Sendable {
 }
 
 @MainActor
-final class NotificationService {
+final class NotificationService: PaperResearchNotifying {
     private var policy = LiveNotificationPolicy()
+
+    func requestPaperResearchAuthorization() async -> Bool {
+        await withCheckedContinuation { continuation in
+            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { @Sendable granted, error in
+                continuation.resume(returning: granted && error == nil)
+            }
+        }
+    }
+
+    func deliverPaperResearch(_ notice: LivePaperNotification, stillAllowed: @MainActor () -> Bool) async -> Bool {
+        guard stillAllowed(), notice.isFresh(at: Date()) else { return false }
+        let center = UNUserNotificationCenter.current()
+        let authorized = await withCheckedContinuation { continuation in
+            center.getNotificationSettings { @Sendable settings in
+                continuation.resume(returning: NotificationAuthorizationPolicy.permitsDelivery(settings.authorizationStatus))
+            }
+        }
+        guard authorized, stillAllowed(), notice.isFresh(at: Date()) else { return false }
+        let content = UNMutableNotificationContent()
+        content.title = notice.title
+        content.body = notice.body
+        content.sound = .default
+        content.userInfo = ["paper_research_destination": "strategy_lab_evidence", "material_key": notice.materialKey]
+        return await withCheckedContinuation { continuation in
+            center.add(UNNotificationRequest(identifier: "paper-research-" + notice.materialKey, content: content, trigger: nil)) { @Sendable error in
+                continuation.resume(returning: error == nil)
+            }
+        }
+    }
 
     func requestAuthorization() async -> Bool {
         let center = UNUserNotificationCenter.current()

@@ -35,6 +35,7 @@ enum EngineJobOutcome: Equatable, Sendable {
 @MainActor
 @Observable
 final class AppModel {
+    let livePaperSignals = LivePaperSignalService()
     let liveMonitor = LiveMonitorController()
     var destination: AppDestination = .today
     var searchText = ""
