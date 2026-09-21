@@ -4,7 +4,7 @@ import Observation
 
 @MainActor protocol PaperResearchNotifying {
     func requestPaperResearchAuthorization() async -> Bool
-    func deliverPaperResearch(_ notice: LivePaperNotification, stillAllowed: @MainActor () -> Bool) async -> Bool
+    func deliverPaperResearch(_ notice: LivePaperNotification, stillAllowed: @MainActor () async -> Bool) async -> Bool
 }
 
 struct LivePaperSignalConfiguration: Sendable {
@@ -173,8 +173,22 @@ final class LivePaperSignalService {
                 if accepted {
                     delivered = await notifications.deliverPaperResearch(notice) { [weak self] in
                         guard let self else { return false }
-                        return self.notificationsEnabled && !Task.isCancelled && self.process?.isRunning == true
-                            && self.state?.suggestion == reservedSuggestion
+                        do {
+                            // The monitor is suspended while macOS checks notification
+                            // settings. Its cached state cannot authorize scheduling.
+                            let currentData = try await Self.command(configuration, "status")
+                            let current = try LivePaperSignalState.decode(currentData,
+                                protocolHash: configuration.protocolHash, now: Date())
+                            self.state = current
+                            return self.notificationsEnabled && !Task.isCancelled && self.process?.isRunning == true
+                                && current.suggestion == reservedSuggestion
+                                && current.currentSuggestion(now: Date(), isRunning: self.isRunning) != nil
+                                && notice.isFresh(at: Date())
+                        } catch {
+                            self.state = nil
+                            self.message = "Paper notification withheld: \(error.localizedDescription)"
+                            return false
+                        }
                     }
                 }
             } catch { message = "Paper notification withheld: \(error.localizedDescription)" }

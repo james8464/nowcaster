@@ -42,15 +42,15 @@ final class NotificationService: PaperResearchNotifying {
         }
     }
 
-    func deliverPaperResearch(_ notice: LivePaperNotification, stillAllowed: @MainActor () -> Bool) async -> Bool {
-        guard stillAllowed(), notice.isFresh(at: Date()) else { return false }
+    func deliverPaperResearch(_ notice: LivePaperNotification, stillAllowed: @MainActor () async -> Bool) async -> Bool {
+        guard await stillAllowed(), notice.isFresh(at: Date()) else { return false }
         let center = UNUserNotificationCenter.current()
         let authorized = await withCheckedContinuation { continuation in
             center.getNotificationSettings { @Sendable settings in
                 continuation.resume(returning: NotificationAuthorizationPolicy.permitsDelivery(settings.authorizationStatus))
             }
         }
-        guard authorized, stillAllowed(), notice.isFresh(at: Date()) else { return false }
+        guard authorized, await stillAllowed(), notice.isFresh(at: Date()) else { return false }
         let content = UNMutableNotificationContent()
         content.title = notice.title
         content.body = notice.body

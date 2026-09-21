@@ -122,6 +122,73 @@ private func liveDecode(_ payload: [String: Any], now: Date = liveNow) throws ->
         #expect(!service.isRunning)
         #expect(service.state == nil)
     }
+
+    @Test @MainActor func deliveryRechecksRetainedStatusAfterPermissionWait() async throws {
+        // The CLI fixture is an external process boundary. The real native
+        // controller, strict decoders, permission gate and outcome command run.
+        for invalidKind in ["failed", "abstaining", "stale"] {
+            let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            try Data("{}".utf8).write(to: directory.appending(path: "protocol.json"))
+            let stateURL = directory.appending(path: "status.json")
+            var stopped: [String: Any] = ["kind": "stopped", "protocol_hash": liveHash,
+                "updated_at": "2020-01-01T00:00:00Z", "evaluated_at": NSNull(), "reasons": [], "suggestion": NSNull()]
+            try JSONSerialization.data(withJSONObject: stopped).write(to: stateURL)
+            let script = directory.appending(path: "run_live_paper_signals.py")
+            try """
+            case "$1" in
+              start) while [ ! -f "$3/stop" ]; do sleep 0.1; done ;;
+              stop) touch "$3/stop"; cat "$3/status.json" ;;
+              status) cat "$3/status.json" ;;
+              notification) cat "$3/notice.json" ;;
+              notification-outcome) printf '%s\\n' "$9" >> "$3/outcomes"; printf '{}\\n' ;;
+              *) exit 1 ;;
+            esac
+            """.write(to: script, atomically: true, encoding: .utf8)
+            let delivery = PausedPaperDelivery()
+            let service = LivePaperSignalService(notifications: delivery)
+            let config = LivePaperSignalConfiguration(projectRoot: directory, executable: URL(fileURLWithPath: "/bin/sh"),
+                script: script, directory: directory, protocolHash: liveHash)
+            await service.start(configuration: config)
+            #expect(service.isRunning)
+            let formatter = ISO8601DateFormatter()
+            let now = Date(), generated = formatter.string(from: now), expiry = formatter.string(from: now.addingTimeInterval(15))
+            var published = livePayload()
+            var suggestion = try #require(published["suggestion"] as? [String: Any])
+            for key in ["decision_at", "available_at"] { suggestion[key] = generated }
+            suggestion["expires_at"] = expiry
+            published["suggestion"] = suggestion
+            published["updated_at"] = generated; published["evaluated_at"] = generated
+            try JSONSerialization.data(withJSONObject: published).write(to: stateURL, options: .atomic)
+            let notice: [String: Any] = ["protocol_hash": liveHash, "candidate_hash": String(repeating: "c", count: 64),
+                "material_key": String(repeating: "d", count: 64), "symbol": "BTCUSDT", "generated_at": generated,
+                "expires_at": expiry, "cooldown_key": liveHash + ":BTCUSDT", "paper_only": true,
+                "destination": "strategy_lab_evidence", "title": "Nowcaster paper research",
+                "body": "Paper-only research posture — not a trade instruction. BTCUSDT. Expires \(expiry)."]
+            try JSONSerialization.data(withJSONObject: notice).write(to: directory.appending(path: "notice.json"))
+            await service.setNotificationsEnabled(true)
+            for _ in 0 ..< 250 {
+                if delivery.pending != nil { break }
+                try? await Task.sleep(for: .milliseconds(20))
+            }
+            #expect(delivery.pending != nil)
+            stopped["kind"] = invalidKind; stopped["updated_at"] = generated
+            stopped["reasons"] = ["provider_unavailable"]
+            try JSONSerialization.data(withJSONObject: stopped).write(to: stateURL, options: .atomic)
+            #expect(service.isRunning)
+            #expect(Date() < formatter.date(from: expiry)!)
+            delivery.pending?.resume(); delivery.pending = nil
+            let outcomes = directory.appending(path: "outcomes")
+            for _ in 0 ..< 250 {
+                if FileManager.default.fileExists(atPath: outcomes.path) { break }
+                try? await Task.sleep(for: .milliseconds(20))
+            }
+            await service.stop()
+            #expect(!delivery.scheduled)
+            #expect(try String(contentsOf: outcomes, encoding: .utf8) == "failed\n")
+        }
+    }
 }
 
 @MainActor private final class PendingPaperAuthorizer: PaperResearchNotifying {
@@ -129,5 +196,16 @@ private func liveDecode(_ payload: [String: Any], now: Date = liveNow) throws ->
     func requestPaperResearchAuthorization() async -> Bool {
         await withCheckedContinuation { pending = $0 }
     }
-    func deliverPaperResearch(_ notice: LivePaperNotification, stillAllowed: @MainActor () -> Bool) async -> Bool { false }
+    func deliverPaperResearch(_ notice: LivePaperNotification, stillAllowed: @MainActor () async -> Bool) async -> Bool { false }
+}
+
+@MainActor private final class PausedPaperDelivery: PaperResearchNotifying {
+    var pending: CheckedContinuation<Void, Never>?
+    var scheduled = false
+    func requestPaperResearchAuthorization() async -> Bool { true }
+    func deliverPaperResearch(_ notice: LivePaperNotification, stillAllowed: @MainActor () async -> Bool) async -> Bool {
+        await withCheckedContinuation { pending = $0 }
+        scheduled = await stillAllowed() && notice.isFresh(at: Date())
+        return scheduled
+    }
 }
