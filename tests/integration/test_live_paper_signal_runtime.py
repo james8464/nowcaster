@@ -113,6 +113,53 @@ def test_transport_failure_then_recovery_records_reconnect_and_warms(registered)
     assert any(e.kind == "reconnect" for e in events(registered))
 
 
+@pytest.mark.parametrize("gap_during_recovery", [False, True])
+def test_empty_poll_and_runner_restart_cannot_erase_interruption_warmup(tmp_path, gap_during_recovery):
+    """Recovery must survive state projections and collect a new continuous window."""
+    protocol = ResearchRoundProtocol.default(round_id="recovery-test", starts_at=NOW - timedelta(days=200))
+    protocol = protocol.model_copy(update={"warmup_minutes": 2}).validated()
+    register_round(protocol, tmp_path)
+    clock = NOW - timedelta(minutes=3)
+    feed = Feed([])
+
+    def poll(rows, at):
+        nonlocal clock
+        clock = at
+        feed.rows = rows
+        # Each invocation recreates the runner, as a resumed run-once process does.
+        return LivePaperSignalRunner(feed, clock=lambda: clock).run_once(tmp_path)
+
+    def rows(at):
+        return [bar(symbol, at, bid="100.99", ask="101.01") for symbol in protocol.symbols]
+
+    for minute in range(-3, 1):
+        at = NOW + timedelta(minutes=minute)
+        poll(rows(at), at)
+    before = sum(event.kind == "evaluated" for event in events(tmp_path))
+    assert poll(OSError("offline"), NOW + timedelta(seconds=5)).kind == "failed"
+    poll([], NOW + timedelta(seconds=20))
+    recovery_at = NOW + timedelta(minutes=1)
+    state = poll(rows(recovery_at), recovery_at)
+    assert "reconnect_warmup" in state.reasons
+    assert state.suggestion is None
+    assert state.evaluated_at is None
+    assert [event.at for event in events(tmp_path) if event.kind == "reconnect"] == [recovery_at]
+    assert sum(event.kind == "evaluated" for event in events(tmp_path)) == before
+    at = NOW + timedelta(minutes=2)
+    assert "reconnect_warmup" in poll([] if gap_during_recovery else rows(at), at).reasons
+    assert sum(event.kind == "evaluated" for event in events(tmp_path)) == before
+    at = NOW + timedelta(minutes=3)
+    if gap_during_recovery:
+        assert "continuity_warmup" in poll(rows(at), at).reasons
+        at = NOW + timedelta(minutes=4)
+        assert "continuity_warmup" in poll(rows(at), at).reasons
+        assert sum(event.kind == "evaluated" for event in events(tmp_path)) == before
+        at = NOW + timedelta(minutes=5)
+    assert poll(rows(at), at).evaluated_at == at
+    assert sum(event.kind == "evaluated" for event in events(tmp_path)) == before + 1
+    assert sum(event.kind == "reconnect" for event in events(tmp_path)) == 1
+
+
 def test_status_expires_stale_data_and_clock_regression_fails_closed(registered):
     runner = LivePaperSignalRunner(Feed([bar(), bar("ETHUSDT")]), clock=lambda: NOW)
     runner.run_once(registered)

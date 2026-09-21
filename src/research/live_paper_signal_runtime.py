@@ -251,16 +251,32 @@ class LivePaperSignalRunner:
         except (ValueError, AttributeError):
             ledger.append(LiveSignalEvent(kind="gap", at=now, detail="invalid_observation"))
             return save("abstaining", ("invalid_observation",))
-        if previous is not None and previous.kind == "failed" and fetched:
+        # The display state can become stale/warming during empty successful
+        # polls. Recover from retained interruption evidence, never that projection.
+        interrupted = False
+        for event in ledger.events():
+            if event.kind == "provider_health" and event.detail == "provider_unavailable":
+                interrupted = True
+            elif event.kind == "reconnect":
+                interrupted = False
+        if interrupted and novel:
             ledger.append(LiveSignalEvent(kind="reconnect", at=now, detail="reconnect_warmup"))
         observations = load_observations(directory)
         quality = summarize_quality(observations, protocol)
         reasons = set(quality.reasons_for(now))
         health = _provider_health(protocol, observations, quality, now)
         reasons.update(health.exclusions)
-        markers = [event.at for event in ledger.events() if event.kind in {"started", "reconnect", "gap"}]
+        retained_events = ledger.events()
+        markers = [event.at for event in retained_events if event.kind in {"started", "reconnect", "gap"}]
         if markers and now - max(markers) < timedelta(minutes=protocol.warmup_minutes):
             reasons.add("reconnect_warmup")
+        recovering = any(event.kind == "reconnect" for event in retained_events)
+        if interrupted and not novel:
+            reasons.add("reconnect_warmup")
+        if recovering and {"reconnect_warmup", "continuity_warmup"} & reasons:
+            # Keep collecting evidence, but do not evaluate or publish until a
+            # full continuous window has elapsed after recovery (and later gaps).
+            return save("stale" if "observation_stale" in reasons else "warming", sorted(reasons))
         if not novel:
             if reasons:
                 return save("stale" if "observation_stale" in reasons else "warming", sorted(reasons))
