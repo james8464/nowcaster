@@ -12,7 +12,8 @@ test -x "$PYTHON"
 mkdir -p "$BUILD_ROOT"
 # Exact source bytes are inputs to the evaluator's immutable identity checks.
 RESOURCE_ARGS=(--add-data "$PROJECT_ROOT/config/strategies.yaml:config"
-  --add-data "$PROJECT_ROOT/src/research/round_two_walkforward.py:src/research")
+  --add-data "$PROJECT_ROOT/src/research/round_two_walkforward.py:src/research"
+  --add-data "$PROJECT_ROOT/src/research/trend_advisor.py:src/research")
 for source in "$PROJECT_ROOT"/src/strategies/**/*.py(N); do
   relative=${source#$PROJECT_ROOT/}
   RESOURCE_ARGS+=(--add-data "$source:${relative:h}")
