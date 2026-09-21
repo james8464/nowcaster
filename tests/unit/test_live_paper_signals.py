@@ -87,6 +87,18 @@ def test_ledger_refuses_orphan_or_corrupt_retained_evidence_without_rewriting_it
     assert ledger.events_path.read_text(encoding="utf-8") == retained + '{"kind":"stopped"'
 
 
+def test_ledger_refuses_a_valid_but_unterminated_jsonl_record_before_append(tmp_path):
+    ledger = SignalEventLedger(tmp_path, protocol_hash=HASH)
+    ledger.append(LiveSignalEvent.started(now=UTC_NOW))
+    retained = ledger.events_path.read_bytes()
+    unterminated = retained.rstrip(b"\n")
+    ledger.events_path.write_bytes(unterminated)
+
+    with pytest.raises(ValueError, match="unreadable"):
+        ledger.append(LiveSignalEvent.stopped(now=UTC_NOW, reason="user_requested"))
+    assert ledger.events_path.read_bytes() == unterminated
+
+
 def test_events_and_state_reject_action_shaped_or_unbounded_values():
     with pytest.raises(ValidationError):
         LiveSignalEvent(kind="order_submitted", at=UTC_NOW)

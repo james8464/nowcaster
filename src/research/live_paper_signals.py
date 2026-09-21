@@ -214,11 +214,13 @@ class SignalEventLedger:
             return ()
         items: list[LiveSignalEvent] = []
         try:
-            with self.events_path.open(encoding="utf-8") as handle:
-                for line_number, line in enumerate(handle, start=1):
-                    if not line.strip():
-                        raise ValueError(f"signal event ledger has blank line {line_number}")
-                    items.append(LiveSignalEvent.model_validate_json(line))
+            data = self.events_path.read_bytes()
+            if data and not data.endswith(b"\n"):
+                raise ValueError("signal event ledger has unterminated record")
+            for line_number, line in enumerate(data.decode("utf-8").splitlines(), start=1):
+                if not line.strip():
+                    raise ValueError(f"signal event ledger has blank line {line_number}")
+                items.append(LiveSignalEvent.model_validate_json(line))
         except (OSError, ValueError) as exc:
             raise ValueError("signal event ledger is unreadable") from exc
         return tuple(items)
