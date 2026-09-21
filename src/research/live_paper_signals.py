@@ -7,11 +7,14 @@ not instructions to transact.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import IO, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -109,13 +112,19 @@ class LiveSignalState(BaseModel):
 
     @model_validator(mode="after")
     def _state_shape_is_safe(self) -> LiveSignalState:
+        if self.evaluated_at is not None and self.evaluated_at > self.updated_at:
+            raise ValueError("evaluated timestamp must not exceed state update")
         if self.suggestion is not None and self.suggestion.protocol_hash != self.protocol_hash:
             raise ValueError("state suggestion protocol mismatch")
         if self.kind == "published":
             if self.suggestion is None or self.suggestion.posture != "long_research":
                 raise ValueError("published state requires a long research suggestion")
-            if self.suggestion.expires_at <= self.updated_at:
-                raise ValueError("published state cannot carry an expired suggestion")
+            if not (
+                self.suggestion.available_at is not None
+                and self.suggestion.available_at <= self.suggestion.decision_at <= self.updated_at
+                and self.updated_at < self.suggestion.expires_at
+            ):
+                raise ValueError("published state must preserve causal suggestion timing")
         elif self.suggestion is not None:
             raise ValueError("only published state may carry a suggestion")
         return self
@@ -126,6 +135,7 @@ class SignalEventLedger:
 
     _MANIFEST = "signal-events-manifest.json"
     _EVENTS = "signal-events.jsonl"
+    _LOCK = "signal-events.lock"
 
     def __init__(self, directory: Path, *, protocol_hash: str):
         if not isinstance(protocol_hash, str) or len(protocol_hash) != 64 or any(
@@ -135,14 +145,29 @@ class SignalEventLedger:
         self.directory = Path(directory)
         self.protocol_hash = protocol_hash
         self.directory.mkdir(parents=True, exist_ok=True)
-        self._bind_protocol()
+        with self._locked():
+            self._bind_protocol_unlocked()
+            self._read_events_unlocked()
 
     @property
     def events_path(self) -> Path:
         return self.directory / self._EVENTS
 
-    def _bind_protocol(self) -> None:
+    @contextmanager
+    def _locked(self) -> Iterator[IO[bytes]]:
+        """Serialize manifest binding, retained validation, and each append."""
+        handle = (self.directory / self._LOCK).open("a+b")
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            yield handle
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            handle.close()
+
+    def _bind_protocol_unlocked(self) -> None:
         manifest = self.directory / self._MANIFEST
+        if self.events_path.exists() and not manifest.exists():
+            raise ValueError("signal event evidence has no protocol manifest")
         payload = {"format": "live-paper-signal-events-v1", "protocol_hash": self.protocol_hash}
         encoded = (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
         try:
@@ -165,14 +190,26 @@ class SignalEventLedger:
         if not isinstance(event, LiveSignalEvent):
             raise TypeError("ledger accepts LiveSignalEvent records only")
         line = event.model_dump_json(exclude_none=True) + "\n"
-        descriptor = os.open(self.events_path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
-        try:
-            os.write(descriptor, line.encode("utf-8"))
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
+        with self._locked():
+            # Refuse a torn or corrupt retained tail before mutating evidence.
+            self._read_events_unlocked()
+            descriptor = os.open(self.events_path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+            try:
+                remaining = memoryview(line.encode("utf-8"))
+                while remaining:
+                    written = os.write(descriptor, remaining)
+                    if written <= 0:
+                        raise OSError("signal event append made no progress")
+                    remaining = remaining[written:]
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
 
     def events(self) -> tuple[LiveSignalEvent, ...]:
+        with self._locked():
+            return self._read_events_unlocked()
+
+    def _read_events_unlocked(self) -> tuple[LiveSignalEvent, ...]:
         if not self.events_path.exists():
             return ()
         items: list[LiveSignalEvent] = []
@@ -194,9 +231,9 @@ def should_publish(
 ) -> bool:
     """Whether a fresh, materially different paper-only research posture merits publication."""
     now = _utc(now, "publication timestamp")
-    if suggestion.posture != "long_research" or suggestion.expires_at <= now:
+    if suggestion.posture != "long_research" or suggestion.available_at is None:
         return False
-    if suggestion.available_at is None or suggestion.available_at > now:
+    if not (suggestion.available_at <= suggestion.decision_at <= now < suggestion.expires_at):
         return False
     if previous is None:
         return True

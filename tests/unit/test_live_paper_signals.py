@@ -67,6 +67,26 @@ def test_ledger_appends_fsync_safe_jsonl_events_in_order(tmp_path):
     assert (tmp_path / "signal-events.jsonl").read_text().count("\n") == 2
 
 
+def test_ledger_refuses_orphan_or_corrupt_retained_evidence_without_rewriting_it(tmp_path):
+    events_path = tmp_path / "signal-events.jsonl"
+    events_path.write_text('{"kind":"started"}\n', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="manifest"):
+        SignalEventLedger(tmp_path, protocol_hash=HASH)
+    assert events_path.read_text(encoding="utf-8") == '{"kind":"started"}\n'
+    assert not (tmp_path / "signal-events-manifest.json").exists()
+
+    ledger = SignalEventLedger(tmp_path / "sealed", protocol_hash=HASH)
+    ledger.append(LiveSignalEvent.started(now=UTC_NOW))
+    retained = ledger.events_path.read_text(encoding="utf-8")
+    with ledger.events_path.open("a", encoding="utf-8") as handle:
+        handle.write('{"kind":"stopped"')
+
+    with pytest.raises(ValueError, match="unreadable"):
+        ledger.append(LiveSignalEvent.stopped(now=UTC_NOW, reason="user_requested"))
+    assert ledger.events_path.read_text(encoding="utf-8") == retained + '{"kind":"stopped"'
+
+
 def test_events_and_state_reject_action_shaped_or_unbounded_values():
     with pytest.raises(ValidationError):
         LiveSignalEvent(kind="order_submitted", at=UTC_NOW)
@@ -110,3 +130,29 @@ def test_stand_aside_never_publishes_as_a_research_posture():
         }
     )
     assert not should_publish(None, aside, UTC_NOW)
+
+
+def test_published_state_and_publication_enforce_causal_timestamp_ordering():
+    future_decision = fresh_long().model_copy(
+        update={
+            "decision_at": UTC_NOW + timedelta(seconds=1),
+            "available_at": UTC_NOW,
+            "expires_at": UTC_NOW + timedelta(seconds=11),
+        }
+    )
+    assert not should_publish(None, future_decision, UTC_NOW)
+
+    with pytest.raises(ValidationError, match="causal"):
+        LiveSignalState(
+            kind="published",
+            protocol_hash=HASH,
+            updated_at=UTC_NOW - timedelta(seconds=1),
+            suggestion=fresh_long(),
+        )
+    with pytest.raises(ValidationError, match="evaluated"):
+        LiveSignalState(
+            kind="warming",
+            protocol_hash=HASH,
+            updated_at=UTC_NOW,
+            evaluated_at=UTC_NOW + timedelta(seconds=1),
+        )
