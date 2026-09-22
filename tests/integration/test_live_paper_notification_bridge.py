@@ -3,18 +3,23 @@ import os
 import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
 
+from src.research.day_trader_context import DayTraderContextProtocol, MarketContextSnapshot, TimeframeTrend
+from src.research.day_trader_decision import gate_suggestion, retain_context_reports
+from src.research.day_trader_lifecycle import PaperLifecycle
 from src.research.live_paper_notification_bridge import (
     read_notification_evidence,
     record_notification_outcome,
     reserve_notification,
 )
+from src.research.live_paper_signal_runtime import _reconcile_publications
 from src.research.live_paper_signals import LiveSignalState, SignalEventLedger
 from src.research.round_two_contracts import ResearchRoundProtocol
-from src.research.round_two_registry import register_round
+from src.research.round_two_registry import append_jsonl_fsync, register_round
 from src.research.trend_advisor import TrendAdvisorSuggestion
 from src.strategies.types import canonical_hash
 
@@ -65,7 +70,11 @@ def test_historical_notification_lookup_is_exact_and_read_only(published):
 
 @pytest.fixture
 def published(tmp_path):
-    protocol = ResearchRoundProtocol.default(round_id="notice-test", starts_at=NOW - timedelta(days=200))
+    return _published(tmp_path, NOW)
+
+
+def _published(tmp_path, now):
+    protocol = ResearchRoundProtocol.default(round_id="notice-test", starts_at=now - timedelta(days=200))
     register_round(protocol, tmp_path)
     candidate = protocol.candidates[0]
     suggestion = TrendAdvisorSuggestion(
@@ -78,17 +87,70 @@ def published(tmp_path):
         evidence_hash="d" * 64,
         policy_hash="e" * 64,
         posture="long_research",
-        decision_at=NOW,
-        available_at=NOW,
-        expires_at=NOW + timedelta(seconds=10),
+        decision_at=now,
+        available_at=now,
+        expires_at=now + timedelta(seconds=10),
         entry_low="100",
         entry_high="101",
         invalidation="99",
         target="103",
         reasons=("trend_aligned", "candidate_confirmed"),
     )
+    settings = DayTraderContextProtocol(round_protocol=protocol)
+    unsigned = MarketContextSnapshot.model_construct(
+        symbol=candidate.symbol,
+        protocol_hash=protocol.identity_hash,
+        context_protocol_hash=settings.identity_hash,
+        source_identity_hash=suggestion.source_hash,
+        source_hashes=("1" * 64,),
+        calendar_hash="2" * 64,
+        decision_at=now,
+        available_at=now,
+        expires_at=suggestion.expires_at,
+        trends=tuple(
+            TimeframeTrend(
+                timeframe_minutes=minutes,
+                direction="up",
+                strength="1",
+                change_bps="10",
+                last_bar_at=now.replace(second=0, microsecond=0),
+            )
+            for minutes in (1, 5, 15)
+        ),
+        realized_volatility_bps=Decimal("2"),
+        atr_normalized_range=Decimal("1"),
+        spread_bps=Decimal("2"),
+        quote_imbalance=Decimal("0.2"),
+        session="europe_americas_overlap",
+        calendar_blackout=False,
+        exclusions=(),
+        feature_hash="0" * 64,
+    )
+    payload = unsigned.model_dump(mode="json", exclude={"feature_hash"})
+    context = MarketContextSnapshot.model_validate({**payload, "feature_hash": canonical_hash(payload)})
+    decision = gate_suggestion(suggestion, context, now)
+    assert decision.suggestion.posture == "long_research"
+    retain_context_reports(
+        tmp_path, (decision,), protocol_hash=protocol.identity_hash, context_protocol_hash=settings.identity_hash
+    )
+    (tmp_path / "day-trader-context-summary.json").write_text(
+        json.dumps(
+            {
+                "protocol_hash": protocol.identity_hash,
+                "context_protocol_hash": settings.identity_hash,
+                "reports": [decision.model_dump(mode="json")],
+            }
+        )
+    )
+    initial = PaperLifecycle.from_report(decision, created_at=now)
+    append_jsonl_fsync(tmp_path / "paper-publications.jsonl", [initial.model_dump(mode="json")])
+    _reconcile_publications(tmp_path, protocol, SignalEventLedger(tmp_path, protocol_hash=protocol.identity_hash), now)
     state = LiveSignalState(
-        kind="published", protocol_hash=protocol.identity_hash, updated_at=NOW, evaluated_at=NOW, suggestion=suggestion
+        kind="published",
+        protocol_hash=protocol.identity_hash,
+        updated_at=now,
+        evaluated_at=now,
+        suggestion=decision.suggestion,
     )
     (tmp_path / "live-paper-signal-state.json").write_text(state.model_dump_json())
     return tmp_path, protocol.identity_hash
@@ -108,7 +170,7 @@ def test_reservation_requires_opt_in_and_survives_restart(published):
         now=NOW + timedelta(seconds=1),
     )
     kinds = [item.kind for item in SignalEventLedger(directory, protocol_hash=identity).events()]
-    assert kinds == ["notification_attempt", "notification_outcome"]
+    assert kinds == ["published", "notification_attempt", "notification_outcome"]
     with pytest.raises(ValueError):
         record_notification_outcome(
             directory,
@@ -158,21 +220,11 @@ def test_notification_rejects_candidate_or_source_outside_protocol(published):
     for field in ("candidate_hash", "source_hash"):
         suggestion = state.suggestion.model_copy(update={field: "f" * 64})
         path.write_text(state.model_copy(update={"suggestion": suggestion}).model_dump_json())
-        with pytest.raises(ValueError):
-            reserve_notification(directory, enabled=True, protocol_hash=identity, now=NOW)
+        assert reserve_notification(directory, enabled=True, protocol_hash=identity, now=NOW) is None
 
 
-def test_cli_notification_is_local_opt_in_and_records_outcome(published):
-    directory, identity = published
-    path = directory / "live-paper-signal-state.json"
-    retained = LiveSignalState.model_validate_json(path.read_text())
-    now = datetime.now(UTC)
-    suggestion = retained.suggestion.model_copy(
-        update={"decision_at": now, "available_at": now, "expires_at": now + timedelta(seconds=15)}
-    )
-    path.write_text(
-        retained.model_copy(update={"updated_at": now, "evaluated_at": now, "suggestion": suggestion}).model_dump_json()
-    )
+def test_cli_notification_is_local_opt_in_and_records_outcome(tmp_path):
+    directory, identity = _published(tmp_path, datetime.now(UTC))
     script = Path(__file__).resolve().parents[2] / "scripts/run_live_paper_signals.py"
 
     def invoke(command, *args):

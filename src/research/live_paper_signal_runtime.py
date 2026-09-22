@@ -36,6 +36,7 @@ from src.research.day_trader_lifecycle import (
     LifecycleObservation,
     PaperLifecycle,
     advance_lifecycle,
+    read_lifecycle_history,
 )
 from src.research.live_paper_signals import LiveSignalEvent, LiveSignalState, SignalEventLedger, should_publish
 from src.research.round_two_contracts import RoundObservation, RoundStatus, _utc
@@ -438,6 +439,48 @@ def _reconcile_publications(directory, protocol, signals, now):
     return records[-1]
 
 
+def _validate_published_state(directory, protocol, state, now):
+    """Read-only identity check; only the writer may repair incomplete projections."""
+    records = _publication_records(directory, protocol, now)
+    if not records or records[-1].origin_report.suggestion != state.suggestion:
+        raise ValueError("state has no exact committed publication")
+    if records[-1].created_at > state.updated_at:
+        raise ValueError("state predates publication")
+    manifest = json.loads((directory / "signal-events-manifest.json").read_text())
+    if manifest != {"format": "live-paper-signal-events-v1", "protocol_hash": protocol.identity_hash}:
+        raise ValueError("signal event protocol mismatch")
+    raw = (directory / "signal-events.jsonl").read_bytes()
+    if raw and not raw.endswith(b"\n"):
+        raise ValueError("unterminated signal event evidence")
+    events = tuple(LiveSignalEvent.model_validate_json(line) for line in raw.splitlines())
+    lifecycles = read_lifecycle_history(directory, protocol_hash=protocol.identity_hash)
+    origins = {item.record_hash for item in lifecycles if item.revision == 0}
+    identities = {"lifecycle:" + item.lifecycle_hash for item in records}
+    if any(
+        event.at > now
+        or (
+            event.kind == "published"
+            and event.detail
+            and event.detail.startswith("lifecycle:")
+            and event.detail not in identities
+        )
+        for event in events
+    ):
+        raise ValueError("unbound publication event")
+    for item in records:
+        expected = LiveSignalEvent(
+            kind="published",
+            at=item.created_at,
+            posture="long_research",
+            candidate_hash=item.origin_report.suggestion.candidate_hash,
+            detail="lifecycle:" + item.lifecycle_hash,
+        )
+        if [event for event in events if event.kind == "published" and event.detail == expected.detail] != [expected]:
+            raise ValueError("publication event missing or mismatched")
+        if item.record_hash not in origins:
+            raise ValueError("initial lifecycle missing or mismatched")
+
+
 def read_live_signal_status(directory: Path, *, now: datetime | None = None) -> LiveSignalState:
     """Read-only freshness projection; reading never makes old evidence current."""
     directory, now = Path(directory), _utc(now or _now(), "status timestamp")
@@ -493,6 +536,16 @@ def read_live_signal_status(directory: Path, *, now: datetime | None = None) -> 
                 updated_at=state.updated_at,
                 evaluated_at=state.evaluated_at,
                 reasons=("context_evidence_unavailable",),
+            )
+        try:
+            _validate_published_state(directory, protocol, state, now)
+        except (OSError, ValueError, KeyError, TypeError):
+            return LiveSignalState(
+                kind="abstaining",
+                protocol_hash=protocol.identity_hash,
+                updated_at=state.updated_at,
+                evaluated_at=state.evaluated_at,
+                reasons=("publication_evidence_unavailable",),
             )
     return state
 

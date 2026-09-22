@@ -337,3 +337,93 @@ def test_recovery_rejects_missing_or_substituted_publication_identity(live, dama
     assert state.suggestion is None
     assert (path / "paper-lifecycles.jsonl").read_bytes() == before
     assert (path / "signal-events.jsonl").read_bytes() == events_before
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "journal_missing",
+        "journal_torn",
+        "journal_corrupt",
+        "journal_mismatch",
+        "event_missing",
+        "event_mismatch",
+        "event_duplicate",
+        "event_manifest_missing",
+        "lifecycle_missing",
+        "lifecycle_torn",
+        "lifecycle_mismatch",
+        "lifecycle_manifest_missing",
+    ],
+)
+def test_status_and_cli_reject_damaged_publication_read_only(live, monkeypatch, capsys, damage):
+    """A current-looking state cannot bypass absent or inconsistent durable evidence."""
+    from scripts.run_live_paper_signals import main
+
+    path, _, _ = live
+    assert poll(live).kind == "published"
+    journal = path / "paper-publications.jsonl"
+    events = path / "signal-events.jsonl"
+    lifecycles = path / "paper-lifecycles.jsonl"
+    if damage == "journal_missing":
+        journal.unlink()
+    elif damage == "journal_torn":
+        journal.write_bytes(journal.read_bytes()[:-1])
+    elif damage == "journal_corrupt":
+        journal.write_bytes(journal.read_bytes() + b"{}\n")
+    elif damage == "journal_mismatch":
+        journal.write_bytes(b"")
+    elif damage in {"event_missing", "event_mismatch", "event_duplicate"}:
+        rows = [json.loads(line) for line in events.read_text().splitlines()]
+        if damage == "event_missing":
+            rows = [row for row in rows if row["kind"] != "published"]
+        elif damage == "event_mismatch":
+            next(row for row in rows if row["kind"] == "published")["candidate_hash"] = "0" * 64
+        else:
+            rows.append(next(row for row in rows if row["kind"] == "published"))
+        events.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    elif damage == "event_manifest_missing":
+        (path / "signal-events-manifest.json").unlink()
+    elif damage == "lifecycle_missing":
+        lifecycles.unlink()
+    elif damage == "lifecycle_torn":
+        lifecycles.write_bytes(lifecycles.read_bytes()[:-1])
+    elif damage == "lifecycle_mismatch":
+        initial = records(live)[0]
+        alternate = PaperLifecycle.from_report(initial.origin_report, created_at=NOW + timedelta(seconds=1))
+        lifecycles.write_text(alternate.model_dump_json() + "\n")
+    else:
+        (path / "paper-lifecycles-manifest.json").unlink()
+    # Removing lock files also detects accidental use of mutating ledger constructors.
+    for lock in path.glob("*.lock"):
+        lock.unlink()
+    before = {item.name: (item.read_bytes(), item.stat().st_mtime_ns) for item in path.iterdir() if item.is_file()}
+    state = runtime.read_live_signal_status(path, now=NOW)
+    assert state.kind == "abstaining"
+    assert state.suggestion is None
+    assert "publication_evidence_unavailable" in state.reasons
+    monkeypatch.setattr(runtime, "_now", lambda: NOW)
+    assert main(["status", "--directory", str(path)]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["kind"] == "abstaining"
+    assert payload["suggestion"] is None
+    assert before == {
+        item.name: (item.read_bytes(), item.stat().st_mtime_ns) for item in path.iterdir() if item.is_file()
+    }
+
+
+def test_status_and_cli_read_healthy_publication_without_creating_files(live, monkeypatch, capsys):
+    from scripts.run_live_paper_signals import main
+
+    path, _, _ = live
+    original = poll(live)
+    for lock in path.glob("*.lock"):
+        lock.unlink()
+    before = {item.name: (item.read_bytes(), item.stat().st_mtime_ns) for item in path.iterdir() if item.is_file()}
+    assert runtime.read_live_signal_status(path, now=NOW) == original
+    monkeypatch.setattr(runtime, "_now", lambda: NOW)
+    assert main(["status", "--directory", str(path)]) == 0
+    assert json.loads(capsys.readouterr().out)["kind"] == "published"
+    assert before == {
+        item.name: (item.read_bytes(), item.stat().st_mtime_ns) for item in path.iterdir() if item.is_file()
+    }

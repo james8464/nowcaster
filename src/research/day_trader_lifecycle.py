@@ -219,6 +219,49 @@ def advance_lifecycle(lifecycle: PaperLifecycle, observation: LifecycleObservati
     return _sealed(values)
 
 
+def _check_lifecycle(item, latest, protocol_hash):
+    if item.origin_report.protocol_hash != protocol_hash:
+        raise ValueError("lifecycle protocol mismatch")
+    for retained in latest.values():
+        if (
+            item.maximum_holding_seconds != retained.maximum_holding_seconds
+            or item.origin_report.context.context_protocol_hash != retained.origin_report.context.context_protocol_hash
+        ):
+            raise ValueError("lifecycle policy changed; register a separate ledger")
+    previous = latest.get(item.lifecycle_hash)
+    if previous is None:
+        if item.revision != 0:
+            raise ValueError("lifecycle initial revision missing")
+    elif (
+        item.revision != previous.revision + 1
+        or item.previous_record_hash != previous.record_hash
+        or item.last_observation is None
+        or advance_lifecycle(previous, item.last_observation) != item
+    ):
+        raise ValueError("lifecycle transition mismatch")
+    latest[item.lifecycle_hash] = item
+
+
+def read_lifecycle_history(directory: Path, *, protocol_hash: str) -> tuple[PaperLifecycle, ...]:
+    """Validate retained history without creating manifests, lock files or records."""
+    directory = Path(directory)
+    manifest = json.loads((directory / "paper-lifecycles-manifest.json").read_text())
+    if manifest != dict(protocol_hash=protocol_hash, policy_hash=LIFECYCLE_POLICY_HASH):
+        raise ValueError("lifecycle protocol mismatch")
+    path = directory / "paper-lifecycles.jsonl"
+    if not path.exists():
+        return ()
+    data = path.read_bytes()
+    if data and not data.endswith(b"\n"):
+        raise ValueError("unterminated lifecycle evidence")
+    items, latest = [], {}
+    for line in data.splitlines():
+        item = PaperLifecycle.model_validate(json.loads(line))
+        _check_lifecycle(item, latest, protocol_hash)
+        items.append(item)
+    return tuple(items)
+
+
 class LifecycleLedger:
     """Durably retains every revision and verifies its causal transition on read."""
 
@@ -247,40 +290,10 @@ class LifecycleLedger:
             raise ValueError("lifecycle protocol mismatch")
 
     def _check(self, item, latest):
-        if item.origin_report.protocol_hash != self.protocol_hash:
-            raise ValueError("lifecycle protocol mismatch")
-        for retained in latest.values():
-            if (
-                item.maximum_holding_seconds != retained.maximum_holding_seconds
-                or item.origin_report.context.context_protocol_hash
-                != retained.origin_report.context.context_protocol_hash
-            ):
-                raise ValueError("lifecycle policy changed; register a separate ledger")
-        previous = latest.get(item.lifecycle_hash)
-        if previous is None:
-            if item.revision != 0:
-                raise ValueError("lifecycle initial revision missing")
-        elif (
-            item.revision != previous.revision + 1
-            or item.previous_record_hash != previous.record_hash
-            or item.last_observation is None
-            or advance_lifecycle(previous, item.last_observation) != item
-        ):
-            raise ValueError("lifecycle transition mismatch")
-        latest[item.lifecycle_hash] = item
+        _check_lifecycle(item, latest, self.protocol_hash)
 
     def _read(self):
-        if not self.events_path.exists():
-            return ()
-        data = self.events_path.read_bytes()
-        if data and not data.endswith(b"\n"):
-            raise ValueError("unterminated lifecycle evidence")
-        items, latest = [], {}
-        for line in data.splitlines():
-            item = PaperLifecycle.model_validate(json.loads(line))
-            self._check(item, latest)
-            items.append(item)
-        return tuple(items)
+        return read_lifecycle_history(self.directory, protocol_hash=self.protocol_hash)
 
     def events(self) -> tuple[PaperLifecycle, ...]:
         with jsonl_writer_lock(self.events_path):
