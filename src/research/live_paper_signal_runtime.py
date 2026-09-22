@@ -31,6 +31,12 @@ from src.research.day_trader_decision import (
     load_context_reports,
     retain_context_reports,
 )
+from src.research.day_trader_lifecycle import (
+    LifecycleLedger,
+    LifecycleObservation,
+    PaperLifecycle,
+    advance_lifecycle,
+)
 from src.research.live_paper_signals import LiveSignalEvent, LiveSignalState, SignalEventLedger, should_publish
 from src.research.round_two_contracts import RoundObservation, RoundStatus, _utc
 from src.research.round_two_quality import append_observations, load_observations, summarize_quality
@@ -318,6 +324,56 @@ def _validate_context_history(directory, protocol):
     return ()
 
 
+def _advance_retained_lifecycles(directory, protocol, now):
+    """Project later retained evidence into hypotheses, never into live decisions.
+
+    Reading retained bars rather than just this poll's novel batch makes an
+    interrupted write recoverable. The lifecycle ledger deduplicates revisions;
+    a missed minute expires evidence instead of inferring a price crossing.
+    """
+    if not (directory / "paper-lifecycles.jsonl").exists():
+        return
+    ledger = LifecycleLedger(directory, protocol_hash=protocol.identity_hash)
+    reports = _validate_context_history(directory, protocol)
+    observations = load_observations(directory)
+    for lifecycle in ledger.latest():
+        if lifecycle.completed_at is not None:
+            continue
+        previous = lifecycle.last_observation
+        after = previous.bar.provider_at if previous and previous.bar else lifecycle.created_at
+        bars = sorted(
+            (
+                row
+                for row in observations
+                if row.symbol == lifecycle.origin_report.suggestion.symbol
+                and row.provider_at > after
+                and row.available_at <= now
+            ),
+            key=lambda row: row.provider_at,
+        )
+        if bars:
+            # More than one unseen minute is necessarily stale under this live
+            # protocol. Resolve the earliest missed observation conservatively.
+            bar = bars[0]
+            matching = [
+                report
+                for report in reports
+                if report.suggestion.candidate_hash == lifecycle.origin_report.suggestion.candidate_hash
+                and report.suggestion.symbol == bar.symbol
+                and bar.provider_at <= report.evaluated_at <= now
+            ]
+            context = max(matching, key=lambda item: item.evaluated_at, default=None)
+            observation = LifecycleObservation(bar=bar, evaluated_at=now, context_report=context)
+        else:
+            expected = after.replace(second=0, microsecond=0) + timedelta(minutes=1)
+            if now <= expected + timedelta(seconds=15):
+                continue
+            observation = LifecycleObservation(evaluated_at=now)
+        advanced = advance_lifecycle(lifecycle, observation)
+        if advanced != lifecycle:
+            ledger.append(advanced)
+
+
 def read_live_signal_status(directory: Path, *, now: datetime | None = None) -> LiveSignalState:
     """Read-only freshness projection; reading never makes old evidence current."""
     directory, now = Path(directory), _utc(now or _now(), "status timestamp")
@@ -400,6 +456,10 @@ class LivePaperSignalRunner:
         now = _utc(self.clock(), "evaluation timestamp")
 
         def save(kind, reasons=(), suggestion=None, evaluated_at=None):
+            try:
+                _advance_retained_lifecycles(directory, protocol, now)
+            except (ValueError, OSError):
+                kind, reasons, suggestion = "failed", ("lifecycle_evidence_unavailable",), None
             state = LiveSignalState(
                 kind=kind,
                 protocol_hash=protocol.identity_hash,
@@ -422,6 +482,10 @@ class LivePaperSignalRunner:
             _validate_context_history(directory, protocol)
         except (OSError, ValueError):
             return save("failed", ("context_evidence_unavailable",))
+        try:
+            _advance_retained_lifecycles(directory, protocol, now)
+        except (OSError, ValueError):
+            return save("failed", ("lifecycle_evidence_unavailable",))
         if previous is None or previous.kind == "stopped":
             ledger.append(LiveSignalEvent.started(now=now))
         try:
@@ -555,11 +619,21 @@ class LivePaperSignalRunner:
         if not reasons and suggestions:
             suggestion = suggestions[0]
             if should_publish(previous.suggestion if previous else None, suggestion, now):
+                try:
+                    contexts = _validate_context_history(directory, protocol)
+                    context = next(item for item in reversed(contexts) if item.suggestion == suggestion)
+                    lifecycle = PaperLifecycle.from_report(context, created_at=now)
+                    lifecycles = LifecycleLedger(directory, protocol_hash=protocol.identity_hash)
+                    retained_lifecycles = lifecycles.latest()
+                except (ValueError, OSError, StopIteration):
+                    return save("failed", ("lifecycle_evidence_unavailable",), evaluated_at=now)
                 ledger.append(
                     LiveSignalEvent(
                         kind="published", at=now, posture="long_research", candidate_hash=suggestion.candidate_hash
                     )
                 )
+                if not any(item.origin_report.report_hash == context.report_hash for item in retained_lifecycles):
+                    lifecycles.append(lifecycle)
             return save("published", suggestion=suggestion, evaluated_at=now)
         reasons.update(reason for item in report.trend_advisor for reason in item.reasons)
         ledger.append(LiveSignalEvent(kind="abstaining", at=now, posture="stand_aside", detail="research_gates_unmet"))
