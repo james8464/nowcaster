@@ -288,6 +288,7 @@ struct StrategyLabView: View {
             ScrollView {
             VStack(alignment: .leading, spacing: 12) {
             LivePaperSignalsView(model: model, settings: settings)
+            DayTraderContextView(service: model.livePaperSignals)
             CandidateCampaignView(
                 presentation: CandidateCampaignPresentation(
                     assetName: "WTI crude oil",

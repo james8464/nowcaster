@@ -53,6 +53,42 @@ features and the frozen prospective study are independent of this service.
 
 ## Evidence requirements
 
+### Understanding Decision context
+
+The **Decision context** card in Strategy Lab describes a disciplined trend
+research workflow. It compares the direction across one-, five- and fifteen-minute
+periods. “Trend” means these observations agree; “Range” means they do not meet
+the fixed trend rule. Volatile, illiquid or unknown conditions cause Stand aside.
+Spread is the gap between quoted buying and selling prices. Volatility describes
+how much prices vary. Both use basis points: 100 basis points equal 1%.
+
+Quote balance describes the relative size of the displayed bid and ask. It does
+not measure every order in the market. A scheduled-event blackout is a predeclared
+period in which event risk blocks research. This is a local imported calendar,
+not automatic news understanding. A calendar that is missing, stale or not yet
+available at the decision time cannot clear the check.
+
+The current public Binance quote endpoint lacks a verified provider timestamp
+for its book quote. The service records that limitation and stands aside; it
+does not substitute the computer's download time or invent order-book evidence.
+Importing a calendar alone will therefore not enable long research. A compatible
+source and all fixed candidate checks must also pass.
+
+Only fresh context appears as current, and it expires on screen even if polling
+stops. **Historical hypothetical outcomes** shows up to 30 validated completions;
+the full history remains retained. “Invalidation” means the hypothesis failed,
+“Target” means the hypothetical objective was observed, “Regime change” means
+the market context changed, “Time limit” means its fixed horizon ended, and
+“Expired” means observation coverage became unusable. These are not records of
+your holdings or confirmed fills. If both target and invalidation are touched
+inside a later complete candle, the simulation conservatively records
+invalidation first; it never borrows candle extremes from before a hypothesis.
+
+Fixed strategy variants can be evaluated separately with chronological test
+periods, stated costs and uncertainty intervals. Every candidate remains in the
+comparison. Those diagnostic results do not automatically change the live rules
+or turn an earlier decision into a winner.
+
 The registered round must already contain enough suitable causal observations
 and candidate evidence to clear its fixed walk-forward evaluation. A newly
 registered folder will normally collect data and stand aside for a substantial
@@ -81,6 +117,8 @@ For a source checkout, use its configured Python environment:
 python scripts/run_live_paper_signals.py status --directory /path/to/registered-round
 python scripts/run_live_paper_signals.py start --directory /path/to/registered-round
 python scripts/run_live_paper_signals.py stop --directory /path/to/registered-round
+python scripts/run_live_paper_signals.py decision-context --directory /path/to/registered-round
+python scripts/run_live_paper_signals.py import-calendar --directory /path/to/registered-round --file /path/to/calendar.json
 ```
 
 The app supervises one owned collector; do not launch a second collector for the

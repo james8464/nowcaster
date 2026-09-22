@@ -74,6 +74,9 @@ final class LivePaperSignalService {
     private(set) var message: String?
     private(set) var directory: URL?
     private(set) var providerHealth: ResearchRoundProviderHealth?
+    private(set) var decisionEvidence: DayTraderEvidence?
+    private(set) var decisionMessage: String?
+    @ObservationIgnored private var lastDecisionRead: Date?
     private(set) var notificationEvidence: LivePaperNotificationEvidence?
     private(set) var notificationEvidenceDirectory: URL?
     private(set) var notificationEvidenceMessage: String?
@@ -141,6 +144,7 @@ final class LivePaperSignalService {
         isBusy = true
         defer { isBusy = false }
         state = nil; events = []; providerHealth = nil; configuration = nil; self.directory = nil
+        decisionEvidence = nil; decisionMessage = nil; lastDecisionRead = nil
         do {
             let provisional = try LivePaperSignalConfiguration.application(directory: directory,
                 protocolHash: String(repeating: "0", count: 64), sourceRoot: sourceRoot, sourcePython: sourcePython)
@@ -155,6 +159,7 @@ final class LivePaperSignalService {
             state = current
             events = try Self.readHistory(directory)
             providerHealth = try Self.readProviderHealth(directory, protocolHash: current.protocolHash)
+            if let configuration { await readDecisionEvidence(configuration) }
             message = nil
         } catch { configuration = nil; self.directory = nil; state = nil; events = []; message = error.localizedDescription }
     }
@@ -169,6 +174,7 @@ final class LivePaperSignalService {
         isBusy = true
         defer { isBusy = false }
         state = nil; events = []; providerHealth = nil; message = nil
+        decisionEvidence = nil; decisionMessage = nil; lastDecisionRead = nil
         do {
             try configuration.validate()
             let initial = try await Self.command(configuration, "status")
@@ -240,11 +246,27 @@ final class LivePaperSignalService {
             state = try LivePaperSignalState.decode(data, protocolHash: configuration.protocolHash, now: Date())
             events = try Self.readHistory(configuration.directory)
             providerHealth = try Self.readProviderHealth(configuration.directory, protocolHash: configuration.protocolHash)
+            if lastDecisionRead.map({ Date().timeIntervalSince($0) >= 5 }) ?? true {
+                await readDecisionEvidence(configuration)
+            }
             message = nil
             if notificationsEnabled, state?.currentSuggestion(now: Date(), isRunning: isRunning) != nil {
                 await notify(configuration)
             }
-        } catch { state = nil; providerHealth = nil; message = error.localizedDescription }
+        } catch { state = nil; providerHealth = nil; decisionEvidence = nil; message = error.localizedDescription }
+    }
+
+    private func readDecisionEvidence(_ configuration: LivePaperSignalConfiguration) async {
+        lastDecisionRead = Date()
+        do {
+            let data = try await Self.command(configuration, "decision-context")
+            let evidence = try DayTraderEvidence.decode(data, protocolHash: configuration.protocolHash, now: Date())
+            guard self.configuration?.directory == configuration.directory, !Task.isCancelled else { return }
+            decisionEvidence = evidence; decisionMessage = nil
+        } catch {
+            decisionEvidence = nil
+            decisionMessage = "Decision context is unavailable. Retained evidence could not be validated."
+        }
     }
 
     private func notify(_ configuration: LivePaperSignalConfiguration) async {

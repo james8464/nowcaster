@@ -15,6 +15,14 @@ This separate service never connects to an account or makes trades; it can
 remain silent while evidence is insufficient. Paper results are not proof of
 profitability. [Read the beginner-friendly guide](docs/research/live-paper-signals.md).
 
+**Day-trader decision context:** Strategy Lab explains whether the 1-, 5- and
+15-minute trends agree, how volatile the market is, whether quotes are usable,
+and whether a scheduled event calls for standing aside. Completed hypothetical
+outcomes have their own historical section. A target being touched is an observed
+paper outcome, not proof that a trade was filled or money was made. Missing
+calendar or quote timing evidence blocks fresh research suggestions; the current
+public quote endpoint does not supply all required timing evidence.
+
 For a qualified intraday alert, the required probability means “the target is reached before the protective stop within the declared horizon, after the entry decision.” A research model that only measures positive strategy returns cannot supply that probability: it remains research-only. Neither kind of estimate is a promise that a whole account will make money.
 
 ![Nowcaster Today view](docs/images/macos/today-light.png)

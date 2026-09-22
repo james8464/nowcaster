@@ -33,6 +33,7 @@ def main(arguments=None):
         "notification-outcome",
         "notification-evidence",
         "import-calendar",
+        "decision-context",
     ):
         command = commands.add_parser(name)
         command.add_argument("--directory", required=True, type=Path)
@@ -49,6 +50,27 @@ def main(arguments=None):
         if name == "notification-outcome":
             command.add_argument("--outcome", choices=("delivered", "failed"), required=True)
     args = parser.parse_args(arguments)
+    if args.command == "decision-context":
+        import json
+        from datetime import UTC, datetime
+
+        from src.research.day_trader_context import DayTraderContextProtocol
+        from src.research.day_trader_presentation import decision_presentation
+        from src.research.round_two_registry import load_round_protocol
+
+        protocol = load_round_protocol(args.directory)
+        settings = DayTraderContextProtocol(round_protocol=protocol)
+        print(
+            json.dumps(
+                decision_presentation(
+                    args.directory,
+                    protocol_hash=protocol.identity_hash,
+                    context_protocol_hash=settings.identity_hash,
+                    now=datetime.now(UTC),
+                )
+            )
+        )
+        return 0
     if args.command == "import-calendar":
         print(import_calendar_snapshot(args.directory, args.file).model_dump_json())
         return 0
