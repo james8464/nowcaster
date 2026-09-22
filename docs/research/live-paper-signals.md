@@ -68,15 +68,23 @@ period in which event risk blocks research. This is a local imported calendar,
 not automatic news understanding. A calendar that is missing, stale or not yet
 available at the decision time cannot clear the check.
 
-The current public Binance quote endpoint lacks a verified provider timestamp
-for its book quote. The service records that limitation and stands aside; it
-does not substitute the computer's download time or invent order-book evidence.
-Importing a calendar alone will therefore not enable long research. A compatible
-source and all fixed candidate checks must also pass.
+The service uses Binance's public spot [`<symbol>@ticker` stream](https://developers.binance.com/docs/binance-spot-api-docs/web-socket-streams#individual-symbol-ticker-streams)
+for the best bid/ask prices and displayed quantities. It retains the provider's
+event timestamp (`E`) separately from the Mac's receipt time. A bounded connection
+reads a fresh event after the finalized candle is received; it does not use the
+24-hour statistics or substitute receipt time for missing provider time. Events
+15 seconds old, future-dated events, mismatched symbols and missing or invalid
+prices/sizes fail closed. Transport failures trigger the existing recovery
+warm-up. This is top-of-book evidence, not full order-book depth or a fill model.
+No API key or account is used. Calendar coverage and all fixed candidate checks
+must also pass before long research can appear.
 
 Only fresh context appears as current, and it expires on screen even if polling
 stops. **Historical hypothetical outcomes** shows up to 30 validated completions;
-the full history remains retained. “Invalidation” means the hypothesis failed,
+the full history remains retained. The presentation validates every retained
+record in bounded chunks and uses a temporary disk index for lifecycle revisions;
+history growth does not disable the view at a fixed total file size. Corrupt old
+records still fail validation. “Invalidation” means the hypothesis failed,
 “Target” means the hypothetical objective was observed, “Regime change” means
 the market context changed, “Time limit” means its fixed horizon ended, and
 “Expired” means observation coverage became unusable. These are not records of

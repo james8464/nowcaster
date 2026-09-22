@@ -12,6 +12,7 @@ import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Protocol
 from urllib.parse import urlencode
@@ -60,6 +61,7 @@ from src.research.round_two_runtime import (
 from src.research.round_two_walkforward import CandidateResult
 from src.research.trend_advisor import AdvisorRoundReport, TrendAdvisorSuggestion, advise
 from src.strategies.types import canonical_hash
+from src.utils.tls import verified_client_context
 
 STATE_FILE = "live-paper-signal-state.json"
 CURSOR_FILE = "live-paper-signal-cursor.json"
@@ -79,6 +81,8 @@ def _context_observations(directory, observations):
             raise ValueError("unterminated context observation")
         for line in data.splitlines():
             row = ContextObservation.model_validate_json(line)
+            if not row.finalized:
+                raise ValueError("retained context observation is not final")
             if row.source_key in rich:
                 raise ValueError("duplicate context observation")
             rich[row.source_key] = row
@@ -215,22 +219,49 @@ def _public_json(path: str, params: dict) -> object:
     # Fixed host and allowlisted read-only paths; no environment/auth configuration.
     if path not in {"/api/v3/klines", "/api/v3/ticker/bookTicker", "/api/v3/time"}:
         raise ValueError("unsupported public endpoint")
-    with urlopen("https://data-api.binance.vision" + path + "?" + urlencode(params), timeout=4) as response:
+    with urlopen(
+        "https://data-api.binance.vision" + path + "?" + urlencode(params),
+        timeout=4,
+        context=verified_client_context(),
+    ) as response:
         payload = response.read(262145)
     if len(payload) > 262144:
         raise ValueError("oversized public response")
     return json.loads(payload)
 
 
+def _public_quote(symbol: str) -> dict:
+    """One bounded public ticker frame; E is the provider event timestamp.
+
+    Spot @ticker includes best bid/ask and quantities as well as event time.
+    The unrelated 24-hour statistics and statistics close time are not used.
+    """
+    from websockets.exceptions import WebSocketException
+    from websockets.sync.client import connect
+
+    if symbol not in {"BTCUSDT", "ETHUSDT"}:
+        raise ValueError("unsupported quote symbol")
+    try:
+        with connect(
+            f"wss://stream.binance.com:9443/ws/{symbol.lower()}@ticker",
+            ssl=verified_client_context(),
+            open_timeout=5,
+            close_timeout=1,
+            max_size=16384,
+            proxy=None,
+        ) as socket:
+            return json.loads(socket.recv(timeout=3))
+    except WebSocketException as error:
+        raise OSError("public quote unavailable") from error
+
+
 class FinalizedSpotFeed:
     """Poll the latest closed one-minute candle and a contemporaneous public quote."""
 
-    # Binance's documented REST bookTicker supplies prices/sizes, not an event
-    # timestamp. Receipt/server time cannot honestly substitute for provider time.
-    context_exclusions = ("book_provider_timestamp_unavailable",)
-
-    def __init__(self, *, fetch_json: Callable = _public_json, clock: Callable = _now):
-        self.fetch_json, self.clock = fetch_json, clock
+    def __init__(
+        self, *, fetch_json: Callable = _public_json, fetch_quote: Callable = _public_quote, clock: Callable = _now
+    ):
+        self.fetch_json, self.fetch_quote, self.clock = fetch_json, fetch_quote, clock
 
     def observations(self, symbols: tuple[str, ...]) -> tuple[RoundObservation, ...]:
         rows = []
@@ -261,12 +292,29 @@ class FinalizedSpotFeed:
             # Old candles remain absent, never re-labelled as fresh on receipt.
             if candle_received - boundary >= timedelta(seconds=15):
                 continue
-            quote = self.fetch_json("/api/v3/ticker/bookTicker", {"symbol": symbol})
+            quote = self.fetch_quote(symbol)
             received = _utc(self.clock(), "receipt")
             if received < candle_received:
                 raise ValueError("clock regression")
-            if not isinstance(quote, dict) or quote.get("symbol") != symbol:
-                raise ValueError("quote symbol mismatch")
+            if (
+                not isinstance(quote, dict)
+                or quote.get("s") != symbol
+                or quote.get("e") != "24hrTicker"
+                or type(quote.get("E")) is not int
+            ):
+                raise ValueError("invalid timestamped quote identity")
+            if not 0 <= quote["E"] < 253402300799000:
+                raise ValueError("quote timestamp out of range")
+            provider_at = datetime.fromtimestamp(quote["E"] / 1000, UTC)
+            if not timedelta(0) <= received - provider_at < timedelta(seconds=15):
+                raise ValueError("quote event is stale or in the future")
+            for field in ("b", "a", "B", "A"):
+                try:
+                    value = Decimal(str(quote.get(field)))
+                except InvalidOperation as error:
+                    raise ValueError("invalid quote number") from error
+                if not value.is_finite() or value <= 0:
+                    raise ValueError("invalid quote price or size")
             rows.append(
                 ContextObservation(
                     provider="binance",
@@ -281,13 +329,14 @@ class FinalizedSpotFeed:
                     low=candle[3],
                     close=candle[4],
                     volume=candle[5],
-                    bid=quote["bidPrice"],
-                    ask=quote["askPrice"],
-                    bid_size=quote.get("bidQty"),
-                    ask_size=quote.get("askQty"),
+                    bid=quote["b"],
+                    ask=quote["a"],
+                    bid_size=quote["B"],
+                    ask_size=quote["A"],
+                    quote_provider_at=provider_at,
                     quote_received_at=received,
                     quote_available_at=received,
-                    quote_source_key=f"binance:spot:bookTicker:{symbol}:{received.isoformat()}",
+                    quote_source_key=f"binance:spot:ticker:{symbol}:{quote['E']}:{received.isoformat()}",
                 )
             )
         return tuple(rows)
@@ -337,7 +386,7 @@ def _advance_retained_lifecycles(directory, protocol, now):
         return
     ledger = LifecycleLedger(directory, protocol_hash=protocol.identity_hash)
     reports = _validate_context_history(directory, protocol)
-    observations = load_observations(directory)
+    observations = _context_observations(directory, load_observations(directory))
     for lifecycle in ledger.latest():
         if lifecycle.completed_at is not None:
             continue
@@ -365,7 +414,11 @@ def _advance_retained_lifecycles(directory, protocol, now):
                 and bar.provider_at <= report.evaluated_at <= now
             ]
             context = max(matching, key=lambda item: item.evaluated_at, default=None)
-            observation = LifecycleObservation(bar=bar, evaluated_at=now, context_report=context)
+            finalized = getattr(bar, "finalized", True)
+            projected = RoundObservation.model_validate(bar.model_dump(include=set(RoundObservation.model_fields)))
+            observation = LifecycleObservation(
+                bar=projected, finalized=finalized, evaluated_at=now, context_report=context
+            )
         else:
             expected = after.replace(second=0, microsecond=0) + timedelta(minutes=1)
             if now <= expected + timedelta(seconds=15):
@@ -644,7 +697,8 @@ class LivePaperSignalRunner:
                 )
                 row.validate_for(protocol)
                 if (
-                    row.close is None
+                    (enriched is not None and not enriched.finalized)
+                    or row.close is None
                     or row.provider_error is not None
                     or row.available_at > now
                     or now - row.provider_at >= timedelta(seconds=min(15, protocol.maximum_observation_age_seconds))

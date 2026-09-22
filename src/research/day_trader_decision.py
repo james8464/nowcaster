@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -202,6 +203,31 @@ def load_context_reports(
     directory: Path, *, protocol_hash: str, context_protocol_hash: str
 ) -> tuple[DecisionContextReport, ...]:
     """Validate the entire retained history and its manifest before selection."""
+    return tuple(
+        iter_context_reports(directory, protocol_hash=protocol_hash, context_protocol_hash=context_protocol_hash)
+    )
+
+
+def iter_evidence_records(path: Path) -> Iterator[bytes]:
+    """Read a fixed file prefix with bounded memory, rejecting torn/oversize rows.
+
+    A concurrently appended complete suffix belongs to the next projection.
+    All evidence in the prefix is still checked, regardless of its age.
+    """
+    with path.open("rb") as stream:
+        remaining = path.stat().st_size
+        while remaining:
+            line = stream.readline(min(remaining, 1024 * 1024 + 1))
+            if not line or len(line) > 1024 * 1024 or not line.endswith(b"\n"):
+                raise ValueError("unterminated or oversized evidence record")
+            remaining -= len(line)
+            yield line
+
+
+def iter_context_reports(
+    directory: Path, *, protocol_hash: str, context_protocol_hash: str
+) -> Iterator[DecisionContextReport]:
+    """Stream validated history without retaining it all in memory."""
     identity = dict(
         protocol_hash=protocol_hash,
         context_protocol_hash=context_protocol_hash,
@@ -209,13 +235,14 @@ def load_context_reports(
     )
     if json.loads((directory / "day-trader-context-manifest.json").read_text()) != identity:
         raise ValueError("context manifest mismatch")
-    data = (directory / CONTEXT_REPORTS_FILE).read_bytes()
-    if not data or not data.endswith(b"\n"):
-        raise ValueError("missing or unterminated context report")
-    reports = tuple(DecisionContextReport.model_validate_json(line) for line in data.splitlines())
-    for report in reports:
+    count = 0
+    for line in iter_evidence_records(directory / CONTEXT_REPORTS_FILE):
+        report = DecisionContextReport.model_validate_json(line)
         if report.protocol_hash != protocol_hash or (
             report.context is not None and report.context.context_protocol_hash != context_protocol_hash
         ):
             raise ValueError("retained context protocol mismatch")
-    return reports
+        count += 1
+        yield report
+    if not count:
+        raise ValueError("missing context report")

@@ -102,6 +102,26 @@ def test_conflicting_finalized_bar_preserves_first_observation(registered):
     assert str(load_observations(registered)[0].close) == "101"
 
 
+def test_nonfinal_enriched_bar_is_rejected_before_any_retention(registered):
+    from src.research.day_trader_context import ContextObservation
+
+    row = ContextObservation(**bar().model_dump(), finalized=False)
+    state = LivePaperSignalRunner(Feed([row]), clock=lambda: NOW).run_once(registered)
+    assert state.kind == "abstaining"
+    assert not load_observations(registered)
+    assert not (registered / "day-trader-context-observations.jsonl").exists()
+
+
+def test_retained_nonfinal_context_cannot_be_projected_as_final(registered):
+    from src.research.day_trader_context import ContextObservation
+    from src.research.live_paper_signal_runtime import _context_observations
+
+    row = ContextObservation(**bar().model_dump(), finalized=False)
+    (registered / "day-trader-context-observations.jsonl").write_text(row.model_dump_json() + "\n")
+    with pytest.raises(ValueError, match="final"):
+        _context_observations(registered, (bar(),))
+
+
 def test_transport_failure_then_recovery_records_reconnect_and_warms(registered):
     feed = Feed(OSError("offline"))
     runner = LivePaperSignalRunner(feed, clock=lambda: NOW)
@@ -198,14 +218,49 @@ def test_public_adapter_omits_open_candle_and_stamps_actual_receipt():
             return [closed, unclosed]
         return {"symbol": "BTCUSDT", "bidPrice": "100", "askPrice": "101"}
 
-    rows = FinalizedSpotFeed(fetch_json=fetch, clock=lambda: NOW).observations(("BTCUSDT",))
+    quote = dict(e="24hrTicker", E=int(NOW.timestamp() * 1000) - 100, s="BTCUSDT", b="100", a="101", B="10", A="20")
+    rows = FinalizedSpotFeed(fetch_json=fetch, fetch_quote=lambda symbol: quote, clock=lambda: NOW).observations(
+        ("BTCUSDT",)
+    )
     assert len(rows) == 1
     assert rows[0].provider_at == NOW.replace(second=0)
     assert rows[0].available_at == NOW
     assert rows[0].close == 101
-    assert rows[0].quote_provider_at is None
+    assert rows[0].quote_provider_at == NOW - timedelta(milliseconds=100)
     assert rows[0].quote_received_at == NOW
-    assert FinalizedSpotFeed.context_exclusions == ("book_provider_timestamp_unavailable",)
+    assert rows[0].bid_size == 10
+    assert rows[0].ask_size == 20
+    assert "ticker" in rows[0].quote_source_key
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"E": None},
+        {"E": True},
+        {"E": int(NOW.timestamp() * 1000) + 1},
+        {"E": int(NOW.timestamp() * 1000) - 15000},
+        {"s": "ETHUSDT"},
+        {"e": "bookTicker"},
+        {"B": "0"},
+        {"B": None},
+        {"A": "NaN"},
+        {"E": 10**40},
+    ],
+)
+def test_public_quote_rejects_missing_stale_future_or_wrong_provenance(changes):
+    opened = int((NOW.replace(second=0) - timedelta(minutes=1)).timestamp() * 1000)
+    candle = [opened, "100", "102", "99", "101", "1000", opened + 59999, "0", 1, "0", "0", "0"]
+
+    def fetch(path, params):
+        return {"serverTime": int(NOW.timestamp() * 1000)} if path == "/api/v3/time" else [candle]
+
+    quote = dict(e="24hrTicker", E=int(NOW.timestamp() * 1000) - 100, s="BTCUSDT", b="100", a="101", B="10", A="20")
+    quote.update(changes)
+    with pytest.raises(ValueError):
+        FinalizedSpotFeed(fetch_json=fetch, fetch_quote=lambda symbol: quote, clock=lambda: NOW).observations(
+            ("BTCUSDT",)
+        )
 
 
 def test_server_clock_prevents_locally_premature_finalization():
@@ -219,6 +274,48 @@ def test_server_clock_prevents_locally_premature_finalization():
         return {"symbol": "BTCUSDT", "bidPrice": "100", "askPrice": "101"}
 
     assert not FinalizedSpotFeed(fetch_json=fetch, clock=lambda: NOW).observations(("BTCUSDT",))
+
+
+def test_public_quote_transport_verifies_host_with_bundled_roots_and_bounded_frame(monkeypatch):
+    import ssl
+    from contextlib import contextmanager
+
+    from src.research.live_paper_signal_runtime import _public_quote
+
+    @contextmanager
+    def connect(url, **options):
+        assert url == "wss://stream.binance.com:9443/ws/btcusdt@ticker"
+        assert options["ssl"].verify_mode == ssl.CERT_REQUIRED
+        assert options["ssl"].check_hostname
+        assert options["ssl"].cert_store_stats()["x509_ca"] > 0
+        assert options["max_size"] <= 16384
+
+        class Socket:
+            def recv(self, timeout):
+                assert 0 < timeout <= 3
+                return '{"e":"24hrTicker","E":123,"s":"BTCUSDT","b":"1","a":"2","B":"3","A":"4"}'
+
+        yield Socket()
+
+    monkeypatch.setattr("websockets.sync.client.connect", connect)
+    assert _public_quote("BTCUSDT")["E"] == 123
+
+
+def test_public_rest_transport_verifies_host_with_bundled_roots(monkeypatch):
+    import ssl
+    from io import BytesIO
+
+    from src.research import live_paper_signal_runtime as runtime
+
+    def open_response(url, *, timeout, context=None):
+        assert context is not None
+        assert context.verify_mode == ssl.CERT_REQUIRED
+        assert context.check_hostname
+        assert context.cert_store_stats()["x509_ca"] > 0
+        return BytesIO(b'{"serverTime":123}')
+
+    monkeypatch.setattr(runtime, "urlopen", open_response)
+    assert runtime._public_json("/api/v3/time", {}) == {"serverTime": 123}
 
 
 def test_unregistered_directory_is_not_created(tmp_path):

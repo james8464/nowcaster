@@ -128,6 +128,25 @@ def test_publication_creates_one_origin_and_restart_never_duplicates_it(live):
     assert records(live) == retained
 
 
+def test_nonfinal_retained_bar_cannot_close_a_lifecycle(live):
+    path, protocol, feed = live
+    assert poll(live).kind == "published"
+    before = records(live)
+    feed.at = NOW + timedelta(minutes=1)
+    feed.close_override = Decimal("104")
+    enriched = feed.row("BTCUSDT", feed.at).model_copy(update={"finalized": False})
+    append_observations(
+        path,
+        protocol,
+        [RoundObservation.model_validate(enriched.model_dump(include=set(RoundObservation.model_fields)))],
+    )
+    with (path / runtime.CONTEXT_OBSERVATIONS_FILE).open("a") as handle:
+        handle.write(enriched.model_dump_json() + "\n")
+    with pytest.raises(ValueError, match="final"):
+        runtime._advance_retained_lifecycles(path, protocol, feed.at)
+    assert records(live) == before
+
+
 @pytest.mark.parametrize("invalid", ["book", "calendar", "stale"])
 def test_ineligible_or_expired_publication_cannot_create_a_lifecycle(live, invalid):
     path, _, feed = live

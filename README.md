@@ -20,8 +20,9 @@ profitability. [Read the beginner-friendly guide](docs/research/live-paper-signa
 and whether a scheduled event calls for standing aside. Completed hypothetical
 outcomes have their own historical section. A target being touched is an observed
 paper outcome, not proof that a trade was filled or money was made. Missing
-calendar or quote timing evidence blocks fresh research suggestions; the current
-public quote endpoint does not supply all required timing evidence.
+calendar or quote timing evidence blocks fresh research suggestions. Public
+Binance ticker events supply timestamped best bid/ask prices and displayed sizes;
+stale, future-dated or malformed events cannot clear that gate.
 
 For a qualified intraday alert, the required probability means “the target is reached before the protective stop within the declared horizon, after the entry decision.” A research model that only measures positive strategy returns cannot supply that probability: it remains research-only. Neither kind of estimate is a promise that a whole account will make money.
 
