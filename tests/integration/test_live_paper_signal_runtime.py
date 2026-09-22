@@ -266,13 +266,20 @@ def test_slow_evaluation_does_not_refresh_expired_source(registered):
 
 
 @pytest.mark.parametrize("maximum_age", [5, 15])
-def test_delayed_receipt_publication_expires_at_provider_deadline(tmp_path, monkeypatch, maximum_age):
+@pytest.mark.parametrize("quote_lag,publish_delay", [(0, 0), (10, 0), (10, 4)])
+def test_delayed_receipt_publication_expires_at_provider_deadline(
+    tmp_path, monkeypatch, maximum_age, quote_lag, publish_delay
+):
     """A synthetic passing advisor decision exercises real publication and status.
 
     Scoring is isolated here: the regression is the service extending the scorer's
     receipt-based expiry past the supporting feed's provider-time deadline.
     """
+    from decimal import Decimal
+
     from src.research import live_paper_signal_runtime as runtime
+    from src.research.day_trader_context import CalendarSnapshot, ContextObservation
+    from src.research.round_two_quality import append_observations
     from src.research.trend_advisor import TrendAdvisorSuggestion
 
     protocol = ResearchRoundProtocol.default(round_id="expiry-test", starts_at=NOW - timedelta(days=200))
@@ -280,8 +287,52 @@ def test_delayed_receipt_publication_expires_at_provider_deadline(tmp_path, monk
         update={"warmup_minutes": 1, "maximum_observation_age_seconds": maximum_age}
     ).validated()
     register_round(protocol, tmp_path)
+
+    def rich_bar(symbol, at):
+        price = Decimal("101") + Decimal(str((at - NOW).total_seconds() / 60)) / 100
+        return ContextObservation(
+            **bar(
+                symbol,
+                at,
+                open=price,
+                close=price,
+                high=price + Decimal("0.02"),
+                low=price - Decimal("0.02"),
+                bid=price - Decimal("0.01"),
+                ask=price + Decimal("0.01"),
+            ).model_dump(),
+            bid_size=3,
+            ask_size=1,
+            quote_provider_at=at.replace(second=0) - timedelta(seconds=quote_lag),
+            quote_received_at=at,
+            quote_available_at=at,
+            quote_source_key=f"quote:{symbol}:{at}",
+        )
+
+    history = [
+        rich_bar(symbol, NOW + timedelta(minutes=minute)) for minute in range(-59, -1) for symbol in protocol.symbols
+    ]
+    append_observations(
+        tmp_path,
+        protocol,
+        [
+            RoundObservation.model_validate(row.model_dump(include=set(RoundObservation.model_fields)))
+            for row in history
+        ],
+    )
+    calendar = CalendarSnapshot(
+        source="retained-test-calendar",
+        revision="v1",
+        published_at=NOW - timedelta(hours=2),
+        available_at=NOW - timedelta(hours=2),
+        valid_until=NOW + timedelta(hours=2),
+        coverage_starts_at=NOW - timedelta(hours=2),
+        coverage_ends_at=NOW + timedelta(hours=2),
+        events=(),
+    )
+    (tmp_path / "day-trader-calendar.jsonl").write_text(calendar.model_dump_json() + "\n")
     clock = NOW - timedelta(minutes=1)
-    feed = Feed([bar(symbol, clock, bid="100.99", ask="101.01") for symbol in protocol.symbols])
+    feed = Feed([rich_bar(symbol, clock) for symbol in protocol.symbols])
     runner = LivePaperSignalRunner(feed, clock=lambda: clock)
     assert runner.run_once(tmp_path).kind == "warming"
     template = json.loads((tmp_path / "research-round-2-summary.json").read_text())["trendAdvisor"][0]
@@ -304,14 +355,28 @@ def test_delayed_receipt_publication_expires_at_provider_deadline(tmp_path, monk
 
     monkeypatch.setattr(runtime, "advise", passing_advice)
     clock = NOW
-    feed.rows = [bar(symbol, clock, bid="100.99", ask="101.01") for symbol in protocol.symbols]
+    feed.rows = [rich_bar(symbol, clock) for symbol in protocol.symbols]
+    publication_clock = iter((NOW, NOW, NOW + timedelta(seconds=publish_delay)))
+    runner.clock = lambda: next(publication_clock)
     state = runner.run_once(tmp_path)
+    deadline = NOW.replace(second=min(maximum_age, 15 - quote_lag))
+    if NOW + timedelta(seconds=publish_delay) >= deadline:
+        assert state.kind == "stale"
+        assert state.suggestion is None
+        assert not any(event.kind == "published" for event in events(tmp_path))
+        return
     assert state.kind == "published"
     assert any(event.kind == "published" for event in events(tmp_path))
-    deadline = NOW.replace(second=maximum_age)
     assert state.suggestion.expires_at == deadline
     report = json.loads((tmp_path / "research-round-2-summary.json").read_text())
     assert all(TrendAdvisorSuggestion.model_validate(item).expires_at == deadline for item in report["trendAdvisor"])
     assert read_live_signal_status(tmp_path, now=deadline - timedelta(microseconds=1)).kind == "published"
     assert read_live_signal_status(tmp_path, now=deadline).kind == "stale"
     assert read_live_signal_status(tmp_path, now=deadline).suggestion is None
+    # A current-looking state cannot survive loss or substitution of its context.
+    context_path = tmp_path / "day-trader-context-summary.json"
+    retained = context_path.read_text()
+    context_path.unlink()
+    assert read_live_signal_status(tmp_path, now=NOW).kind == "abstaining"
+    context_path.write_text(retained)
+    assert read_live_signal_status(tmp_path, now=NOW).kind == "published"

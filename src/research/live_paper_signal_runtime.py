@@ -17,6 +17,19 @@ from typing import Protocol
 from urllib.parse import urlencode
 from urllib.request import urlopen
 
+from src.research.day_trader_context import (
+    CalendarSnapshot,
+    ContextObservation,
+    DayTraderContextProtocol,
+    extract_context,
+)
+from src.research.day_trader_decision import (
+    CONTEXT_REPORTS_FILE,
+    CONTEXT_SUMMARY_FILE,
+    DecisionContextReport,
+    gate_suggestion,
+    retain_context_reports,
+)
 from src.research.live_paper_signals import LiveSignalEvent, LiveSignalState, SignalEventLedger, should_publish
 from src.research.round_two_contracts import RoundObservation, RoundStatus, _utc
 from src.research.round_two_quality import append_observations, load_observations, summarize_quality
@@ -42,6 +55,56 @@ from src.research.trend_advisor import AdvisorRoundReport, TrendAdvisorSuggestio
 STATE_FILE = "live-paper-signal-state.json"
 CURSOR_FILE = "live-paper-signal-cursor.json"
 STOP_FILE = "live-paper-signal-stop.json"
+CONTEXT_OBSERVATIONS_FILE = "day-trader-context-observations.jsonl"
+CALENDAR_FILE = "day-trader-calendar.jsonl"
+
+
+def _context_observations(directory, observations):
+    """Use enriched provenance only when it exactly matches the retained bar."""
+    path = directory / CONTEXT_OBSERVATIONS_FILE
+    rich = {}
+    if path.exists():
+        data = path.read_bytes()
+        if data and not data.endswith(b"\n"):
+            raise ValueError("unterminated context observation")
+        for line in data.splitlines():
+            row = ContextObservation.model_validate_json(line)
+            if row.source_key in rich:
+                raise ValueError("duplicate context observation")
+            rich[row.source_key] = row
+    selected = []
+    for row in observations:
+        enriched = rich.get(row.source_key)
+        if enriched is not None:
+            if enriched.model_dump(include=set(RoundObservation.model_fields)) != row.model_dump():
+                raise ValueError("context observation identity mismatch")
+            selected.append(enriched)
+        else:
+            selected.append(row)
+    return tuple(selected)
+
+
+def _calendar_at(directory, now):
+    """Read retained, explicitly covered local calendar revisions as-of now."""
+    path = directory / CALENDAR_FILE
+    if not path.exists():
+        return None
+    data = path.read_bytes()
+    if data and not data.endswith(b"\n"):
+        raise ValueError("unterminated calendar snapshot")
+    visible, identities = [], {}
+    for line in data.splitlines():
+        snapshot = CalendarSnapshot.model_validate_json(line)
+        if snapshot.available_at > now:
+            continue
+        key = (snapshot.source, snapshot.revision)
+        if key in identities and identities[key] != snapshot.identity_hash:
+            raise ValueError("conflicting calendar revision")
+        identities[key] = snapshot.identity_hash
+        visible.append(snapshot)
+    if len({item.source for item in visible}) > 1:
+        raise ValueError("conflicting calendar sources")
+    return max(visible, key=lambda item: (item.available_at, item.published_at), default=None)
 
 
 def _now() -> datetime:
@@ -168,6 +231,33 @@ def read_live_signal_status(directory: Path, *, now: datetime | None = None) -> 
             evaluated_at=state.evaluated_at,
             reasons=("evidence_expired",),
         )
+    if state.kind == "published":
+        try:
+            summary = json.loads((directory / CONTEXT_SUMMARY_FILE).read_text())
+            settings = DayTraderContextProtocol(round_protocol=protocol)
+            if summary["protocol_hash"] != protocol.identity_hash or (
+                summary["context_protocol_hash"] != settings.identity_hash
+            ):
+                raise ValueError("context summary identity mismatch")
+            decisions = tuple(DecisionContextReport.model_validate(item) for item in summary["reports"])
+            matching = next(item for item in decisions if item.suggestion == state.suggestion)
+            if matching.context is None or matching.context.context_protocol_hash != settings.identity_hash:
+                raise ValueError("context settings mismatch")
+            retained = (directory / CONTEXT_REPORTS_FILE).read_bytes()
+            if not retained.endswith(b"\n") or not any(
+                DecisionContextReport.model_validate_json(line) == matching for line in retained.splitlines()
+            ):
+                raise ValueError("context report not retained")
+            if gate_suggestion(matching.advisor, matching.context, now).suggestion.posture != "long_research":
+                raise ValueError("context no longer eligible")
+        except (OSError, ValueError, KeyError, TypeError, StopIteration):
+            return LiveSignalState(
+                kind="abstaining",
+                protocol_hash=protocol.identity_hash,
+                updated_at=state.updated_at,
+                evaluated_at=state.evaluated_at,
+                reasons=("context_evidence_unavailable",),
+            )
     return state
 
 
@@ -226,8 +316,17 @@ class LivePaperSignalRunner:
         retained = load_observations(directory)
         existing = {row.source_key: row for row in retained}
         novel = []
+        novel_context = []
         try:
-            for row in fetched:
+            for fetched_row in fetched:
+                enriched = (
+                    ContextObservation.model_validate(fetched_row.model_dump())
+                    if isinstance(fetched_row, ContextObservation)
+                    else None
+                )
+                row = RoundObservation.model_validate(
+                    fetched_row.model_dump(include=set(RoundObservation.model_fields))
+                )
                 row.validate_for(protocol)
                 if (
                     row.close is None
@@ -247,7 +346,17 @@ class LivePaperSignalRunner:
                 if latest is not None and row.provider_at <= latest:
                     raise ValueError("late observation")
                 novel.append(row)
+                if enriched is not None:
+                    novel_context.append(enriched)
             append_observations(directory, protocol, novel)
+            # Rich inputs are retained separately to preserve the existing
+            # RoundObservation contract used by walk-forward quality checks.
+            if novel_context:
+                path = directory / CONTEXT_OBSERVATIONS_FILE
+                with jsonl_writer_lock(path):
+                    append_jsonl_fsync(
+                        path, [row.model_dump(mode="json") for row in novel_context], writer_lock_held=True
+                    )
         except (ValueError, AttributeError):
             ledger.append(LiveSignalEvent(kind="gap", at=now, detail="invalid_observation"))
             return save("abstaining", ("invalid_observation",))
@@ -315,6 +424,9 @@ class LivePaperSignalRunner:
         ):
             return save("stale", ("evidence_expired",), evaluated_at=evaluated_at)
         suggestions = [item for item in report.trend_advisor if item.posture == "long_research"]
+        if suggestions and all(now >= item.expires_at for item in suggestions):
+            return save("stale", ("evidence_expired",), evaluated_at=evaluated_at)
+        suggestions = [item for item in suggestions if now < item.expires_at]
         if not reasons and suggestions:
             suggestion = suggestions[0]
             if should_publish(previous.suggestion if previous else None, suggestion, now):
@@ -342,6 +454,10 @@ class LivePaperSignalRunner:
                 raise ValueError("evaluation manifest missing")
             _bind_evaluation(directory, protocol, registry)
         suggestions = []
+        contexts = []
+        settings = DayTraderContextProtocol(round_protocol=protocol)
+        context_rows = _context_observations(directory, observations)
+        calendar = _calendar_at(directory, now)
         for candidate in protocol.candidates[:100]:
             result = next((item for item in results if item.candidate == candidate), None)
             if result is None or exclusions:
@@ -375,7 +491,25 @@ class LivePaperSignalRunner:
                         reasons=("evidence_expired",),
                     )
                 suggestion = TrendAdvisorSuggestion.model_validate(fields)
-            suggestions.append(suggestion)
+            symbol_rows = tuple(row for row in context_rows if row.symbol == suggestion.symbol)
+            context = extract_context(settings, symbol_rows, now, calendar) if symbol_rows else None
+            decision = gate_suggestion(suggestion, context, now)
+            contexts.append(decision)
+            suggestions.append(decision.suggestion)
+        retain_context_reports(
+            directory,
+            tuple(contexts),
+            protocol_hash=protocol.identity_hash,
+            context_protocol_hash=settings.identity_hash,
+        )
+        _write_atomic_json(
+            directory / CONTEXT_SUMMARY_FILE,
+            {
+                "protocol_hash": protocol.identity_hash,
+                "context_protocol_hash": settings.identity_hash,
+                "reports": [item.model_dump(mode="json") for item in contexts],
+            },
+        )
         identity = (
             json.dumps(
                 {"protocol_hash": protocol.identity_hash, "policy_hash": suggestions[0].policy_hash},
