@@ -52,7 +52,8 @@ def test_overlapping_entry_bar_ignores_extremes_but_retains_prospective_close():
     [({"high": "105"}, "target"), ({"low": "98"}, "invalidation"), ({"low": "98", "high": "105"}, "invalidation")],
 )
 def test_later_complete_bar_conservatively_resolves_barriers(values, expected):
-    assert advance_lifecycle(lifecycle(), observation(**values)).exit_reason == expected
+    current = advance_lifecycle(lifecycle(), observation(58))
+    assert advance_lifecycle(current, observation(**values)).exit_reason == expected
 
 
 def test_pre_entry_extremes_cannot_overrule_later_close():
@@ -60,8 +61,11 @@ def test_pre_entry_extremes_cannot_overrule_later_close():
 
 
 def test_time_limit_uses_later_known_time_without_post_deadline_extremes():
+    current = lifecycle()
+    for seconds in range(58, 599, 60):
+        current = advance_lifecycle(current, observation(seconds))
     late = observation(658, high="105")
-    assert advance_lifecycle(lifecycle(), late).exit_reason == "time_limit"
+    assert advance_lifecycle(current, late).exit_reason == "time_limit"
 
 
 def test_stale_or_missing_observation_records_expiry_without_claiming_barrier():
@@ -76,7 +80,7 @@ def test_stale_or_missing_observation_records_expiry_without_claiming_barrier():
 
 def test_future_nonfinal_wrong_symbol_and_out_of_order_cannot_advance():
     initial = lifecycle()
-    obs = observation()
+    obs = observation(58)
     for invalid in (
         obs.model_copy(update={"evaluated_at": NOW}),
         obs.model_copy(update={"finalized": False}),
@@ -96,7 +100,8 @@ def test_later_causal_regime_report_closes_without_rewriting_origin():
     later = LifecycleObservation(
         bar=obs.bar, evaluated_at=obs.evaluated_at, context_report=gate_suggestion(new_suggestion, new_context, at)
     )
-    closed = advance_lifecycle(lifecycle(), later)
+    current = advance_lifecycle(lifecycle(), observation(58))
+    closed = advance_lifecycle(current, later)
     assert closed.exit_reason == "regime_change"
     assert closed.origin_report.evaluated_at == NOW
 
@@ -115,7 +120,7 @@ def test_ledger_recovery_is_append_only_idempotent_and_protocol_bound(tmp_path):
     initial = lifecycle()
     ledger.append(initial)
     prefix = ledger.events_path.read_bytes()
-    closed = advance_lifecycle(initial, observation(high="105"))
+    closed = advance_lifecycle(initial, observation(58, high="105", close="104"))
     ledger.append(closed)
     ledger.append(closed)
     assert ledger.events_path.read_bytes().startswith(prefix)
@@ -132,7 +137,7 @@ def test_ledger_refuses_rewritten_chain_or_torn_tail(tmp_path):
     initial = lifecycle()
     ledger.append(initial)
     with pytest.raises(ValueError):
-        ledger.append(advance_lifecycle(advance_lifecycle(initial, observation()), observation(178)))
+        ledger.append(advance_lifecycle(advance_lifecycle(initial, observation(58)), observation(118)))
     with ledger.events_path.open("ab") as stream:
         stream.write(b"{")
     retained = ledger.events_path.read_bytes()
@@ -149,3 +154,21 @@ def test_ledger_prevents_live_holding_policy_changes(tmp_path):
     )
     with pytest.raises(ValueError):
         ledger.append(changed)
+
+
+@pytest.mark.parametrize("preceding", [False, True])
+def test_any_missing_provider_minute_expires_before_a_later_barrier(preceding):
+    current = advance_lifecycle(lifecycle(), observation(58)) if preceding else lifecycle()
+    skipped = observation(178 if preceding else 118, high="105")
+    assert advance_lifecycle(current, skipped).exit_reason == "expired"
+
+
+@pytest.mark.parametrize("close,expected", [("98", "invalidation"), ("102", "expired")])
+def test_missing_context_cannot_hide_a_known_invalidation(close, expected):
+    at = NOW + timedelta(seconds=58)
+    missing = gate_suggestion(
+        suggestion(decision_at=at, available_at=at, expires_at=at + timedelta(seconds=5)), None, at
+    )
+    bar = observation(58, low="98", close=close).bar
+    later = LifecycleObservation(bar=bar, evaluated_at=bar.available_at, context_report=missing)
+    assert advance_lifecycle(lifecycle(), later).exit_reason == expected

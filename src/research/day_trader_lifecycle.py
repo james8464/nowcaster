@@ -21,9 +21,9 @@ from src.strategies.types import canonical_hash, canonical_json
 
 LIFECYCLE_POLICY_HASH = canonical_hash(
     dict(
-        version="paper-lifecycle-v1",
+        version="paper-lifecycle-v2",
         freshness_seconds=15,
-        maximum_gap_seconds=120,
+        require_continuous_provider_minutes=True,
         ambiguous_bar="invalidation_first",
         overlapping_bar="close_only",
         default_holding_seconds=3600,
@@ -166,8 +166,13 @@ def advance_lifecycle(lifecycle: PaperLifecycle, observation: LifecycleObservati
             return lifecycle
         if previous and previous.bar and bar.provider_at <= previous.bar.provider_at:
             return lifecycle
+    expected_bar_at = (
+        previous.bar.provider_at if previous and previous.bar else lifecycle.created_at.replace(second=0, microsecond=0)
+    ) + timedelta(minutes=1)
     reason = None
-    if now >= lifecycle.deadline:
+    if bar is not None and bar.provider_at != expected_bar_at:
+        reason = "expired"
+    elif now >= lifecycle.deadline:
         reason = "time_limit"
     elif (
         bar is None
@@ -175,12 +180,20 @@ def advance_lifecycle(lifecycle: PaperLifecycle, observation: LifecycleObservati
         or bar.close is None
         or not bar.close.is_finite()
         or now - bar.provider_at > timedelta(seconds=15)
-        or now - previous_at > timedelta(seconds=120)
     ):
         reason = "expired"
     else:
-        report = observation.context_report
-        if report is not None:
+        whole_bar = bar.provider_at - timedelta(minutes=1) >= lifecycle.created_at
+        low = bar.low if whole_bar else bar.close
+        high = bar.high if whole_bar else bar.close
+        if low is None or high is None or not low.is_finite() or not high.is_finite():
+            reason = "expired"
+        elif low <= lifecycle.origin_report.suggestion.invalidation:
+            reason = "invalidation"
+        elif high >= lifecycle.origin_report.suggestion.target:
+            reason = "target"
+        elif observation.context_report is not None:
+            report = observation.context_report
             origin = lifecycle.origin_report
             if (
                 report.protocol_hash != origin.protocol_hash
@@ -192,18 +205,9 @@ def advance_lifecycle(lifecycle: PaperLifecycle, observation: LifecycleObservati
                 or report.suggestion.decision_at < bar.provider_at
                 or now >= report.suggestion.expires_at
             ):
-                return lifecycle
-        whole_bar = bar.provider_at - timedelta(minutes=1) >= lifecycle.created_at
-        low = bar.low if whole_bar else bar.close
-        high = bar.high if whole_bar else bar.close
-        if low is None or high is None or not low.is_finite() or not high.is_finite():
-            reason = "expired"
-        elif low <= lifecycle.origin_report.suggestion.invalidation:
-            reason = "invalidation"
-        elif high >= lifecycle.origin_report.suggestion.target:
-            reason = "target"
-        elif report is not None and report.suggestion.posture == "stand_aside":
-            reason = "regime_change"
+                reason = "expired"
+            elif report.suggestion.posture == "stand_aside":
+                reason = "regime_change"
     values = lifecycle.model_dump(exclude={"record_hash"})
     values.update(
         revision=lifecycle.revision + 1,
