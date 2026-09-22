@@ -96,6 +96,36 @@ def test_costs_apply_to_both_sides_and_drawdown_and_turnover_include_losses():
     assert result.status == "diagnostic_only"
 
 
+@pytest.mark.parametrize("failure", ["stale", "provider_error"])
+def test_time_limit_does_not_price_stale_or_error_terminal_observations(failure):
+    from tests.unit.test_day_trader_lifecycle import observation
+
+    p = protocol()
+    events = [history()[0]]
+    for seconds in range(58, 598, 60):
+        events.append(advance_lifecycle(events[-1], observation(seconds)))
+    obs = observation(598, provider_error="feed_error" if failure == "provider_error" else None)
+    terminal = LifecycleObservation(
+        bar=obs.bar, evaluated_at=NOW + timedelta(seconds=620 if failure == "stale" else 600)
+    )
+    events.append(advance_lifecycle(events[-1], terminal))
+    assert events[-1].exit_reason == "time_limit"
+    (result,) = evaluate_variants(p, events, p.variants)
+    assert result.outcomes[0].net_return_bps is None
+    assert "terminal_price_unavailable" in result.outcomes[0].exclusions
+
+
+def test_overlapping_stop_bar_open_cannot_repaint_post_entry_return():
+    from tests.unit.test_day_trader_lifecycle import observation
+
+    p = protocol()
+    initial = history()[0]
+    terminal = advance_lifecycle(initial, observation(58, open="90", low="90", high="100", close="98"))
+    assert terminal.exit_reason == "invalidation"
+    (result,) = evaluate_variants(p, (initial, terminal), p.variants)
+    assert result.outcomes[0].net_return_bps == pytest.approx(Decimal("-327.0297029702970297029702970"))
+
+
 def test_chronological_folds_purge_cross_boundary_and_never_score_training():
     p = protocol(training_end=(NOW - timedelta(days=1)).replace(second=0))
     training = history(NOW - timedelta(days=1, hours=1))

@@ -182,14 +182,24 @@ def _score(item, protocol, windows, evaluated_at):
     net = None
     if not reasons:
         bar = item.last_observation.bar
-        if bar is None or bar.close is None or bar.provider_at > item.deadline:
+        if (
+            bar is None
+            or bar.close is None
+            or not bar.close.is_finite()
+            or bar.provider_error is not None
+            or bar.provider_at > item.deadline
+            or item.last_observation.evaluated_at - bar.provider_at > timedelta(seconds=15)
+        ):
             reasons.append("terminal_price_unavailable")
         else:
             hypothesis = item.origin_report.suggestion
             # The upper zone is the conservative entry hypothesis. For a stop,
-            # include a possible gap below the invalidation using the bar open.
+            # include a possible gap below the invalidation using the bar open
+            # only when the whole candle occurred after lifecycle creation.
             if item.exit_reason == "invalidation":
-                terminal = min(hypothesis.invalidation, bar.close, bar.open or bar.close)
+                whole_bar = bar.provider_at - timedelta(minutes=1) >= item.created_at
+                eligible_open = bar.open if whole_bar and bar.open is not None else bar.close
+                terminal = min(hypothesis.invalidation, bar.close, eligible_open)
             elif item.exit_reason == "target":
                 terminal = hypothesis.target
             else:
