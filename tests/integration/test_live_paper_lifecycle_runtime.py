@@ -11,7 +11,8 @@ import pytest
 
 from src.research import live_paper_signal_runtime as runtime
 from src.research.day_trader_context import CalendarSnapshot, ContextObservation
-from src.research.day_trader_lifecycle import LifecycleLedger
+from src.research.day_trader_lifecycle import LifecycleLedger, PaperLifecycle
+from src.research.live_paper_signals import SignalEventLedger
 from src.research.round_two_contracts import ResearchRoundProtocol, RoundObservation
 from src.research.round_two_quality import append_observations
 from src.research.round_two_registry import register_round
@@ -230,3 +231,109 @@ def test_corrupt_lifecycle_history_blocks_new_publication_without_rewriting(live
     assert state.kind == "failed"
     assert state.suggestion is None
     assert history.read_bytes() == corrupt
+
+
+@pytest.mark.parametrize("write", ["journal", "event", "lifecycle", "state"])
+@pytest.mark.parametrize("after_write", [False, True])
+@pytest.mark.parametrize("restart_delay", [0, 30])
+def test_publication_transaction_recovers_every_write_boundary(live, monkeypatch, write, after_write, restart_delay):
+    """A crash must neither orphan publication nor invent a fresh decision on replay."""
+    path, protocol, feed = live
+
+    class Crash(BaseException):
+        pass
+
+    def interrupt(original, predicate):
+        def wrapped(*args, **kwargs):
+            if predicate(*args, **kwargs):
+                if after_write:
+                    original(*args, **kwargs)
+                raise Crash()
+            return original(*args, **kwargs)
+
+        return wrapped
+
+    with monkeypatch.context() as patch:
+        if write == "journal":
+            patch.setattr(
+                runtime,
+                "append_jsonl_fsync",
+                interrupt(
+                    runtime.append_jsonl_fsync, lambda path, *args, **kwargs: path.name == "paper-publications.jsonl"
+                ),
+            )
+        elif write == "event":
+            patch.setattr(
+                SignalEventLedger,
+                "append",
+                interrupt(SignalEventLedger.append, lambda self, event: event.kind == "published"),
+            )
+        elif write == "lifecycle":
+            patch.setattr(
+                LifecycleLedger, "append", interrupt(LifecycleLedger.append, lambda self, item: item.revision == 0)
+            )
+        else:
+            patch.setattr(
+                runtime,
+                "_write_atomic_json",
+                interrupt(
+                    runtime._write_atomic_json,
+                    lambda path, payload: path.name == runtime.STATE_FILE and payload["kind"] == "published",
+                ),
+            )
+        with pytest.raises(Crash):
+            poll(live)
+
+    before_decisions = (path / "trend-advisor-decisions.jsonl").read_bytes()
+    before_context = (path / "day-trader-context-reports.jsonl").read_bytes()
+    feed.empty = True
+    feed.at = NOW + timedelta(seconds=restart_delay)
+    state = poll(live)
+    published = [
+        event
+        for event in SignalEventLedger(path, protocol_hash=protocol.identity_hash).events()
+        if event.kind == "published"
+    ]
+    origins = [item for item in records(live) if item.revision == 0]
+    committed = write != "journal" or after_write
+    assert len(published) == len(origins) == int(committed)
+    if committed:
+        assert origins[0].created_at == published[0].at == NOW
+        assert published[0].detail == "lifecycle:" + origins[0].lifecycle_hash
+        if restart_delay == 0:
+            assert state.kind == "published"
+            assert state.suggestion == origins[0].origin_report.suggestion
+        else:
+            assert state.suggestion is None
+    assert (path / "trend-advisor-decisions.jsonl").read_bytes() == before_decisions
+    assert (path / "day-trader-context-reports.jsonl").read_bytes() == before_context
+    events_before = (path / "signal-events.jsonl").read_bytes()
+    lifecycles_before = (path / "paper-lifecycles.jsonl").read_bytes() if committed else None
+    poll(live)
+    assert (path / "signal-events.jsonl").read_bytes() == events_before
+    if committed:
+        assert (path / "paper-lifecycles.jsonl").read_bytes() == lifecycles_before
+
+
+@pytest.mark.parametrize("damage", ["missing", "torn", "different_origin"])
+def test_recovery_rejects_missing_or_substituted_publication_identity(live, damage):
+    path, _, feed = live
+    poll(live)
+    publication = path / "paper-publications.jsonl"
+    original = records(live)[0]
+    if damage == "missing":
+        publication.unlink()
+    elif damage == "torn":
+        publication.write_bytes(publication.read_bytes()[:-1])
+    else:
+        alternate = PaperLifecycle.from_report(original.origin_report, created_at=NOW + timedelta(seconds=1))
+        publication.write_text(alternate.model_dump_json() + "\n")
+    before = (path / "paper-lifecycles.jsonl").read_bytes()
+    events_before = (path / "signal-events.jsonl").read_bytes()
+    feed.at = NOW + timedelta(seconds=1)
+    feed.empty = True
+    state = poll(live)
+    assert state.kind == "failed"
+    assert state.suggestion is None
+    assert (path / "paper-lifecycles.jsonl").read_bytes() == before
+    assert (path / "signal-events.jsonl").read_bytes() == events_before

@@ -65,6 +65,7 @@ CURSOR_FILE = "live-paper-signal-cursor.json"
 STOP_FILE = "live-paper-signal-stop.json"
 CONTEXT_OBSERVATIONS_FILE = "day-trader-context-observations.jsonl"
 CALENDAR_FILE = "day-trader-calendar.jsonl"
+PUBLICATIONS_FILE = "paper-publications.jsonl"
 
 
 def _context_observations(directory, observations):
@@ -374,6 +375,69 @@ def _advance_retained_lifecycles(directory, protocol, now):
             ledger.append(advanced)
 
 
+def _publication_records(directory, protocol, now):
+    """The durable publication journal is the commit point for all projections."""
+    path = directory / PUBLICATIONS_FILE
+    if not path.exists():
+        return ()
+    data = path.read_bytes()
+    if data and not data.endswith(b"\n"):
+        raise ValueError("unterminated publication journal")
+    reports = {item.report_hash: item for item in _validate_context_history(directory, protocol)}
+    records, seen = [], set()
+    for line in data.splitlines():
+        item = PaperLifecycle.model_validate_json(line)
+        if (
+            item.revision != 0
+            or item.created_at > now
+            or item.origin_report.protocol_hash != protocol.identity_hash
+            or reports.get(item.origin_report.report_hash) != item.origin_report
+            or item.origin_report.report_hash in seen
+        ):
+            raise ValueError("publication journal identity mismatch")
+        if records and item.created_at < records[-1].created_at:
+            raise ValueError("publication journal clock regression")
+        seen.add(item.origin_report.report_hash)
+        records.append(item)
+    return tuple(records)
+
+
+def _reconcile_publications(directory, protocol, signals, now):
+    """Recover exact committed evidence, without scoring or extending its expiry."""
+    records = _publication_records(directory, protocol, now)
+    events = signals.events()
+    identities = {"lifecycle:" + item.lifecycle_hash for item in records}
+    if any(
+        event.kind == "published"
+        and event.detail
+        and event.detail.startswith("lifecycle:")
+        and event.detail not in identities
+        for event in events
+    ):
+        raise ValueError("publication event has no committed evidence")
+    if not records:
+        return None
+    lifecycles = LifecycleLedger(directory, protocol_hash=protocol.identity_hash)
+    # Validate the complete chain before recovering another projection.
+    retained_hashes = {item.record_hash for item in lifecycles.events()}
+    for item in records:
+        expected = LiveSignalEvent(
+            kind="published",
+            at=item.created_at,
+            posture="long_research",
+            candidate_hash=item.origin_report.suggestion.candidate_hash,
+            detail="lifecycle:" + item.lifecycle_hash,
+        )
+        matching = [event for event in events if event.kind == "published" and event.detail == expected.detail]
+        if matching and matching != [expected]:
+            raise ValueError("publication projection identity mismatch")
+        if not matching:
+            signals.append(expected)
+        if item.record_hash not in retained_hashes:
+            lifecycles.append(item)
+    return records[-1]
+
+
 def read_live_signal_status(directory: Path, *, now: datetime | None = None) -> LiveSignalState:
     """Read-only freshness projection; reading never makes old evidence current."""
     directory, now = Path(directory), _utc(now or _now(), "status timestamp")
@@ -483,6 +547,20 @@ class LivePaperSignalRunner:
         except (OSError, ValueError):
             return save("failed", ("context_evidence_unavailable",))
         try:
+            publication = _reconcile_publications(directory, protocol, ledger, now)
+            if publication is not None and (
+                previous is None
+                or previous.updated_at < publication.created_at
+                or (previous.updated_at == publication.created_at and previous.kind == "failed")
+            ):
+                suggestion = publication.origin_report.suggestion
+                fresh = now < suggestion.expires_at
+                previous = save(
+                    "published" if fresh else "stale",
+                    () if fresh else ("evidence_expired",),
+                    suggestion=suggestion if fresh else None,
+                    evaluated_at=publication.created_at,
+                )
             _advance_retained_lifecycles(directory, protocol, now)
         except (OSError, ValueError):
             return save("failed", ("lifecycle_evidence_unavailable",))
@@ -623,17 +701,15 @@ class LivePaperSignalRunner:
                     contexts = _validate_context_history(directory, protocol)
                     context = next(item for item in reversed(contexts) if item.suggestion == suggestion)
                     lifecycle = PaperLifecycle.from_report(context, created_at=now)
-                    lifecycles = LifecycleLedger(directory, protocol_hash=protocol.identity_hash)
-                    retained_lifecycles = lifecycles.latest()
+                    LifecycleLedger(directory, protocol_hash=protocol.identity_hash).events()
+                    committed = _publication_records(directory, protocol, now)
                 except (ValueError, OSError, StopIteration):
                     return save("failed", ("lifecycle_evidence_unavailable",), evaluated_at=now)
-                ledger.append(
-                    LiveSignalEvent(
-                        kind="published", at=now, posture="long_research", candidate_hash=suggestion.candidate_hash
-                    )
-                )
-                if not any(item.origin_report.report_hash == context.report_hash for item in retained_lifecycles):
-                    lifecycles.append(lifecycle)
+                if not any(item.origin_report.report_hash == context.report_hash for item in committed):
+                    path = directory / PUBLICATIONS_FILE
+                    with jsonl_writer_lock(path):
+                        append_jsonl_fsync(path, [lifecycle.model_dump(mode="json")], writer_lock_held=True)
+                _reconcile_publications(directory, protocol, ledger, now)
             return save("published", suggestion=suggestion, evaluated_at=now)
         reasons.update(reason for item in report.trend_advisor for reason in item.reasons)
         ledger.append(LiveSignalEvent(kind="abstaining", at=now, posture="stand_aside", detail="research_gates_unmet"))
