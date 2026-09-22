@@ -151,6 +151,7 @@ class MarketContextSnapshot(_Immutable):
     context_protocol_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     source_identity_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     source_hashes: tuple[str, ...] = Field(max_length=1000)
+    conflict_evidence_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     calendar_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     decision_at: datetime
     available_at: datetime
@@ -251,16 +252,18 @@ def extract_context(
     reasons: list[str] = []
     unique: dict[datetime, ContextObservation] = {}
     keys: dict[str, ContextObservation] = {}
+    conflicts: dict[str, ContextObservation] = {}
     for row in causal:
-        if (row.provider_at in unique and unique[row.provider_at] != row) or (
-            row.source_key in keys and keys[row.source_key] != row
-        ):
-            reasons.append("conflicting_observations")
+        for retained in (unique.get(row.provider_at), keys.get(row.source_key)):
+            if retained is not None and retained != row:
+                reasons.append("conflicting_observations")
+                for evidence in (retained, row):
+                    conflicts[canonical_hash(evidence.model_dump(mode="json"))] = evidence
         unique.setdefault(row.provider_at, row)
         keys.setdefault(row.source_key, row)
     rows = list(unique.values())[-research.maximum_feature_bars :]
     latest = rows[-1] if rows else None
-    available_at = max((row.available_at for row in rows), default=decision_at)
+    available_at = max((row.available_at for row in (*rows, *conflicts.values())), default=decision_at)
     expires_at = (
         latest.provider_at + timedelta(seconds=research.maximum_observation_age_seconds) if latest else decision_at
     )
@@ -381,6 +384,10 @@ def extract_context(
         context_protocol_hash=settings.identity_hash,
         source_identity_hash=canonical_hash(research.source.model_dump(mode="json")),
         source_hashes=tuple(canonical_hash(row.model_dump(mode="json")) for row in rows),
+        # Bind every causal conflict, including evidence dropped from the bounded
+        # feature window. A digest keeps the wire snapshot bounded without losing
+        # the identity of evidence that caused its exclusion.
+        conflict_evidence_hash=canonical_hash(sorted(conflicts)) if conflicts else None,
         calendar_hash=calendar_hash,
         decision_at=decision_at,
         available_at=available_at,

@@ -92,6 +92,21 @@ def test_future_or_later_received_bars_cannot_repaint_a_snapshot():
     assert extract_context(protocol(), (*bars(), future, revision), DECISION, calendar()) == context
 
 
+def test_discarded_causal_conflict_binds_its_content_and_availability():
+    observations = bars()
+    conflict = observations[-1].model_copy(
+        update={"source_key": "z-conflict", "volume": Decimal(9), "available_at": DECISION}
+    )
+    other_conflict = conflict.model_copy(update={"volume": Decimal(8)})
+    first = extract_context(protocol(), (*observations, conflict), DECISION, calendar())
+    second = extract_context(protocol(), (*observations, other_conflict), DECISION, calendar())
+    assert first.exclusions == second.exclusions == ("conflicting_observations",)
+    assert first.feature_hash != second.feature_hash
+    assert first.available_at == DECISION
+    later_conflict = other_conflict.model_copy(update={"available_at": DECISION + timedelta(seconds=1)})
+    assert extract_context(protocol(), (*observations, conflict, later_conflict), DECISION, calendar()) == first
+
+
 def test_unfinished_aggregate_is_excluded_from_features_and_its_own_extrema():
     context = extract_context(protocol(), bars(59), DECISION - timedelta(minutes=1), calendar())
     assert "insufficient_15m_history" in context.exclusions
