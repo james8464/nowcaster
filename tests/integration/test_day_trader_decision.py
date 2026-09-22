@@ -1,8 +1,11 @@
 """Context gates must prevent otherwise valid advice from bypassing causal evidence."""
 
 import json
+import subprocess
+import sys
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
@@ -225,3 +228,152 @@ def test_retention_rejects_policy_drift_and_corruption_without_rewriting(tmp_pat
     with pytest.raises(ValueError, match="unterminated"):
         retain_context_reports(tmp_path, (report,), **arguments)
     assert path.read_bytes() == before[:-1]
+
+
+def test_deleted_context_manifest_is_never_recreated(tmp_path):
+    from src.research.day_trader_decision import retain_context_reports
+
+    report = gate_suggestion(suggestion(), context(), NOW)
+    arguments = dict(protocol_hash="a" * 64, context_protocol_hash="f" * 64)
+    retain_context_reports(tmp_path, (report,), **arguments)
+    manifest = tmp_path / "day-trader-context-manifest.json"
+    manifest.unlink()
+    with pytest.raises(ValueError, match="manifest"):
+        retain_context_reports(tmp_path, (report,), **arguments)
+    assert not manifest.exists()
+
+
+def test_calendar_outage_recovery_requires_continuous_warmup_across_restarts(tmp_path):
+    from src.research.day_trader_context import CalendarSnapshot
+    from src.research.live_paper_signals import SignalEventLedger
+
+    protocol = ResearchRoundProtocol.default(round_id="calendar-recovery", starts_at=NOW - timedelta(days=200))
+    protocol = protocol.model_copy(update={"warmup_minutes": 2}).validated()
+    register_round(protocol, tmp_path)
+
+    class Feed:
+        at = NOW
+
+        def observations(self, symbols):
+            return tuple(
+                RoundObservation(
+                    provider="binance",
+                    feed="spot",
+                    symbol=symbol,
+                    provider_at=self.at.replace(second=0),
+                    received_at=self.at,
+                    available_at=self.at,
+                    source_key=f"{symbol}:{self.at}",
+                    open="100",
+                    high="102",
+                    low="99",
+                    close="101",
+                    volume="1000",
+                    bid="100.99",
+                    ask="101.01",
+                )
+                for symbol in symbols
+            )
+
+    feed = Feed()
+
+    def poll(minute):
+        feed.at = NOW + timedelta(minutes=minute)
+        return LivePaperSignalRunner(feed, clock=lambda: feed.at).run_once(tmp_path)
+
+    poll(0)
+    calendar = CalendarSnapshot(
+        source="local",
+        revision="v1",
+        published_at=NOW,
+        available_at=NOW,
+        valid_until=NOW + timedelta(hours=2),
+        coverage_starts_at=NOW - timedelta(hours=1),
+        coverage_ends_at=NOW + timedelta(hours=2),
+        events=(),
+    )
+    path = tmp_path / "day-trader-calendar.jsonl"
+    path.write_text(calendar.model_dump_json() + "\n")
+    assert "calendar_reconnect_warmup" in poll(1).reasons
+    assert "calendar_reconnect_warmup" in poll(2).reasons
+    path.unlink()
+    poll(3)
+    path.write_text(calendar.model_dump_json() + "\n")
+    assert "calendar_reconnect_warmup" in poll(4).reasons
+    assert "calendar_reconnect_warmup" in poll(5).reasons
+    assert "calendar_reconnect_warmup" not in poll(6).reasons
+    events = SignalEventLedger(tmp_path, protocol_hash=protocol.identity_hash).events()
+    assert [event.at for event in events if event.detail == "calendar_unavailable"] == [NOW, NOW + timedelta(minutes=3)]
+    assert [event.at for event in events if event.detail == "calendar_reconnect_warmup"] == [
+        NOW + timedelta(minutes=1),
+        NOW + timedelta(minutes=4),
+    ]
+
+
+def test_calendar_import_stamps_receipt_and_retains_revisions(tmp_path):
+    from src.research.day_trader_context import CalendarSnapshot
+    from src.research.live_paper_signal_runtime import import_calendar_snapshot
+
+    protocol = ResearchRoundProtocol.default(round_id="calendar-import", starts_at=NOW - timedelta(days=200))
+    register_round(protocol, tmp_path)
+    imported = CalendarSnapshot(
+        source="local",
+        revision="v1",
+        published_at=NOW - timedelta(hours=1),
+        available_at=NOW - timedelta(hours=1),
+        valid_until=NOW + timedelta(hours=2),
+        coverage_starts_at=NOW - timedelta(hours=1),
+        coverage_ends_at=NOW + timedelta(hours=2),
+        events=(),
+    )
+    source = tmp_path / "calendar-input.json"
+    source.write_text(imported.model_dump_json())
+    retained = import_calendar_snapshot(tmp_path, source, now=NOW)
+    assert retained.available_at == NOW
+    assert retained.published_at == imported.published_at
+    path = tmp_path / "day-trader-calendar.jsonl"
+    before = path.read_bytes()
+    assert import_calendar_snapshot(tmp_path, source, now=NOW + timedelta(seconds=1)) == retained
+    assert path.read_bytes() == before
+    source.write_text(imported.model_copy(update={"valid_until": NOW + timedelta(hours=1)}).model_dump_json())
+    with pytest.raises(ValueError, match="revision"):
+        import_calendar_snapshot(tmp_path, source, now=NOW + timedelta(seconds=2))
+    assert path.read_bytes() == before
+
+
+def test_explicit_calendar_import_cli(tmp_path):
+    from src.research.day_trader_context import CalendarSnapshot
+
+    now = datetime.now(UTC)
+    protocol = ResearchRoundProtocol.default(round_id="calendar-cli", starts_at=now - timedelta(days=200))
+    register_round(protocol, tmp_path)
+    supplied = CalendarSnapshot(
+        source="local",
+        revision="v1",
+        published_at=now - timedelta(hours=1),
+        available_at=now - timedelta(hours=1),
+        valid_until=now + timedelta(hours=2),
+        coverage_starts_at=now - timedelta(hours=1),
+        coverage_ends_at=now + timedelta(hours=2),
+        events=(),
+    )
+    source = tmp_path / "input.json"
+    source.write_text(supplied.model_dump_json())
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(Path(__file__).parents[2] / "scripts/run_live_paper_signals.py"),
+            "import-calendar",
+            "--directory",
+            str(tmp_path),
+            "--file",
+            str(source),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    imported = CalendarSnapshot.model_validate_json(result.stdout)
+    assert imported.available_at >= now
+    assert imported.revision == "v1"
+    assert (tmp_path / "day-trader-calendar.jsonl").read_text().count("\n") == 1

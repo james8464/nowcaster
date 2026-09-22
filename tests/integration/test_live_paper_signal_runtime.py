@@ -203,6 +203,9 @@ def test_public_adapter_omits_open_candle_and_stamps_actual_receipt():
     assert rows[0].provider_at == NOW.replace(second=0)
     assert rows[0].available_at == NOW
     assert rows[0].close == 101
+    assert rows[0].quote_provider_at is None
+    assert rows[0].quote_received_at == NOW
+    assert FinalizedSpotFeed.context_exclusions == ("book_provider_timestamp_unavailable",)
 
 
 def test_server_clock_prevents_locally_premature_finalization():
@@ -380,3 +383,15 @@ def test_delayed_receipt_publication_expires_at_provider_deadline(
     assert read_live_signal_status(tmp_path, now=NOW).kind == "abstaining"
     context_path.write_text(retained)
     assert read_live_signal_status(tmp_path, now=NOW).kind == "published"
+    reports_path = tmp_path / "day-trader-context-reports.jsonl"
+    reports_before = reports_path.read_bytes()
+    with reports_path.open("ab") as stream:
+        stream.write(b'{"corrupted":"tail"}\n')
+    assert read_live_signal_status(tmp_path, now=NOW).kind == "abstaining"
+    reports_path.write_bytes(reports_before)
+    manifest_path = tmp_path / "day-trader-context-manifest.json"
+    manifest_path.unlink()
+    assert read_live_signal_status(tmp_path, now=NOW).kind == "abstaining"
+    runner.clock = lambda: NOW
+    assert runner.run_once(tmp_path).kind == "failed"
+    assert not manifest_path.exists()

@@ -28,6 +28,7 @@ from src.research.day_trader_decision import (
     CONTEXT_SUMMARY_FILE,
     DecisionContextReport,
     gate_suggestion,
+    load_context_reports,
     retain_context_reports,
 )
 from src.research.live_paper_signals import LiveSignalEvent, LiveSignalState, SignalEventLedger, should_publish
@@ -51,6 +52,7 @@ from src.research.round_two_runtime import (
 )
 from src.research.round_two_walkforward import CandidateResult
 from src.research.trend_advisor import AdvisorRoundReport, TrendAdvisorSuggestion, advise
+from src.strategies.types import canonical_hash
 
 STATE_FILE = "live-paper-signal-state.json"
 CURSOR_FILE = "live-paper-signal-cursor.json"
@@ -107,6 +109,92 @@ def _calendar_at(directory, now):
     return max(visible, key=lambda item: (item.available_at, item.published_at), default=None)
 
 
+def _calendar_exclusions(snapshot, settings, now):
+    if snapshot is None:
+        return ("calendar_missing",)
+    expiry = min(snapshot.valid_until, snapshot.published_at + timedelta(seconds=settings.maximum_calendar_age_seconds))
+    if snapshot.available_at > now:
+        return ("calendar_unavailable",)
+    if now >= expiry:
+        return ("calendar_stale",)
+    if snapshot.coverage_starts_at > now - timedelta(
+        minutes=settings.blackout_after_minutes
+    ) or snapshot.coverage_ends_at < now + timedelta(minutes=settings.blackout_before_minutes):
+        return ("calendar_coverage_missing",)
+    return ()
+
+
+def import_calendar_snapshot(directory: Path, source: Path, *, now: datetime | None = None) -> CalendarSnapshot:
+    """Explicit local import; actual receipt time prevents backdated availability."""
+    directory, now = Path(directory), _utc(now or _now(), "calendar import time")
+    protocol = load_round_protocol(directory)
+    settings = DayTraderContextProtocol(round_protocol=protocol)
+    with Path(source).open("rb") as stream:
+        payload = stream.read(1048577)
+    if len(payload) > 1048576:
+        raise ValueError("calendar input exceeds size limit")
+    supplied = CalendarSnapshot.model_validate_json(payload)
+    if supplied.available_at > now or supplied.published_at > now:
+        raise ValueError("calendar import cannot contain future availability")
+    snapshot = CalendarSnapshot.model_validate({**supplied.model_dump(), "available_at": now})
+    if _calendar_exclusions(snapshot, settings, now):
+        raise ValueError("calendar import requires current covered evidence")
+    path = directory / CALENDAR_FILE
+    with jsonl_writer_lock(path):
+        data = path.read_bytes() if path.exists() else b""
+        if data and not data.endswith(b"\n"):
+            raise ValueError("unterminated calendar history")
+        retained = tuple(CalendarSnapshot.model_validate_json(line) for line in data.splitlines())
+        for old in retained:
+            if old.source != snapshot.source:
+                raise ValueError("calendar source changed")
+            if old.revision == snapshot.revision:
+                if old.model_dump(exclude={"available_at"}) != snapshot.model_dump(exclude={"available_at"}):
+                    raise ValueError("calendar revision conflict")
+                return old
+        if retained and (
+            snapshot.published_at < max(row.published_at for row in retained)
+            or now < max(row.available_at for row in retained)
+        ):
+            raise ValueError("calendar revision or receipt regressed")
+        append_jsonl_fsync(path, [snapshot.model_dump(mode="json")], writer_lock_held=True)
+    receipt = dict(
+        protocol_hash=protocol.identity_hash,
+        received_at=now.isoformat(),
+        input_hash=canonical_hash(supplied.model_dump(mode="json")),
+        calendar_hash=snapshot.identity_hash,
+    )
+    receipt_path = directory / "day-trader-calendar-imports.jsonl"
+    with jsonl_writer_lock(receipt_path):
+        append_jsonl_fsync(receipt_path, [receipt], writer_lock_held=True)
+    return snapshot
+
+
+def _calendar_health(directory, protocol, ledger, now):
+    """Retain outages/recovery; process recreation cannot reset continuous warm-up."""
+    settings = DayTraderContextProtocol(round_protocol=protocol)
+    try:
+        snapshot = _calendar_at(directory, now)
+        reasons = _calendar_exclusions(snapshot, settings, now)
+    except (OSError, ValueError):
+        snapshot, reasons = None, ("calendar_invalid",)
+    events = ledger.events()
+    calendar_events = [
+        event for event in events if event.detail in {"calendar_unavailable", "calendar_reconnect_warmup"}
+    ]
+    last = calendar_events[-1] if calendar_events else None
+    if reasons:
+        if last is None or last.detail != "calendar_unavailable":
+            ledger.append(LiveSignalEvent(kind="gap", at=now, detail="calendar_unavailable"))
+        return reasons
+    if last is not None and last.detail == "calendar_unavailable":
+        last = LiveSignalEvent(kind="reconnect", at=now, detail="calendar_reconnect_warmup")
+        ledger.append(last)
+    if last is not None and now - last.at < timedelta(minutes=protocol.warmup_minutes):
+        return ("calendar_reconnect_warmup",)
+    return ()
+
+
 def _now() -> datetime:
     return datetime.now(UTC)
 
@@ -128,6 +216,10 @@ def _public_json(path: str, params: dict) -> object:
 
 class FinalizedSpotFeed:
     """Poll the latest closed one-minute candle and a contemporaneous public quote."""
+
+    # Binance's documented REST bookTicker supplies prices/sizes, not an event
+    # timestamp. Receipt/server time cannot honestly substitute for provider time.
+    context_exclusions = ("book_provider_timestamp_unavailable",)
 
     def __init__(self, *, fetch_json: Callable = _public_json, clock: Callable = _now):
         self.fetch_json, self.clock = fetch_json, clock
@@ -168,7 +260,7 @@ class FinalizedSpotFeed:
             if not isinstance(quote, dict) or quote.get("symbol") != symbol:
                 raise ValueError("quote symbol mismatch")
             rows.append(
-                RoundObservation(
+                ContextObservation(
                     provider="binance",
                     feed="spot",
                     symbol=symbol,
@@ -183,6 +275,11 @@ class FinalizedSpotFeed:
                     volume=candle[5],
                     bid=quote["bidPrice"],
                     ask=quote["askPrice"],
+                    bid_size=quote.get("bidQty"),
+                    ask_size=quote.get("askQty"),
+                    quote_received_at=received,
+                    quote_available_at=received,
+                    quote_source_key=f"binance:spot:bookTicker:{symbol}:{received.isoformat()}",
                 )
             )
         return tuple(rows)
@@ -209,6 +306,18 @@ def _retained_state(directory: Path, protocol_hash: str) -> LiveSignalState | No
     return state
 
 
+def _validate_context_history(directory, protocol):
+    if any(
+        (directory / name).exists()
+        for name in (CONTEXT_REPORTS_FILE, CONTEXT_SUMMARY_FILE, "day-trader-context-manifest.json")
+    ):
+        settings = DayTraderContextProtocol(round_protocol=protocol)
+        return load_context_reports(
+            directory, protocol_hash=protocol.identity_hash, context_protocol_hash=settings.identity_hash
+        )
+    return ()
+
+
 def read_live_signal_status(directory: Path, *, now: datetime | None = None) -> LiveSignalState:
     """Read-only freshness projection; reading never makes old evidence current."""
     directory, now = Path(directory), _utc(now or _now(), "status timestamp")
@@ -219,6 +328,16 @@ def read_live_signal_status(directory: Path, *, now: datetime | None = None) -> 
     if now < state.updated_at:
         return LiveSignalState(
             kind="failed", protocol_hash=protocol.identity_hash, updated_at=now, reasons=("clock_regression",)
+        )
+    try:
+        retained_context = _validate_context_history(directory, protocol)
+    except (OSError, ValueError):
+        return LiveSignalState(
+            kind="abstaining",
+            protocol_hash=protocol.identity_hash,
+            updated_at=state.updated_at,
+            evaluated_at=state.evaluated_at,
+            reasons=("context_evidence_unavailable",),
         )
     if state.kind not in {"stopped", "failed"} and (
         now - state.updated_at >= timedelta(seconds=min(15, protocol.maximum_observation_age_seconds))
@@ -243,10 +362,7 @@ def read_live_signal_status(directory: Path, *, now: datetime | None = None) -> 
             matching = next(item for item in decisions if item.suggestion == state.suggestion)
             if matching.context is None or matching.context.context_protocol_hash != settings.identity_hash:
                 raise ValueError("context settings mismatch")
-            retained = (directory / CONTEXT_REPORTS_FILE).read_bytes()
-            if not retained.endswith(b"\n") or not any(
-                DecisionContextReport.model_validate_json(line) == matching for line in retained.splitlines()
-            ):
+            if matching not in retained_context:
                 raise ValueError("context report not retained")
             if gate_suggestion(matching.advisor, matching.context, now).suggestion.posture != "long_research":
                 raise ValueError("context no longer eligible")
@@ -302,6 +418,10 @@ class LivePaperSignalRunner:
                 raise ValueError("stop control protocol mismatch")
             ledger.append(LiveSignalEvent.stopped(now=now, reason="user_stopped"))
             return save("stopped", ("user_stopped",))
+        try:
+            _validate_context_history(directory, protocol)
+        except (OSError, ValueError):
+            return save("failed", ("context_evidence_unavailable",))
         if previous is None or previous.kind == "stopped":
             ledger.append(LiveSignalEvent.started(now=now))
         try:
@@ -375,6 +495,9 @@ class LivePaperSignalRunner:
         reasons = set(quality.reasons_for(now))
         health = _provider_health(protocol, observations, quality, now)
         reasons.update(health.exclusions)
+        reasons.update(getattr(self.feed, "context_exclusions", ()))
+        calendar_reasons = _calendar_health(directory, protocol, ledger, now)
+        reasons.update(calendar_reasons)
         retained_events = ledger.events()
         markers = [event.at for event in retained_events if event.kind in {"started", "reconnect", "gap"}]
         if markers and now - max(markers) < timedelta(minutes=protocol.warmup_minutes):
@@ -382,6 +505,8 @@ class LivePaperSignalRunner:
         recovering = any(event.kind == "reconnect" for event in retained_events)
         if interrupted and not novel:
             reasons.add("reconnect_warmup")
+        if "calendar_reconnect_warmup" in reasons:
+            return save("warming", ("calendar_reconnect_warmup", *sorted(reasons - {"calendar_reconnect_warmup"})))
         if recovering and {"reconnect_warmup", "continuity_warmup"} & reasons:
             # Keep collecting evidence, but do not evaluate or publish until a
             # full continuous window has elapsed after recovery (and later gaps).

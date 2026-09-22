@@ -172,6 +172,10 @@ def retain_context_reports(
     )
     manifest = json.dumps(identity, sort_keys=True, separators=(",", ":")) + "\n"
     path = directory / "day-trader-context-manifest.json"
+    if not path.exists() and (directory / CONTEXT_REPORTS_FILE).exists():
+        raise ValueError("retained context has no manifest")
+    if (directory / CONTEXT_SUMMARY_FILE).exists() and not (directory / CONTEXT_REPORTS_FILE).exists():
+        raise ValueError("retained context history missing")
     if not _write_first_manifest(path, manifest.encode()) and path.read_text() != manifest:
         raise ValueError("context policy changed; register a new round")
 
@@ -192,3 +196,26 @@ def retain_context_reports(
             for line in data.splitlines():
                 checked(DecisionContextReport.model_validate_json(line))
         append_jsonl_fsync(path, [checked(report).model_dump(mode="json") for report in reports], writer_lock_held=True)
+
+
+def load_context_reports(
+    directory: Path, *, protocol_hash: str, context_protocol_hash: str
+) -> tuple[DecisionContextReport, ...]:
+    """Validate the entire retained history and its manifest before selection."""
+    identity = dict(
+        protocol_hash=protocol_hash,
+        context_protocol_hash=context_protocol_hash,
+        decision_policy_hash=DECISION_POLICY_HASH,
+    )
+    if json.loads((directory / "day-trader-context-manifest.json").read_text()) != identity:
+        raise ValueError("context manifest mismatch")
+    data = (directory / CONTEXT_REPORTS_FILE).read_bytes()
+    if not data or not data.endswith(b"\n"):
+        raise ValueError("missing or unterminated context report")
+    reports = tuple(DecisionContextReport.model_validate_json(line) for line in data.splitlines())
+    for report in reports:
+        if report.protocol_hash != protocol_hash or (
+            report.context is not None and report.context.context_protocol_hash != context_protocol_hash
+        ):
+            raise ValueError("retained context protocol mismatch")
+    return reports

@@ -15,6 +15,7 @@ from src.research.live_paper_notification_bridge import (  # noqa: E402
 )
 from src.research.live_paper_signal_runtime import (  # noqa: E402
     LivePaperSignalRunner,
+    import_calendar_snapshot,
     read_live_signal_status,
     request_stop,
 )
@@ -31,11 +32,14 @@ def main(arguments=None):
         "notification",
         "notification-outcome",
         "notification-evidence",
+        "import-calendar",
     ):
         command = commands.add_parser(name)
         command.add_argument("--directory", required=True, type=Path)
         if name == "start":
             command.add_argument("--poll-seconds", type=float, default=5)
+        if name == "import-calendar":
+            command.add_argument("--file", required=True, type=Path)
         if name in {"notification", "notification-outcome", "notification-evidence"}:
             command.add_argument("--protocol-hash", required=True)
         if name == "notification":
@@ -45,6 +49,9 @@ def main(arguments=None):
         if name == "notification-outcome":
             command.add_argument("--outcome", choices=("delivered", "failed"), required=True)
     args = parser.parse_args(arguments)
+    if args.command == "import-calendar":
+        print(import_calendar_snapshot(args.directory, args.file).model_dump_json())
+        return 0
     if args.command == "notification-evidence":
         import json
 
