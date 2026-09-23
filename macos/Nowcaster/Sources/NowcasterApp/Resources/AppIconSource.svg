@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="backdrop" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F8FCFF"/>
+      <stop offset="0.50" stop-color="#DDF1FF"/>
+      <stop offset="1" stop-color="#BFE1FF"/>
+    </linearGradient>
+    <linearGradient id="mark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#174B91"/>
+      <stop offset="0.52" stop-color="#126CC5"/>
+      <stop offset="1" stop-color="#0A9ED1"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#28BFE7"/>
+      <stop offset="1" stop-color="#1379CF"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="26" stdDeviation="28" flood-color="#0A4C91" flood-opacity="0.20"/>
+    </filter>
+  </defs>
+  <rect width="1024" height="1024" rx="224" fill="url(#backdrop)"/>
+  <circle cx="820" cy="208" r="218" fill="#FFFFFF" opacity="0.42"/>
+  <circle cx="170" cy="854" r="250" fill="#A9D9FF" opacity="0.35"/>
+  <g filter="url(#shadow)">
+    <path d="M286 748V296C286 263 313 236 346 236H388C421 236 448 263 448 296V530L659 252C679 226 716 221 742 241L776 267C802 287 807 324 787 350L576 628V728C576 761 549 788 516 788H476C443 788 416 761 416 728V494L365 563V748C365 781 338 808 305 808C272 808 245 781 245 748H286Z" fill="url(#mark)"/>
+    <path d="M626 563L750 400C771 373 809 368 836 389C863 410 868 448 847 475L676 700C657 725 621 730 590 712L338 565C308 548 296 509 312 479C328 449 365 438 395 455L626 563Z" fill="url(#accent)"/>
+  </g>
+  <path d="M352 648L465 565L544 620L709 447" fill="none" stroke="#FFFFFF" stroke-linecap="round" stroke-linejoin="round" stroke-width="34" opacity="0.94"/>
+  <circle cx="352" cy="648" r="24" fill="#FFFFFF"/>
+  <circle cx="709" cy="447" r="24" fill="#FFFFFF"/>
+</svg>

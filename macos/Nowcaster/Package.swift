@@ -11,6 +11,10 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "NowcasterApp",
+            exclude: [
+                "Resources/AppIcon.icon",
+                "Resources/AppIconSource.svg",
+            ],
             resources: [
                 .copy("Resources/AppIcon.png"),
                 .copy("Resources/Fixtures"),
