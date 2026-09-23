@@ -97,13 +97,6 @@ struct NowcasterApp: App {
     @State private var settings = AppSettings()
     @State private var model = AppModel()
 
-    init() {
-        guard let iconURL = AppResources.bundle.url(forResource: "AppIcon", withExtension: "png"),
-              let icon = NSImage(contentsOf: iconURL)
-        else { return }
-        NSApplication.shared.applicationIconImage = icon
-    }
-
     private var forcedColorScheme: ColorScheme? {
         if ProcessInfo.processInfo.arguments.contains("--ui-dark") { return .dark }
         if ProcessInfo.processInfo.arguments.contains("--ui-light") { return .light }

@@ -20,4 +20,5 @@ grep -Fq "LSUIElement" "$INFO_PLIST" && {
 }
 grep -Fq "CFBundleIconFile" "$INFO_PLIST"
 grep -Fq "AppIcon" "$INFO_PLIST"
+grep -Fq "ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;" "$XCODE_PROJECT/project.pbxproj"
 grep -Fq "setActivationPolicy(.regular)" "$APP_ENTRYPOINT"

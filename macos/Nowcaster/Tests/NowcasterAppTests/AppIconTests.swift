@@ -32,4 +32,17 @@ final class AppIconTests: XCTestCase {
 
         XCTAssertGreaterThan(backdrop.brightnessComponent, 0.60)
     }
+
+    func testXcodeTargetSelectsTheIconComposerAppIcon() throws {
+        let packageRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let projectURL = packageRoot
+            .appending(path: "Nowcaster.xcodeproj/project.pbxproj")
+
+        let project = try String(contentsOf: projectURL, encoding: .utf8)
+
+        XCTAssertTrue(project.contains("ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;"))
+    }
 }
