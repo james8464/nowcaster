@@ -27,34 +27,11 @@ for resource_bundle in "$BIN_PATH"/*.bundle(N); do
     cp -R "$resource_bundle" "$CONTENTS_PATH/Resources/"
 done
 
-"$PYTHON" "$PROJECT_ROOT/scripts/generate_sbom.py" --root "$PROJECT_ROOT" \
-  --output "$CONTENTS_PATH/Resources/nowcaster-sbom.cdx.json"
-
+"$PROJECT_ROOT/scripts/embed_macos_runtime.sh" "$APP_PATH"
 if [[ "$IDENTITY" == "-" ]]; then
     SIGN_OPTIONS=(--timestamp=none)
 else
     SIGN_OPTIONS=(--timestamp)
 fi
-
-if [[ "${NOWCASTER_SKIP_ENGINE_BUNDLE:-0}" != "1" ]]; then
-    ENGINE_ROOT=$("$PROJECT_ROOT/scripts/build_engine_bundle.sh")
-    install -m 755 "$ENGINE_ROOT/nowcaster-engine" "$CONTENTS_PATH/Helpers/nowcaster-engine"
-    codesign --force --options runtime "${SIGN_OPTIONS[@]}" \
-      --entitlements "$PACKAGE_ROOT/Resources/Engine.entitlements" \
-      --sign "$IDENTITY" "$CONTENTS_PATH/Helpers/nowcaster-engine"
-    "$PYTHON" "$PROJECT_ROOT/scripts/engine_manifest.py" --root "$PROJECT_ROOT" \
-      --executable "$CONTENTS_PATH/Helpers/nowcaster-engine" \
-      --output "$CONTENTS_PATH/Resources/engine-manifest.json"
-    PAPER_ROOT=$(zsh "$PROJECT_ROOT/scripts/build_paper_signals_bundle.sh")
-    # A nested app separates signed code from Python resources using Apple's
-    # bundle layout, without extracting a runtime on every freshness check.
-    cp -R "$PAPER_ROOT" "$CONTENTS_PATH/Helpers/nowcaster-paper-signals.app"
-    /usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" \
-      "$CONTENTS_PATH/Helpers/nowcaster-paper-signals.app/Contents/Info.plist"
-    codesign --force --options runtime "${SIGN_OPTIONS[@]}" \
-      --entitlements "$PACKAGE_ROOT/Resources/Engine.entitlements" \
-      --sign "$IDENTITY" "$CONTENTS_PATH/Helpers/nowcaster-paper-signals.app"
-fi
-
 codesign --force --options runtime "${SIGN_OPTIONS[@]}" --sign "$IDENTITY" "$APP_PATH"
 print "$APP_PATH"

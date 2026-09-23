@@ -37,8 +37,16 @@ After intentionally refreshing the checked-in first-launch evidence, run `make d
 
 ## Packaging
 
+For normal macOS development, open
+`macos/Nowcaster/Nowcaster.xcodeproj` in Xcode and run the **Nowcaster**
+scheme. It is a standard foreground application target: it appears in the
+Dock, app switcher, and menu bar, and embeds the same signed local research
+helpers as the command-line packaging route. The nested paper-signal helper is
+deliberately hidden from the Dock because it is not a user-facing app.
+
 ```bash
 make macos-test
+scripts/verify_xcode_app_project.sh
 make macos-app
 codesign --verify --deep --strict build/Nowcaster.app
 make release-archive

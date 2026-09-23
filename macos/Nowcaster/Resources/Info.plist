@@ -10,6 +10,8 @@
     <string>com.james8464.nowcaster</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleName</key>
     <string>Nowcaster</string>
     <key>CFBundlePackageType</key>

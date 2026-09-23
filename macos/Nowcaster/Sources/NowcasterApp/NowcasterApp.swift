@@ -17,6 +17,8 @@ final class NowcasterApplicationDelegate: NSObject, NSApplicationDelegate, UNUse
     private var terminationPending = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApplication.shared.setActivationPolicy(.regular)
+        NSApplication.shared.activate(ignoringOtherApps: true)
         UNUserNotificationCenter.current().delegate = self
     }
 
@@ -96,7 +98,7 @@ struct NowcasterApp: App {
     @State private var model = AppModel()
 
     init() {
-        guard let iconURL = Bundle.module.url(forResource: "AppIcon", withExtension: "png"),
+        guard let iconURL = AppResources.bundle.url(forResource: "AppIcon", withExtension: "png"),
               let icon = NSImage(contentsOf: iconURL)
         else { return }
         NSApplication.shared.applicationIconImage = icon

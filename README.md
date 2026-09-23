@@ -233,6 +233,13 @@ open build/Nowcaster.app
 
 The demo is deterministic and needs no API keys. `make demo` builds the local DuckDB database, runs the research stages, and exports the snapshot used by the Mac app.
 
+### Open it in Xcode
+
+Nowcaster is also a standard macOS Xcode project. Open
+`macos/Nowcaster/Nowcaster.xcodeproj`, select the **Nowcaster** scheme, and
+press Run. Xcode builds a signed foreground `Nowcaster.app` with a Dock icon
+and the same bundled paper-research helpers as the command-line package build.
+
 ## Useful developer commands
 
 ```bash
@@ -248,6 +255,7 @@ make sync-macos-snapshot # Merge authoritative CI research into the app's first-
 make verify-swift-fixture-parity # Read-only check that the committed app fixture matches CI research
 make macos-test          # Run Swift model and app tests
 make macos-app           # Assemble build/Nowcaster.app
+scripts/verify_xcode_app_project.sh # Verify the normal Xcode app target
 make verify-paper-trading # Broker adapter, idempotency, stream, recovery, and CLI tests
 make verify-trading-readiness # Risk, emergency, forward evidence, readiness, live-lock, and arming tests
 make verify-live-monitor   # Live protocol, causal alerts, native models, and deterministic replay

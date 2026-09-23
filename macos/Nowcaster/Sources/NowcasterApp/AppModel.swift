@@ -197,7 +197,7 @@ final class AppModel {
 
     func loadBundledSnapshot() async {
         guard snapshot == nil else { return }
-        guard let url = Bundle.module.url(
+        guard let url = AppResources.url(
             forResource: "nowcaster-snapshot",
             withExtension: "json",
             subdirectory: "Fixtures"
