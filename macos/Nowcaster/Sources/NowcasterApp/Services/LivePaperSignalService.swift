@@ -40,14 +40,15 @@ struct LivePaperSignalConfiguration: Sendable {
         return environment
     }
 
-    func validate() throws {
+    func validate(requireRegistered: Bool = true) throws {
         guard protocolHash.count == 64, protocolHash.allSatisfy({ "0123456789abcdef".contains($0) }),
               FileManager.default.isExecutableFile(atPath: executable.path),
               script.map({ $0.lastPathComponent == "run_live_paper_signals.py" && FileManager.default.fileExists(atPath: $0.path) }) ??
                 (executable.lastPathComponent == "nowcaster-paper-signals"),
-              !directory.resolvingSymlinksInPath().path.contains("/ProspectiveStudies/"),
+              !directory.resolvingSymlinksInPath().pathComponents.contains("ProspectiveStudies"),
+              !directory.resolvingSymlinksInPath().pathComponents.contains("live-paper-study"),
               !projectRoot.resolvingSymlinksInPath().path.contains("/.worktrees/live-paper-study"),
-              FileManager.default.fileExists(atPath: directory.appending(path: "protocol.json").path) else {
+              !requireRegistered || FileManager.default.fileExists(atPath: directory.appending(path: "protocol.json").path) else {
             throw LivePaperServiceError.invalidConfiguration
         }
     }
@@ -66,6 +67,10 @@ enum LivePaperServiceError: LocalizedError {
 
 @MainActor @Observable
 final class LivePaperSignalService {
+    static var defaultDirectory: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appending(path: "Nowcaster/PaperResearch/paper-desk-v1", directoryHint: .isDirectory)
+    }
     private(set) var isRunning = false
     private(set) var isBusy = false
     private(set) var notificationsEnabled = false
@@ -167,6 +172,31 @@ final class LivePaperSignalService {
     func startSelected() async {
         guard let configuration else { return }
         await start(configuration: configuration)
+    }
+
+    func createOrResumeDesk(sourceRoot: URL, sourcePython: URL) async {
+        guard !isRunning, !isBusy else { return }
+        isBusy = true
+        let directory = Self.defaultDirectory
+        do {
+            let config = try LivePaperSignalConfiguration.application(directory: directory,
+                protocolHash: String(repeating: "0", count: 64), sourceRoot: sourceRoot, sourcePython: sourcePython)
+            try config.validate(requireRegistered: false)
+            _ = try await Self.command(config, "setup")
+            isBusy = false
+            await open(directory: directory, sourceRoot: sourceRoot, sourcePython: sourcePython)
+        } catch { isBusy = false; message = error.localizedDescription }
+    }
+
+    func importCalendar(_ file: URL) async {
+        guard let configuration, !isBusy else { return }
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            try configuration.validate()
+            _ = try await Self.command(configuration, "import-calendar", extra: ["--file", file.path])
+            message = "Calendar evidence retained. Coverage, age and blackout checks still apply."
+        } catch { message = "Calendar not imported. Use a current, covered calendar JSON in the documented format; old or conflicting evidence is rejected." }
     }
 
     func start(configuration: LivePaperSignalConfiguration) async {

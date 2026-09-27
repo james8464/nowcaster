@@ -27,6 +27,7 @@ struct LivePaperSignalsView: View {
     @Bindable var model: AppModel
     let settings: AppSettings
     @State private var choosingDirectory = false
+    @State private var choosingCalendar = false
     @State private var showingHistory = false
     @State private var selectionMessage: String?
 
@@ -69,7 +70,7 @@ struct LivePaperSignalsView: View {
                     HStack { controls }
                     VStack(alignment: .leading) { controls }
                 }
-                Text(service.directory?.lastPathComponent ?? "Choose a registered research folder to begin.")
+                Text(service.directory?.lastPathComponent ?? "Create a paper desk, or open an existing registered research folder.")
                     .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                 TimelineView(.periodic(from: .now, by: 1)) { context in
                     status(now: context.date)
@@ -123,9 +124,24 @@ struct LivePaperSignalsView: View {
         .onChange(of: model.paperResearchEvidenceRequested, initial: true) { _, requested in
             if requested { showingHistory = true; model.paperResearchEvidenceRequested = false }
         }
+        .fileImporter(isPresented: $choosingCalendar, allowedContentTypes: [.json]) { result in
+            switch result {
+            case let .success(file):
+                selectionMessage = nil
+                Task { await service.importCalendar(file) }
+            case let .failure(error): selectionMessage = error.localizedDescription
+            }
+        }
     }
 
     @ViewBuilder private var controls: some View {
+        if service.directory == nil {
+            Button("Set Up Paper Desk", systemImage: "plus.circle") {
+                selectionMessage = nil
+                Task { await service.createOrResumeDesk(sourceRoot: settings.configuration.projectRoot,
+                                                       sourcePython: settings.configuration.pythonExecutable) }
+            }.disabled(service.isRunning || service.isBusy).accessibilityIdentifier("paperSignals.setup")
+        }
         Button("Choose Research Folder…", systemImage: "folder") { choosingDirectory = true }
             .disabled(service.isRunning || service.isBusy)
         if service.isRunning {
@@ -137,6 +153,8 @@ struct LivePaperSignalsView: View {
                 .disabled(service.directory == nil || service.isBusy).accessibilityIdentifier("paperSignals.start")
         }
         if let directory = service.directory {
+            Button("Import Calendar…", systemImage: "calendar.badge.plus") { choosingCalendar = true }
+                .disabled(service.isBusy)
             Button("Show Evidence", systemImage: "doc.text.magnifyingglass") {
                 NSWorkspace.shared.open(directory)
             }

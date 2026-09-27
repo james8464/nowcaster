@@ -1,6 +1,7 @@
 import Foundation
 
 enum AppDestination: String, CaseIterable, Identifiable, Sendable {
+    case tradeDesk
     case today
     case markets
     case earnings
@@ -17,6 +18,7 @@ enum AppDestination: String, CaseIterable, Identifiable, Sendable {
 
     var title: String {
         switch self {
+        case .tradeDesk: "Trade Desk"
         case .today: "Today"
         case .markets: "Markets"
         case .earnings: "Earnings"
@@ -33,6 +35,7 @@ enum AppDestination: String, CaseIterable, Identifiable, Sendable {
 
     var symbolName: String {
         switch self {
+        case .tradeDesk: "chart.line.uptrend.xyaxis.circle"
         case .today: "sparkles"
         case .markets: "chart.line.uptrend.xyaxis"
         case .earnings: "calendar.badge.clock"

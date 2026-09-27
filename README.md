@@ -240,6 +240,61 @@ Nowcaster is also a standard macOS Xcode project. Open
 press Run. Xcode builds a signed foreground `Nowcaster.app` with a Dock icon
 and the same bundled paper-research helpers as the command-line package build.
 
+Do **not** open `Package.swift` and Run its `NowcasterApp` executable as the
+installed app. That package is useful for native tests, but its bare executable
+does not have the normal application's bundle identity. During the September 27
+hands-on check, Xcode was running that package and logging “missing main bundle
+identifier”. Use the `.xcodeproj` and the `Nowcaster` app scheme instead.
+The `com.apple.linkd.autoShortcut` 4097 messages concern Apple's Shortcuts/Intents
+service connection; do not disable system services or hide all logging to suppress
+them. Check the actual launch target and whether the app's own workflow works.
+
+### Use the Trade Desk
+
+The opening **Trade Desk** is separate from the historical earnings/demo pages.
+Choose **Set Up Paper Desk**, then **Start** to collect public Bitcoin/USDT and
+Ether/USDT spot observations. No account or order permissions are requested.
+Setup creates, or reopens without resetting, this local folder:
+`~/Library/Application Support/Nowcaster/PaperResearch/paper-desk-v1`.
+Relaunching reopens its evidence but does not automatically start collection or
+enable notifications. Quitting stops the app-owned collector.
+
+New registrations contain six hypotheses: EMA/ADX trend, previous-20-bar Donchian
+breakout and session-VWAP continuation, each for BTC and ETH. They have separate
+1-minute research identities (`desk_*_1m`, version `1.0.0`); evidence from other
+intervals does not qualify them. EMA emphasizes recent prices and still lags
+turning points ([Fidelity indicator guide](https://www.fidelity.com/learning-center/trading-investing/technical-analysis/technical-indicator-guide/ema)).
+VWAP adds volume-weighted price context, not a guarantee of a successful entry
+([Schwab explanation](https://www.schwab.com/learn/story/how-to-use-volume-weighted-indicators-trading)).
+
+**This is not an immediately qualified signal subscription.** A fresh desk's
+registered schedule is 90 training days, 30 validation days and 30 untouched
+test days, with the existing cost, coverage and minimum-trade gates. The live
+collector does not automatically execute the offline evaluation. After sufficient
+retained observations exist, the developer evaluation command is:
+
+```bash
+python scripts/run_research_round_two.py evaluate --directory '/absolute/path/to/paper-desk-v1'
+```
+
+All candidate results, including failures, remain recorded. Existing registered
+folders retain their original rules; setup never converts the frozen prospective
+study. Neither passing software tests nor seeing a trend proves profitability.
+This desk supports long/stand-aside spot research only. Stocks, ETFs, oil, futures
+and short selling are not connected to it; the separate legacy Live Monitor has
+different provider requirements.
+
+**Calendar evidence:** use **Import Calendar…** with a source-attributed JSON
+snapshot. Required fields are `source`, `revision`, `published_at`, `available_at`,
+`valid_until`, `coverage_starts_at`, `coverage_ends_at`, and `events`. Each event
+has `event_id`, `scheduled_at`, `available_at`, `symbols` (BTCUSDT/ETHUSDT), and
+`impact` (`high`, `medium`, or `low`). Timestamps must be UTC. Publication cannot
+follow availability; coverage must include the current blackout window and the
+snapshot must be current. Imports are retained, never substituted retrospectively.
+Do not invent an empty calendar to remove the block: an empty `events` array
+asserts verified no-event coverage, not “unknown”. There is no automatic calendar
+provider connected yet. Missing calendar evidence means stand aside.
+
 ## Useful developer commands
 
 ```bash

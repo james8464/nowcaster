@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import plistlib
 import subprocess
 import sys
 from pathlib import Path
@@ -78,11 +79,7 @@ import src.live_monitor.command
     assert result.returncode == 0, result.stderr
 
 
-def test_frozen_helper_declares_only_the_required_pyinstaller_library_entitlement() -> None:
+def test_frozen_helper_entitlements_allow_library_loading_but_not_debugging() -> None:
     root = Path(__file__).resolve().parents[2]
-    entitlements = (root / "macos/Nowcaster/Resources/Engine.entitlements").read_text(encoding="utf-8")
-    build = (root / "scripts/build_macos_app.sh").read_text(encoding="utf-8")
-
-    assert "com.apple.security.cs.disable-library-validation" in entitlements
-    assert "com.apple.security.get-task-allow" not in entitlements
-    assert '--entitlements "$PACKAGE_ROOT/Resources/Engine.entitlements"' in build
+    entitlements = plistlib.loads((root / "macos/Nowcaster/Resources/Engine.entitlements").read_bytes())
+    assert entitlements == {"com.apple.security.cs.disable-library-validation": True}

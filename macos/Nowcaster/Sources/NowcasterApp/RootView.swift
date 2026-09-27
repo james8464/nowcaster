@@ -26,7 +26,8 @@ struct RootSnapshotStatusPresentation: Equatable, Sendable {
 struct RootView: View {
     @Bindable var model: AppModel
     let settings: AppSettings
-    @SceneStorage("Nowcaster.destination") private var storedDestination = AppDestination.today.rawValue
+    @SceneStorage("Nowcaster.destination") private var storedDestination = AppDestination.tradeDesk.rawValue
+    @AppStorage("Nowcaster.tradeDeskIntroduced") private var tradeDeskIntroduced = false
     @FocusState private var searchIsFocused: Bool
 
     var body: some View {
@@ -49,10 +50,11 @@ struct RootView: View {
         .task {
             let screenshotMode = ProcessInfo.processInfo.arguments.contains { $0.hasPrefix("--destination=") }
             if !screenshotMode, let destination = AppDestination(rawValue: storedDestination) {
-                model.destination = destination
+                model.destination = !tradeDeskIntroduced && destination == .today ? .tradeDesk : destination
+                tradeDeskIntroduced = true
             }
             await model.loadBundledSnapshot()
-            if !screenshotMode, settings.resumeMonitoring {
+            if !screenshotMode, model.destination != .tradeDesk, settings.resumeMonitoring {
                 model.liveMonitor.configureNotifications(
                     quietEntries: settings.silenceEntryNotifications,
                     enabledCategories: enabledNotificationCategories
@@ -110,7 +112,7 @@ struct RootView: View {
     }
 
     @ViewBuilder private var snapshotRefreshBanner: some View {
-        if let presentation = RootSnapshotStatusPresentation(state: model.loadState), model.snapshot != nil {
+        if model.destination != .tradeDesk, let presentation = RootSnapshotStatusPresentation(state: model.loadState), model.snapshot != nil {
             HStack(spacing: 10) {
                 Label {
                     VStack(alignment: .leading, spacing: 2) {
@@ -162,6 +164,7 @@ struct RootView: View {
     private var sidebar: some View {
         List(selection: $model.destination) {
             Section {
+                destinationRow(.tradeDesk)
                 destinationRow(.today)
                 destinationRow(.markets)
                 destinationRow(.earnings)
@@ -201,10 +204,14 @@ struct RootView: View {
     }
 
     @ViewBuilder private var destinationContent: some View {
-        if model.destination == .strategyLab, model.snapshot == nil {
+        if model.destination == .tradeDesk {
+            TradeDeskView(model: model, settings: settings)
+        } else if model.destination == .strategyLab, model.snapshot == nil {
             ScrollView { LivePaperSignalsView(model: model, settings: settings).padding() }
         } else if let snapshot = model.snapshot {
             switch model.destination {
+            case .tradeDesk:
+                TradeDeskView(model: model, settings: settings)
             case .today:
                 TodayView(snapshot: snapshot, selectSignal: model.selectSignal)
             case .markets:
@@ -293,6 +300,10 @@ struct RootView: View {
 
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
+            if model.destination == .tradeDesk {
+                Label("Paper research · no orders", systemImage: "shield.lefthalf.filled")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else {
             if model.isRunningJob {
                 ProgressView().controlSize(.small).accessibilityLabel("Research job running")
             }
@@ -316,6 +327,7 @@ struct RootView: View {
             }
             .disabled(model.isRunningJob)
             .accessibilityIdentifier("toolbar.refresh")
+            }
         }
     }
 }

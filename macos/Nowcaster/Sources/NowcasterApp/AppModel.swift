@@ -37,7 +37,7 @@ enum EngineJobOutcome: Equatable, Sendable {
 final class AppModel {
     let livePaperSignals: LivePaperSignalService
     let liveMonitor = LiveMonitorController()
-    var destination: AppDestination = .today
+    var destination: AppDestination = .tradeDesk
     var paperResearchEvidenceRequested = false
 
     func openPaperResearchNotification(destination: String?, materialKey: String?) {
