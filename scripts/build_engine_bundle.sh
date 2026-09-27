@@ -3,6 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR=${0:A:h}
 PROJECT_ROOT=${SCRIPT_DIR:h}
+# --clean must not invalidate another project's simultaneous build.
+export PYINSTALLER_CONFIG_DIR="$PROJECT_ROOT/build/pyinstaller-cache"
 PYTHON=${NOWCASTER_BUILD_PYTHON:-$PROJECT_ROOT/.venv/bin/python}
 BUILD_ROOT=$PROJECT_ROOT/build/engine
 DIST_ROOT=$BUILD_ROOT/dist

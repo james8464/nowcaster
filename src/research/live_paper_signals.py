@@ -138,8 +138,10 @@ class SignalEventLedger:
     _LOCK = "signal-events.lock"
 
     def __init__(self, directory: Path, *, protocol_hash: str):
-        if not isinstance(protocol_hash, str) or len(protocol_hash) != 64 or any(
-            character not in "0123456789abcdef" for character in protocol_hash
+        if (
+            not isinstance(protocol_hash, str)
+            or len(protocol_hash) != 64
+            or any(character not in "0123456789abcdef" for character in protocol_hash)
         ):
             raise ValueError("protocol hash must be a lowercase SHA-256 digest")
         self.directory = Path(directory)

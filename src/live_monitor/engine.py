@@ -812,9 +812,7 @@ class LiveMonitorEngine:
             and LiveMonitorEngine._risk_inputs(bars, evidence.direction) is not None
         )
 
-    def _experimental_opportunity(
-        self, plan: TradePlan, decision: MonitorDecision, now: datetime
-    ) -> MonitorWireEvent:
+    def _experimental_opportunity(self, plan: TradePlan, decision: MonitorDecision, now: datetime) -> MonitorWireEvent:
         return self.emit(
             "experimental_opportunity",
             {

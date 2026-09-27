@@ -3,6 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR=${0:A:h}
 PROJECT_ROOT=${SCRIPT_DIR:h}
+# Keep the binary cache local; PyInstaller --clean otherwise uses a shared cache.
+export PYINSTALLER_CONFIG_DIR="$PROJECT_ROOT/build/pyinstaller-cache"
 PYTHON=${NOWCASTER_BUILD_PYTHON:-$PROJECT_ROOT/.venv/bin/python}
 IDENTITY=${NOWCASTER_CODESIGN_IDENTITY:--}
 BUILD_ROOT="$PROJECT_ROOT/build/paper-signals"

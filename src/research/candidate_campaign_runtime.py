@@ -14,9 +14,7 @@ from src.research.candidate_campaign import CampaignReceipt, CandidateCampaignDe
 from src.strategies.types import canonical_hash
 
 
-def _receipt(
-    definition: CandidateCampaignDefinition, *, status: str, reason: str
-) -> CampaignReceipt:
+def _receipt(definition: CandidateCampaignDefinition, *, status: str, reason: str) -> CampaignReceipt:
     payload = {
         "campaign_id": definition.campaign_id,
         "campaign_hash": definition.identity_hash,

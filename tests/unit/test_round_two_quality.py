@@ -16,13 +16,16 @@ from src.research.round_two_registry import register_round
 UTC_T = datetime(2026, 1, 1, tzinfo=UTC)
 
 
-@pytest.mark.parametrize("changes", [
-    {"high": "99", "low": "101"},
-    {"high": "110", "low": "90", "open": "111"},
-    {"high": "110", "low": "90", "open": "89"},
-    {"high": "99", "low": "90"},
-    {"high": "110", "low": "101"},
-])
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"high": "99", "low": "101"},
+        {"high": "110", "low": "90", "open": "111"},
+        {"high": "110", "low": "90", "open": "89"},
+        {"high": "99", "low": "90"},
+        {"high": "110", "low": "101"},
+    ],
+)
 def test_impossible_ohlc_is_rejected_at_construction_and_ingestion(tmp_path, changes):
     protocol, directory = registered_round(tmp_path)
     valid = observation()
@@ -37,12 +40,16 @@ def test_impossible_ohlc_is_rejected_at_construction_and_ingestion(tmp_path, cha
 
 
 def registered_round(tmp_path):
-    protocol = ResearchRoundProtocol.default(round_id="round-002", starts_at=UTC_T).model_copy(
-        update={
-            "symbols": ("BTCUSDT",),
-            "candidates": (RoundCandidate(symbol="BTCUSDT", strategy_id="ema"),),
-        }
-    ).validated()
+    protocol = (
+        ResearchRoundProtocol.default(round_id="round-002", starts_at=UTC_T)
+        .model_copy(
+            update={
+                "symbols": ("BTCUSDT",),
+                "candidates": (RoundCandidate(symbol="BTCUSDT", strategy_id="ema"),),
+            }
+        )
+        .validated()
+    )
     return protocol, register_round(protocol, tmp_path / "round-002")
 
 

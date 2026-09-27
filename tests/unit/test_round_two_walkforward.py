@@ -32,13 +32,16 @@ def test_range_partly_before_entry_cannot_trigger_a_barrier(extreme):
     rows = list(bars((100,) * 5))
     # Entry at 00:01:02. The next minute range started at 00:01,
     # so its extreme could predate the entry. Following quotes stay at 100.
-    rows[1] = rows[1].model_copy(update={
-        "received_at": rows[1].provider_at + timedelta(seconds=2),
-        "available_at": rows[1].provider_at + timedelta(seconds=2),
-    })
+    rows[1] = rows[1].model_copy(
+        update={
+            "received_at": rows[1].provider_at + timedelta(seconds=2),
+            "available_at": rows[1].provider_at + timedelta(seconds=2),
+        }
+    )
     rows[2] = rows[2].model_copy(update={"high": Decimal("100"), "low": Decimal("100"), **extreme})
-    metrics = _simulate(rows, [1] * len(rows), protocol(), multiplier=1,
-                        candidate=RoundCandidate(symbol="BTCUSDT", strategy_id="ema"))
+    metrics = _simulate(
+        rows, [1] * len(rows), protocol(), multiplier=1, candidate=RoundCandidate(symbol="BTCUSDT", strategy_id="ema")
+    )
     assert metrics.trade_count == 0
     assert metrics.open_quantity > 0
 

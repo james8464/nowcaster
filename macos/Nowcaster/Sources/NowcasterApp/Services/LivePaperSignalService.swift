@@ -370,13 +370,22 @@ final class LivePaperSignalService {
         return Array(try LivePaperSignalEvent.decodeHistory(data, now: Date()).suffix(200))
     }
 
-    private static func readProviderHealth(_ directory: URL, protocolHash: String) throws -> ResearchRoundProviderHealth? {
-        let url = directory.appending(path: "research-round-2-summary.json")
+    nonisolated static func readProviderHealth(_ directory: URL, protocolHash: String) throws -> ResearchRoundProviderHealth? {
+        let liveURL = directory.appending(path: "live-paper-provider-health.json")
+        let live = FileManager.default.fileExists(atPath: liveURL.path)
+        let url = live ? liveURL : directory.appending(path: "research-round-2-summary.json")
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
         let data = try handle.read(upToCount: 1_048_577) ?? Data()
         guard data.count <= 1_048_576 else { throw LivePaperServiceError.outputTooLarge }
+        if live {
+            guard case let .object(root) = try JSONDecoder.nowcaster.decode(JSONValue.self, from: data),
+                  Set(root.keys) == ["protocolHash", "providerHealth"],
+                  case let .string(identity) = root["protocolHash"], identity == protocolHash,
+                  let health = root["providerHealth"] else { throw LivePaperServiceError.invalidConfiguration }
+            return try ResearchRoundProviderHealth(value: health)
+        }
         let report = try JSONDecoder.nowcaster.decode(ResearchRoundSnapshot.self, from: data)
         guard report.protocolHash == protocolHash else { throw LivePaperServiceError.invalidConfiguration }
         return report.providerHealth

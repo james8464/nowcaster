@@ -3,6 +3,37 @@ import Testing
 @testable import NowcasterApp
 
 @Suite struct LivePaperSignalsPresentationTests {
+    @Test func providerHealthDoesNotRequireStrategyEvaluation() throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let identity = String(repeating: "a", count: 64)
+        let payload: [String: Any] = ["protocolHash": identity, "providerHealth": [
+            "provider": "binance", "feed": "spot", "revision": "binance-spot-public-v1",
+            "reportedAt": "2026-09-21T12:00:02Z", "lastSuccessfulObservationAt": "2026-09-21T12:00:00Z",
+            "maximumAgeSeconds": 15, "state": "degraded", "exclusions": ["continuity_warmup"]]]
+        let file = directory.appending(path: "live-paper-provider-health.json")
+        try JSONSerialization.data(withJSONObject: payload).write(to: file)
+        let health = try #require(try LivePaperSignalService.readProviderHealth(directory, protocolHash: identity))
+        #expect(health.lastSuccessfulObservationAt != nil)
+        #expect(health.state == "degraded")
+        #expect(health.title(now: health.reportedAt.addingTimeInterval(16)) == "Stale")
+        #expect(throws: LivePaperServiceError.self) {
+            try LivePaperSignalService.readProviderHealth(directory, protocolHash: String(repeating: "b", count: 64))
+        }
+        try Data("{}".utf8).write(to: file)
+        #expect(throws: LivePaperServiceError.self) { try LivePaperSignalService.readProviderHealth(directory, protocolHash: identity) }
+    }
+
+    @Test func optInRetainedSyntheticReplayDecodesWithoutModification() throws {
+        guard let path = ProcessInfo.processInfo.environment["NOWCASTER_UI_REPLAY_DIRECTORY"] else { return }
+        let directory = URL(fileURLWithPath: path)
+        #expect(FileManager.default.fileExists(atPath: directory.appending(path: "UI-TEST-ONLY.md").path))
+        let report = try JSONDecoder.nowcaster.decode(ResearchRoundSnapshot.self,
+            from: Data(contentsOf: directory.appending(path: "research-round-2-summary.json")))
+        _ = try LivePaperSignalEvent.decodeHistory(Data(contentsOf: directory.appending(path: "signal-events.jsonl")), now: Date())
+        _ = try LivePaperSignalState.decode(Data(contentsOf: directory.appending(path: "live-paper-signal-state.json")), protocolHash: report.protocolHash, now: Date())
+    }
     @Test func disconnectedAndExpiredStateNeverLooksLive() {
         let now = Date()
         let state = LivePaperSignalState(kind: "warming", protocolHash: String(repeating: "a", count: 64),

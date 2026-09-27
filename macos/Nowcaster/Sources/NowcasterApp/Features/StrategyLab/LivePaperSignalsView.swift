@@ -26,8 +26,9 @@ struct LivePaperSignalsPresentation {
 struct LivePaperSignalsView: View {
     @Bindable var model: AppModel
     let settings: AppSettings
-    @State private var choosingDirectory = false
-    @State private var choosingCalendar = false
+    private enum ImportKind { case directory, calendar }
+    @State private var importKind: ImportKind = .directory
+    @State private var choosingFile = false
     @State private var showingHistory = false
     @State private var selectionMessage: String?
 
@@ -112,25 +113,25 @@ struct LivePaperSignalsView: View {
             }.padding(4)
         }
         .accessibilityIdentifier("strategyLab.livePaperSignals")
-        .fileImporter(isPresented: $choosingDirectory, allowedContentTypes: [.folder]) { result in
+        // A single presenter avoids two fileImporter modifiers competing for
+        // the same macOS view's presentation slot (the folder picker was lost).
+        .fileImporter(isPresented: $choosingFile,
+                      allowedContentTypes: importKind == .directory ? [.folder] : [.json]) { result in
             switch result {
-            case let .success(directory):
+            case let .success(file):
                 selectionMessage = nil
-                Task { await service.open(directory: directory, sourceRoot: settings.configuration.projectRoot,
-                                          sourcePython: settings.configuration.pythonExecutable) }
+                switch importKind {
+                case .directory:
+                    Task { await service.open(directory: file, sourceRoot: settings.configuration.projectRoot,
+                                              sourcePython: settings.configuration.pythonExecutable) }
+                case .calendar:
+                    Task { await service.importCalendar(file) }
+                }
             case let .failure(error): selectionMessage = error.localizedDescription
             }
         }
         .onChange(of: model.paperResearchEvidenceRequested, initial: true) { _, requested in
             if requested { showingHistory = true; model.paperResearchEvidenceRequested = false }
-        }
-        .fileImporter(isPresented: $choosingCalendar, allowedContentTypes: [.json]) { result in
-            switch result {
-            case let .success(file):
-                selectionMessage = nil
-                Task { await service.importCalendar(file) }
-            case let .failure(error): selectionMessage = error.localizedDescription
-            }
         }
     }
 
@@ -142,7 +143,7 @@ struct LivePaperSignalsView: View {
                                                        sourcePython: settings.configuration.pythonExecutable) }
             }.disabled(service.isRunning || service.isBusy).accessibilityIdentifier("paperSignals.setup")
         }
-        Button("Choose Research Folder…", systemImage: "folder") { choosingDirectory = true }
+        Button("Choose Research Folder…", systemImage: "folder") { importKind = .directory; choosingFile = true }
             .disabled(service.isRunning || service.isBusy)
         if service.isRunning {
             Button("Stop", systemImage: "stop.fill") { Task { await service.stop() } }
@@ -153,7 +154,7 @@ struct LivePaperSignalsView: View {
                 .disabled(service.directory == nil || service.isBusy).accessibilityIdentifier("paperSignals.start")
         }
         if let directory = service.directory {
-            Button("Import Calendar…", systemImage: "calendar.badge.plus") { choosingCalendar = true }
+            Button("Import Calendar…", systemImage: "calendar.badge.plus") { importKind = .calendar; choosingFile = true }
                 .disabled(service.isBusy)
             Button("Show Evidence", systemImage: "doc.text.magnifyingglass") {
                 NSWorkspace.shared.open(directory)

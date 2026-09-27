@@ -36,9 +36,14 @@ from src.research.round_two_walkforward import (
 from src.strategies.types import canonical_hash
 
 HEALTH = {
-    "provider": "binance", "feed": "spot", "revision": "binance-spot-public-v1",
-    "reported_at": "2026-01-01T00:00:00Z", "last_successful_observation_at": None,
-    "maximum_age_seconds": 15, "state": "unavailable", "exclusions": ["no_available_observations"],
+    "provider": "binance",
+    "feed": "spot",
+    "revision": "binance-spot-public-v1",
+    "reported_at": "2026-01-01T00:00:00Z",
+    "last_successful_observation_at": None,
+    "maximum_age_seconds": 15,
+    "state": "unavailable",
+    "exclusions": ["no_available_observations"],
 }
 
 
@@ -102,14 +107,32 @@ def test_report_requires_source_backed_health_and_retains_error_exclusions(tmp_p
     assert empty["providerHealth"]["state"] == "unavailable"
     assert empty["providerHealth"]["lastSuccessfulObservationAt"] is None
     fixture = tmp_path / "health.json"
-    fixture.write_text(json.dumps([
-        {"provider": "binance", "feed": "spot", "symbol": "BTCUSDT",
-         "provider_at": "2026-01-01T00:00:00Z", "received_at": "2026-01-01T00:00:00Z",
-         "available_at": "2026-01-01T00:00:00Z", "source_key": "health:ok", "close": "100"},
-        {"provider": "binance", "feed": "spot", "symbol": "BTCUSDT",
-         "provider_at": "2026-01-01T00:01:00Z", "received_at": "2026-01-01T00:01:00Z",
-         "available_at": "2026-01-01T00:01:00Z", "source_key": "health:error", "provider_error": "disconnected"},
-    ]))
+    fixture.write_text(
+        json.dumps(
+            [
+                {
+                    "provider": "binance",
+                    "feed": "spot",
+                    "symbol": "BTCUSDT",
+                    "provider_at": "2026-01-01T00:00:00Z",
+                    "received_at": "2026-01-01T00:00:00Z",
+                    "available_at": "2026-01-01T00:00:00Z",
+                    "source_key": "health:ok",
+                    "close": "100",
+                },
+                {
+                    "provider": "binance",
+                    "feed": "spot",
+                    "symbol": "BTCUSDT",
+                    "provider_at": "2026-01-01T00:01:00Z",
+                    "received_at": "2026-01-01T00:01:00Z",
+                    "available_at": "2026-01-01T00:01:00Z",
+                    "source_key": "health:error",
+                    "provider_error": "disconnected",
+                },
+            ]
+        )
+    )
     ingest_file(tmp_path, fixture)
     health = _native_round_payload(build_round_report(tmp_path))["providerHealth"]
     assert health["state"] == "error"
@@ -126,10 +149,20 @@ def test_recent_receipt_of_old_market_data_cannot_claim_healthy_provider(tmp_pat
     register_default_round(tmp_path, main_starts_at())
     protocol = load_round_protocol(tmp_path)
     now = datetime.now(UTC)
-    rows = [RoundObservation(
-        provider="binance", feed="spot", symbol=symbol, source_key=f"old:{symbol}:{index}",
-        provider_at=main_starts_at() + timedelta(minutes=index), received_at=now, available_at=now, close="100",
-    ) for symbol in protocol.symbols for index in range(61)]
+    rows = [
+        RoundObservation(
+            provider="binance",
+            feed="spot",
+            symbol=symbol,
+            source_key=f"old:{symbol}:{index}",
+            provider_at=main_starts_at() + timedelta(minutes=index),
+            received_at=now,
+            available_at=now,
+            close="100",
+        )
+        for symbol in protocol.symbols
+        for index in range(61)
+    ]
     append_observations(tmp_path, protocol, rows)
     health = _native_round_payload(build_round_report(tmp_path))["providerHealth"]
     assert health["state"] == "stale"
@@ -144,11 +177,20 @@ def test_provider_health_becomes_healthy_only_with_current_clean_data(tmp_path):
     register_default_round(tmp_path, main_starts_at())
     protocol = load_round_protocol(tmp_path)
     now = datetime.now(UTC)
-    rows = [RoundObservation(
-        provider="binance", feed="spot", symbol=symbol, source_key=f"fresh:{symbol}:{index}",
-        provider_at=now - timedelta(minutes=60-index), received_at=now - timedelta(minutes=60-index),
-        available_at=now - timedelta(minutes=60-index), close="100",
-    ) for symbol in protocol.symbols for index in range(61)]
+    rows = [
+        RoundObservation(
+            provider="binance",
+            feed="spot",
+            symbol=symbol,
+            source_key=f"fresh:{symbol}:{index}",
+            provider_at=now - timedelta(minutes=60 - index),
+            received_at=now - timedelta(minutes=60 - index),
+            available_at=now - timedelta(minutes=60 - index),
+            close="100",
+        )
+        for symbol in protocol.symbols
+        for index in range(61)
+    ]
     append_observations(tmp_path, protocol, rows)
     health = _native_round_payload(build_round_report(tmp_path))["providerHealth"]
     assert health["state"] == "healthy"
@@ -157,20 +199,38 @@ def test_provider_health_becomes_healthy_only_with_current_clean_data(tmp_path):
 
 def test_health_cannot_attribute_another_provider_to_the_registered_source(tmp_path):
     register_default_round(tmp_path, main_starts_at())
-    append_jsonl_fsync(tmp_path / "observations.jsonl", [{
-        "provider": "other", "feed": "spot", "symbol": "BTCUSDT", "source_key": "wrong-source",
-        "provider_at": "2026-01-01T00:00:00Z", "received_at": "2026-01-01T00:00:00Z",
-        "available_at": "2026-01-01T00:00:00Z", "close": "100",
-    }])
+    append_jsonl_fsync(
+        tmp_path / "observations.jsonl",
+        [
+            {
+                "provider": "other",
+                "feed": "spot",
+                "symbol": "BTCUSDT",
+                "source_key": "wrong-source",
+                "provider_at": "2026-01-01T00:00:00Z",
+                "received_at": "2026-01-01T00:00:00Z",
+                "available_at": "2026-01-01T00:00:00Z",
+                "close": "100",
+            }
+        ],
+    )
     with pytest.raises(ValueError, match="provider/feed"):
         build_round_report(tmp_path)
 
 
-@pytest.mark.parametrize("update", [
-    {"maximum_age_seconds": 0}, {"maximum_age_seconds": 86401}, {"exclusions": ["x"] * 17},
-    {"revision": "é" * 129}, {"state": "qualified"}, {"feed": "margin"},
-    {"reported_at": "2026-01-01T00:00:00"}, {"state": "healthy"},
-])
+@pytest.mark.parametrize(
+    "update",
+    [
+        {"maximum_age_seconds": 0},
+        {"maximum_age_seconds": 86401},
+        {"exclusions": ["x"] * 17},
+        {"revision": "é" * 129},
+        {"state": "qualified"},
+        {"feed": "margin"},
+        {"reported_at": "2026-01-01T00:00:00"},
+        {"state": "healthy"},
+    ],
+)
 def test_provider_health_rejects_unbounded_or_unsubstantiated_claims(update):
     from src.research.round_two_contracts import RoundProviderHealth
 
@@ -184,11 +244,18 @@ def test_runtime_summary_decodes_with_the_strict_native_parser(tmp_path):
     observation_path = tmp_path / "one-finalized-observation.json"
     observation_path.write_text(
         json.dumps(
-            [{
-                "provider": "binance", "feed": "spot", "symbol": "BTCUSDT",
-                "provider_at": "2026-01-01T00:00:00Z", "received_at": "2026-01-01T00:00:00Z",
-                "available_at": "2026-01-01T00:00:00Z", "source_key": "native-wire:btc:one", "close": "100",
-            }]
+            [
+                {
+                    "provider": "binance",
+                    "feed": "spot",
+                    "symbol": "BTCUSDT",
+                    "provider_at": "2026-01-01T00:00:00Z",
+                    "received_at": "2026-01-01T00:00:00Z",
+                    "available_at": "2026-01-01T00:00:00Z",
+                    "source_key": "native-wire:btc:one",
+                    "close": "100",
+                }
+            ]
         ),
         encoding="utf-8",
     )
@@ -225,8 +292,12 @@ def _native_candidate(**updates):
         "qualification_status": "unqualified",
         "reasons": ["insufficient_data"],
         "sealed_metrics": {
-            "net_return": "0", "stressed_net_return": "0", "lower_edge": None,
-            "trade_count": 0, "maximum_drawdown": "0", "coverage": "0",
+            "net_return": "0",
+            "stressed_net_return": "0",
+            "lower_edge": None,
+            "trade_count": 0,
+            "maximum_drawdown": "0",
+            "coverage": "0",
         },
     }
     candidate.update(updates)
@@ -236,12 +307,18 @@ def _native_candidate(**updates):
 @pytest.mark.parametrize(
     ("report", "message"),
     [
-        (RoundReport(provider_health=HEALTH, round_id="r" * 257,
-                     protocol_hash="a" * 64, status=RoundStatus.INSUFFICIENT_DATA), "roundId"),
+        (
+            RoundReport(
+                provider_health=HEALTH, round_id="r" * 257, protocol_hash="a" * 64, status=RoundStatus.INSUFFICIENT_DATA
+            ),
+            "roundId",
+        ),
         (
             RoundReport(
                 provider_health=HEALTH,
-                round_id="round", protocol_hash="a" * 64, status=RoundStatus.INSUFFICIENT_DATA,
+                round_id="round",
+                protocol_hash="a" * 64,
+                status=RoundStatus.INSUFFICIENT_DATA,
                 reasons=tuple("reason" for _ in range(17)),
             ),
             "reasons",
@@ -249,7 +326,9 @@ def _native_candidate(**updates):
         (
             RoundReport(
                 provider_health=HEALTH,
-                round_id="round", protocol_hash="a" * 64, status=RoundStatus.INSUFFICIENT_DATA,
+                round_id="round",
+                protocol_hash="a" * 64,
+                status=RoundStatus.INSUFFICIENT_DATA,
                 candidates=tuple(_native_candidate() for _ in range(101)),
             ),
             "candidates",
@@ -257,7 +336,9 @@ def _native_candidate(**updates):
         (
             RoundReport(
                 provider_health=HEALTH,
-                round_id="round", protocol_hash="a" * 64, status=RoundStatus.INSUFFICIENT_DATA,
+                round_id="round",
+                protocol_hash="a" * 64,
+                status=RoundStatus.INSUFFICIENT_DATA,
                 candidates=(_native_candidate(strategy_id="s" * 257),),
             ),
             "strategyId",
@@ -265,11 +346,11 @@ def _native_candidate(**updates):
         (
             RoundReport(
                 provider_health=HEALTH,
-                round_id="round", protocol_hash="a" * 64, status=RoundStatus.INSUFFICIENT_DATA,
+                round_id="round",
+                protocol_hash="a" * 64,
+                status=RoundStatus.INSUFFICIENT_DATA,
                 candidates=(
-                    _native_candidate(
-                        sealed_metrics={**_native_candidate()["sealed_metrics"], "net_return": "nan"}
-                    ),
+                    _native_candidate(sealed_metrics={**_native_candidate()["sealed_metrics"], "net_return": "nan"}),
                 ),
             ),
             "netReturn",
@@ -290,9 +371,7 @@ def test_native_wire_publisher_rejects_non_swift_numeric_spellings(value):
         round_id="round",
         protocol_hash="a" * 64,
         status=RoundStatus.INSUFFICIENT_DATA,
-        candidates=(
-            _native_candidate(sealed_metrics={**_native_candidate()["sealed_metrics"], "net_return": value}),
-        ),
+        candidates=(_native_candidate(sealed_metrics={**_native_candidate()["sealed_metrics"], "net_return": value}),),
     )
 
     with pytest.raises(ValueError, match="netReturn"):
@@ -306,9 +385,7 @@ def test_native_wire_publisher_accepts_ascii_swift_numeric_spellings(value):
         round_id="round",
         protocol_hash="a" * 64,
         status=RoundStatus.INSUFFICIENT_DATA,
-        candidates=(
-            _native_candidate(sealed_metrics={**_native_candidate()["sealed_metrics"], "net_return": value}),
-        ),
+        candidates=(_native_candidate(sealed_metrics={**_native_candidate()["sealed_metrics"], "net_return": value}),),
     )
 
     payload = _native_round_payload(report)

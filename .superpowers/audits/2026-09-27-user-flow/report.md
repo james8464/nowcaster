@@ -1,5 +1,8 @@
 # Nowcaster installed-app user-flow check — 27 September 2026
 
+This is a chronological record. The initial blocked inspection below is retained;
+the XCTest continuation at the end records the later tests and fixes.
+
 ## Verdict
 
 Incomplete. The installed app opened and its Live Monitor navigation worked, but the current starting state was a month-old demo snapshot with monitoring stopped. This run did not verify the complete day-trading assistant workflow. Do not treat it as an all-markets, trading-lifecycle, or profitability pass.
@@ -75,3 +78,143 @@ The built-helper checks were then explicitly enabled. The registered-state check
 Final Xcode build succeeded with local development signing; both app and paper helper have the expected team identity and strict/deep signature verification passed. The installed app was updated at `/Applications/Nowcaster.app`, with its previous version retained at `~/Library/Application Support/Nowcaster/AppBackups/Nowcaster-before-trade-desk-20260927.app`. Temporary app instances and the old installed instance were normally quit through Activity Monitor; only the updated installed app was reopened. macOS logged acceptance of PID 13606 at 21:10:54 UTC without the reported 4097 error for that launch. Native-control inspection still failed with only this app instance running.
 
 Still required: complete native user interaction, calendar import and invalid-input recovery through UI, qualified replay entry/management/exit, notification delivery, persistence after relaunch, and longer-duration feed/error recovery. None is silently counted as passing.
+
+## User-authorized XCTest continuation
+
+The user explicitly authorized Apple's XCTest UI runner after the native-control
+service continued crashing. Added a real `NowcasterUITests` target to the existing
+shared Nowcaster scheme. It operates the actual bundled app, native file sheets
+and normal Quit/relaunch. It does not inject live prices or bypass eligibility.
+
+### Issues reproduced and corrected
+
+- Two competing SwiftUI file importers prevented **Choose Research Folder** from
+  presenting its sheet. One presenter now routes folder/calendar selections.
+  The failing UI runs are retained, not discarded.
+- A healthy collector could retain prices while showing **Awaiting evidence**:
+  provider health was only written after strategy evaluation, which is suppressed
+  during reconnect warmup. A separate, protocol-bound health projection now updates
+  before that gate. No strategy evaluation, publication or qualification is enabled
+  by this projection. Its timestamps still expire; malformed or mismatched health
+  is rejected, not silently replaced with older evidence.
+- An old UI assertion queried SwiftUI's Markets table as an accessibility Table;
+  the observed macOS hierarchy exposes an Outline with the correct identifier.
+- The synthetic lifecycle fixture reused a candidate identity for both symbols.
+  The native decoder correctly rejected duplicate decisions. The fixture now
+  derives per-asset identities, with a separate retained fixture directory. No
+  decoder or safety check was relaxed.
+
+### Evidence boundaries
+
+The live desk is `~/Library/Application Support/Nowcaster/PaperResearch/paper-desk-v1`,
+protocol `4c902a65e01dd99f20c1a4287952388422d9389f9cb4bea455b60d37f852efcc`.
+All observations from successful and failed attempts remain. An earlier failed
+test left its paper collector running; it was stopped using its normal control at
+21:58:31 UTC. Test teardown now attempts Stop and normal Quit even after an assertion
+failure. The frozen prospective study was neither started nor altered.
+
+Calendar rejection uses a source-attributed, deliberately limited BLS JOLTS file.
+Its September 29 event window does not cover September 27, so rejection is the
+correct outcome. There is still no complete automatic calendar provider. Valid
+calendar import is exercised only in an explicitly marked synthetic directory.
+No fabricated no-event calendar is imported into live research.
+
+Synthetic fixture: `~/Library/Application Support/Nowcaster/UIAcceptanceFixtures/replay-20260927-2201/test_later_retained_bars_advan0`.
+The integration test demonstrates causal origin → management revision → target
+completion → idempotent reload. The native UI test checks its historical display
+and rejection as a current entry. This is not a historical strategy-return study,
+nor proof of an executable fill or a profitable live trade.
+
+A single evaluation of the earlier ten-observation real-data verification desk
+returned **insufficient_data / incomplete_fold for all six candidates**, with no
+completed validation fold or simulated trades. All results were retained. The
+90-day training, 30-day validation and 30-day sealed window, trade-count and data
+coverage requirements remain unchanged. Future observations cannot be manufactured
+by completing UI work.
+
+### Review and final verification
+
+Independent review requested stronger fresh-receipt assertions, unconditional
+cleanup, actual elapsed-duration checks and unique synthetic import filenames.
+All four were addressed. Live acceptance now requires new timely receipts for both
+assets after Start; the soak requires elapsed monotonic time and recent receipts,
+not just an existing row count. Raw `.xcresult` recordings stay local because they
+can include unrelated desktop content.
+
+The ten-minute UI collection/control test passed (644.995 seconds including UI
+overhead). Its collector ran 22:01:46–22:12:13 UTC, retaining ten new BTC and ten
+new ETH observations. Receipt latencies were 5.14–13.14 seconds. The 22:10 minute
+was absent after an `invalid_observation` event at 22:10:15; this is retained
+coverage loss, not uninterrupted-feed proof. All 54 observations then present
+had distinct source keys. Stop/reopen preserved the protocol and prior bytes.
+
+The first full UI run had five passing scenarios and one runner-side fixture
+failure: XCTest could read but could not write the synthetic calendar directly
+into the app's Application Support directory. The test now writes within its own
+container and retains the exact JSON as an attachment before importing it through
+the app. No app permission or eligibility check was weakened.
+
+Release verification also reproduced an incremental Xcode signing failure:
+the runtime script changed `engine-manifest.json` without declared outputs, so
+Xcode could skip re-signing the outer app. The build phase now declares its
+generated resources and always runs so Python changes remain included.
+
+Full Python checkpoint: **1,627 passed, 2 skipped** (1,082.19 seconds). The two
+release-helper cases were subsequently covered by the **14-passing** packaged
+helper/TLS/packaging run. The later incremental-signing contract has **8 passing**
+packaging checks. Native checkpoint: **128 Swift Testing + 4 XCTest passed**.
+
+### Final acceptance checkpoint
+
+The subsequent live acceptance test passed in **192.451 seconds**, including
+new timely BTC/ETH receipts, rejected calendars, invalid-folder recovery,
+Stop and ordinary Quit/relaunch. The installed-app quit-before-upgrade check
+also passed. Synthetic calendar import passed, but the history assertion initially
+failed because a center click selected the disclosure label instead of expanding
+its arrow. The test now targets the observed leading arrow and checks expansion.
+
+Two attempts to verify that last adjustment stopped **before any test began**:
+`nowcaster-ui-history-20260927.xcresult` and
+`nowcaster-ui-history-retry-20260927.xcresult`, retained under `/tmp`.
+Both report `Timed out while enabling automation mode`. A read-only sample of
+`testmanagerd` shows `XAMLocalAuthenticationProvider authorizationWithError`
+waiting in LocalAuthentication. No authentication, security or power setting was
+bypassed. Local authentication was requested from the user. The latest history
+interaction and replacement installed-app UI verification remain unverified.
+
+A repeated packaging build also exposed a missing file in PyInstaller's global
+cache. Both packagers now use this checkout's own build cache. The added regression
+contract brings the focused packaging checks to **9 passed**. The next actual
+incremental build passed, including strict/deep signature verification; one further
+unchanged-app-source rebuild was requested to verify the signing regression.
+
+The successful and failed UI runs, existing losses and collection gaps are all
+retained. No actual current qualified entry/management or macOS notification
+banner was observed. Completed synthetic lifecycle calculations and native model
+checks are not substitutes for those missing UI/live results. The default desk
+still needs verified current calendar coverage and enough future retained data
+for its frozen qualification protocol. It is not copy-trading-ready.
+
+Both isolated-cache incremental builds finished successfully and passed strict/deep
+signature verification, including the repeat with unchanged app source. The final
+bundle was installed at `/Applications/Nowcaster.app`; its previous version is
+retained at `~/Library/Application Support/Nowcaster/AppBackups/Nowcaster-before-xctest-fixes-20260927-2234.app`.
+The installed signature and source/executable manifest were verified again.
+Native-control inspection of the replacement still closed its pipe without a
+response. This does not close the remaining installed-window acceptance item.
+The installed app did launch as PID 64069. At 22:33:19 UTC, macOS `linkd` accepted
+its identified app connection without the reported 4097 error in that launch's
+filtered log. Collection remained stopped; no alerts were enabled.
+
+Final checks against the **installed** helper plus TLS and packaging contracts:
+**16 passed in 34.42 seconds**. The original installed bundle still passed
+strict/deep signature verification afterward. Ruff passed with all 408 Python
+files formatted; tracked-file and reachable-history secret scans passed. No local
+signing identity/configuration, raw desktop recordings or study files were staged.
+
+Inspected window-only captures (no unrelated desktop content):
+
+- [Successful synthetic calendar import](03-synthetic-calendar-import.png): test
+  fixture only, stopped, old context unavailable; not live trading evidence.
+- [Stale data means stand aside](04-stale-stand-aside.png): captured during the
+  live test before a later display refresh, not evidence of a fresh entry.

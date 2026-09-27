@@ -261,8 +261,7 @@ class RoundObservation(BaseModel):
         for name in ("open", "close"):
             value = getattr(self, name)
             if value is not None and (
-                (self.low is not None and value < self.low)
-                or (self.high is not None and value > self.high)
+                (self.low is not None and value < self.low) or (self.high is not None and value > self.high)
             ):
                 raise ValueError(f"{name} must be within the observed low/high range")
         if self.bid is not None and self.ask is not None and self.ask < self.bid:

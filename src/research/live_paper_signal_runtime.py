@@ -52,6 +52,7 @@ from src.research.round_two_runtime import (
     SUMMARY_FILE,
     _bind_evaluation,
     _candidate_snapshot,
+    _native_provider_health,
     _native_round_payload,
     _provider_health,
     _recent_candidate_results,
@@ -743,6 +744,15 @@ class LivePaperSignalRunner:
         quality = summarize_quality(observations, protocol)
         reasons = set(quality.reasons_for(now))
         health = _provider_health(protocol, observations, quality, now)
+        # Feed visibility is not strategy eligibility. Publish a bounded health
+        # projection even when warmup/calendar gates forbid evaluation.
+        _write_atomic_json(
+            directory / "live-paper-provider-health.json",
+            {
+                "protocolHash": protocol.identity_hash,
+                "providerHealth": _native_provider_health(health),
+            },
+        )
         reasons.update(health.exclusions)
         reasons.update(getattr(self.feed, "context_exclusions", ()))
         calendar_reasons = _calendar_health(directory, protocol, ledger, now)

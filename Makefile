@@ -2,7 +2,7 @@ PYTHON ?= python3
 VENV ?= .venv
 PIP_INDEX ?= https://pypi.org/simple
 
-.PHONY: setup test lint init-db fetch features train backtest report demo research-ci research-live research-live-probe audit-day-trading verify-research-fixtures verify-swift-fixture-parity verify-deep-research verify-paper-trading verify-trading-readiness verify-live-monitor replay-live-monitor secret-scan clean-generated sync-macos-snapshot engine-bundle macos-build macos-test macos-app macos-open macos-ui-test macos-screenshots release-archive
+.PHONY: setup test lint init-db fetch features train backtest report demo research-ci research-live research-live-probe audit-day-trading verify-research-fixtures verify-swift-fixture-parity verify-deep-research verify-paper-trading verify-trading-readiness verify-live-monitor replay-live-monitor secret-scan clean-generated sync-macos-snapshot engine-bundle macos-build macos-test macos-app macos-open macos-ui-test macos-xcui-test macos-screenshots release-archive
 setup:
 	uv venv --python 3.13 $(VENV)
 	uv pip install --python $(VENV)/bin/python --index-url $(PIP_INDEX) -e '.[dev]'
@@ -109,6 +109,9 @@ macos-open: macos-app
 
 macos-ui-test: macos-app
 	xcrun swift scripts/capture_macos_app.swift build/Nowcaster.app /tmp/nowcaster-ui-smoke --verify-only
+
+macos-xcui-test:
+	xcodebuild -project macos/Nowcaster/Nowcaster.xcodeproj -scheme Nowcaster -destination 'platform=macOS' test
 
 macos-screenshots: macos-app
 	xcrun swift scripts/capture_macos_app.swift build/Nowcaster.app docs/images/macos

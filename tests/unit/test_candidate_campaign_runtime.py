@@ -43,16 +43,20 @@ def test_nonfinalized_csv_is_rejected_and_retained(tmp_path):
     with source.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(
             handle,
-            fieldnames=[
-                "timestamp", "open", "high", "low", "close", "volume", "finalized", "available_at", "revision"
-            ],
+            fieldnames=["timestamp", "open", "high", "low", "close", "volume", "finalized", "available_at", "revision"],
         )
         writer.writeheader()
         writer.writerow(
             {
                 "timestamp": "2026-09-17T12:00:00Z",
-                "open": "70", "high": "71", "low": "69", "close": "70.5", "volume": "100",
-                "finalized": "false", "available_at": "2026-09-17T12:05:00Z", "revision": "0",
+                "open": "70",
+                "high": "71",
+                "low": "69",
+                "close": "70.5",
+                "volume": "100",
+                "finalized": "false",
+                "available_at": "2026-09-17T12:05:00Z",
+                "revision": "0",
             }
         )
 

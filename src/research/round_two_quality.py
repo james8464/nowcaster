@@ -234,8 +234,10 @@ def _reasons_for(
             reasons.add(_intrinsic_reason(latest, protocol) or "")
             continue
         active_run = causal_runs[symbol][-1] if causal_runs[symbol] else []
-        warm_enough = bool(active_run) and active_run[-1].provider_at == latest.provider_at and (
-            active_run[-1].provider_at - active_run[0].provider_at >= timedelta(minutes=protocol.warmup_minutes)
+        warm_enough = (
+            bool(active_run)
+            and active_run[-1].provider_at == latest.provider_at
+            and (active_run[-1].provider_at - active_run[0].provider_at >= timedelta(minutes=protocol.warmup_minutes))
         )
         if not warm_enough:
             reasons.add("continuity_warmup")

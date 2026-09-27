@@ -306,6 +306,48 @@ Do not invent an empty calendar to remove the block: an empty `events` array
 asserts verified no-event coverage, not “unknown”. There is no automatic calendar
 provider connected yet. Missing calendar evidence means stand aside.
 
+### Testing the actual Mac interface
+
+Open `macos/Nowcaster/Nowcaster.xcodeproj`, select **Nowcaster**, then use
+**Product → Test** (or `make macos-xcui-test`). This runs Apple's XCTest UI runner
+against the real app bundle. Keep the desktop unlocked. The ordinary tests open
+screens but do not start market collection, connect accounts or enable alerts.
+The older `macos-ui-test` command is only a launch/screenshot smoke check.
+macOS may request local authentication to enable UI testing. Complete that prompt
+on the Mac; an automation-mode timeout before a test starts is not an app result.
+Do not disable system protections to work around it.
+
+The desk reports the latest retained source observation during warmup, even when
+calendar or strategy checks block an entry. A feed receiving data is **not** the
+same as a strategy being eligible. Feed timestamps still expire normally.
+
+The extended tests are explicit opt-ins. They retain research data rather than
+resetting it. Supply these variables with Xcode's `TEST_RUNNER_` prefix when
+running `xcodebuild test`:
+
+- `NOWCASTER_UI_LIVE_ACCEPTANCE=1`: exercise setup/resume, rejected imports,
+  folder recovery, public-data start/stop and reopening.
+- `NOWCASTER_UI_DESK_DIRECTORY`: the absolute path to the app's existing/default
+  `Nowcaster/PaperResearch/paper-desk-v1` folder under your Application Support
+  directory. The runner has its own container, so it must not guess this path.
+- `NOWCASTER_UI_CALENDAR`: a source-attributed JSON with **missing current
+  coverage**, for the rejection check. The test must not invent clear-calendar
+  coverage for the live desk.
+- `NOWCASTER_UI_SOAK_MINUTES`: optionally collect a bounded 1–30 minutes of new
+  public observations, then stop and verify earlier records are unchanged.
+- `NOWCASTER_UI_REPLAY_DIRECTORY`: optionally open a separate synthetic lifecycle
+  fixture marked `UI-TEST-ONLY.md`. Only this test folder receives synthetic
+  calendar data. The fixture is not a historical strategy-performance result.
+- `NOWCASTER_UI_INSTALLED_APP=quit` or `verify`: opt-in upgrade checks on exactly
+  `/Applications/Nowcaster.app`; normally quit a stopped installed app, or launch
+  its Trade Desk and quit again. Do not run against active collection.
+
+Results and screenshots are in Xcode's `.xcresult` bundle. Keep raw recordings
+local: they can include desktop content. A passing interface test proves the
+tested controls work; it does not qualify a strategy, validate executable fills,
+or establish profitability. Notification logic tests are also distinct from
+observing a macOS notification banner.
+
 ## Useful developer commands
 
 ```bash

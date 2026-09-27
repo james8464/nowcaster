@@ -65,6 +65,23 @@ def events(directory):
     return SignalEventLedger(directory, protocol_hash=protocol.identity_hash).events()
 
 
+def test_provider_health_is_visible_during_reconnect_without_evaluating(registered):
+    protocol = ResearchRoundProtocol.model_validate_json((registered / "protocol.json").read_text())
+    ledger = SignalEventLedger(registered, protocol_hash=protocol.identity_hash)
+    from src.research.live_paper_signals import LiveSignalEvent
+
+    ledger.append(LiveSignalEvent(kind="reconnect", at=NOW, detail="process_start_warmup"))
+    state = LivePaperSignalRunner(Feed([bar(), bar("ETHUSDT")]), clock=lambda: NOW).run_once(registered)
+    assert state.kind == "warming"
+    assert state.suggestion is None
+    assert not any(event.kind == "evaluated" for event in ledger.events())
+    assert not (registered / "research-round-2-summary.json").exists()
+    health = json.loads((registered / "live-paper-provider-health.json").read_text())
+    assert health["protocolHash"] == protocol.identity_hash
+    assert health["providerHealth"]["lastSuccessfulObservationAt"] == "2026-09-21T12:00:00Z"
+    assert health["providerHealth"]["reportedAt"] == "2026-09-21T12:00:02Z"
+
+
 def test_ingests_before_evaluation_and_never_repeats_bar_after_restart(registered):
     feed = Feed([bar(), bar("ETHUSDT")])
     state = LivePaperSignalRunner(feed, clock=lambda: NOW).run_once(registered)

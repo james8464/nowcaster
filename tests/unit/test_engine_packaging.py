@@ -91,7 +91,8 @@ def test_xcode_signing_allows_local_development_identity_without_tracking_it() -
     project = (root / "macos/Nowcaster/Nowcaster.xcodeproj/project.pbxproj").read_text()
     assert "CODE_SIGN_IDENTITY = -" in config
     assert '#include? "Signing.local.xcconfig"' in config
-    assert project.count("baseConfigurationReference = A01C00000000000000000011") == 2
+    # Debug/Release for the application and its native UI test runner.
+    assert project.count("baseConfigurationReference = A01C00000000000000000011") == 4
     assert "CODE_SIGN_IDENTITY =" not in project  # Must not override the local config.
     assert "DEVELOPMENT_TEAM =" not in project
     assert "macos/Nowcaster/Resources/Signing.local.xcconfig" in (root / ".gitignore").read_text()
@@ -101,3 +102,17 @@ def test_embedded_helpers_inherit_xcode_resolved_signing_identity() -> None:
     root = Path(__file__).resolve().parents[2]
     source = (root / "scripts/embed_macos_runtime.sh").read_text()
     assert "IDENTITY=${NOWCASTER_CODESIGN_IDENTITY:-${EXPANDED_CODE_SIGN_IDENTITY:--}}" in source
+
+
+def test_runtime_manifest_is_an_explicit_xcode_output_for_incremental_signing() -> None:
+    root = Path(__file__).resolve().parents[2]
+    project = (root / "macos/Nowcaster/Nowcaster.xcodeproj/project.pbxproj").read_text()
+    assert '"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/engine-manifest.json"' in project
+    assert "alwaysOutOfDate = 1;" in project  # Python changes still rebuild the embedded runtime.
+
+
+def test_packagers_do_not_clean_other_projects_shared_pyinstaller_cache() -> None:
+    root = Path(__file__).resolve().parents[2]
+    for script in ["build_engine_bundle.sh", "build_paper_signals_bundle.sh"]:
+        source = (root / "scripts" / script).read_text()
+        assert 'export PYINSTALLER_CONFIG_DIR="$PROJECT_ROOT/build/pyinstaller-cache"' in source

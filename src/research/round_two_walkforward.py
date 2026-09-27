@@ -699,11 +699,7 @@ def validate_retained_candidate_results(
             ):
                 raise ValueError("candidate_evidence_missing")
             selection = next(
-                (
-                    item
-                    for item in receipt.selections
-                    if canonical_hash(item.get("candidate")) == identity
-                ),
+                (item for item in receipt.selections if canonical_hash(item.get("candidate")) == identity),
                 None,
             )
             if (

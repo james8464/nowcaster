@@ -17,6 +17,7 @@ from src.research.round_two_contracts import ResearchRoundProtocol, RoundObserva
 from src.research.round_two_quality import append_observations
 from src.research.round_two_registry import register_round
 from src.research.trend_advisor import TrendAdvisorSuggestion
+from src.strategies.types import canonical_hash
 
 NOW = datetime(2026, 9, 22, 12, 0, 2, tzinfo=UTC)
 
@@ -89,6 +90,7 @@ def live(tmp_path, monkeypatch):
         fields = TrendAdvisorSuggestion.model_validate(template).model_dump()
         fields.update(
             symbol=result.candidate.symbol,
+            candidate_hash=canonical_hash(result.candidate.model_dump(mode="json")),
             posture="long_research",
             decision_at=decision_at,
             available_at=decision_at,
@@ -182,6 +184,8 @@ def test_later_retained_bars_advance_chain_and_cli_exposes_completed_history(liv
     assert chain[-1].exit_reason == "target"
     assert chain[-1].completed_at == feed.at
     assert chain[-1].previous_record_hash == chain[-2].record_hash
+    report = json.loads((path / "research-round-2-summary.json").read_text())
+    assert len({item["candidateHash"] for item in report["trendAdvisor"]}) == len(report["trendAdvisor"])
     before = (path / "paper-lifecycles.jsonl").read_bytes()
     result = subprocess.run(
         [

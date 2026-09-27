@@ -6,12 +6,18 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXContainerItemProxy section */
+		A01C00000000000000000029 = {isa = PBXContainerItemProxy; containerPortal = A01C0000000000000000000B; proxyType = 1; remoteGlobalIDString = A01C00000000000000000005; remoteInfo = Nowcaster; };
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
+		A01C00000000000000000020 /* NowcasterUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NowcasterUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A01C00000000000000000011 /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Resources/Signing.xcconfig; sourceTree = "<group>"; };
 		A01C00000000000000000001 /* Nowcaster.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Nowcaster.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		A01C00000000000000000021 /* UITests */ = {isa = PBXFileSystemSynchronizedRootGroup; path = UITests; sourceTree = "<group>"; };
 		A01C00000000000000000002 /* Sources/NowcasterApp */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = Sources/NowcasterApp;
@@ -20,6 +26,7 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		A01C00000000000000000024 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		A01C00000000000000000008 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -34,6 +41,7 @@
 			isa = PBXGroup;
 			children = (
 				A01C00000000000000000002 /* Sources/NowcasterApp */,
+				A01C00000000000000000021 /* UITests */,
 				A01C00000000000000000011 /* Signing.xcconfig */,
 				A01C00000000000000000004 /* Products */,
 			);
@@ -43,6 +51,7 @@
 			isa = PBXGroup;
 			children = (
 				A01C00000000000000000001 /* Nowcaster.app */,
+				A01C00000000000000000020 /* NowcasterUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -50,6 +59,18 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		A01C00000000000000000022 /* NowcasterUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A01C00000000000000000026;
+			buildPhases = (A01C00000000000000000023, A01C00000000000000000024, A01C00000000000000000025);
+			buildRules = ();
+			dependencies = (A01C0000000000000000002A);
+			fileSystemSynchronizedGroups = (A01C00000000000000000021);
+			name = NowcasterUITests;
+			productName = NowcasterUITests;
+			productReference = A01C00000000000000000020;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 		A01C00000000000000000005 /* Nowcaster */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = A01C00000000000000000006 /* Build configuration list for PBXNativeTarget "Nowcaster" */;
@@ -83,6 +104,7 @@
 				LastSwiftUpdateCheck = 2700;
 				LastUpgradeCheck = 2700;
 				TargetAttributes = {
+					A01C00000000000000000022 = {CreatedOnToolsVersion = 27.0; TestTargetID = A01C00000000000000000005; };
 					A01C00000000000000000005 = {
 						CreatedOnToolsVersion = 27.0;
 					};
@@ -103,11 +125,13 @@
 			projectRoot = "";
 			targets = (
 				A01C00000000000000000005 /* Nowcaster */,
+				A01C00000000000000000022 /* NowcasterUITests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		A01C00000000000000000025 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		A01C00000000000000000009 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -120,6 +144,7 @@
 /* Begin PBXShellScriptBuildPhase section */
 		A01C0000000000000000000A /* Embed Nowcaster Runtime */ = {
 			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
 			files = (
 			);
@@ -127,6 +152,9 @@
 			);
 			name = "Embed Nowcaster Runtime";
 			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/engine-manifest.json",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/nowcaster-sbom.cdx.json",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/AppIcon.icns",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/zsh;
@@ -135,6 +163,7 @@
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		A01C00000000000000000023 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		A01C00000000000000000007 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -144,7 +173,23 @@
 		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		A01C0000000000000000002A = {isa = PBXTargetDependency; target = A01C00000000000000000005; targetProxy = A01C00000000000000000029; };
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
+		A01C00000000000000000027 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = A01C00000000000000000011 /* Signing.xcconfig */;
+			buildSettings = {GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = com.james8464.nowcaster.uitests; PRODUCT_NAME = "$(TARGET_NAME)"; TEST_TARGET_NAME = Nowcaster; };
+			name = Debug;
+		};
+		A01C00000000000000000028 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = A01C00000000000000000011 /* Signing.xcconfig */;
+			buildSettings = {GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = com.james8464.nowcaster.uitests; PRODUCT_NAME = "$(TARGET_NAME)"; TEST_TARGET_NAME = Nowcaster; };
+			name = Release;
+		};
 		A01C0000000000000000000D /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -226,6 +271,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		A01C00000000000000000026 = {isa = XCConfigurationList; buildConfigurations = (A01C00000000000000000027, A01C00000000000000000028); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 		A01C00000000000000000006 /* Build configuration list for PBXNativeTarget "Nowcaster" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
