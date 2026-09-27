@@ -1,0 +1,48 @@
+Window: "Live Monitor", App: Nowcaster.
+0 standard window Live Monitor, ID: main-AppWindow-1, Secondary Actions: Raise
+	1 split group main-AppWindow-1, SidebarNavigationSplitView
+		2 scroll area
+			3 list Description: Sidebar, ID: sidebar
+				4 row (selectable) Monitor
+				5 row (selectable) Today
+				6 row (selectable) Markets
+				7 row (selectable) Earnings
+				8 row (selectable) Signals
+				9 row (selected) Live Monitor
+				10 row (selectable) Research
+				11 row (selectable) Backtests
+				12 row (selectable) Strategy Lab
+				13 row (selectable) Model Lab
+				14 row (selectable) System
+				15 row (selectable) Data Quality
+				16 row (selectable) Pipeline Runs
+				17 row (selectable) Execution Center
+		18 splitter (disabled, settable, float) 228
+		19 container
+			20 text Live Monitor status: Stopped 2 stocks · 2 crypto Confirmed 5-minute decisions · 1-minute risk monitoring
+			21 button Description: Start Monitoring, ID: liveMonitor.toggle
+			22 text No Live Events Start the monitor to warm finalized market bars. It will abstain unless a strategy has passed every evidence gate. Research notifications only — Nowcaster cannot place orders or guarantee profit. Monitoring stops while this Mac sleeps, is offline, or the app is quit.
+	23 toolbar
+		24 button Description: Hide Sidebar, Secondary Actions: Increment, Decrement, Delete, Cancel
+		25 text Description: No data, Value: Demo snapshot
+		26 text 1 mth, 1 day
+		27 menu button More, ID: ellipsis.circle
+		28 button Description: Refresh research, ID: toolbar.refresh, Secondary Actions: Increment, Decrement, Delete, Cancel, Move previous, Move next, Remove from toolbar
+		29 button Search
+	30 close button
+	31 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	32 minimize button
+	33 text Live Monitor
+34 menu bar
+	35 Nowcaster
+	36 File
+	37 Edit
+	38 View
+	39 Research
+	40 Window
+	41 Help
+
+Selected:
+	9 row (selected)
+
+Note: Pay special attention to the content selected by the user. If the user asks a question or refers to the content they are looking at on-screen, they might be referring to the selected content (but they might be referring to something else that's visible, too).

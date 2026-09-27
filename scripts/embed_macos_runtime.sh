@@ -5,7 +5,7 @@ SCRIPT_DIR=${0:A:h}
 PROJECT_ROOT=${SCRIPT_DIR:h}
 APP_PATH=${1:?"Expected the built Nowcaster.app path"}
 CONTENTS_PATH="$APP_PATH/Contents"
-IDENTITY=${NOWCASTER_CODESIGN_IDENTITY:--}
+IDENTITY=${NOWCASTER_CODESIGN_IDENTITY:-${EXPANDED_CODE_SIGN_IDENTITY:--}}
 PYTHON=${NOWCASTER_BUILD_PYTHON:-$PROJECT_ROOT/.venv/bin/python}
 if [[ ! -x "$PYTHON" ]]; then
   PRIMARY_WORKTREE=$(git -C "$PROJECT_ROOT" worktree list --porcelain | sed -n '1s/^worktree //p')

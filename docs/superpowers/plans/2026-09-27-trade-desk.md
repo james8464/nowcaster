@@ -30,11 +30,11 @@
 
 **Interfaces:** `initialize_paper_desk(directory: Path, now: datetime | None = None) -> ResearchRoundProtocol`; CLI `setup --directory` returns normal status. Production registry adds unique `desk_*_1m` research variants, version `1.0.0`, fixed parameters copied from existing known generators. New default registration selects all three across BTC/ETH; legacy manifests are not migrated.
 
-- [ ] Add failing tests: real candidate resolution and causal rising/falling fixture; future suffix leaves prefix unchanged; repeated setup preserves bytes and ledger; arbitrary nonempty/protected symlink directory rejected.
-- [ ] Run focused tests and observe failure.
-- [ ] Implement idempotent setup and production starter definitions.
-- [ ] Run `pytest tests/integration/test_paper_desk_setup.py tests/integration/test_research_round_two_runtime.py tests/integration/test_live_paper_signal_runtime.py -q`; expected pass (resolve exact existing research runtime test filename first).
-- [ ] Commit verified backend changes.
+- [x] Add failing tests: real candidate resolution and causal rising/falling fixture; future suffix leaves prefix unchanged; repeated setup preserves bytes and ledger; arbitrary nonempty/protected symlink directory rejected.
+- [x] Run focused tests and observe failure.
+- [x] Implement idempotent setup and production starter definitions.
+- [x] Run focused setup, research runtime and live runtime tests. Existing runtime filename is `test_research_round_two_cli.py`; combined checks passed.
+- [x] Commit verified backend changes (`b2e26a2`).
 
 ### Task 2: Native Trade Desk and launch verification
 
@@ -42,8 +42,9 @@
 
 **Interfaces:** Service create/resume invokes Task 1 setup then existing open; calendar import invokes existing validated CLI. Native desk composes existing controls/context without depending on a snapshot. Default Trade Desk; preserve non-Today saved destinations. Controls remain paper-only and opt-in.
 
-- [ ] Add configuration validation tests for new setup without manifest and protected paths; run failing.
-- [ ] Implement setup/calendar controls, Trade Desk with supported assets/playbook and honest evidence prerequisites. Scope research toolbar to research destinations.
-- [ ] Run `swift test`; expected pass. Run targeted Python packaging checks; document any unrelated baseline failure rather than conceal it.
-- [ ] Build real Xcode project, confirm bundle identity/helper, and exercise create/resume/start/stop/context through UI where accessible. Record untested lifecycle behavior explicitly.
+- [x] Add configuration validation tests for new setup without manifest and protected paths; run failing.
+- [x] Implement setup/calendar controls, Trade Desk with supported assets/playbook and honest evidence prerequisites. Scope research toolbar to research destinations.
+- [x] Run `swift test`: 126 Swift Testing + 4 XCTest passed. Expanded Python checks: 173 passed; full-suite checkpoint: 1,624 passed, two packaged-helper tests skipped pending separate execution.
+- [x] Build real Xcode project, confirm bundle identity/helper, and verify bounded packaged public-feed start/stop. Resolve observed Shortcuts bundle rejection using existing Apple Development identity and ignored local Xcode signing settings.
+- [ ] Complete create/resume/start/stop/context and lifecycle interactions through UI. Blocked by repeated native-control service crashes; actual app launch and system-service acceptance verified, not a substitute for this check. See retained audit.
 - [ ] Update README/Xcode guidance and audit, commit, obtain one fresh review, apply important fixes, and push the same branch under standing authorization.

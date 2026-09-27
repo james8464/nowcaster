@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import shutil
 import ssl
 import subprocess
 import threading
@@ -22,7 +23,7 @@ from src.strategies.types import canonical_hash
 
 @pytest.fixture
 def market_proxy(tmp_path):
-    """Substitute only the external HTTPS service, leaving the frozen helper real."""
+    """A local HTTPS source with a dedicated test-only CA; never change OS trust."""
     certificate, key = tmp_path / "certificate.pem", tmp_path / "key.pem"
     subprocess.run(
         [
@@ -38,6 +39,12 @@ def market_proxy(tmp_path):
             "/CN=data-api.binance.vision",
             "-addext",
             "subjectAltName=DNS:data-api.binance.vision",
+            "-addext",
+            "basicConstraints=critical,CA:TRUE",
+            "-addext",
+            "keyUsage=critical,digitalSignature,keyCertSign,cRLSign",
+            "-addext",
+            "subjectKeyIdentifier=hash",
             "-keyout",
             str(key),
             "-out",
@@ -94,7 +101,7 @@ def market_proxy(tmp_path):
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        yield {"https_proxy": f"http://127.0.0.1:{server.server_port}", "SSL_CERT_FILE": str(certificate)}
+        yield {"proxy": f"http://127.0.0.1:{server.server_port}", "certificate": certificate}
     finally:
         server.shutdown()
         server.server_close()
@@ -145,7 +152,25 @@ def test_packaged_helper_evaluates_live_bar_with_retained_protocol(tmp_path, mar
     allow one full real-clock boundary through the local market-data proxy.
     Failure to collect/evaluate is a release failure, never a skipped success.
     """
-    helper = Path(os.environ["NOWCASTER_PAPER_HELPER"]).resolve()
+    original_helper = Path(os.environ["NOWCASTER_PAPER_HELPER"]).resolve()
+    original_bundle = original_helper.parents[2]
+    original_ca = original_bundle / "Contents/Resources/certifi/cacert.pem"
+    retained_ca = original_ca.read_bytes()
+    # Production intentionally pins certifi, so SSL_CERT_FILE cannot inject a
+    # root. Trust the fixture only in a temporary copy and re-sign that copy.
+    # Never edit the installed helper, disable verification, or add an OS root.
+    bundle = tmp_path / "fixture-helper.app"
+    shutil.copytree(original_bundle, bundle, symlinks=True)
+    fixture_ca = (bundle / "Contents/Resources/certifi/cacert.pem").resolve()
+    assert fixture_ca.is_relative_to(bundle.resolve())
+    fixture_ca.write_bytes(retained_ca + b"\n" + market_proxy["certificate"].read_bytes())
+    subprocess.run(
+        ["/usr/bin/codesign", "--force", "--sign", "-", "--preserve-metadata=entitlements,flags", str(bundle)],
+        check=True,
+        capture_output=True,
+        timeout=30,
+    )
+    helper = bundle / original_helper.relative_to(original_bundle)
     protocol = ResearchRoundProtocol.default(round_id="bundle-evaluation", starts_at=datetime.now(UTC))
     directory = tmp_path / "evidence"
     register_round(protocol, directory)
@@ -156,7 +181,12 @@ def test_packaged_helper_evaluates_live_bar_with_retained_protocol(tmp_path, mar
         result = subprocess.run(
             [str(helper), "run-once", "--directory", str(directory)],
             cwd=tmp_path,
-            env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "TMPDIR": str(tmp_path), **market_proxy},
+            env={
+                "PATH": "/usr/bin:/bin",
+                "HOME": str(tmp_path),
+                "TMPDIR": str(tmp_path),
+                "https_proxy": market_proxy["proxy"],
+            },
             capture_output=True,
             text=True,
             timeout=30,
@@ -169,6 +199,7 @@ def test_packaged_helper_evaluates_live_bar_with_retained_protocol(tmp_path, mar
             break
         time.sleep(2)
     assert summary.exists(), f"Packaged helper did not evaluate a finalized bar: {state}"
+    assert original_ca.read_bytes() == retained_ca
     report = json.loads(summary.read_text())
     assert report["protocolHash"] == protocol.identity_hash
     assert report["trendAdvisor"]

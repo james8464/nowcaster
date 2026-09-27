@@ -1,0 +1,6 @@
+// Portable fallback for machines without an Apple Development certificate.
+// For normal local development, override in the ignored sibling file below.
+CODE_SIGN_STYLE = Manual
+CODE_SIGN_IDENTITY = -
+DEVELOPMENT_TEAM =
+#include? "Signing.local.xcconfig"

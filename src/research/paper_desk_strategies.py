@@ -17,7 +17,13 @@ def generate_desk_signal(spec, bars, context):
 
 def register_desk_strategies(registry):
     for name in DESK_STRATEGIES:
-        original = registry.resolve(name)
+        try:
+            original = registry.resolve(name)
+        except KeyError:
+            # Respect disabled/omitted base rules without disabling unrelated
+            # research. A retained candidate referencing this variant will be
+            # rejected as unavailable by the existing evaluator.
+            continue
         spec = StrategySpec.model_validate(
             {**original.spec.model_dump(), "strategy_id": f"desk_{name}_1m", "intervals": ("1m",)}
         )

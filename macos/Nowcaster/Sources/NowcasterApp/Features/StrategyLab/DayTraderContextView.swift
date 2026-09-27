@@ -7,7 +7,7 @@ struct DayTraderContextView: View {
         GroupBox {
             VStack(alignment: .leading, spacing: 12) {
                 Label("Decision context", systemImage: "chart.xyaxis.line").font(.headline)
-                Text("How market conditions support the current research decision.")
+                Text("Market conditions for the leading research candidate per asset. An entry still requires the live publication checks.")
                     .foregroundStyle(.secondary)
                 TimelineView(.periodic(from: .now, by: 1)) { timeline in
                     let current = service.decisionEvidence?.currentContexts(now: timeline.date, isRunning: service.isRunning) ?? []

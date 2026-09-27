@@ -83,3 +83,21 @@ def test_frozen_helper_entitlements_allow_library_loading_but_not_debugging() ->
     root = Path(__file__).resolve().parents[2]
     entitlements = plistlib.loads((root / "macos/Nowcaster/Resources/Engine.entitlements").read_bytes())
     assert entitlements == {"com.apple.security.cs.disable-library-validation": True}
+
+
+def test_xcode_signing_allows_local_development_identity_without_tracking_it() -> None:
+    root = Path(__file__).resolve().parents[2]
+    config = (root / "macos/Nowcaster/Resources/Signing.xcconfig").read_text()
+    project = (root / "macos/Nowcaster/Nowcaster.xcodeproj/project.pbxproj").read_text()
+    assert "CODE_SIGN_IDENTITY = -" in config
+    assert '#include? "Signing.local.xcconfig"' in config
+    assert project.count("baseConfigurationReference = A01C00000000000000000011") == 2
+    assert "CODE_SIGN_IDENTITY =" not in project  # Must not override the local config.
+    assert "DEVELOPMENT_TEAM =" not in project
+    assert "macos/Nowcaster/Resources/Signing.local.xcconfig" in (root / ".gitignore").read_text()
+
+
+def test_embedded_helpers_inherit_xcode_resolved_signing_identity() -> None:
+    root = Path(__file__).resolve().parents[2]
+    source = (root / "scripts/embed_macos_runtime.sh").read_text()
+    assert "IDENTITY=${NOWCASTER_CODESIGN_IDENTITY:-${EXPANDED_CODE_SIGN_IDENTITY:--}}" in source

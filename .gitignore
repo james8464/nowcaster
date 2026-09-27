@@ -30,3 +30,4 @@ build/
 macos/**/.build/
 macos/**/.swiftpm/
 macos/**/xcuserdata/
+macos/Nowcaster/Resources/Signing.local.xcconfig

@@ -101,7 +101,19 @@ def decision_presentation(directory: Path, *, protocol_hash: str, context_protoc
         if report.evaluated_at > now or report.suggestion.decision_at > now:
             raise ValueError("future decision evidence")
         previous = latest.get(report.suggestion.symbol)
-        if previous is None or report.evaluated_at >= previous.evaluated_at:
+        # Match the collector's first-eligible-candidate ordering within the
+        # latest batch, rather than replacing an eligible EMA with a later
+        # ineligible VWAP for the same symbol. Never carry an older long posture
+        # into a newer abstaining batch.
+        if (
+            previous is None
+            or report.evaluated_at > previous.evaluated_at
+            or (
+                report.evaluated_at == previous.evaluated_at
+                and previous.suggestion.posture != "long_research"
+                and report.suggestion.posture == "long_research"
+            )
+        ):
             latest[report.suggestion.symbol] = report
     contexts = []
     for report in latest.values():

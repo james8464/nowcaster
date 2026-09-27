@@ -246,8 +246,19 @@ does not have the normal application's bundle identity. During the September 27
 hands-on check, Xcode was running that package and logging “missing main bundle
 identifier”. Use the `.xcodeproj` and the `Nowcaster` app scheme instead.
 The `com.apple.linkd.autoShortcut` 4097 messages concern Apple's Shortcuts/Intents
-service connection; do not disable system services or hide all logging to suppress
-them. Check the actual launch target and whether the app's own workflow works.
+service connection. On the tested Mac, its log rejected the ad-hoc app with
+`requiresValidatedBundle`, then accepted the same app after Apple Development
+signing. Do not disable system services or hide logging to suppress this error.
+
+For normal local Xcode development, copy
+`macos/Nowcaster/Resources/Signing.local.xcconfig.example` to
+`Signing.local.xcconfig` in the same folder and replace `YOUR_TEAM_ID` with
+your own Xcode development team. A matching Apple Development certificate must
+already be available. This local file is ignored by Git; no certificate or private
+key is stored in the repository. Both app configurations load it and the embedded
+helpers inherit Xcode's selected identity. Without the local file, builds retain
+the portable ad-hoc fallback, which may be rejected by system integrations.
+Signing is not notarization and does not qualify any trading strategy.
 
 ### Use the Trade Desk
 

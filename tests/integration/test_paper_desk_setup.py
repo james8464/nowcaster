@@ -6,9 +6,11 @@ import pandas as pd
 import pytest
 
 from src.research.paper_desk_setup import initialize_paper_desk
+from src.research.paper_desk_strategies import register_desk_strategies
 from src.research.round_two_runtime import _strategy_registry
 from src.research.round_two_walkforward import _parameter_specs
 from src.strategies.library import StrategyContext, audit_prefix_invariance
+from src.strategies.registry import StrategyRegistry
 
 
 def test_new_setup_resolves_real_rules_and_does_not_repaint(tmp_path):
@@ -74,3 +76,14 @@ def test_setup_refuses_protected_symlink(tmp_path):
     with pytest.raises(ValueError, match="protected"):
         initialize_paper_desk(alias)
     assert not list(protected.iterdir())
+
+
+def test_disabled_starter_does_not_break_unrelated_registered_strategies():
+    original = _strategy_registry().resolve("ema_adx_trend")
+    selected = StrategyRegistry()
+    selected.register(original.spec, original.generator, original.metadata)
+    register_desk_strategies(selected)
+    assert selected.resolve("ema_adx_trend") == original
+    assert selected.resolve("desk_ema_adx_trend_1m").spec.enabled
+    with pytest.raises(KeyError):
+        selected.resolve("desk_vwap_trend_continuation_1m")

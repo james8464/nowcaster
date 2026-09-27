@@ -58,6 +58,49 @@ def test_empty_history_does_not_create_files(tmp_path):
     assert list(tmp_path.iterdir()) == []
 
 
+@pytest.mark.parametrize("trailing_qualified", [False, True])
+def test_equal_time_candidates_show_first_eligible_not_last_report(tmp_path, trailing_qualified):
+    first = gate_suggestion(suggestion(strategy_id="desk_ema_adx_trend_1m"), context(), NOW)
+    values = dict(strategy_id="desk_vwap_trend_continuation_1m", candidate_hash="9" * 64)
+    if not trailing_qualified:
+        values.update(
+            posture="stand_aside",
+            entry_low=None,
+            entry_high=None,
+            invalidation=None,
+            target=None,
+            reasons=("candidate_gates_failed",),
+        )
+    last = gate_suggestion(suggestion(**values), context(), NOW)
+    retain_context_reports(tmp_path, (first, last), protocol_hash="a" * 64, context_protocol_hash="f" * 64)
+    payload = decision_presentation(tmp_path, protocol_hash="a" * 64, context_protocol_hash="f" * 64, now=NOW)
+    assert len(payload["contexts"]) == 1
+    assert payload["contexts"][0]["report_hash"] == first.report_hash
+    assert payload["contexts"][0]["posture"] == "long_research"
+
+
+def test_newer_abstention_replaces_older_eligible_context(tmp_path):
+    first = gate_suggestion(suggestion(), context(), NOW)
+    later = NOW + timedelta(seconds=1)
+    last = gate_suggestion(
+        suggestion(
+            decision_at=later,
+            posture="stand_aside",
+            entry_low=None,
+            entry_high=None,
+            invalidation=None,
+            target=None,
+            reasons=("candidate_gates_failed",),
+        ),
+        context(decision_at=later),
+        later,
+    )
+    retain_context_reports(tmp_path, (first, last), protocol_hash="a" * 64, context_protocol_hash="f" * 64)
+    payload = decision_presentation(tmp_path, protocol_hash="a" * 64, context_protocol_hash="f" * 64, now=later)
+    assert payload["contexts"][0]["report_hash"] == last.report_hash
+    assert payload["contexts"][0]["posture"] == "stand_aside"
+
+
 def test_large_history_is_streamed_without_losing_recent_context_or_old_validation(tmp_path, monkeypatch):
     report = gate_suggestion(suggestion(), context(), NOW)
     identity = report.context.context_protocol_hash
