@@ -218,3 +218,43 @@ Inspected window-only captures (no unrelated desktop content):
   fixture only, stopped, old context unavailable; not live trading evidence.
 - [Stale data means stand aside](04-stale-stand-aside.png): captured during the
   live test before a later display refresh, not evidence of a fresh entry.
+
+### Fresh-install CI compatibility
+
+Delivery `2abdfd3` triggered CI 36355836468, which **failed** in the deterministic
+research fixture and live-monitor checks. Read-only inspection of the preceding
+CI run 36350891811 also found a formatting failure (corrected in this delivery)
+and the same database reflection error. Fresh CI resolved SQLAlchemy **2.1.1**,
+whereas the tested installed app uses **2.0.52**, with DuckDB 1.5.5 and
+duckdb-engine 0.17.0 in both cases.
+
+A separate fresh environment at `/tmp/nowcaster-dependency-check.sOpHxi/venv`
+reproduced the migration failure with 2.1.1 (`pg_catalog.pg_collation` binding).
+The upstream dialect documents its inheritance of PostgreSQL behavior; see
+[duckdb-engine's compatibility notes](https://github.com/Mause/duckdb_engine#things-to-keep-in-mind).
+This release now pins the locally tested **2.0.52**, rather than patching database
+ledgers or changing reflection rules. The dependency contract failed before the
+constraint and passed afterward. The fresh environment's repository, migration,
+startup and packaging checks then passed: **24 tests**. Neither the primary
+installed environment nor the frozen study environment was upgraded or modified.
+
+The affected live-monitor target passed in the fresh environment: **172 Python
+tests, 16 native checks and the deterministic replay**. The regenerated CI snapshot
+had only 180 source-derived identity differences (36 each of strategy cohort,
+ensemble cohort, evidence cohort, contextual protocol and outcome-index hashes).
+No market values, trade results, strategy weights or safety decisions differed.
+Updated the generated CI artifacts and the native fixture using the existing
+synchronization tool; Python/native research semantic parity passed. Old fixtures
+remain in Git history; these generated demo artifacts are not study records.
+
+After the fixture refresh, **128 Swift Testing + 4 XCTest tests passed again**.
+The full engine rebuild and subsequent native-resource rebuild both succeeded.
+The final installed bundle passed strict/deep signing and source/executable
+manifest verification. Its immediately previous version is retained at
+`~/Library/Application Support/Nowcaster/AppBackups/Nowcaster-before-dependency-pin-20260927-2245.app`.
+The app was normally quit before replacement and collection remains stopped.
+Fresh-environment fixture parity, deterministic reproducibility, failure isolation
+and bounded historical-replay contract tests also completed: **10 passed in
+124.85 seconds**. Packaging dependency checks: **10 passed**. Lint and formatting
+passed again. Remote CI for the compatibility-fix commit remains a separate check;
+the previously failed run is retained, not represented as passing.

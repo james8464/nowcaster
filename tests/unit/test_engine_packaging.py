@@ -4,7 +4,19 @@ import ast
 import plistlib
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
+
+from packaging.requirements import Requirement
+
+
+def test_database_dependency_excludes_the_reproduced_reflection_regression() -> None:
+    root = Path(__file__).resolve().parents[2]
+    dependencies = tomllib.loads((root / "pyproject.toml").read_text())["project"]["dependencies"]
+    requirement = next(Requirement(item) for item in dependencies if Requirement(item).name == "sqlalchemy")
+    assert requirement.specifier.contains("2.0.52")
+    assert not requirement.specifier.contains("2.1.1")
+    assert not requirement.specifier.contains("2.0.45")
 
 
 def test_frozen_engine_initializes_multiprocessing_before_cli_dispatch() -> None:
