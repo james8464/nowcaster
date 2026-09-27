@@ -15,8 +15,10 @@ from typing import Any, Protocol
 import yaml
 
 from src.config.settings import StrategiesConfig
+from src.research.paper_desk_strategies import DESK_STRATEGIES, register_desk_strategies
 from src.research.round_two_contracts import (
     ResearchRoundProtocol,
+    RoundCandidate,
     RoundObservation,
     RoundProviderHealth,
     RoundReport,
@@ -81,6 +83,16 @@ def register_default_round(directory: Path, starts_at: datetime, *, round_id: st
     """Create exactly one default Binance-spot research protocol at ``directory``."""
     path = Path(directory)
     protocol = ResearchRoundProtocol.default(round_id=round_id or path.name or "research-round-2", starts_at=starts_at)
+    # New rounds use executable definitions. Never migrate an existing manifest.
+    protocol = protocol.model_copy(
+        update={
+            "candidates": tuple(
+                RoundCandidate(symbol=symbol, strategy_id=f"desk_{name}_1m", strategy_version="1.0.0", direction="long")
+                for symbol in protocol.symbols
+                for name in DESK_STRATEGIES
+            )
+        }
+    ).validated()
     return register_round(protocol, path)
 
 
@@ -128,7 +140,11 @@ def _strategy_registry():
     """Load static strategy definitions only; this reads no environment or accounts."""
     config_path = _repository_root() / "config" / "strategies.yaml"
     config = StrategiesConfig.model_validate(yaml.safe_load(config_path.read_text(encoding="utf-8")))
-    return build_strategy_registry(config.enabled)
+    registry = build_strategy_registry(config.enabled)
+    # Separate research identities: this is NOT a claim that 5m/15m evidence
+    # transfers to 1m. Existing strategy specs and retained manifests stay intact.
+    register_desk_strategies(registry)
+    return registry
 
 
 def evaluate_registered_round(directory: Path) -> tuple[CandidateResult, ...]:
@@ -306,14 +322,18 @@ def _native_round_payload(report: RoundReport) -> dict[str, Any]:
 def _native_provider_health(health: RoundProviderHealth) -> dict[str, Any]:
     health = RoundProviderHealth.model_validate(health.model_dump())
     return {
-        "provider": health.provider, "feed": health.feed, "revision": health.revision,
+        "provider": health.provider,
+        "feed": health.feed,
+        "revision": health.revision,
         "reportedAt": health.reported_at.isoformat().replace("+00:00", "Z"),
         "lastSuccessfulObservationAt": (
             health.last_successful_observation_at.isoformat().replace("+00:00", "Z")
-            if health.last_successful_observation_at else None
+            if health.last_successful_observation_at
+            else None
         ),
         "maximumAgeSeconds": health.maximum_age_seconds,
-        "state": health.state, "exclusions": list(health.exclusions),
+        "state": health.state,
+        "exclusions": list(health.exclusions),
     }
 
 
@@ -341,9 +361,14 @@ def _provider_health(protocol, observations, quality, decision_at) -> RoundProvi
     else:
         state = "healthy"
     return RoundProviderHealth(
-        provider=protocol.source.provider, feed=protocol.source.feed, revision=protocol.source.revision,
-        reported_at=decision_at, last_successful_observation_at=last,
-        maximum_age_seconds=protocol.maximum_observation_age_seconds, state=state, exclusions=tuple(sorted(exclusions)),
+        provider=protocol.source.provider,
+        feed=protocol.source.feed,
+        revision=protocol.source.revision,
+        reported_at=decision_at,
+        last_successful_observation_at=last,
+        maximum_age_seconds=protocol.maximum_observation_age_seconds,
+        state=state,
+        exclusions=tuple(sorted(exclusions)),
     )
 
 

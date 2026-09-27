@@ -26,6 +26,7 @@ def main(arguments=None):
     commands = parser.add_subparsers(dest="command", required=True)
     for name in (
         "start",
+        "setup",
         "run-once",
         "status",
         "stop",
@@ -50,6 +51,12 @@ def main(arguments=None):
         if name == "notification-outcome":
             command.add_argument("--outcome", choices=("delivered", "failed"), required=True)
     args = parser.parse_args(arguments)
+    if args.command == "setup":
+        from src.research.paper_desk_setup import initialize_paper_desk
+
+        initialize_paper_desk(args.directory)
+        print(read_live_signal_status(args.directory).model_dump_json())
+        return 0
     if args.command == "decision-context":
         import json
         from datetime import UTC, datetime
