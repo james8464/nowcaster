@@ -32,8 +32,6 @@ class LearningScheduler:
             state, raw, rows = self.registry._read()
             if campaign.identity_hash not in state.campaigns:
                 raise ValueError("campaign must be registered before dispatch")
-            if now < campaign.created_at:
-                return None
             protocol = state.campaigns[campaign.identity_hash][1]
             key = protocol.source.provider, protocol.source.feed, symbol, protocol.interval
             peers = [batch for batch in state.batches.values() if state.key(batch) == key]

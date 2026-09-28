@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import pytest
 
-from src.background_research.contracts import LearningCampaign, LearningStatus
+from src.background_research.contracts import LearningBatch, LearningCampaign, LearningStatus
 from src.background_research.registry import LearningRegistry
 from src.background_research.scheduler import LearningScheduler
 from tests.background_research_fixtures import campaign_fixture
@@ -44,6 +44,33 @@ def test_same_asset_day_and_fingerprint_cannot_buy_another_batch(registry, campa
     assert registry.reserve_batch(batch) is False
     assert registry.reserve_batch(batch.model_copy(update={"batch_id": "other"})) is False
     assert snapshot(registry.root) == before
+
+
+@pytest.mark.parametrize("day,allowed", [(1, False), (2, True)])
+def test_direct_reservation_requires_campaign_registration_time(tmp_path, day, allowed):
+    campaign = campaign_fixture(tmp_path).model_copy(update={"created_at": datetime(2026, 6, 2, tzinfo=UTC)})
+    registry = LearningRegistry(tmp_path / "registry")
+    registry.register(campaign)
+    created_at = datetime(2026, 6, day, tzinfo=UTC)
+    batch = LearningBatch(
+        batch_id="direct",
+        campaign_hash=campaign.identity_hash,
+        symbol="BTCUSDT",
+        utc_day=created_at.date(),
+        data_fingerprint="b" * 64,
+        training_start=datetime(2026, 1, 1, tzinfo=UTC),
+        training_end=datetime(2026, 4, 1, tzinfo=UTC),
+        validation_end=datetime(2026, 5, 1, tzinfo=UTC),
+        holdout_end=datetime(2026, 5, 31, tzinfo=UTC),
+        max_attempts=100,
+        created_at=created_at,
+    )
+    before = snapshot(registry.root)
+    source_before = snapshot(campaign.source_directory)
+    assert registry.reserve_batch(batch) is allowed
+    if not allowed:
+        assert snapshot(registry.root) == before
+    assert snapshot(campaign.source_directory) == source_before
 
 
 def test_holdout_exposure_survives_campaign_and_dataset_rename(tmp_path, registry, campaign):

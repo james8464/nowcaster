@@ -79,6 +79,8 @@ class _State:
 
     def can_reserve(self, batch: LearningBatch) -> bool:
         campaign = self.campaigns[batch.campaign_hash][0]
+        if batch.created_at < campaign.created_at:
+            return False
         if batch.symbol not in campaign.symbols or batch.max_attempts != campaign.max_attempts_per_batch:
             raise ValueError("batch does not match campaign symbol or attempt budget")
         schedule = campaign.schedule
