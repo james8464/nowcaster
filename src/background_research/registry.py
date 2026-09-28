@@ -74,8 +74,13 @@ class _State:
         return protocol.source.provider, protocol.source.feed, batch.symbol, protocol.interval
 
     def batch_state(self, batch_id: str) -> str:
-        states = [event.state for event in self.events[batch_id] if event.kind == "state"]
+        states = [event.state for event in self.events[batch_id] if event.kind in {"state", "completion"}]
         return states[-1] if states else "training"
+
+    def batch_finished(self, batch_id: str) -> bool:
+        return self.batch_state(batch_id) in TERMINAL_STATES or any(
+            event.kind == "completion" for event in self.events[batch_id]
+        )
 
     def can_reserve(self, batch: LearningBatch) -> bool:
         campaign = self.campaigns[batch.campaign_hash][0]
@@ -103,7 +108,7 @@ class _State:
         if sum(old.utc_day == batch.utc_day for old in peers) >= campaign.max_batches_per_asset_day:
             return False
         own = [old for old in peers if old.campaign_hash == batch.campaign_hash]
-        if any(self.batch_state(old.batch_id) not in TERMINAL_STATES for old in own):
+        if any(not self.batch_finished(old.batch_id) for old in own):
             return False
         return not (own and batch.training_start <= max(old.training_start for old in own))
 
@@ -136,7 +141,7 @@ class _State:
             events = self.events[batch.batch_id]
             attempts = {item.attempt_id: item for item in events if item.kind == "attempt"}
             if event.kind == "attempt":
-                if self.batch_state(batch.batch_id) in TERMINAL_STATES:
+                if self.batch_finished(batch.batch_id):
                     raise ValueError("terminal batch cannot accept another attempt")
                 if event.attempt_id in attempts or len(attempts) >= batch.max_attempts:
                     raise ValueError("attempt identity already retained or attempt budget exhausted")
@@ -148,7 +153,7 @@ class _State:
                     item.kind == "attempt_result" and item.attempt_id == event.attempt_id for item in events
                 ):
                     raise ValueError("attempt outcome already retained")
-            elif event.kind == "state" and self.batch_state(batch.batch_id) in TERMINAL_STATES:
+            elif event.kind in {"state", "completion"} and self.batch_finished(batch.batch_id):
                 raise ValueError("terminal batch state cannot be reset")
             events.append(event)
         else:
@@ -205,7 +210,7 @@ class _State:
                 latest.holdout_end + timedelta(days=campaign.schedule.step_days),
             )
             for event in self.events[latest.batch_id]:
-                if event.kind == "state":
+                if event.kind in {"state", "completion"}:
                     values.update(state=event.state, reason=event.reason)
                     if event.next_eligible_at:
                         values["next_eligible_at"] = event.next_eligible_at

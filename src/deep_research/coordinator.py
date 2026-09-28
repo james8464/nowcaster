@@ -164,6 +164,7 @@ class DeepResearchCoordinator:
         emit: EventSink | None = None,
         clock: Callable[[], datetime] | None = None,
         resource_guard: ResourceGuard | None = None,
+        on_result: Callable[[CandidateAttempt, WorkerResult | None], None] | None = None,
     ):
         self.run_id = run_id
         self.protocol = protocol
@@ -173,6 +174,7 @@ class DeepResearchCoordinator:
         self.emit = emit
         self.clock = clock or (lambda: datetime.now(UTC))
         self.resource_guard = resource_guard or evaluate_resource_capacity
+        self.on_result = on_result
         self.worker_count = recommended_worker_count(
             os.cpu_count() or 1,
             reserved_processors=protocol.reserved_processors,
@@ -229,7 +231,10 @@ class DeepResearchCoordinator:
         generation: int = 1,
         create_run: bool = True,
         finish_run: bool | None = None,
+        evaluate_final: bool = True,
     ) -> DeepResearchOutcome:
+        if self.protocol.continuous and evaluate_final:
+            raise ValueError("continuous research requires training-only evaluation")
         ordered_work = tuple(sorted(works, key=lambda item: item.ordinal))
         if generation < 1:
             raise ValueError("generation must be positive")
@@ -397,6 +402,9 @@ class DeepResearchCoordinator:
                             generation=generation,
                         )
 
+                if self.on_result is not None:
+                    for item in batch:
+                        self.on_result(batch_attempts[item.ordinal], results.get(item.ordinal))
                 self.repository.append_attempts_ordered(self.run_id, [batch_attempts[item.ordinal] for item in batch])
                 attempts.update(batch_attempts)
                 for item in batch:
@@ -446,8 +454,13 @@ class DeepResearchCoordinator:
         )
 
         best_hash: str | None = None
-        promotion_outcome = "no_reliable_strategy_found"
-        if results:
+        promotion_outcome = "no_reliable_strategy_found" if evaluate_final else "training_only"
+        if results and not evaluate_final:
+            best_ordinal = min(
+                results, key=lambda ordinal: (-results[ordinal].fitness, work_by_ordinal[ordinal].candidate_hash)
+            )
+            best_hash = work_by_ordinal[best_ordinal].candidate_hash
+        if results and evaluate_final:
             best_ordinal, best_result = max(results.items(), key=lambda item: (item[1].fitness, -item[0]))
             best_work = work_by_ordinal[best_ordinal]
             best_hash = best_work.candidate_hash

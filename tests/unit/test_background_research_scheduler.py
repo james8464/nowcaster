@@ -88,3 +88,19 @@ def test_clock_cannot_precede_campaign_registration(tmp_path):
     registry = LearningRegistry(tmp_path / "registry")
     registry.register(campaign)
     assert dispatch(LearningScheduler(registry), campaign, datetime(2026, 6, 1, tzinfo=UTC)) is None
+
+
+def test_completed_wait_advances_only_new_registered_window_but_unfinished_wait_resumes(tmp_path):
+    campaign, registry, scheduler = setup(tmp_path)
+    day = datetime(2026, 5, 31, tzinfo=UTC)
+    batch = dispatch(scheduler, campaign, day)
+    registry.append_event(batch.batch_id, {"kind": "state", "state": "waiting", "reason": "temporary resource wait"})
+    assert dispatch(scheduler, campaign, day + timedelta(days=30), "c" * 64) == batch
+    registry.append_event(batch.batch_id, {"kind": "completion", "state": "waiting", "reason": "holdout exhausted"})
+    assert registry.read_status(campaign.identity_hash).state == "waiting"
+    assert dispatch(scheduler, campaign, day + timedelta(days=1), "c" * 64) is None
+    assert dispatch(scheduler, campaign, day + timedelta(days=30), "b" * 64) is None
+    next_batch = dispatch(scheduler, campaign, day + timedelta(days=30), "c" * 64)
+    assert next_batch.training_start == datetime(2026, 1, 31, tzinfo=UTC)
+    with pytest.raises(ValueError, match="terminal"):
+        registry.append_event(batch.batch_id, {"kind": "state", "state": "training", "reason": "retry"})

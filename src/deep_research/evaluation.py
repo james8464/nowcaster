@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
@@ -12,6 +14,19 @@ from src.deep_research.candidates import CandidateDefinition
 from src.strategies.indicators import rolling_zscore, rsi
 from src.strategies.library import StrategyContext, generate_signals
 from src.strategies.types import StrategySpec
+
+if TYPE_CHECKING:
+    from src.research.round_two_contracts import ResearchRoundProtocol, RoundCandidate, RoundObservation
+    from src.research.round_two_walkforward import EvaluationMetrics
+
+
+@dataclass(frozen=True, slots=True)
+class RetainedEvaluationInput:
+    protocol: ResearchRoundProtocol
+    round_candidate: RoundCandidate
+    observations: tuple[RoundObservation, ...]
+    coverage: Decimal
+    reasons: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,6 +43,7 @@ class CandidateEvaluationPayload:
     fold_ranges: tuple[tuple[datetime, datetime], ...]
     execution_assumptions: ExecutionAssumptions
     risk_limits: RiskLimits
+    retained_input: RetainedEvaluationInput | None = None
 
     @property
     def base_spec(self) -> StrategySpec:
@@ -40,6 +56,8 @@ class CandidatePathEvidence:
     gross_returns: tuple[float, ...]
     costs: tuple[float, ...]
     trade_count: int
+    retained_metrics: EvaluationMetrics | None = None
+    decisions: tuple[tuple[datetime, int], ...] = ()
 
 
 def _rule_signals(payload: CandidateEvaluationPayload) -> pd.DataFrame:
@@ -73,6 +91,10 @@ def _candidate_signals(payload: CandidateEvaluationPayload) -> pd.DataFrame:
 
 
 def evaluate_candidate_payload(payload: CandidateEvaluationPayload) -> CandidatePathEvidence:
+    if payload.retained_input is not None:
+        from src.background_research.data import evaluate_retained_payload
+
+        return evaluate_retained_payload(payload)
     start = pd.Timestamp(payload.evaluation_start)
     end = pd.Timestamp(payload.evaluation_end)
     if start.tzinfo is None or end.tzinfo is None or start >= end:

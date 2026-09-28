@@ -213,7 +213,7 @@ class LearningEvent(FrozenModel):
     """Versioned worker envelope. Attempts are reserved before candidate evaluation."""
 
     schema_version: Literal[1] = 1
-    kind: Literal["attempt", "attempt_result", "checkpoint", "state", "artifact"]
+    kind: Literal["attempt", "attempt_result", "checkpoint", "state", "artifact", "completion"]
     attempt_id: Identifier | None = None
     candidate_hash: Digest | None = None
     outcome: Literal["reserved", "completed", "rejected", "invalid", "failed", "interrupted"] | None = None
@@ -235,8 +235,10 @@ class LearningEvent(FrozenModel):
             raise ValueError("attempt events require attempt_id and candidate_hash")
         if self.kind == "attempt_result" and self.outcome in {None, "reserved"}:
             raise ValueError("attempt_result requires a terminal outcome")
-        if self.kind == "state" and (self.state is None or not self.reason):
+        if self.kind in {"state", "completion"} and (self.state is None or not self.reason):
             raise ValueError("state events require state and reason")
+        if self.kind == "completion" and self.state not in {"waiting", "completed", "failed"}:
+            raise ValueError("completion requires a terminal disposition")
         if self.kind == "checkpoint" and not self.checkpoint:
             raise ValueError("checkpoint event requires a checkpoint")
         if self.kind == "artifact" and (self.phase is None or self.payload is None):
@@ -245,6 +247,7 @@ class LearningEvent(FrozenModel):
             "attempt": {"attempt_id", "candidate_hash", "outcome", "payload"},
             "attempt_result": {"attempt_id", "candidate_hash", "outcome", "payload"},
             "state": {"state", "reason", "next_eligible_at"},
+            "completion": {"state", "reason", "next_eligible_at"},
             "checkpoint": {"checkpoint"},
             "artifact": {"phase", "payload"},
         }[self.kind] | {"schema_version", "kind"}

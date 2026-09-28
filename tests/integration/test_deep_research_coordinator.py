@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from threading import Timer
+
+import pytest
 
 from src.database.engine import Database
 from src.deep_research.contracts import ResearchProtocol, RunState
@@ -15,6 +18,55 @@ from src.deep_research.coordinator import (
 from src.deep_research.repository import DeepResearchRepository
 
 NOW = datetime(2026, 8, 24, 12, tzinfo=UTC)
+
+
+class CountingRepository(DeepResearchRepository):
+    def promotion_count(self):
+        return self.database.scalar("select count(*) from deep_research_promotions")
+
+
+def test_training_only_never_promotes_or_reads_final(tmp_path):
+    database = Database.from_url(f"duckdb:///{tmp_path / 'training.duckdb'}")
+    database.initialize()
+    repository = CountingRepository(database)
+    control = ResearchControl(tmp_path / "training", run_id="training", nonce="t" * 32)
+    control.initialize()
+
+    def forbidden(*args):
+        raise AssertionError("training must not inspect final or evaluate promotion")
+
+    coordinator = DeepResearchCoordinator(
+        run_id="training",
+        protocol=_protocol(workers=1, trial_budget=2, continuous=True),
+        repository=repository,
+        control=control,
+        sealed_evaluator=forbidden,
+    )
+    coordinator._promotion = forbidden
+    # Equal fitness: canonical hash, not dispatch ordinal, chooses the winner.
+    works = (_work(1), replace(_work(1), ordinal=2, candidate_hash="0" * 64))
+    result = coordinator.run(works, evaluate_final=False)
+    assert result.promotion_outcome == "training_only"
+    assert result.best_candidate_hash == "0" * 64
+    assert repository.promotion_count() == 0
+    assert database.scalar("select count(*) from deep_research_trials") == 2
+
+
+def test_continuous_protocol_rejects_final_evaluation_before_run_creation(tmp_path):
+    database = Database.from_url(f"duckdb:///{tmp_path / 'forbidden.duckdb'}")
+    database.initialize()
+    control = ResearchControl(tmp_path / "forbidden", run_id="forbidden", nonce="f" * 32)
+    control.initialize()
+    coordinator = DeepResearchCoordinator(
+        run_id="forbidden",
+        protocol=_protocol(workers=1, continuous=True),
+        repository=CountingRepository(database),
+        control=control,
+        sealed_evaluator=lambda _: (1.0,),
+    )
+    with pytest.raises(ValueError, match="continuous.*training"):
+        coordinator.run((_work(1),), evaluate_final=True)
+    assert database.scalar("select count(*) from deep_research_runs") == 0
 
 
 def test_worker_recommendation_always_reserves_two_processors_and_honors_ceiling() -> None:
@@ -216,7 +268,7 @@ def test_continuous_run_resumes_at_the_checkpointed_ordinal_and_generation(tmp_p
         repository=repository,
         control=first_control,
         sealed_evaluator=lambda work: tuple([0.002 + work.ordinal * 0.0001, -0.0001] * 160),
-    ).run((_work(1), _work(2)), generation=1, finish_run=False)
+    ).run((_work(1), _work(2)), generation=1, finish_run=False, evaluate_final=False)
     assert first.state is RunState.RUNNING
 
     resume = repository.resume_run("resume-cycle", protocol)
@@ -229,7 +281,7 @@ def test_continuous_run_resumes_at_the_checkpointed_ordinal_and_generation(tmp_p
         repository=repository,
         control=second_control,
         sealed_evaluator=lambda work: tuple([0.002 + work.ordinal * 0.0001, -0.0001] * 160),
-    ).run((_work(3), _work(4)), generation=resume.generation, create_run=False, finish_run=True)
+    ).run((_work(3), _work(4)), generation=resume.generation, create_run=False, finish_run=True, evaluate_final=False)
 
     assert second.state is RunState.COMPLETED
     rows = database.frame("select ordinal, generation from deep_research_trials order by ordinal")

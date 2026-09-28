@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta
 
 from src.background_research.contracts import LearningBatch, LearningCampaign
-from src.background_research.registry import TERMINAL_STATES, LearningRegistry, _source, _validate_source
+from src.background_research.registry import LearningRegistry, _source, _validate_source
 from src.research.round_two_contracts import _utc
 from src.strategies.types import canonical_hash
 
@@ -42,7 +42,7 @@ class LearningScheduler:
                 batch_state = state.batch_state(batch.batch_id)
                 if batch_state in {"paused", "pausing", "blocked"}:
                     return None
-                if batch_state not in TERMINAL_STATES:
+                if not state.batch_finished(batch.batch_id):
                     return batch if batch.holdout_end <= through else None
             schedule = campaign.schedule
             start = (

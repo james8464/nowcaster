@@ -4,8 +4,12 @@ import math
 import os
 import time
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from src.research.round_two_walkforward import EvaluationMetrics
 
 NUMERIC_THREAD_ENVIRONMENT = (
     "OMP_NUM_THREADS",
@@ -38,6 +42,8 @@ class WorkerResult:
     gross_returns: tuple[float, ...]
     costs: tuple[float, ...]
     trade_count: int
+    retained_metrics: EvaluationMetrics | None = None
+    fold_returns: tuple[tuple[float, ...], ...] = ()
 
 
 def _fold_metric(values: tuple[float, ...]) -> WorkerFoldMetric:
@@ -83,6 +89,8 @@ def evaluate_candidate_work(work, attempt_number: int) -> WorkerResult:
         gross_returns=tuple(gross_returns),
         costs=tuple(costs),
         trade_count=trade_count,
+        retained_metrics=evaluated.retained_metrics if work.evaluation_payload is not None else None,
+        fold_returns=tuple(tuple(values) for values in fold_returns),
     )
 
 

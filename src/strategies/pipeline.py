@@ -1074,6 +1074,7 @@ class StrategyPipeline:
                 generation=generation,
                 create_run=create_run,
                 finish_run=not options.continuous,
+                evaluate_final=not options.continuous,
             )
             evaluated_total += outcome.evaluated_attempts
             if outcome.best_candidate_hash is not None:

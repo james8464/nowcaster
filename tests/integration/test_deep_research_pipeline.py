@@ -144,6 +144,11 @@ def test_continuous_deep_research_runs_checkpointed_generations_until_time_budge
     pipeline, database = _pipeline(project_root, tmp_path)
     start = datetime(2026, 8, 20, tzinfo=UTC)
     pipeline.ingest(IngestOptions(scope=_scope(), start=start, end=start + timedelta(minutes=5 * BAR_COUNT)))
+
+    def forbidden(_):
+        raise AssertionError("continuous pipeline must not read final returns")
+
+    monkeypatch.setattr(strategy_pipeline, "evaluate_candidate_payload", forbidden)
     monotonic_ticks = iter((0.0, 5.0, 7.0))
     monkeypatch.setattr(
         strategy_pipeline,
@@ -165,12 +170,14 @@ def test_continuous_deep_research_runs_checkpointed_generations_until_time_budge
     )
 
     assert outcome.status == "completed"
+    assert outcome.message == "training only"
     assert outcome.evaluated_candidates >= 4
     assert database.scalar("select count(*) from deep_research_trials") == outcome.evaluated_candidates
     assert database.scalar("select max(generation) from deep_research_trials") >= 2
     assert database.scalar("select count(*) from deep_research_checkpoints") >= 2
     assert database.scalar("select state from deep_research_runs") == "completed"
     assert database.scalar("select count(*) from broker_order_intents") == 0
+    assert database.scalar("select count(*) from deep_research_promotions") == 0
 
 
 @pytest.mark.parametrize(
