@@ -24,12 +24,19 @@ struct PaperSessionPreferences: Codable, Equatable, Sendable {
 struct PaperSessionPreferenceStore: Sendable {
     let url: URL
     static var application: Self {
-        .init(url: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appending(path: "Nowcaster/paper-session.json"))
+        .init(url: AppStorageLocations.root.appending(path: "paper-session.json"))
     }
     func load() -> (preferences: PaperSessionPreferences, explanation: String?) {
         guard FileManager.default.fileExists(atPath: url.path) else { return (.init(), nil) }
         do {
             let preferences = try JSONDecoder().decode(PaperSessionPreferences.self, from: Data(contentsOf: url))
+            if let root = AppStorageLocations.acceptanceRoot {
+                for path in [preferences.source?.directory, preferences.registryURL, preferences.manifestURL].compactMap({ $0 }) {
+                    guard path.resolvingSymlinksInPath().path.hasPrefix(root.path + "/") else {
+                        throw BackgroundResearchError.invalidPath
+                    }
+                }
+            }
             guard preferences.seed >= 0,
                   preferences.campaignHash.map(LearningStatus.isDigest) ?? true,
                   preferences.runtimeCodeIdentity.map(LearningStatus.isDigest) ?? true,

@@ -29,6 +29,7 @@ struct RootView: View {
     @SceneStorage("Nowcaster.destination") private var storedDestination = AppDestination.tradeDesk.rawValue
     @AppStorage("Nowcaster.tradeDeskIntroduced") private var tradeDeskIntroduced = false
     @FocusState private var searchIsFocused: Bool
+    @State private var advancedExpanded = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -61,7 +62,12 @@ struct RootView: View {
                 await applyScreenshotPresentation(presentation)
             }
         }
-        .onChange(of: model.destination) { _, destination in storedDestination = destination.rawValue }
+        .onChange(of: model.destination) { _, destination in
+            storedDestination = destination.rawValue
+            if AppDestination.advancedDestinations.contains(destination) { advancedExpanded = true }
+        }
+        .sheet(isPresented: $model.showingPaperSetup) { PaperSessionSetupView(model: model, settings: settings) }
+        .sheet(isPresented: $model.showingPaperHelp) { PaperResearchHelpView() }
         .onReceive(NotificationCenter.default.publisher(for: .focusGlobalSearch)) { _ in searchIsFocused = true }
     }
 
@@ -99,7 +105,7 @@ struct RootView: View {
     }
 
     @ViewBuilder private var snapshotRefreshBanner: some View {
-        if model.destination != .tradeDesk, let presentation = RootSnapshotStatusPresentation(state: model.loadState), model.snapshot != nil {
+        if ![.tradeDesk, .history, .research].contains(model.destination), let presentation = RootSnapshotStatusPresentation(state: model.loadState), model.snapshot != nil {
             HStack(spacing: 10) {
                 Label {
                     VStack(alignment: .leading, spacing: 2) {
@@ -151,28 +157,18 @@ struct RootView: View {
     private var sidebar: some View {
         List(selection: $model.destination) {
             Section {
-                destinationRow(.tradeDesk)
-                destinationRow(.today)
-                destinationRow(.markets)
-                destinationRow(.earnings)
-                destinationRow(.signals)
-                destinationRow(.liveMonitor)
-            } header: {
-                sidebarSectionHeader("Monitor")
+                ForEach(AppDestination.primaryDestinations) { destinationRow($0) }
             }
             Section {
-                destinationRow(.backtests)
-                destinationRow(.strategyLab)
-                destinationRow(.modelLab)
-            } header: {
-                sidebarSectionHeader("Research")
-            }
-            Section {
-                destinationRow(.dataQuality)
-                destinationRow(.pipelineRuns)
-                destinationRow(.executionCenter)
-            } header: {
-                sidebarSectionHeader("System")
+                Button {
+                    advancedExpanded.toggle()
+                } label: {
+                    Label(advancedExpanded ? "Hide Advanced" : "Advanced", systemImage: advancedExpanded ? "chevron.down" : "chevron.right")
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("sidebar.advanced")
+                .accessibilityValue(advancedExpanded ? "Expanded" : "Collapsed")
+                if advancedExpanded { ForEach(AppDestination.advancedDestinations) { destinationRow($0) } }
             }
         }
         .navigationTitle("Research")
@@ -193,12 +189,20 @@ struct RootView: View {
     @ViewBuilder private var destinationContent: some View {
         if model.destination == .tradeDesk {
             TradeDeskView(model: model, settings: settings)
+        } else if model.destination == .history {
+            PaperHistoryView(service: model.livePaperSignals)
+        } else if model.destination == .research {
+            BackgroundResearchView(model: model, settings: settings)
         } else if model.destination == .strategyLab, model.snapshot == nil {
             ScrollView { LivePaperSignalsView(model: model, settings: settings).padding() }
         } else if let snapshot = model.snapshot {
             switch model.destination {
             case .tradeDesk:
                 TradeDeskView(model: model, settings: settings)
+            case .history:
+                PaperHistoryView(service: model.livePaperSignals)
+            case .research:
+                BackgroundResearchView(model: model, settings: settings)
             case .today:
                 TodayView(snapshot: snapshot, selectSignal: model.selectSignal)
             case .markets:
@@ -287,8 +291,8 @@ struct RootView: View {
 
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
-            if model.destination == .tradeDesk {
-                Label("Paper research · no orders", systemImage: "shield.lefthalf.filled")
+            if [.tradeDesk, .history, .research].contains(model.destination) {
+                Label("Paper research", systemImage: "shield.lefthalf.filled")
                     .font(.caption).foregroundStyle(.secondary)
             } else {
             if model.isRunningJob {

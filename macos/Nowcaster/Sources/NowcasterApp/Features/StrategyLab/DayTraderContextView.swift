@@ -2,6 +2,7 @@ import SwiftUI
 
 struct DayTraderContextView: View {
     let service: LivePaperSignalService
+    @State private var showingHistory = false
 
     var body: some View {
         GroupBox {
@@ -20,7 +21,10 @@ struct DayTraderContextView: View {
                     }
                 }
                 Divider()
-                DisclosureGroup("Historical hypothetical outcomes") {
+                Button(showingHistory ? "Hide Historical Outcomes" : "Show Historical Outcomes") { showingHistory.toggle() }
+                    .accessibilityIdentifier("dayTrader.historyToggle")
+                    .accessibilityValue(showingHistory ? "Expanded" : "Collapsed")
+                if showingHistory {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Completed paper hypotheses only. These are historical observations, not current signals or executable fills.")
                             .font(.caption).foregroundStyle(.secondary)
@@ -37,8 +41,8 @@ struct DayTraderContextView: View {
                         } else {
                             Text("No validated completed outcomes loaded.").foregroundStyle(.secondary)
                         }
-                    }.padding(.top, 4)
-                }.accessibilityIdentifier("dayTrader.historicalOutcomes")
+                    }.padding(.top, 4).accessibilityIdentifier("dayTrader.historicalOutcomes")
+                }
             }.padding(4).textSelection(.enabled)
         }.accessibilityIdentifier("strategyLab.dayTraderContext")
     }

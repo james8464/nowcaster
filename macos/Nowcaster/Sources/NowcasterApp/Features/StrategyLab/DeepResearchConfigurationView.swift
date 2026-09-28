@@ -69,7 +69,7 @@ struct DeepResearchConfigurationView: View {
 
             Section {
                 Label(
-                    "Deep Research searches historical data and a sealed holdout. Results remain hypothetical, cannot guarantee future profit, and never unlock live trading.",
+                    "Continuous research searches training data only. A locked proposal requires a separate evaluation; inspected holdouts cannot be reused as unseen evidence. Results remain hypothetical and never unlock live trading.",
                     systemImage: "exclamationmark.shield"
                 )
                 .font(.footnote)

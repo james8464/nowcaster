@@ -43,8 +43,9 @@ final class AppSettings {
     var targetNotifications: Bool { didSet { defaults.set(targetNotifications, forKey: Key.targetNotifications) } }
     var stopNotifications: Bool { didSet { defaults.set(stopNotifications, forKey: Key.stopNotifications) } }
     var closeNotifications: Bool { didSet { defaults.set(closeNotifications, forKey: Key.closeNotifications) } }
+    var contentTextSize: Double { didSet { defaults.set(contentTextSize, forKey: "contentTextSize") } }
 
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = AppStorageLocations.defaults) {
         self.defaults = defaults
         let root = defaults.string(forKey: Key.projectRoot) ?? FileManager.default.currentDirectoryPath
         projectRootPath = root
@@ -59,6 +60,7 @@ final class AppSettings {
         targetNotifications = defaults.object(forKey: Key.targetNotifications) as? Bool ?? true
         stopNotifications = defaults.object(forKey: Key.stopNotifications) as? Bool ?? true
         closeNotifications = defaults.object(forKey: Key.closeNotifications) as? Bool ?? true
+        contentTextSize = min(26, max(13, defaults.object(forKey: "contentTextSize") as? Double ?? 13))
     }
 
     var normalizedStocks: [String] { normalizeWatchlist(stockWatchlist) }
@@ -96,10 +98,68 @@ final class AppSettings {
 
 struct SettingsView: View {
     @Bindable var settings: AppSettings
+    @Bindable var model: AppModel
     @State private var loginItemMessage: String?
     @State private var showingAdvancedCredentials = false
 
     var body: some View {
+        TabView {
+            Form {
+                Section("Paper session") {
+                    Toggle("Enable background learning", isOn: Binding(get: { model.paperSession.preferences.learningEnabled },
+                        set: { enabled in Task { await model.paperSession.setLearningEnabled(enabled) } }))
+                        .accessibilityIdentifier("settings.learning")
+                    Toggle("Resume paper session when Nowcaster opens", isOn: Binding(get: { model.paperSession.preferences.resumeOnLaunch },
+                        set: { enabled in Task { await model.paperSession.setResumeOnLaunch(enabled) } }))
+                        .accessibilityIdentifier("settings.resume")
+                    Toggle("Start Nowcaster at login", isOn: $settings.monitorAtLogin)
+                        .accessibilityIdentifier("settings.login")
+                        .onChange(of: settings.monitorAtLogin) { _, enabled in
+                            do { try LoginItemService.setEnabled(enabled); loginItemMessage = LoginItemService.statusDescription }
+                            catch { settings.monitorAtLogin = false; loginItemMessage = error.localizedDescription }
+                        }
+                    Toggle("Show menu bar control", isOn: Binding(get: { model.paperSession.preferences.showMenuBarExtra },
+                        set: { model.paperSession.setShowMenuBarExtra($0) }))
+                        .accessibilityIdentifier("settings.menu")
+                    Text("Closing a window leaves a started session running. Reopen from the Dock or Open Nowcaster. Quit stops app-owned work. Nothing runs while this Mac sleeps or is offline; gaps remain recorded.")
+                        .foregroundStyle(.secondary)
+                    if let loginItemMessage { Text(loginItemMessage) }
+                }
+                Section("Resources") {
+                    PaperResourcePicker(model: model)
+                    Text("Efficient uses half the logical cores and reserves at least two when available. Balanced uses the available cores after that reserve. Both use one numerical thread per worker.")
+                        .foregroundStyle(.secondary)
+                }
+                Section("Notifications") {
+                    Toggle("Notify me about new paper research", isOn: Binding(get: { model.livePaperSignals.notificationsEnabled },
+                        set: { enabled in Task { await model.livePaperSignals.setNotificationsEnabled(enabled) } }))
+                        .accessibilityIdentifier("settings.notifications")
+                    Text("Optional, checked paper-research updates only. Enabling learning does not grant notification permission.").foregroundStyle(.secondary)
+                }
+                Section("Reading") {
+                    Picker("Content text size", selection: $settings.contentTextSize) {
+                        Text("Standard").tag(13.0)
+                        Text("Larger").tag(17.0)
+                        Text("Extra Large").tag(21.0)
+                        Text("200%").tag(26.0)
+                    }.accessibilityIdentifier("settings.textSize")
+                }
+            }.formStyle(.grouped)
+                .tabItem { Label("General", systemImage: "gearshape") }
+            advancedSettings.tabItem { Label("Advanced", systemImage: "slider.horizontal.3") }
+        }
+        .padding()
+        .font(.system(size: settings.contentTextSize))
+        .frame(width: 640, height: 620)
+        .sheet(isPresented: $showingAdvancedCredentials) {
+            VStack {
+                BrokerCredentialsView(vault: BrokerCredentialVault())
+                Button("Done") { showingAdvancedCredentials = false }
+            }.padding().frame(width: 600)
+        }
+    }
+
+    private var advancedSettings: some View {
         Form {
             Section("Research engine") {
                 pathRow("Project root", text: $settings.projectRootPath, chooseDirectories: true)
@@ -116,16 +176,6 @@ struct SettingsView: View {
             Section("Live Monitor") {
                 TextField("Stocks", text: $settings.stockWatchlist, prompt: Text("AAPL, SPY"))
                 TextField("Crypto", text: $settings.cryptoWatchlist, prompt: Text("BTCUSDT, ETHUSDT"))
-                Toggle("Start Nowcaster at login", isOn: $settings.monitorAtLogin)
-                    .onChange(of: settings.monitorAtLogin) { _, enabled in
-                        do {
-                            try LoginItemService.setEnabled(enabled)
-                            loginItemMessage = LoginItemService.statusDescription
-                        } catch {
-                            settings.monitorAtLogin = false
-                            loginItemMessage = error.localizedDescription
-                        }
-                    }
                 Text("The former automatic-monitoring preference is retired. Paper-session resume is a separate, explicit choice.")
                     .font(.footnote).foregroundStyle(.secondary)
                 Toggle("Silence new-entry banners", isOn: $settings.silenceEntryNotifications)
@@ -156,20 +206,12 @@ struct SettingsView: View {
                 }
             }
             Section {
-                Text("Nowcaster stores only these local paths and the selected mode in preferences. Broker credentials use Keychain.")
+                Text("Local paths and display preferences are stored on this Mac. Explicit broker tooling uses Keychain.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
-        .padding()
-        .frame(width: 640, height: 620)
-        .sheet(isPresented: $showingAdvancedCredentials) {
-            VStack {
-                BrokerCredentialsView(vault: BrokerCredentialVault())
-                Button("Done") { showingAdvancedCredentials = false }
-            }.padding().frame(width: 600)
-        }
     }
 
     private func pathRow(_ title: String, text: Binding<String>, chooseDirectories: Bool = false) -> some View {

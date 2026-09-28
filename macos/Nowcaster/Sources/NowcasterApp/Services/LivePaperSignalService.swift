@@ -68,8 +68,7 @@ enum LivePaperServiceError: LocalizedError {
 @MainActor @Observable
 final class LivePaperSignalService: PaperSessionCollecting {
     static var defaultDirectory: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appending(path: "Nowcaster/PaperResearch/paper-desk-v1", directoryHint: .isDirectory)
+        AppStorageLocations.root.appending(path: "PaperResearch/paper-desk-v1", directoryHint: .isDirectory)
     }
     private(set) var isRunning = false
     private(set) var isBusy = false
@@ -158,6 +157,10 @@ final class LivePaperSignalService: PaperSessionCollecting {
         state = nil; events = []; providerHealth = nil; configuration = nil; self.directory = nil
         decisionEvidence = nil; decisionMessage = nil; lastDecisionRead = nil
         do {
+            if let root = AppStorageLocations.acceptanceRoot,
+               !directory.resolvingSymlinksInPath().path.hasPrefix(root.path + "/") {
+                throw BackgroundResearchError.invalidPath
+            }
             let provisional = try LivePaperSignalConfiguration.application(directory: directory,
                 protocolHash: String(repeating: "0", count: 64), sourceRoot: sourceRoot, sourcePython: sourcePython)
             try provisional.validate()

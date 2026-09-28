@@ -9,11 +9,11 @@ final class TradeDeskUITests: XCTestCase {
         if app.state != .notRunning {
             // XCTest failures do not always unwind Swift defers. Stop only the
             // app-owned collector and use normal Quit before runner cleanup.
-            let stop = app.buttons["paperSignals.stop"]
-            if stop.exists, stop.isEnabled {
+            let stop = app.buttons["paperSession.action"]
+            if stop.exists, stop.isEnabled, stop.label == "Pause" {
                 stop.click()
-                let stopped = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND enabled == true"),
-                                                        object: app.buttons["paperSignals.start"])
+                let stopped = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND enabled == true AND label == 'Start'"),
+                                                        object: app.buttons["paperSession.action"])
                 _ = XCTWaiter.wait(for: [stopped], timeout: 30)
             }
             app.typeKey(.escape, modifierFlags: [])
@@ -42,6 +42,20 @@ final class TradeDeskUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: timeout), .completed)
     }
 
+    private func waitSession(_ title: String, app: XCUIApplication) {
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND enabled == true AND label == %@", title),
+                                              object: app.buttons["paperSession.action"])
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 60), .completed)
+    }
+
+    private func assertNotificationsOff(_ app: XCUIApplication) {
+        app.typeKey(",", modifierFlags: .command)
+        let toggle = app.checkBoxes["settings.notifications"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 10))
+        XCTAssertEqual(toggle.value as? String, "0")
+        app.typeKey("w", modifierFlags: .command)
+    }
+
     nonisolated private static func freshSymbols(at url: URL, after prefix: Data, since start: Date) -> Set<String> {
         guard let data = try? Data(contentsOf: url), data.starts(with: prefix) else { return [] }
         let formatter = ISO8601DateFormatter()
@@ -61,8 +75,10 @@ final class TradeDeskUITests: XCTestCase {
     }
 
     private func choose(_ path: String, button: String, app: XCUIApplication) {
-        waitEnabled(app.buttons[button])
-        app.buttons[button].click()
+        let dataMenu = app.popUpButtons["tradeDesk.data"]
+        waitEnabled(dataMenu)
+        dataMenu.click()
+        app.menuItems[button].click()
         capture(app, "picker-" + button)
         XCTAssertTrue(app.sheets.firstMatch.waitForExistence(timeout: 10), app.debugDescription)
         app.typeKey("g", modifierFlags: [.command, .shift])
@@ -82,13 +98,14 @@ final class TradeDeskUITests: XCTestCase {
         // collection starting without a user's explicit action.
         continueAfterFailure = false
         let app = XCUIApplication()
+        try isolatePaperAcceptance(app)
         app.launchArguments = ["--destination=tradeDesk"]
         app.launch()
         defer { app.terminate() }
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 30))
-        XCTAssertTrue(app.buttons["paperSignals.start"].waitForExistence(timeout: 30), app.debugDescription)
-        XCTAssertFalse(app.buttons["paperSignals.stop"].exists)
-        XCTAssertTrue(app.staticTexts["Stand aside"].firstMatch.exists)
+        XCTAssertTrue(app.buttons["paperSession.action"].waitForExistence(timeout: 30), app.debugDescription)
+        XCTAssertEqual(app.buttons["paperSession.action"].label, "Start")
+        XCTAssertTrue(app.buttons["tradeDesk.asset.BTCUSDT"].exists)
         let capture = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
         capture.name = "01-native-trade-desk"
         capture.lifetime = .keepAlways
@@ -101,7 +118,7 @@ final class TradeDeskUITests: XCTestCase {
         let app = XCUIApplication(url: URL(fileURLWithPath: "/Applications/Nowcaster.app"))
         guard app.state != .notRunning else { return }
         app.activate()
-        XCTAssertFalse(app.buttons["paperSignals.stop"].exists, "Do not replace an app collecting evidence.")
+        XCTAssertNotEqual(app.buttons["paperSession.action"].label, "Pause", "Do not replace an app collecting evidence.")
         app.typeKey("q", modifierFlags: .command)
         XCTAssertTrue(app.wait(for: .notRunning, timeout: 30))
     }
@@ -111,11 +128,12 @@ final class TradeDeskUITests: XCTestCase {
         continueAfterFailure = false
         let app = XCUIApplication(url: URL(fileURLWithPath: "/Applications/Nowcaster.app"))
         XCTAssertEqual(app.state, .notRunning, "Quit the installed app normally before verifying its replacement.")
+        try isolatePaperAcceptance(app)
         app.launchArguments = ["--destination=tradeDesk"]
         app.launch()
-        waitEnabled(app.buttons["paperSignals.start"])
-        XCTAssertFalse(app.buttons["paperSignals.stop"].exists)
-        XCTAssertTrue(app.staticTexts["Stand aside"].firstMatch.exists)
+        waitEnabled(app.buttons["paperSession.action"])
+        XCTAssertEqual(app.buttons["paperSession.action"].label, "Start")
+        XCTAssertTrue(app.buttons["tradeDesk.asset.BTCUSDT"].label.contains("Stand aside"))
         capture(app, "11-installed-application")
         app.typeKey("q", modifierFlags: .command)
         XCTAssertTrue(app.wait(for: .notRunning, timeout: 30))
@@ -133,12 +151,19 @@ final class TradeDeskUITests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: calendar))
         continueAfterFailure = false
         let app = XCUIApplication()
+        try isolatePaperAcceptance(app)
+        XCTAssertTrue(desk.path.hasPrefix(try XCTUnwrap(app.launchEnvironment["NOWCASTER_UI_STORAGE_ROOT"]) + "/"))
         app.launchArguments = ["--destination=tradeDesk"]
         app.launch()
         defer { app.terminate() }
-        XCTAssertTrue(app.buttons["paperSignals.start"].waitForExistence(timeout: 30))
-        if app.buttons["paperSignals.setup"].exists { app.buttons["paperSignals.setup"].click() }
-        waitEnabled(app.buttons["paperSignals.start"])
+        XCTAssertTrue(app.buttons["paperSession.action"].waitForExistence(timeout: 30))
+        if !FileManager.default.fileExists(atPath: desk.appending(path: "protocol.json").path) {
+            app.buttons["tradeDesk.setup"].click()
+            app.buttons["paperSignals.setup"].click()
+            waitEnabled(app.buttons["paperSignals.setup"])
+            app.buttons["Done"].click()
+        }
+        waitEnabled(app.buttons["paperSession.action"])
         // The UI runner has its own container; inspect the explicitly selected
         // app directory, not the runner's Application Support directory.
         let protocolURL = desk.appending(path: "protocol.json")
@@ -146,7 +171,7 @@ final class TradeDeskUITests: XCTestCase {
         let calendarLedger = desk.appending(path: "day-trader-calendar.jsonl")
         let originalCalendar = try? Data(contentsOf: calendarLedger)
         capture(app, "02-desk-setup")
-        XCTAssertEqual(String(describing: try XCTUnwrap(app.switches["paperSignals.notifications"].value)), "0")
+        assertNotificationsOff(app)
 
         let invalid = FileManager.default.temporaryDirectory.appending(path: "nowcaster-invalid-calendar-\(UUID().uuidString).json")
         try Data("{}".utf8).write(to: invalid)
@@ -155,7 +180,7 @@ final class TradeDeskUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Calendar not imported. Use a current, covered calendar JSON in the documented format; old or conflicting evidence is rejected."].waitForExistence(timeout: 30))
         capture(app, "03-invalid-calendar-rejected")
         choose(calendar, button: "Import Calendar…", app: app)
-        waitEnabled(app.buttons["paperSignals.start"])
+        waitEnabled(app.buttons["paperSession.action"])
         XCTAssertTrue(app.staticTexts["Calendar not imported. Use a current, covered calendar JSON in the documented format; old or conflicting evidence is rejected."].exists)
         XCTAssertEqual(try? Data(contentsOf: calendarLedger), originalCalendar)
         capture(app, "04-uncovered-calendar-rejected")
@@ -163,27 +188,25 @@ final class TradeDeskUITests: XCTestCase {
         // Opening an unregistered directory must fail, not initialize or erase it.
         choose(invalid.deletingLastPathComponent().path, button: "Choose Research Folder…", app: app)
         XCTAssertTrue(app.staticTexts["Choose a registered research directory and an available paper research engine."].waitForExistence(timeout: 30))
-        XCTAssertFalse(app.buttons["paperSignals.start"].isEnabled)
+        XCTAssertEqual(app.buttons["paperSession.action"].label, "Start")
         choose(desk.path, button: "Choose Research Folder…", app: app)
-        waitEnabled(app.buttons["paperSignals.start"])
+        waitEnabled(app.buttons["paperSession.action"])
         XCTAssertEqual(try Data(contentsOf: protocolURL), originalProtocol)
 
         let observationURL = desk.appending(path: "observations.jsonl")
         let previousObservations = (try? Data(contentsOf: observationURL)) ?? Data()
         let startedAt = Date()
-        app.buttons["paperSignals.start"].click()
-        waitEnabled(app.buttons["paperSignals.stop"])
+        app.buttons["paperSession.action"].click()
+        waitSession("Pause", app: app)
         let fresh = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             Self.freshSymbols(at: observationURL, after: previousObservations, since: startedAt)
                 .isSuperset(of: ["BTCUSDT", "ETHUSDT"])
         }, object: nil)
         XCTAssertEqual(XCTWaiter.wait(for: [fresh], timeout: 120), .completed, "Both assets need new, timely receipts after Start.")
-        XCTAssertTrue(app.staticTexts["Last source observation"].waitForExistence(timeout: 90), app.debugDescription)
-        XCTAssertTrue(app.staticTexts["Stand aside"].firstMatch.exists)
+        XCTAssertTrue(app.buttons["tradeDesk.asset.BTCUSDT"].label.contains("Stand aside"))
         capture(app, "05-live-public-data")
-        app.buttons["paperSignals.stop"].click()
-        waitEnabled(app.buttons["paperSignals.start"])
-        XCTAssertTrue(app.staticTexts["Not collecting"].exists)
+        app.buttons["paperSession.action"].click()
+        waitSession("Start", app: app)
         XCTAssertEqual(try Data(contentsOf: protocolURL), originalProtocol)
         let observations = try String(contentsOf: desk.appending(path: "observations.jsonl"), encoding: .utf8)
         XCTAssertTrue(observations.contains("BTCUSDT"))
@@ -194,9 +217,9 @@ final class TradeDeskUITests: XCTestCase {
         app.typeKey("q", modifierFlags: .command)
         XCTAssertTrue(app.wait(for: .notRunning, timeout: 30))
         app.launch()
-        waitEnabled(app.buttons["paperSignals.start"])
-        XCTAssertFalse(app.buttons["paperSignals.stop"].exists)
-        XCTAssertEqual(String(describing: try XCTUnwrap(app.switches["paperSignals.notifications"].value)), "0")
+        waitEnabled(app.buttons["paperSession.action"])
+        XCTAssertEqual(app.buttons["paperSession.action"].label, "Start")
+        assertNotificationsOff(app)
         XCTAssertEqual(try Data(contentsOf: protocolURL), originalProtocol)
         XCTAssertEqual(try String(contentsOf: desk.appending(path: "observations.jsonl"), encoding: .utf8), observations)
         capture(app, "07-reopened-with-evidence")
@@ -211,13 +234,15 @@ final class TradeDeskUITests: XCTestCase {
         let original = try Data(contentsOf: ledger)
         continueAfterFailure = false
         let app = XCUIApplication()
+        try isolatePaperAcceptance(app)
+        XCTAssertTrue(directory.path.hasPrefix(try XCTUnwrap(app.launchEnvironment["NOWCASTER_UI_STORAGE_ROOT"]) + "/"))
         app.launchArguments = ["--destination=tradeDesk"]
         app.launch()
         defer { app.terminate() }
-        XCTAssertTrue(app.buttons["paperSignals.start"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.buttons["paperSession.action"].waitForExistence(timeout: 30))
         choose(path, button: "Choose Research Folder…", app: app)
         capture(app, "synthetic-folder-open-result")
-        waitEnabled(app.buttons["paperSignals.start"])
+        waitEnabled(app.buttons["paperSession.action"])
         // Only this marked synthetic fixture receives a synthetic calendar.
         // The live/default directory must never receive fabricated coverage.
         let now = Date(), formatter = ISO8601DateFormatter()
@@ -242,15 +267,8 @@ final class TradeDeskUITests: XCTestCase {
         choose(calendar.path, button: "Import Calendar…", app: app)
         XCTAssertTrue(app.staticTexts["Calendar evidence retained. Coverage, age and blackout checks still apply."].waitForExistence(timeout: 30))
         capture(app, "synthetic-calendar-import-NOT-market-evidence")
-        let disclosure = app.disclosureTriangles["dayTrader.historicalOutcomes"]
-        XCTAssertTrue(disclosure.waitForExistence(timeout: 10), app.debugDescription)
-        // The AX frame includes leading inset, not just the visible chevron.
-        // Window capture places the arrow 27 pt from that frame's leading edge;
-        // a percentage-of-label-width click lands in the inset or selects text.
-        disclosure.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5))
-            .withOffset(CGVector(dx: 27, dy: 0)).click()
-        let expanded = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == 1 OR value == '1'"), object: disclosure)
-        XCTAssertEqual(XCTWaiter.wait(for: [expanded], timeout: 10), .completed)
+        app.staticTexts["sidebar.history"].click()
+        XCTAssertTrue(app.staticTexts["history.explanation"].waitForExistence(timeout: 10))
         capture(app, "synthetic-expanded-history-NOT-market-evidence")
         // AX values are heterogeneous: applying CONTAINS to a numeric value
         // throws inside XCTest's query evaluator. Read the snapshot, then
@@ -261,9 +279,9 @@ final class TradeDeskUITests: XCTestCase {
                     || (element.value as? String)?.contains("BTCUSDT · Target") == true
             }
         XCTAssertTrue(completedOutcome, "Expanded history must expose the retained BTC target outcome.")
-        XCTAssertTrue(app.staticTexts["Current context unavailable"].exists)
+        XCTAssertTrue(app.staticTexts["history.explanation"].exists)
         XCTAssertFalse(app.staticTexts["Research entry zone"].exists)
-        XCTAssertFalse(app.buttons["paperSignals.stop"].exists)
+        XCTAssertFalse(app.buttons["Pause"].exists)
         XCTAssertEqual(try Data(contentsOf: ledger), original)
         capture(app, "08-synthetic-completed-history-NOT-live-evidence")
     }
@@ -281,14 +299,16 @@ final class TradeDeskUITests: XCTestCase {
         let originalProtocol = try Data(contentsOf: protocolURL)
         continueAfterFailure = false
         let app = XCUIApplication()
+        try isolatePaperAcceptance(app)
+        XCTAssertTrue(desk.path.hasPrefix(try XCTUnwrap(app.launchEnvironment["NOWCASTER_UI_STORAGE_ROOT"]) + "/"))
         app.launchArguments = ["--destination=tradeDesk"]
         app.launch()
         defer { app.terminate() }
-        waitEnabled(app.buttons["paperSignals.start"])
+        waitEnabled(app.buttons["paperSession.action"])
         let startedAt = Date()
         let startedUptime = ProcessInfo.processInfo.systemUptime
-        app.buttons["paperSignals.start"].click()
-        waitEnabled(app.buttons["paperSignals.stop"])
+        app.buttons["paperSession.action"].click()
+        waitSession("Pause", app: app)
         let collected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             let data = (try? Data(contentsOf: observations)) ?? Data()
             return ProcessInfo.processInfo.systemUptime - startedUptime >= Double(minutes) * 60
@@ -298,11 +318,11 @@ final class TradeDeskUITests: XCTestCase {
         }, object: nil)
         XCTAssertEqual(XCTWaiter.wait(for: [collected], timeout: Double(minutes + 2) * 60), .completed)
         capture(app, "09-sustained-public-collection")
-        app.buttons["paperSignals.stop"].click()
-        waitEnabled(app.buttons["paperSignals.start"])
+        app.buttons["paperSession.action"].click()
+        waitSession("Start", app: app)
         XCTAssertEqual(try Data(contentsOf: protocolURL), originalProtocol)
         XCTAssertTrue(try Data(contentsOf: observations).starts(with: before))
-        XCTAssertTrue(app.staticTexts["Not collecting"].exists)
+        XCTAssertEqual(app.buttons["paperSession.action"].label, "Start")
         capture(app, "10-soak-stopped-retained")
     }
 }

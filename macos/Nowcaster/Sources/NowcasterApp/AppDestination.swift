@@ -2,6 +2,8 @@ import Foundation
 
 enum AppDestination: String, CaseIterable, Identifiable, Sendable {
     case tradeDesk
+    case history
+    case research
     case today
     case markets
     case earnings
@@ -15,10 +17,14 @@ enum AppDestination: String, CaseIterable, Identifiable, Sendable {
     case executionCenter
 
     var id: String { rawValue }
+    static let primaryDestinations: [Self] = [.tradeDesk, .markets, .history, .research]
+    static var advancedDestinations: [Self] { allCases.filter { !primaryDestinations.contains($0) } }
 
     var title: String {
         switch self {
         case .tradeDesk: "Trade Desk"
+        case .history: "History"
+        case .research: "Research"
         case .today: "Today"
         case .markets: "Markets"
         case .earnings: "Earnings"
@@ -36,6 +42,8 @@ enum AppDestination: String, CaseIterable, Identifiable, Sendable {
     var symbolName: String {
         switch self {
         case .tradeDesk: "chart.line.uptrend.xyaxis.circle"
+        case .history: "clock.arrow.circlepath"
+        case .research: "flask"
         case .today: "sparkles"
         case .markets: "chart.line.uptrend.xyaxis"
         case .earnings: "calendar.badge.clock"

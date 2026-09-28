@@ -84,7 +84,8 @@ struct LivePaperSignalsView: View {
                 Text("Paper-only research — not a trade instruction. No account connection or trades. Results are not proof of profitability.")
                     .font(.caption).foregroundStyle(.secondary)
                 if let message = selectionMessage ?? service.message {
-                    Label(message, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
+                    Label(message, systemImage: message.hasPrefix("Calendar evidence retained") ? "checkmark.circle" : "info.circle")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
                 DisclosureGroup("Recent evidence (\(service.events.count))", isExpanded: $showingHistory) {
                     if service.events.isEmpty {
@@ -145,17 +146,7 @@ struct LivePaperSignalsView: View {
         }
         Button("Choose Research Folder…", systemImage: "folder") { importKind = .directory; choosingFile = true }
             .disabled(service.isRunning || service.isBusy)
-        if service.isRunning {
-            Button("Stop", systemImage: "stop.fill") { Task { await model.paperSession.pause() } }
-                .accessibilityIdentifier("paperSignals.stop")
-        } else {
-            Button("Start", systemImage: "play.fill") { Task {
-                model.paperSession.configure(settings.configuration)
-                await model.paperSession.start()
-            } }
-                .buttonStyle(.borderedProminent)
-                .disabled(service.directory == nil || service.isBusy).accessibilityIdentifier("paperSignals.start")
-        }
+        PaperSessionAction(model: model, settings: settings)
         if let directory = service.directory {
             Button("Import Calendar…", systemImage: "calendar.badge.plus") { importKind = .calendar; choosingFile = true }
                 .disabled(service.isBusy)

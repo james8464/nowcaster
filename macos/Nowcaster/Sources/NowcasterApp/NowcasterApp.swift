@@ -89,7 +89,10 @@ struct NowcasterWindowPresentation: Sendable {
     let minimumHeight: CGFloat = 620
 
     init(arguments: [String]) {
-        if arguments.contains("--ui-narrow") {
+        if arguments.contains("--ui-minimum") {
+            defaultWidth = 820
+            defaultHeight = 620
+        } else if arguments.contains("--ui-narrow") {
             defaultWidth = 900
             defaultHeight = 700
         } else {
@@ -127,14 +130,28 @@ struct NowcasterApp: App {
     }
 
     var body: some Scene {
-        WindowGroup(id: "main") {
+        Window("Nowcaster", id: "main") {
             RootView(model: model, settings: settings)
+            .defaultAppStorage(AppStorageLocations.defaults)
+            .font(.system(size: settings.contentTextSize))
             .preferredColorScheme(forcedColorScheme)
             .frame(minWidth: windowPresentation.minimumWidth, minHeight: windowPresentation.minimumHeight)
         }
         .defaultSize(width: windowPresentation.defaultWidth, height: windowPresentation.defaultHeight)
         .commands {
             SidebarCommands()
+            CommandMenu("Paper Session") {
+                PaperSessionMenuCommands(model: model, settings: settings)
+            }
+            CommandMenu("Text") {
+                Button("Larger Content Text") { settings.contentTextSize = min(26, settings.contentTextSize + 2) }
+                    .keyboardShortcut("+")
+                Button("Smaller Content Text") { settings.contentTextSize = max(13, settings.contentTextSize - 2) }
+                    .keyboardShortcut("-")
+            }
+            CommandGroup(replacing: .help) {
+                Button("Nowcaster Help") { model.showingPaperHelp = true }
+            }
             CommandMenu("Research") {
                 Button("Refresh Research") {
                     Task { await model.run(.rebuildAll, configuration: settings.configuration) }
@@ -159,11 +176,12 @@ struct NowcasterApp: App {
         MenuBarExtra("Nowcaster Paper Session", systemImage: "chart.line.uptrend.xyaxis", isInserted: Binding(
             get: { model.paperSession.preferences.showMenuBarExtra },
             set: { model.paperSession.setShowMenuBarExtra($0) })) {
-            PaperSessionMenu(model: model)
+            PaperSessionMenu(model: model, settings: settings)
         }
+        .menuBarExtraStyle(.window)
 
         Settings {
-            SettingsView(settings: settings)
+            SettingsView(settings: settings, model: model)
         }
     }
 }

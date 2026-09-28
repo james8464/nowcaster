@@ -41,6 +41,8 @@ final class AppModel {
     let liveMonitor = LiveMonitorController()
     var destination: AppDestination = .tradeDesk
     var paperResearchEvidenceRequested = false
+    var showingPaperSetup = false
+    var showingPaperHelp = false
 
     func openPaperResearchNotification(destination: String?, materialKey: String?) {
         guard destination == "strategy_lab_evidence", let materialKey,

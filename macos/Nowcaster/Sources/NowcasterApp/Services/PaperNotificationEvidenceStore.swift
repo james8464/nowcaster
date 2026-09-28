@@ -23,8 +23,7 @@ struct PaperNotificationLocation: Codable, Equatable, Sendable {
 struct PaperNotificationEvidenceStore: Sendable {
     let directory: URL
 
-    init(directory: URL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        .appending(path: "Nowcaster/PaperNotificationIndex")) {
+    init(directory: URL = AppStorageLocations.root.appending(path: "PaperNotificationIndex")) {
         self.directory = directory
     }
 

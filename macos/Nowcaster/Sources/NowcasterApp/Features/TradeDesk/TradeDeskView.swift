@@ -1,47 +1,46 @@
+import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
-/// A live research workspace, deliberately independent of the earnings/demo snapshot.
 struct TradeDeskView: View {
     @Bindable var model: AppModel
     let settings: AppSettings
+    @State private var selectedSymbol: String?
+    @State private var importing = false
+    @State private var calendarImport = false
+    @State private var importMessage: String?
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Observe. Plan. Review.").font(.largeTitle.bold())
-                    Text("Track market conditions, inspect a rule-based setup, and retain what happened next.")
-                        .foregroundStyle(.secondary)
+        GeometryReader { geometry in
+            if geometry.size.width >= 850, let selectedSymbol {
+                HSplitView {
+                    desk.frame(minWidth: 410)
+                    ScrollView { TradeAssetDetailView(model: model, symbol: selectedSymbol) { self.selectedSymbol = nil } }
+                        .frame(minWidth: 280, idealWidth: 350, maxWidth: 500)
                 }
-                LivePaperSignalsView(model: model, settings: settings)
-                DayTraderContextView(service: model.livePaperSignals)
-                GroupBox("Coverage and research playbook") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Label("Bitcoin / USDT · Ether / USDT", systemImage: "bitcoinsign.circle")
-                            .font(.headline)
-                        Text("Public Binance spot data. This desk studies long entries or standing aside, not short selling. Stocks, ETFs, oil and futures are not connected to this desk.")
+            } else {
+                ScrollView {
+                    if let selectedSymbol {
+                        TradeAssetDetailView(model: model, symbol: selectedSymbol) { self.selectedSymbol = nil }
                         Divider()
-                        Text("New desk: three fixed hypotheses per asset").font(.subheadline.bold())
-                        playbook("EMA + ADX trend", "Looks for fast/slow moving-average agreement and trend strength. Can whipsaw in sideways markets.")
-                        playbook("Donchian breakout", "Looks for a close beyond the previous 20-bar range. False breakouts and trading costs can erase the move.")
-                        playbook("VWAP continuation", "Checks price and slope against the session's volume-weighted average. A trend is context, not a probability of profit.")
-                        Text("One-minute research variants; 1/5/15-minute context and spread, volatility, calendar and freshness checks apply. Opening an older folder keeps its original rules.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }.frame(maxWidth: .infinity, alignment: .leading).padding(4)
+                    }
+                    desk
                 }
-                GroupBox("Before an entry setup can appear") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("1. Set up the desk, then start public-data collection. Keep the Mac awake and online; quitting stops this app-owned service.")
-                        Text("2. Import current, source-attributed event-calendar evidence. Missing or expired coverage means stand aside—not an assumption that no news is scheduled.")
-                        Text("3. Evaluate the retained candidate evidence. A new desk uses 90 training days, 30 validation days and 30 sealed-test days, plus coverage, cost and minimum-trade requirements. The live collector does not run that evaluation itself.")
-                        Text("Only a candidate that meets those gates can produce an experimental entry zone, invalidation, target and expiry. There is no daily trade quota. The current software and these new hypotheses have not established profitability.")
-                            .foregroundStyle(.secondary)
-                    }.font(.callout).frame(maxWidth: .infinity, alignment: .leading).padding(4)
-                }
-            }.padding(24).frame(maxWidth: 1000)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
         }
         .accessibilityIdentifier("tradeDesk.workspace")
+        .fileImporter(isPresented: $importing, allowedContentTypes: calendarImport ? [.json] : [.folder]) { result in
+            switch result {
+            case let .success(url):
+                importMessage = nil
+                Task {
+                    if calendarImport { await model.livePaperSignals.importCalendar(url) }
+                    else { await model.livePaperSignals.open(directory: url, sourceRoot: settings.configuration.projectRoot,
+                                                             sourcePython: settings.configuration.pythonExecutable) }
+                }
+            case let .failure(error): importMessage = error.localizedDescription
+            }
+        }
         .task {
             let directory = LivePaperSignalService.defaultDirectory
             if model.livePaperSignals.directory == nil,
@@ -52,10 +51,107 @@ struct TradeDeskView: View {
         }
     }
 
-    private func playbook(_ title: String, _ explanation: String) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(title).font(.subheadline.weight(.semibold))
-            Text(explanation).font(.callout).foregroundStyle(.secondary)
+    private var desk: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            PaperSessionHeader(model: model, settings: settings)
+            HStack {
+                Text("Connected market coverage").fontWeight(.semibold)
+                Spacer()
+                Button("Set Up…") { model.showingPaperSetup = true }
+                    .accessibilityIdentifier("tradeDesk.setup")
+                Menu("Data") {
+                    Button("Choose Research Folder…") { calendarImport = false; importing = true }
+                        .disabled(model.livePaperSignals.isRunning || model.livePaperSignals.isBusy)
+                    Button("Import Calendar…") { calendarImport = true; importing = true }
+                        .disabled(model.livePaperSignals.directory == nil || model.livePaperSignals.isBusy)
+                    if let directory = model.livePaperSignals.directory {
+                        Button("Show Evidence Folder") { NSWorkspace.shared.open(directory) }
+                    }
+                }.accessibilityIdentifier("tradeDesk.data")
+            }
+            Text("Bitcoin and Ether · Binance spot · long / stand aside").foregroundStyle(.secondary)
+            TimelineView(.periodic(from: .now, by: 1)) { timeline in
+                let presentation = TradeDeskPresentation.make(service: model.livePaperSignals, session: model.paperSession, now: timeline.date)
+                VStack(spacing: 0) {
+                    ForEach(presentation.assets) { row in
+                        Button { selectedSymbol = row.symbol } label: {
+                            VStack(alignment: .leading, spacing: 7) {
+                                HStack {
+                                    Text(row.symbol).fontWeight(.semibold)
+                                    Spacer()
+                                    Label(row.posture, systemImage: row.detail == nil ? "pause.circle" : "flask")
+                                }
+                                Text("\(row.source) · \(row.freshness)").foregroundStyle(.secondary)
+                                Text("Trend: \(row.trend)").foregroundStyle(.secondary)
+                                Text(row.reason).fixedSize(horizontal: false, vertical: true)
+                            }.padding(14).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .background(selectedSymbol == row.symbol ? Color.accentColor.opacity(0.10) : Color(nsColor: .controlBackgroundColor))
+                        .accessibilityIdentifier("tradeDesk.asset.\(row.symbol)")
+                        .accessibilityLabel("\(row.symbol), \(row.posture), \(row.source), \(row.freshness), trend \(row.trend). Show details")
+                        Divider()
+                    }
+                }
+            }
+            if let message = importMessage ?? model.livePaperSignals.message {
+                Label(message, systemImage: message.hasPrefix("Calendar evidence retained") ? "checkmark.circle" : "info.circle")
+                    .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            Button("About This Research…") { model.showingPaperHelp = true }
+            Spacer(minLength: 0)
+        }.padding(20)
+    }
+}
+
+struct PaperSessionHeader: View {
+    @Bindable var model: AppModel
+    let settings: AppSettings
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Paper research").fontWeight(.semibold)
+                    Text(TradeDeskPresentation.statusTitle(model.paperSession.state)).accessibilityIdentifier("paperSession.status")
+                }
+                Spacer()
+                if model.paperSession.state == .starting || model.paperSession.state == .pausing {
+                    ProgressView().controlSize(.small).accessibilityLabel("Session operation in progress")
+                }
+                PaperSessionAction(model: model, settings: settings)
+            }
+            if model.backgroundResearch.isPreparing {
+                Text("Preparing the registered research workspace. First startup can take about 25 seconds; Pause remains available.")
+            } else if model.backgroundResearch.isStarting {
+                Text("Starting the research worker and checking ownership…")
+            }
+            if case let .blocked(reason) = model.paperSession.state {
+                Label(reason, systemImage: "exclamationmark.circle")
+            } else if let explanation = model.paperSession.explanation {
+                Label(explanation, systemImage: "info.circle")
+            }
+            if model.livePaperSignals.directory == nil {
+                Text("Set up a desk to retain public observations.").foregroundStyle(.secondary)
+            }
+        }.fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+struct PaperSessionAction: View {
+    @Bindable var model: AppModel
+    let settings: AppSettings
+    var body: some View {
+        let presentation = TradeDeskPresentation.make(service: model.livePaperSignals, session: model.paperSession, now: Date())
+        Button(presentation.action, systemImage: presentation.canPause ? "pause.fill" : "play.fill") {
+            Task {
+                let current = TradeDeskPresentation.make(service: model.livePaperSignals, session: model.paperSession, now: Date())
+                if current.canPause { await model.paperSession.pause() }
+                else if model.livePaperSignals.directory == nil && model.paperSession.preferences.source == nil { model.showingPaperSetup = true }
+                else { model.paperSession.configure(settings.configuration); await model.paperSession.start() }
+            }
         }
+        .buttonStyle(.borderedProminent)
+        .disabled(presentation.transitioning || (!presentation.canPause && model.livePaperSignals.isBusy))
+        .accessibilityIdentifier("paperSession.action")
     }
 }

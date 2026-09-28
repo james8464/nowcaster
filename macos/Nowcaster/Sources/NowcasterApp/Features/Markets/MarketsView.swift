@@ -10,6 +10,9 @@ struct MarketsView: View {
     }
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+        Text("Imported / demo markets · separate from the connected BTC and ETH paper desk")
+            .foregroundStyle(.secondary).padding(.horizontal).accessibilityIdentifier("markets.sourceScope")
         GeometryReader { geometry in
         Table(sortedInstruments, selection: $model.selectedInstrumentID, sortOrder: $sortOrder) {
             TableColumn("Symbol", value: \.symbol) { instrument in
@@ -41,6 +44,7 @@ struct MarketsView: View {
             }
         }
         .accessibilityIdentifier("markets.table")
+        }
         }
     }
 
