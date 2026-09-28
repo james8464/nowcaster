@@ -288,7 +288,13 @@ class BackgroundLearningRunner:
         )
 
 
-def register_background_research(registry_directory: Path, manifest: Path) -> LearningCampaign:
+def register_background_research(
+    registry_directory: Path,
+    manifest: Path,
+    *,
+    expected_campaign_hash: str | None = None,
+    expected_runtime_code_identity: str | None = None,
+) -> LearningCampaign:
     from src.background_research.contracts import LearningCampaign
     from src.background_research.registry import LearningRegistry
 
@@ -298,6 +304,10 @@ def register_background_research(registry_directory: Path, manifest: Path) -> Le
         raise ValueError("registration runtime code/environment identity mismatch")
     payload["code_hash"] = identity
     campaign = LearningCampaign.model_validate(payload)
+    if (expected_campaign_hash is not None and campaign.identity_hash != expected_campaign_hash) or (
+        expected_runtime_code_identity is not None and campaign.code_hash != expected_runtime_code_identity
+    ):
+        raise ValueError("retained campaign/runtime identity mismatch")
     LearningRegistry(registry_directory).register(campaign)
     return campaign
 
@@ -370,9 +380,17 @@ def background_main(argv=None) -> int:
     restrict_background_environment()
     parser = argparse.ArgumentParser(description="Local paper-only background research")
     commands = parser.add_subparsers(dest="command", required=True)
+    prepare = commands.add_parser("prepare-background-research")
+    prepare.add_argument("--source-directory", type=Path, required=True)
+    prepare.add_argument("--output", type=Path, required=True)
+    prepare.add_argument("--campaign-id", required=True)
+    prepare.add_argument("--seed", type=int, required=True)
+    prepare.add_argument("--created-at", required=True)
     register = commands.add_parser("register-background-research")
     register.add_argument("--registry-directory", type=Path, required=True)
     register.add_argument("--manifest", type=Path, required=True)
+    register.add_argument("--expected-campaign-hash")
+    register.add_argument("--expected-runtime-code-identity")
     run = commands.add_parser("background-research")
     run.add_argument("--registry-directory", type=Path, required=True)
     run.add_argument("--campaign-hash", required=True)
@@ -400,10 +418,21 @@ def background_main(argv=None) -> int:
                     os.dup2(sink.fileno(), sys.stdout.fileno())
 
     try:
-        if args.command == "register-background-research":
+        if args.command == "prepare-background-research":
+            from src.background_research.preparation import prepare_background_research
+
+            values = vars(args).copy()
+            values.pop("command")
+            emit(prepare_background_research(**values))
+        elif args.command == "register-background-research":
             from src.background_research.registry import LearningRegistry
 
-            campaign = register_background_research(args.registry_directory, args.manifest)
+            campaign = register_background_research(
+                args.registry_directory,
+                args.manifest,
+                expected_campaign_hash=args.expected_campaign_hash,
+                expected_runtime_code_identity=args.expected_runtime_code_identity,
+            )
             emit(
                 {
                     "event": "registered",

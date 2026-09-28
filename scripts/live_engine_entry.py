@@ -30,6 +30,7 @@ def main() -> int:
         in {
             "background-research",
             "register-background-research",
+            "prepare-background-research",
         }
     ):
         from src.background_research.runtime import background_main

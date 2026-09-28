@@ -1,6 +1,19 @@
 import AppKit
 import SwiftUI
 
+struct PaperSessionMenu: View {
+    @Bindable var model: AppModel
+    @Environment(\.openWindow) private var openWindow
+    var body: some View {
+        Text("Paper Session")
+        Button("Open Nowcaster") { openWindow(id: "main") }
+        Button("Start Paper Session") { Task { await model.paperSession.start() } }
+        Button("Pause Paper Session") { Task { await model.paperSession.pause() } }
+        Divider()
+        Button("Quit Nowcaster") { NSApplication.shared.terminate(nil) }
+    }
+}
+
 struct LiveMonitorMenu: View {
     @Bindable var model: AppModel
     @Environment(\.openWindow) private var openWindow

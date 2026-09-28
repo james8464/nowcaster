@@ -36,6 +36,8 @@ enum EngineJobOutcome: Equatable, Sendable {
 @Observable
 final class AppModel {
     let livePaperSignals: LivePaperSignalService
+    let paperSession: PaperSessionCoordinator
+    let backgroundResearch: BackgroundResearchService
     let liveMonitor = LiveMonitorController()
     var destination: AppDestination = .tradeDesk
     var paperResearchEvidenceRequested = false
@@ -72,6 +74,7 @@ final class AppModel {
     @ObservationIgnored private var activeDeepResearchControl: DeepResearchControlFile?
     @ObservationIgnored private var thermalMonitor: Task<Void, Never>?
     @ObservationIgnored private var automaticallyPausedForThermals = false
+    @ObservationIgnored private var terminating = false
 
     init(
         snapshot: NowcasterSnapshot? = nil,
@@ -79,7 +82,14 @@ final class AppModel {
         runner: any EngineRunning = EngineRunner(),
         paperSignals: LivePaperSignalService? = nil
     ) {
-        self.livePaperSignals = paperSignals ?? LivePaperSignalService()
+        let paperSignals = paperSignals ?? LivePaperSignalService()
+        self.livePaperSignals = paperSignals
+        let background = BackgroundResearchService(); self.backgroundResearch = background
+        let preferenceStore = PaperSessionPreferenceStore.application
+        let loadedPreferences = preferenceStore.load()
+        self.paperSession = PaperSessionCoordinator(collector: paperSignals, research: background,
+            preferences: loadedPreferences.preferences, configuration: AppSettings().configuration,
+            store: preferenceStore, explanation: loadedPreferences.explanation)
         self.snapshot = snapshot
         self.repository = repository
         self.runner = runner
@@ -89,6 +99,18 @@ final class AppModel {
             destination = requested
         }
         prepareDefaultSelections()
+    }
+
+    func shutdownForApplicationTermination() async -> Bool {
+        // Legacy work is drained only if it was explicitly started; these calls never launch it.
+        terminating = true
+        try? activeDeepResearchControl?.request(.stopped)
+        thermalMonitor?.cancel(); thermalMonitor = nil
+        async let paperStopped = paperSession.shutdown()
+        async let legacyStopped: Void = liveMonitor.shutdownForApplicationTermination()
+        async let legacyJobsStopped: Void = runner.shutdown(timeout: .seconds(30))
+        let result = await (paperStopped, legacyStopped, legacyJobsStopped)
+        return result.0
     }
 
     var searchResults: [InstrumentSnapshot] {
@@ -248,7 +270,7 @@ final class AppModel {
     }
 
     func run(_ job: EngineJob, configuration: EngineConfiguration) async {
-        guard !isRunningJob else { return }
+        guard !isRunningJob, !terminating else { return }
         isRunningJob = true
         progressEvents = []
         lastJobOutcome = .running(job)
@@ -259,6 +281,7 @@ final class AppModel {
         do {
             try beginDeepResearchControl(for: job)
             try await consume(job, configuration: configuration)
+            guard !terminating else { return }
             if let exportJob = job.followUpExport(configuration: configuration) {
                 try await consume(exportJob, configuration: configuration)
             }

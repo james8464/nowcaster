@@ -97,6 +97,7 @@ final class AppSettings {
 struct SettingsView: View {
     @Bindable var settings: AppSettings
     @State private var loginItemMessage: String?
+    @State private var showingAdvancedCredentials = false
 
     var body: some View {
         Form {
@@ -125,7 +126,8 @@ struct SettingsView: View {
                             loginItemMessage = error.localizedDescription
                         }
                     }
-                Toggle("Start monitoring whenever Nowcaster opens", isOn: $settings.resumeMonitoring)
+                Text("The former automatic-monitoring preference is retired. Paper-session resume is a separate, explicit choice.")
+                    .font(.footnote).foregroundStyle(.secondary)
                 Toggle("Silence new-entry banners", isOn: $settings.silenceEntryNotifications)
                 Toggle("Target banners", isOn: $settings.targetNotifications)
                 Toggle("Protective-stop banners", isOn: $settings.stopNotifications)
@@ -135,7 +137,9 @@ struct SettingsView: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
-            BrokerCredentialsView(vault: BrokerCredentialVault())
+            Section("Advanced") {
+                Button("Open Broker Credentials…") { showingAdvancedCredentials = true }
+            }
             let issues = settings.validationIssues()
             if !issues.isEmpty {
                 Section("Configuration health") {
@@ -160,6 +164,12 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .padding()
         .frame(width: 640, height: 620)
+        .sheet(isPresented: $showingAdvancedCredentials) {
+            VStack {
+                BrokerCredentialsView(vault: BrokerCredentialVault())
+                Button("Done") { showingAdvancedCredentials = false }
+            }.padding().frame(width: 600)
+        }
     }
 
     private func pathRow(_ title: String, text: Binding<String>, chooseDirectories: Bool = false) -> some View {

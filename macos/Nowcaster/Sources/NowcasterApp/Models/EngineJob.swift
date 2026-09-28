@@ -183,6 +183,9 @@ enum EngineJobError: Error, Equatable, LocalizedError, Sendable {
 }
 
 enum EngineJob: Sendable, Equatable {
+    case prepareBackgroundResearch(BackgroundResearchPreparationRequest)
+    case registerBackgroundResearch(BackgroundResearchRegistrationRequest)
+    case backgroundResearch(BackgroundResearchRequest)
     case rebuildAll
     case fullBacktest
     case evaluateStrategies(strategyIDs: [String], mode: StrategyRunMode, asset: StrategyAssetContext)
@@ -194,6 +197,9 @@ enum EngineJob: Sendable, Equatable {
 
     var title: String {
         switch self {
+        case .prepareBackgroundResearch: "Prepare paper learning"
+        case .registerBackgroundResearch: "Register paper learning"
+        case .backgroundResearch: "Background paper learning"
         case .rebuildAll: "Rebuild all research"
         case .fullBacktest: "Run full backtest"
         case .evaluateStrategies: "Evaluate selected strategies"
@@ -207,6 +213,7 @@ enum EngineJob: Sendable, Equatable {
 
     var stageName: String {
         switch self {
+        case .prepareBackgroundResearch, .registerBackgroundResearch, .backgroundResearch: "background_research"
         case .rebuildAll: "rebuild_all"
         case .fullBacktest: "full_backtest"
         case .evaluateStrategies: "evaluate"
@@ -220,6 +227,7 @@ enum EngineJob: Sendable, Equatable {
 
     func followUpExport(configuration: EngineConfiguration) -> EngineJob? {
         switch self {
+        case .prepareBackgroundResearch, .registerBackgroundResearch, .backgroundResearch: nil
         case .rebuildAll, .fullBacktest:
             .exportSnapshot(databaseURL: nil)
         case let .evaluateStrategies(_, _, asset):
@@ -239,6 +247,21 @@ enum EngineJob: Sendable, Equatable {
         var command: [String]
         var invocationEnvironment: [String: String] = [:]
         switch self {
+        case let .prepareBackgroundResearch(request):
+            command = ["strategy", "prepare-background-research", "--source-directory", request.source.directory.path,
+                "--output", request.manifestURL.path, "--campaign-id", request.campaignID,
+                "--seed", String(request.seed), "--created-at", request.createdAt]
+        case let .registerBackgroundResearch(request):
+            command = ["strategy", "register-background-research", "--registry-directory", request.registryURL.path, "--manifest", request.manifestURL.path]
+            if let hash = request.expectedCampaignHash { command += ["--expected-campaign-hash", hash] }
+            if let identity = request.expectedRuntimeCodeIdentity { command += ["--expected-runtime-code-identity", identity] }
+        case let .backgroundResearch(request):
+            guard LearningStatus.isDigest(request.campaignHash), request.controlNonce.count >= 32,
+                  !request.runID.isEmpty, request.runID.count <= 128,
+                  request.runID.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || "_-".contains($0)) }), request.workers >= 1 else { throw BackgroundResearchError.identityMismatch }
+            command = ["strategy", "background-research", "--registry-directory", request.registryURL.path,
+                "--campaign-hash", request.campaignHash, "--run-id", request.runID, "--control-directory", request.controlDirectory.path,
+                "--control-nonce", request.controlNonce, "--workers", String(request.workers)]
         case .rebuildAll:
             command = ["demo", "--mode", configuration.mode.rawValue]
         case .fullBacktest:
@@ -325,6 +348,17 @@ enum EngineJob: Sendable, Equatable {
             }
             command += ["--output", configuration.snapshotURL.path]
         }
+        if isBackgroundResearch {
+            let helper = Bundle.main.bundleURL.appending(path: "Contents/Helpers/nowcaster-engine")
+            if Bundle.main.bundleURL.pathExtension == "app" {
+                guard FileManager.default.isExecutableFile(atPath: helper.path) else { throw EngineRunnerError.invalidExecutable(helper.path) }
+                return EngineInvocation(executableURL: helper, arguments: command, workingDirectoryURL: Bundle.main.bundleURL,
+                    environment: BackgroundResearchEnvironment.make())
+            }
+            return EngineInvocation(executableURL: configuration.pythonExecutable,
+                arguments: [configuration.projectRoot.appending(path: "scripts/live_engine_entry.py").path] + command,
+                workingDirectoryURL: configuration.projectRoot, environment: BackgroundResearchEnvironment.make())
+        }
         command += ["--project-root", configuration.projectRoot.path]
         return EngineInvocation(
             executableURL: configuration.pythonExecutable,
@@ -332,6 +366,13 @@ enum EngineJob: Sendable, Equatable {
             workingDirectoryURL: configuration.projectRoot,
             environment: invocationEnvironment
         )
+    }
+
+    var isBackgroundResearch: Bool {
+        switch self {
+        case .prepareBackgroundResearch, .registerBackgroundResearch, .backgroundResearch: true
+        default: false
+        }
     }
 
     private func validate(asset: StrategyAssetContext) throws {
@@ -408,9 +449,17 @@ struct EngineProgressEvent: Codable, Equatable, Sendable, Identifiable {
     let stage: String?
     let progress: Double?
     let message: String?
+    var schemaVersion: Int? = nil
+    var status: LearningStatus? = nil
+    var ownership: BackgroundProcessOwnership? = nil
+    var campaignHash: String? = nil
+    var runtimeCodeIdentity: String? = nil
+    var sourceProtocolHash: String? = nil
 
     private enum CodingKeys: String, CodingKey {
         case event, stage, progress, message
+        case schemaVersion = "schema_version", status, campaignHash = "campaign_hash"
+        case runtimeCodeIdentity = "runtime_code_identity", sourceProtocolHash = "source_protocol_hash"
     }
 
     init(event: String, stage: String? = nil, progress: Double? = nil, message: String? = nil) {
@@ -428,6 +477,12 @@ struct EngineProgressEvent: Codable, Equatable, Sendable, Identifiable {
         stage = try container.decodeIfPresent(String.self, forKey: .stage)
         progress = try container.decodeIfPresent(Double.self, forKey: .progress)
         message = try container.decodeIfPresent(String.self, forKey: .message)
+        schemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion)
+        status = try container.decodeIfPresent(LearningStatus.self, forKey: .status)
+        campaignHash = try container.decodeIfPresent(String.self, forKey: .campaignHash)
+        runtimeCodeIdentity = try container.decodeIfPresent(String.self, forKey: .runtimeCodeIdentity)
+        sourceProtocolHash = try container.decodeIfPresent(String.self, forKey: .sourceProtocolHash)
+        if event == "ownership" { ownership = try BackgroundProcessOwnership(from: decoder) }
     }
 
     func encode(to encoder: Encoder) throws {
@@ -436,9 +491,19 @@ struct EngineProgressEvent: Codable, Equatable, Sendable, Identifiable {
         try container.encodeIfPresent(stage, forKey: .stage)
         try container.encodeIfPresent(progress, forKey: .progress)
         try container.encodeIfPresent(message, forKey: .message)
+        try container.encodeIfPresent(schemaVersion, forKey: .schemaVersion)
+        try container.encodeIfPresent(status, forKey: .status)
+        try container.encodeIfPresent(campaignHash, forKey: .campaignHash)
+        try container.encodeIfPresent(runtimeCodeIdentity, forKey: .runtimeCodeIdentity)
+        try container.encodeIfPresent(sourceProtocolHash, forKey: .sourceProtocolHash)
+        if let ownership { try ownership.encode(to: encoder) }
     }
 
     static func parse(_ line: String) throws -> EngineProgressEvent {
-        try JSONDecoder().decode(EngineProgressEvent.self, from: Data(line.utf8))
+        let data = Data(line.utf8)
+        if let object = try JSONSerialization.jsonObject(with: data) as? [String: Any], let status = object["status"] {
+            try LearningStatus.validateJSONTypes(status)
+        }
+        return try JSONDecoder().decode(EngineProgressEvent.self, from: data)
     }
 }

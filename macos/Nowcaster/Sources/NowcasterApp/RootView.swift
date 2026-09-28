@@ -54,19 +54,6 @@ struct RootView: View {
                 tradeDeskIntroduced = true
             }
             await model.loadBundledSnapshot()
-            if !screenshotMode, model.destination != .tradeDesk, settings.resumeMonitoring {
-                model.liveMonitor.configureNotifications(
-                    quietEntries: settings.silenceEntryNotifications,
-                    enabledCategories: enabledNotificationCategories
-                )
-                let credentials = try? BrokerCredentialVault().loadForSession(environment: .paper)
-                if credentials != nil || settings.normalizedStocks.isEmpty {
-                    await model.liveMonitor.start(
-                        configuration: .appConfiguration(settings: settings, snapshot: model.snapshot),
-                        credentials: credentials
-                    )
-                }
-            }
             if screenshotMode {
                 let arguments = ProcessInfo.processInfo.arguments
                 model.applyScreenshotState(arguments: arguments)

@@ -146,10 +146,13 @@ struct LivePaperSignalsView: View {
         Button("Choose Research Folder…", systemImage: "folder") { importKind = .directory; choosingFile = true }
             .disabled(service.isRunning || service.isBusy)
         if service.isRunning {
-            Button("Stop", systemImage: "stop.fill") { Task { await service.stop() } }
-                .disabled(service.isBusy).accessibilityIdentifier("paperSignals.stop")
+            Button("Stop", systemImage: "stop.fill") { Task { await model.paperSession.pause() } }
+                .accessibilityIdentifier("paperSignals.stop")
         } else {
-            Button("Start", systemImage: "play.fill") { Task { await service.startSelected() } }
+            Button("Start", systemImage: "play.fill") { Task {
+                model.paperSession.configure(settings.configuration)
+                await model.paperSession.start()
+            } }
                 .buttonStyle(.borderedProminent)
                 .disabled(service.directory == nil || service.isBusy).accessibilityIdentifier("paperSignals.start")
         }

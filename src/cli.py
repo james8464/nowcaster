@@ -12,6 +12,7 @@ if __name__ == "__main__":
         in {
             "background-research",
             "register-background-research",
+            "prepare-background-research",
         }
     ):
         from src.background_research.runtime import background_main
@@ -80,24 +81,56 @@ app.add_typer(monitor_app, name="monitor")
 DEFAULT_PROJECT_ROOT = Path.cwd()
 
 
-@strategy_app.command("register-background-research")
-def strategy_register_background_research(
-    registry_directory: Annotated[Path, typer.Option()],
-    manifest: Annotated[Path, typer.Option()],
+@strategy_app.command("prepare-background-research")
+def strategy_prepare_background_research(
+    source_directory: Annotated[Path, typer.Option()],
+    output: Annotated[Path, typer.Option()],
+    campaign_id: Annotated[str, typer.Option()],
+    seed: Annotated[int, typer.Option()],
+    created_at: Annotated[str, typer.Option()],
 ) -> None:
     from src.background_research.runtime import background_main
 
     raise typer.Exit(
         background_main(
             [
-                "register-background-research",
-                "--registry-directory",
-                str(registry_directory),
-                "--manifest",
-                str(manifest),
+                "prepare-background-research",
+                "--source-directory",
+                str(source_directory),
+                "--output",
+                str(output),
+                "--campaign-id",
+                campaign_id,
+                "--seed",
+                str(seed),
+                "--created-at",
+                created_at,
             ]
         )
     )
+
+
+@strategy_app.command("register-background-research")
+def strategy_register_background_research(
+    registry_directory: Annotated[Path, typer.Option()],
+    manifest: Annotated[Path, typer.Option()],
+    expected_campaign_hash: Annotated[str | None, typer.Option()] = None,
+    expected_runtime_code_identity: Annotated[str | None, typer.Option()] = None,
+) -> None:
+    from src.background_research.runtime import background_main
+
+    arguments = [
+        "register-background-research",
+        "--registry-directory",
+        str(registry_directory),
+        "--manifest",
+        str(manifest),
+    ]
+    if expected_campaign_hash is not None:
+        arguments += ["--expected-campaign-hash", expected_campaign_hash]
+    if expected_runtime_code_identity is not None:
+        arguments += ["--expected-runtime-code-identity", expected_runtime_code_identity]
+    raise typer.Exit(background_main(arguments))
 
 
 @strategy_app.command("background-research")

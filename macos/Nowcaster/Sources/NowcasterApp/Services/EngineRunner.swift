@@ -6,7 +6,9 @@ protocol EngineRunning: Sendable {
         _ job: EngineJob,
         configuration: EngineConfiguration
     ) -> AsyncThrowingStream<EngineProgressEvent, Error>
+    func shutdown(timeout: Duration) async
 }
+extension EngineRunning { func shutdown(timeout: Duration) async {} }
 
 enum EngineRunnerError: Error, Equatable, LocalizedError, Sendable {
     case invalidProjectRoot(String)
@@ -87,14 +89,18 @@ struct EngineOutputDecoder: Sendable {
 }
 
 private final class RunningProcess: @unchecked Sendable {
+    private let backgroundOwner: BackgroundProcessHandle?
+    init(backgroundOwner: BackgroundProcessHandle? = nil) { self.backgroundOwner = backgroundOwner }
     private let lock = NSLock()
     private var process: Process?
     private var worker: Task<Void, Never>?
     private var terminationRequested = false
+    private var finished = false
     private let terminationGrace: Duration = .milliseconds(250)
 
     func setWorker(_ worker: Task<Void, Never>) {
         let cancel = lock.withLock {
+            guard !finished else { return false }
             self.worker = worker
             return terminationRequested
         }
@@ -102,7 +108,7 @@ private final class RunningProcess: @unchecked Sendable {
     }
 
     func clearWorker() {
-        lock.withLock { worker = nil }
+        lock.withLock { worker = nil; finished = true }
     }
 
     func checkCancellation() throws {
@@ -116,7 +122,8 @@ private final class RunningProcess: @unchecked Sendable {
         guard !terminationRequested, !Task.isCancelled else { throw CancellationError() }
         self.process = process
         do {
-            try process.run()
+            if let backgroundOwner { try backgroundOwner.launch(process) }
+            else { try process.run() }
         } catch {
             self.process = nil
             throw error
@@ -136,7 +143,22 @@ private final class RunningProcess: @unchecked Sendable {
         if let process = active.1 { requestTermination(process) }
     }
 
+    var isActive: Bool { lock.withLock { !finished } }
+    func forceTerminate() {
+        let active = lock.withLock { () -> (Task<Void, Never>?, Process?) in
+            terminationRequested = true
+            return (worker, process)
+        }
+        active.0?.cancel()
+        if let process = active.1, process.isRunning { process.terminate(); if process.isRunning { _ = Darwin.kill(process.processIdentifier, SIGKILL) } }
+    }
+
     private func requestTermination(_ process: Process) {
+        if let backgroundOwner {
+            backgroundOwner.requestStop()
+            Task.detached(priority: .utility) { _ = await backgroundOwner.shutdown(timeout: .seconds(30)) }
+            return
+        }
         guard process.isRunning else { return }
         process.terminate()
         let pid = process.processIdentifier
@@ -150,47 +172,64 @@ private final class RunningProcess: @unchecked Sendable {
     }
 }
 
+private final class EngineProcessRegistry: @unchecked Sendable {
+    private let lock = NSLock()
+    private var children: [ObjectIdentifier: RunningProcess] = [:]
+    private var stopping = false
+    func add(_ process: RunningProcess) -> Bool {
+        lock.withLock {
+            guard !stopping else { return false }
+            children[ObjectIdentifier(process)] = process; return true
+        }
+    }
+    func remove(_ process: RunningProcess) { _ = lock.withLock { children.removeValue(forKey: ObjectIdentifier(process)) } }
+    func shutdown(timeout: Duration) async {
+        let owned = lock.withLock { stopping = true; return Array(children.values) }
+        let deadline = ContinuousClock.now + min(max(timeout, .zero), .seconds(30))
+        while owned.contains(where: { $0.isActive }), ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(50)) }
+        for process in owned where process.isActive { process.forceTerminate() }
+    }
+}
+
 struct EngineRunner: EngineRunning, Sendable {
     private let beforeLaunch: @Sendable () async -> Void
+    private let backgroundOwner: BackgroundProcessHandle?
+    private let processes = EngineProcessRegistry()
 
-    init(beforeLaunch: @escaping @Sendable () async -> Void = {}) {
+    init(backgroundOwner: BackgroundProcessHandle? = nil, beforeLaunch: @escaping @Sendable () async -> Void = {}) {
         self.beforeLaunch = beforeLaunch
+        self.backgroundOwner = backgroundOwner
     }
 
     func run(
         _ job: EngineJob,
         configuration: EngineConfiguration
     ) -> AsyncThrowingStream<EngineProgressEvent, Error> {
-        let holder = RunningProcess()
+        let holder = RunningProcess(backgroundOwner: job.isBackgroundResearch ? (backgroundOwner ?? BackgroundProcessHandle()) : nil)
         return AsyncThrowingStream(bufferingPolicy: .bufferingNewest(256)) { continuation in
+            guard processes.add(holder) else { continuation.finish(throwing: CancellationError()); return }
             continuation.onTermination = { _ in holder.terminate() }
             let worker = Task.detached(priority: .userInitiated) {
-                defer { holder.clearWorker() }
+                defer { holder.clearWorker(); processes.remove(holder) }
                 do {
                     try holder.checkCancellation()
                 } catch {
                     continuation.finish(throwing: error)
                     return
                 }
-                var isDirectory: ObjCBool = false
-                guard FileManager.default.fileExists(
-                    atPath: configuration.projectRoot.path,
-                    isDirectory: &isDirectory
-                ), isDirectory.boolValue else {
-                    continuation.finish(throwing: EngineRunnerError.invalidProjectRoot(configuration.projectRoot.path))
-                    return
-                }
-                guard FileManager.default.isExecutableFile(atPath: configuration.pythonExecutable.path) else {
-                    continuation.finish(throwing: EngineRunnerError.invalidExecutable(configuration.pythonExecutable.path))
-                    return
-                }
-
                 let invocation: EngineInvocation
                 do {
                     invocation = try job.invocation(configuration: configuration)
                 } catch {
                     continuation.finish(throwing: error)
                     return
+                }
+                var isDirectory: ObjCBool = false
+                guard FileManager.default.fileExists(atPath: invocation.workingDirectoryURL.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+                    continuation.finish(throwing: EngineRunnerError.invalidProjectRoot(invocation.workingDirectoryURL.path)); return
+                }
+                guard FileManager.default.isExecutableFile(atPath: invocation.executableURL.path) else {
+                    continuation.finish(throwing: EngineRunnerError.invalidExecutable(invocation.executableURL.path)); return
                 }
                 let process = Process()
                 let output = Pipe()
@@ -199,8 +238,8 @@ struct EngineRunner: EngineRunning, Sendable {
                 process.currentDirectoryURL = invocation.workingDirectoryURL
                 process.standardOutput = output
                 process.standardError = output
-                let brokerEnvironment = configuration.secretEnvironment?.consume() ?? [:]
-                process.environment = ProcessInfo.processInfo.environment
+                let brokerEnvironment = job.isBackgroundResearch ? [:] : (configuration.secretEnvironment?.consume() ?? [:])
+                process.environment = job.isBackgroundResearch ? BackgroundResearchEnvironment.make() : ProcessInfo.processInfo.environment
                     .merging(["PYTHONUNBUFFERED": "1"]) { _, new in new }
                     .merging(invocation.environment) { _, new in new }
                     .merging(brokerEnvironment) { _, new in new }
@@ -220,7 +259,7 @@ struct EngineRunner: EngineRunning, Sendable {
 
                 continuation.yield(EngineProgressEvent(event: "job_started", stage: job.stageName, progress: 0))
                 var decoder = EngineOutputDecoder(
-                    redactedValues: Array(brokerEnvironment.values) + Array(invocation.environment.values)
+                    redactedValues: job.isBackgroundResearch ? [] : Array(brokerEnvironment.values) + Array(invocation.environment.values)
                 )
                 do {
                     while true {
@@ -261,4 +300,6 @@ struct EngineRunner: EngineRunning, Sendable {
             holder.setWorker(worker)
         }
     }
+
+    func shutdown(timeout: Duration) async { await processes.shutdown(timeout: timeout) }
 }

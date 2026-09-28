@@ -15,6 +15,17 @@ final class NowcasterApplicationDelegate: NSObject, NSApplicationDelegate, UNUse
     }
     private var pendingPaperResearch: (String?, String?)?
     private var terminationPending = false
+    private var restoreTask: Task<Void, Never>?
+
+    func bind(model: AppModel, settings: AppSettings) {
+        guard self.model == nil else { return }
+        self.model = model; liveMonitor = model.liveMonitor
+        model.paperSession.configure(settings.configuration)
+        guard !ProcessInfo.processInfo.arguments.contains(where: { $0.hasPrefix("--destination=") }) else { return }
+        restoreTask = Task { await model.paperSession.restoreIfOptedIn() }
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.regular)
@@ -58,11 +69,13 @@ final class NowcasterApplicationDelegate: NSObject, NSApplicationDelegate, UNUse
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard let liveMonitor, liveMonitor.isRunning else { return .terminateNow }
+        guard model != nil || liveMonitor?.isRunning == true else { return .terminateNow }
         guard !terminationPending else { return .terminateLater }
         terminationPending = true
         Task { @MainActor in
-            await liveMonitor.shutdownForApplicationTermination()
+            restoreTask?.cancel()
+            if let model { _ = await model.shutdownForApplicationTermination() }
+            else { await liveMonitor?.shutdownForApplicationTermination() }
             sender.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
@@ -94,8 +107,14 @@ struct NowcasterWindowPresentation: Sendable {
 @main
 struct NowcasterApp: App {
     @NSApplicationDelegateAdaptor(NowcasterApplicationDelegate.self) private var appDelegate
-    @State private var settings = AppSettings()
-    @State private var model = AppModel()
+    @State private var settings: AppSettings
+    @State private var model: AppModel
+
+    init() {
+        let settings = AppSettings(), model = AppModel()
+        _settings = State(initialValue: settings); _model = State(initialValue: model)
+        appDelegate.bind(model: model, settings: settings)
+    }
 
     private var forcedColorScheme: ColorScheme? {
         if ProcessInfo.processInfo.arguments.contains("--ui-dark") { return .dark }
@@ -110,7 +129,6 @@ struct NowcasterApp: App {
     var body: some Scene {
         WindowGroup(id: "main") {
             RootView(model: model, settings: settings)
-            .onAppear { appDelegate.liveMonitor = model.liveMonitor; appDelegate.model = model }
             .preferredColorScheme(forcedColorScheme)
             .frame(minWidth: windowPresentation.minimumWidth, minHeight: windowPresentation.minimumHeight)
         }
@@ -138,8 +156,10 @@ struct NowcasterApp: App {
             }
         }
 
-        MenuBarExtra("Nowcaster Live Monitor", systemImage: model.liveMonitor.status.symbol) {
-            LiveMonitorMenu(model: model)
+        MenuBarExtra("Nowcaster Paper Session", systemImage: "chart.line.uptrend.xyaxis", isInserted: Binding(
+            get: { model.paperSession.preferences.showMenuBarExtra },
+            set: { model.paperSession.setShowMenuBarExtra($0) })) {
+            PaperSessionMenu(model: model)
         }
 
         Settings {
