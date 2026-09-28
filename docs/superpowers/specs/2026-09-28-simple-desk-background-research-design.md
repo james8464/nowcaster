@@ -1,7 +1,7 @@
 # A simpler Mac app with visible background paper research
 
 Date: 28 September 2026
-Status: direction approved; written specification awaiting review.
+Status: written specification approved by the user on 28 September 2026; implementation plan awaiting review.
 
 ## Intent and boundaries
 
