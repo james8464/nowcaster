@@ -40,6 +40,10 @@ from src.research.round_two_walkforward import EvaluationMetrics, _gate
 from src.strategies.types import canonical_hash
 
 
+class TerminalControlError(ValueError):
+    """An authenticated terminal execution cannot dispatch another batch."""
+
+
 def _candidate(payload):
     def rule(value):
         children = tuple(rule(child) for child in value.get("children", ()))
@@ -204,7 +208,7 @@ class LearningTrainer:
             data = load_learning_data(campaign, batch, now=datetime.now(UTC))
             artifacts = self._artifacts(batch)
             if control.read() is ControlState.STOPPED:
-                raise ValueError("terminal control requires a fresh execution identity")
+                raise TerminalControlError("terminal control requires a fresh execution identity")
             if state.batch_finished(batch.batch_id):
                 return self.registry.read_status(campaign.identity_hash)
             if state.batch_state(batch.batch_id) in {"paused", "pausing", "blocked"}:

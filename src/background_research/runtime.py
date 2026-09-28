@@ -154,6 +154,7 @@ class BackgroundLearningRunner:
     def _loop(self, campaign, control, emit):
         from src.background_research.data import load_learning_data, read_learning_source
         from src.background_research.scheduler import LearningScheduler
+        from src.background_research.training import TerminalControlError
 
         scheduler = LearningScheduler(self.registry)
         next_check = 0.0
@@ -197,6 +198,8 @@ class BackgroundLearningRunner:
             if command is ControlState.RUNNING and time.monotonic() >= next_check:
                 now = datetime.now(UTC)
                 source = read_learning_source(campaign, now=now)
+                if control.read() is not ControlState.RUNNING:
+                    continue
                 with self.registry._locked():
                     state, _, _ = self.registry._read()
                 unfinished = [
@@ -208,6 +211,8 @@ class BackgroundLearningRunner:
                 if batch is not None:
                     # Resume authority follows full source-prefix/campaign/runtime validation.
                     load_learning_data(campaign, batch, now=now)
+                    if control.read() is not ControlState.RUNNING:
+                        continue
                     if state.batch_state(batch.batch_id) in {"paused", "pausing", "blocked"}:
                         self.registry.append_event(
                             batch.batch_id,
@@ -229,6 +234,8 @@ class BackgroundLearningRunner:
                         if batch is not None:
                             break
                 if batch is not None:
+                    if control.read() is not ControlState.RUNNING:
+                        continue
 
                     def progress(event):
                         emit(
@@ -239,7 +246,15 @@ class BackgroundLearningRunner:
                             }
                         )
 
-                    status = self.trainer.run_batch(campaign, batch, control=control, emit=progress)
+                    try:
+                        status = self.trainer.run_batch(campaign, batch, control=control, emit=progress)
+                    except TerminalControlError:
+                        # STOP can arrive during trainer preparation after our last
+                        # read. Only that typed, authenticated cancellation is orderly;
+                        # concurrent source/checkpoint failures still fail visibly.
+                        if control.read() is not ControlState.STOPPED:
+                            raise
+                        continue
                     if status.state == "paused" and control.read() is ControlState.RUNNING:
                         control.request(ControlState.PAUSED)
                 else:

@@ -426,9 +426,133 @@ def test_stop_immediately_after_ownership_exits_without_reserving_work(tmp_path)
         cleanup(process)
 
 
+@pytest.mark.parametrize("packaged", [False, True])
+def test_stop_at_trainer_preparation_lock_is_orderly_and_preserves_receipts(tmp_path, packaged):
+    from datetime import UTC, datetime
+
+    from src.background_research.data import read_learning_source
+    from src.background_research.scheduler import LearningScheduler
+    from src.deep_research.candidates import generate_candidates
+    from src.research.round_two_registry import jsonl_writer_lock
+    from src.strategies.types import canonical_hash
+
+    if packaged and not PACKAGED.exists():
+        pytest.skip("build existing engine helper to exercise frozen preparation stop")
+    entry = [str(PACKAGED)] if packaged else ENTRY
+    campaign_hash, before, source_path = register(tmp_path, eligible=True, entry=entry)
+    registry = LearningRegistry(tmp_path / "registry")
+    with registry._locked():
+        state, _, _ = registry._read()
+    campaign = state.campaigns[campaign_hash][0]
+    now = datetime.now(UTC)
+    source = read_learning_source(campaign, now=now)
+    batch = LearningScheduler(registry).next_batch(
+        campaign, symbol="BTCUSDT", data_fingerprint=source.data_fingerprint, through=source.through, now=now
+    )
+    attempt = next(iter(generate_candidates(campaign.search_spaces[0].to_search_space(), count=1, seed=campaign.seed)))
+    registry.append_event(
+        batch.batch_id,
+        {
+            "kind": "attempt",
+            "attempt_id": f"{batch.batch_id}:{attempt.ordinal}",
+            "candidate_hash": attempt.candidate.identity,
+            "payload": {"ordinal": attempt.ordinal, "generation": 1, "candidate": attempt.candidate.payload()},
+        },
+    )
+    prefix = registry.ledger.read_bytes()
+    directory = registry.root / "batches" / canonical_hash(batch.batch_id)
+    process = None
+    try:
+        # Hold the real preparation lock, then observe the authenticated worker's
+        # open descriptor before STOP. No production sleeps/hooks/test-only flags.
+        with jsonl_writer_lock(directory / "worker"):
+            process = launch(tmp_path, campaign_hash, entry=entry)
+            owner = event_until(process, lambda e: e["event"] == "ownership", timeout=60)
+            assert owner["pid"] == process.pid or owner["parent_pid"] == process.pid
+            lock = (directory / ".worker.lock").resolve()
+            deadline = time.monotonic() + 45
+            preparing = False
+            while time.monotonic() < deadline:
+                if sys.platform == "darwin":
+                    listing = subprocess.run(
+                        ["/usr/sbin/lsof", "-a", "-p", str(owner["pid"]), "-Fn"],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                    ).stdout.splitlines()
+                    preparing = f"n{lock}" in listing
+                else:
+                    preparing = any(path.resolve() == lock for path in Path(f"/proc/{owner['pid']}/fd").iterdir())
+                if preparing:
+                    break
+                time.sleep(0.1)
+            assert preparing, "worker never reached its real trainer preparation lock"
+            control = ResearchControl(tmp_path / "control", run_id="execution-1", nonce="n" * 32)
+            control.request(ControlState.STOPPED)
+        event = event_until(process, lambda e: e["event"] == "complete", timeout=45)
+        process.wait(timeout=10)
+        assert process.returncode == 0, process.stderr.read()
+        assert event["status"]["state"] == "paused"
+        assert event["status"]["batch_attempt_count"] == 1
+        assert not any(e["event"] == "error" for e in process._seen_events)
+        assert registry.ledger.read_bytes().startswith(prefix)
+        with registry._locked():
+            state, _, _ = registry._read()
+        assert [e.outcome for e in state.events[batch.batch_id] if e.kind == "attempt_result"] == ["interrupted"]
+        assert control.read() is ControlState.STOPPED
+        assert before == {p.name: p.read_bytes() for p in source_path.iterdir() if p.is_file()}
+    finally:
+        if process is not None:
+            cleanup(process)
+
+
 def test_public_source_cli_registers_same_contract(tmp_path):
     campaign_hash, _, _ = register(tmp_path, entry=[sys.executable, "-m", "src.cli"])
     assert LearningRegistry(tmp_path / "registry").read_status(campaign_hash).campaign_id == "learning"
+
+
+@pytest.mark.parametrize("command", ["register-background-research", "background-research"])
+def test_public_background_cli_restricts_environment_before_scientific_imports(command):
+    probe = """
+import importlib.abc
+import os
+import runpy
+import sys
+os.environ['ALPACA_API_KEY'] = 'synthetic-must-not-inherit'
+os.environ['OMP_NUM_THREADS'] = '8'
+class ImportBoundary(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.partition('.')[0] in {'numpy', 'pandas', 'scipy', 'sklearn'}:
+            assert os.environ.get('OMP_NUM_THREADS') == '1', 'numeric limits applied after scientific import'
+            assert 'ALPACA_API_KEY' not in os.environ, 'credential reached scientific import'
+sys.meta_path.insert(0, ImportBoundary())
+sys.argv = ['src.cli', 'strategy', sys.argv[1], '--help']
+try:
+    runpy.run_module('src.cli', run_name='__main__')
+except SystemExit as error:
+    assert error.code == 0
+assert os.environ['OMP_NUM_THREADS'] == '1'
+assert 'ALPACA_API_KEY' not in os.environ
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", probe, command], cwd=ROOT, capture_output=True, text=True, timeout=30
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_public_cli_legacy_import_retains_environment_and_commands():
+    probe = """
+import os
+os.environ['ALPACA_API_KEY'] = 'synthetic-legacy-sentinel'
+import src.cli
+assert os.environ['ALPACA_API_KEY'] == 'synthetic-legacy-sentinel'
+from typer.testing import CliRunner
+result = CliRunner().invoke(src.cli.app, ['monitor', '--help'])
+assert result.exit_code == 0, result.output
+assert 'run' in result.output
+"""
+    result = subprocess.run([sys.executable, "-c", probe], cwd=ROOT, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
 
 
 def test_training_progress_carries_versioned_status_after_durable_results(tmp_path):

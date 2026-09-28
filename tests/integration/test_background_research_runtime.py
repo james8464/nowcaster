@@ -80,3 +80,81 @@ def test_manual_worker_limit_reserves_host_cores_without_changing_campaign(tmp_p
         LearningTrainer(registry, workers=7)
     with pytest.raises(ValueError, match="workers"):
         LearningTrainer(registry, workers=0)
+
+
+@pytest.mark.parametrize("boundary", ["source", "prefix", "trainer"])
+def test_stop_during_real_preparation_preserves_receipts_and_completes(tmp_path, monkeypatch, boundary):
+    from src.background_research import data, training
+    from src.deep_research.candidates import generate_candidates
+    from src.deep_research.control import ControlState
+    from tests.unit.test_background_research_data import reserved
+
+    campaign, _, _, registry, batch = reserved(tmp_path)
+    monkeypatch.setattr(runtime, "runtime_code_identity", lambda: campaign.code_hash)
+    control = ResearchControl(tmp_path / "control", run_id="preparing", nonce="n" * 32)
+    control.initialize()
+    for attempt in generate_candidates(campaign.search_spaces[0].to_search_space(), count=2, seed=campaign.seed):
+        event = {
+            "attempt_id": f"{batch.batch_id}:{attempt.ordinal}",
+            "candidate_hash": attempt.candidate.identity,
+            "payload": {"ordinal": attempt.ordinal, "generation": 1, "candidate": attempt.candidate.payload()},
+        }
+        registry.append_event(batch.batch_id, {**event, "kind": "attempt"})
+        if attempt.ordinal == 1:
+            registry.append_event(batch.batch_id, {**event, "kind": "attempt_result", "outcome": "completed"})
+    prefix = registry.ledger.read_bytes()
+    source = {p: p.read_bytes() for p in campaign.source_directory.iterdir() if p.is_file()}
+    owner, name = {
+        "source": (data, "read_learning_source"),
+        "prefix": (data, "load_learning_data"),
+        "trainer": (training, "load_learning_data"),
+    }[boundary]
+    original = getattr(owner, name)
+
+    def stop_after_preparation(*args, **kwargs):
+        result = original(*args, **kwargs)
+        control.request(ControlState.STOPPED)
+        return result
+
+    monkeypatch.setattr(owner, name, stop_after_preparation)
+    emitted = []
+    status = runtime.BackgroundLearningRunner(registry, LearningTrainer(registry)).run(
+        campaign.identity_hash, control=control, emit=emitted.append
+    )
+    assert status.state == "paused"
+    assert status.batch_attempt_count == 2
+    assert registry.ledger.read_bytes().startswith(prefix)
+    with registry._locked():
+        state, _, _ = registry._read()
+    results = [event.outcome for event in state.events[batch.batch_id] if event.kind == "attempt_result"]
+    assert sorted(results) == ["completed", "interrupted"]
+    assert emitted[-1]["event"] == "complete"
+    assert not any(event["event"] == "error" for event in emitted)
+    assert all(p.read_bytes() == content for p, content in source.items())
+    assert control.read() is ControlState.STOPPED
+
+
+def test_stop_does_not_hide_unrelated_preparation_failure(tmp_path, monkeypatch):
+    from src.background_research import training
+    from src.deep_research.control import ControlState
+    from tests.unit.test_background_research_data import reserved
+
+    campaign, _, _, registry, batch = reserved(tmp_path)
+    monkeypatch.setattr(runtime, "runtime_code_identity", lambda: campaign.code_hash)
+    control = ResearchControl(tmp_path / "control", run_id="preparing", nonce="n" * 32)
+    control.initialize()
+    original = training.load_learning_data
+
+    def fail_after_preparation(*args, **kwargs):
+        original(*args, **kwargs)
+        control.request(ControlState.STOPPED)
+        raise ValueError("synthetic checkpoint failure")
+
+    monkeypatch.setattr(training, "load_learning_data", fail_after_preparation)
+    emitted = []
+    with pytest.raises(ValueError, match="synthetic checkpoint failure"):
+        runtime.BackgroundLearningRunner(registry, LearningTrainer(registry)).run(
+            campaign.identity_hash, control=control, emit=emitted.append
+        )
+    assert registry.read_status(campaign.identity_hash).state == "blocked"
+    assert emitted[-1]["event"] == "error"

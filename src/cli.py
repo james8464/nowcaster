@@ -1,5 +1,23 @@
 from __future__ import annotations
 
+# The public module entry must apply the same credential/thread boundary as the
+# packaged helper before importing the legacy CLI's scientific dependencies.
+if __name__ == "__main__":
+    import sys
+
+    if (
+        len(sys.argv) > 2
+        and sys.argv[1] == "strategy"
+        and sys.argv[2]
+        in {
+            "background-research",
+            "register-background-research",
+        }
+    ):
+        from src.background_research.runtime import background_main
+
+        raise SystemExit(background_main(sys.argv[2:]))
+
 import csv
 import json
 import os
