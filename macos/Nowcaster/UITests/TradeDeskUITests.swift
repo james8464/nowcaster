@@ -244,11 +244,23 @@ final class TradeDeskUITests: XCTestCase {
         capture(app, "synthetic-calendar-import-NOT-market-evidence")
         let disclosure = app.disclosureTriangles["dayTrader.historicalOutcomes"]
         XCTAssertTrue(disclosure.waitForExistence(timeout: 10), app.debugDescription)
-        // On macOS the selectable label only takes focus; use its leading arrow.
-        disclosure.coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: 0.5)).click()
+        // The AX frame includes leading inset, not just the visible chevron.
+        // Window capture places the arrow 27 pt from that frame's leading edge;
+        // a percentage-of-label-width click lands in the inset or selects text.
+        disclosure.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5))
+            .withOffset(CGVector(dx: 27, dy: 0)).click()
         let expanded = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == 1 OR value == '1'"), object: disclosure)
         XCTAssertEqual(XCTWaiter.wait(for: [expanded], timeout: 10), .completed)
-        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "BTCUSDT · Target", "BTCUSDT · Target")).firstMatch.waitForExistence(timeout: 10), app.windows.firstMatch.debugDescription)
+        capture(app, "synthetic-expanded-history-NOT-market-evidence")
+        // AX values are heterogeneous: applying CONTAINS to a numeric value
+        // throws inside XCTest's query evaluator. Read the snapshot, then
+        // type-check values instead of evaluating that predicate on every node.
+        let completedOutcome = app.windows.firstMatch.descendants(matching: .any)
+            .allElementsBoundByIndex.contains { element in
+                element.label.contains("BTCUSDT · Target")
+                    || (element.value as? String)?.contains("BTCUSDT · Target") == true
+            }
+        XCTAssertTrue(completedOutcome, "Expanded history must expose the retained BTC target outcome.")
         XCTAssertTrue(app.staticTexts["Current context unavailable"].exists)
         XCTAssertFalse(app.staticTexts["Research entry zone"].exists)
         XCTAssertFalse(app.buttons["paperSignals.stop"].exists)

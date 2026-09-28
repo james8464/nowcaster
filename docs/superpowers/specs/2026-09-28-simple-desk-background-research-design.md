@@ -35,10 +35,12 @@ a reliable control for the desk. The app already has a `MenuBarExtra`, login-ite
 support, a retained-data search engine, checkpoints and thermal controls; build
 on those components rather than introduce another independent engine.
 
-The installed launch/normal-quit acceptance test passed on September 28. The
-historical-outcome disclosure test remains under investigation; its first retry
-clicked the leading inset rather than the arrow. No trading behavior was changed
-to address that test.
+The installed launch/normal-quit and historical-outcome acceptance tests passed
+on September 28. Two test-only issues were corrected: a click in the chevron's
+leading inset and a string predicate applied to numeric accessibility values.
+The final UI suite passed all five enabled cases (three intentional opt-in
+skips). No trading behavior changed. Failed attempts and the detailed limits
+remain in `.superpowers/audits/2026-09-28-interface-review/report.md`.
 
 ## Chosen approach
 
