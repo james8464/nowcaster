@@ -35,7 +35,8 @@ codesign "${SIGN_OPTIONS[@]}" --entitlements "$PROJECT_ROOT/macos/Nowcaster/Reso
   "$CONTENTS_PATH/Helpers/nowcaster-engine"
 "$PYTHON" "$PROJECT_ROOT/scripts/engine_manifest.py" --root "$PROJECT_ROOT" \
   --executable "$CONTENTS_PATH/Helpers/nowcaster-engine" \
-  --output "$CONTENTS_PATH/Resources/engine-manifest.json"
+  --output "$CONTENTS_PATH/Resources/engine-manifest.json" \
+  --retained-build "$PROJECT_ROOT/build/engine/engine-build.json"
 
 PAPER_ROOT=$(zsh "$SCRIPT_DIR/build_paper_signals_bundle.sh")
 rm -rf "$CONTENTS_PATH/Helpers/nowcaster-paper-signals.app"

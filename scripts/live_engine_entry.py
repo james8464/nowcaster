@@ -7,8 +7,8 @@ import sys
 from multiprocessing import freeze_support
 from pathlib import Path
 
-from src.live_monitor.command import MonitorRuntimeError, parse_bootstrap, replay_events, run_live
-from src.live_monitor.control_input import read_bootstrap_line
+if not getattr(sys, "frozen", False):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 def parser() -> argparse.ArgumentParser:
@@ -23,6 +23,21 @@ def parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    if (
+        len(sys.argv) > 2
+        and sys.argv[1] == "strategy"
+        and sys.argv[2]
+        in {
+            "background-research",
+            "register-background-research",
+        }
+    ):
+        from src.background_research.runtime import background_main
+
+        return background_main(sys.argv[2:])
+    from src.live_monitor.command import MonitorRuntimeError, parse_bootstrap, replay_events, run_live
+    from src.live_monitor.control_input import read_bootstrap_line
+
     arguments = parser().parse_args()
     try:
         bootstrap = parse_bootstrap(read_bootstrap_line(sys.stdin))

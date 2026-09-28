@@ -12,15 +12,18 @@ DIST_ROOT=$BUILD_ROOT/dist
 test -x "$PYTHON"
 if [[ "${NOWCASTER_REUSE_ENGINE_BUNDLE:-0}" == "1" && -x "$DIST_ROOT/nowcaster-engine" ]]; then
   "$PYTHON" "$PROJECT_ROOT/scripts/engine_manifest.py" \
-    --root "$PROJECT_ROOT" --executable "$DIST_ROOT/nowcaster-engine" --output "$DIST_ROOT/engine-manifest.json"
+    --root "$PROJECT_ROOT" --executable "$DIST_ROOT/nowcaster-engine" --verify "$DIST_ROOT/engine-manifest.json"
   print "$DIST_ROOT"
   exit 0
 fi
 
 rm -rf "$BUILD_ROOT"
 mkdir -p "$BUILD_ROOT"
+"$PYTHON" "$PROJECT_ROOT/scripts/engine_manifest.py" --root "$PROJECT_ROOT" --build-output "$BUILD_ROOT/engine-build.json"
 "$PYTHON" -m PyInstaller --clean --noconfirm --onefile --name nowcaster-engine \
   --paths "$PROJECT_ROOT" \
+  --add-data "$BUILD_ROOT/engine-build.json:." \
+  --add-data "$PROJECT_ROOT/config:config" \
   --collect-submodules src.live_monitor \
   --hidden-import websockets.asyncio.client \
   --hidden-import pytz \
@@ -32,7 +35,6 @@ mkdir -p "$BUILD_ROOT"
   --exclude-module nbformat \
   --exclude-module pyarrow \
   --exclude-module pytest \
-  --exclude-module scipy \
   --exclude-module tkinter \
   --exclude-module tornado \
   --exclude-module traitlets \
@@ -40,5 +42,6 @@ mkdir -p "$BUILD_ROOT"
   --distpath "$DIST_ROOT" --workpath "$BUILD_ROOT/work" --specpath "$BUILD_ROOT" \
   "$PROJECT_ROOT/scripts/live_engine_entry.py"
 "$PYTHON" "$PROJECT_ROOT/scripts/engine_manifest.py" \
-  --root "$PROJECT_ROOT" --executable "$DIST_ROOT/nowcaster-engine" --output "$DIST_ROOT/engine-manifest.json"
+  --root "$PROJECT_ROOT" --executable "$DIST_ROOT/nowcaster-engine" --output "$DIST_ROOT/engine-manifest.json" \
+  --retained-build "$BUILD_ROOT/engine-build.json"
 print "$DIST_ROOT"

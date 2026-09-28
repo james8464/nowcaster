@@ -62,6 +62,55 @@ app.add_typer(monitor_app, name="monitor")
 DEFAULT_PROJECT_ROOT = Path.cwd()
 
 
+@strategy_app.command("register-background-research")
+def strategy_register_background_research(
+    registry_directory: Annotated[Path, typer.Option()],
+    manifest: Annotated[Path, typer.Option()],
+) -> None:
+    from src.background_research.runtime import background_main
+
+    raise typer.Exit(
+        background_main(
+            [
+                "register-background-research",
+                "--registry-directory",
+                str(registry_directory),
+                "--manifest",
+                str(manifest),
+            ]
+        )
+    )
+
+
+@strategy_app.command("background-research")
+def strategy_background_research(
+    registry_directory: Annotated[Path, typer.Option()],
+    campaign_hash: Annotated[str, typer.Option()],
+    run_id: Annotated[str, typer.Option()],
+    control_directory: Annotated[Path, typer.Option()],
+    control_nonce: Annotated[str, typer.Option()],
+    workers: Annotated[int | None, typer.Option()] = None,
+) -> None:
+    from src.background_research.runtime import background_main
+
+    arguments = [
+        "background-research",
+        "--registry-directory",
+        str(registry_directory),
+        "--campaign-hash",
+        campaign_hash,
+        "--run-id",
+        run_id,
+        "--control-directory",
+        str(control_directory),
+        "--control-nonce",
+        control_nonce,
+    ]
+    if workers is not None:
+        arguments.extend(["--workers", str(workers)])
+    raise typer.Exit(background_main(arguments))
+
+
 @monitor_app.command("run")
 def monitor_run(
     replay: Annotated[Path | None, typer.Option(exists=True, dir_okay=False)] = None,

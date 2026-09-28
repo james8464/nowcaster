@@ -94,8 +94,13 @@ def candidate_payload(
 
 
 class LearningTrainer:
-    def __init__(self, registry: LearningRegistry):
+    def __init__(self, registry: LearningRegistry, *, workers: int | None = None):
         self.registry = registry
+        cores = os.cpu_count() or 1
+        maximum = max(1, cores - 2)
+        self.workers = max(1, min(cores // 2, maximum)) if workers is None else workers
+        if type(self.workers) is not int or not 1 <= self.workers <= maximum:
+            raise ValueError("workers must reserve at least two logical host cores when available")
 
     def _state(self):
         with self.registry._locked():
@@ -427,7 +432,7 @@ class LearningTrainer:
             feed=data.protocol.source.feed,
             interval=data.protocol.interval,
             seed=campaign.seed,
-            workers=max(1, min((os.cpu_count() or 1) // 2, (os.cpu_count() or 1) - 2)),
+            workers=self.workers,
             trial_budget=None,
             continuous=True,
             cycle_budget=50,

@@ -128,3 +128,86 @@ def test_packagers_do_not_clean_other_projects_shared_pyinstaller_cache() -> Non
     for script in ["build_engine_bundle.sh", "build_paper_signals_bundle.sh"]:
         source = (root / "scripts" / script).read_text()
         assert 'export PYINSTALLER_CONFIG_DIR="$PROJECT_ROOT/build/pyinstaller-cache"' in source
+
+
+def test_reused_helper_refuses_stale_source_instead_of_relabeling_binary(tmp_path):
+    import json
+    import shutil
+
+    from scripts.engine_manifest import build_manifest
+
+    root = Path(__file__).resolve().parents[2]
+    (tmp_path / "scripts").mkdir()
+    for name in ("build_engine_bundle.sh", "engine_manifest.py"):
+        shutil.copy(root / "scripts" / name, tmp_path / "scripts" / name)
+    (tmp_path / "src").mkdir()
+    module = tmp_path / "src/probe.py"
+    module.write_text("VALUE = 1\n")
+    dist = tmp_path / "build/engine/dist"
+    dist.mkdir(parents=True)
+    binary = dist / "nowcaster-engine"
+    binary.write_bytes(b"synthetic stale executable")
+    binary.chmod(0o755)
+    manifest = dist / "engine-manifest.json"
+    manifest.write_text(json.dumps(build_manifest(tmp_path, binary)))
+    original = manifest.read_bytes()
+    module.write_text("VALUE = 2\n")
+    import os
+
+    result = subprocess.run(
+        ["zsh", str(tmp_path / "scripts/build_engine_bundle.sh")],
+        env={**os.environ, "NOWCASTER_BUILD_PYTHON": sys.executable, "NOWCASTER_REUSE_ENGINE_BUNDLE": "1"},
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode != 0
+    assert manifest.read_bytes() == original
+
+
+def test_registration_runtime_does_not_import_scipy_or_sklearn_before_ownership(tmp_path):
+    import json
+
+    from tests.background_research_fixtures import learning_fixture
+
+    campaign, _, _ = learning_fixture(tmp_path)
+    manifest = tmp_path / "synthetic-registration.json"
+    payload = campaign.model_dump(mode="json")
+    payload.pop("code_hash")
+    manifest.write_text(json.dumps(payload))
+    root = Path(__file__).resolve().parents[2]
+    probe = """
+import importlib.abc
+import sys
+class HeavyImportBlocker(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.partition('.')[0] in {'scipy', 'sklearn'}:
+            raise RuntimeError('heavy dependency before ownership: ' + fullname)
+sys.meta_path.insert(0, HeavyImportBlocker())
+import src.background_research.runtime as runtime
+runtime.restrict_background_environment()
+from pathlib import Path
+campaign = runtime.register_background_research(Path(sys.argv[1]), Path(sys.argv[2]))
+assert campaign.campaign_id == 'learning'
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", probe, str(tmp_path / "registry"), str(manifest)],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_legacy_research_and_learning_exports_retain_import_identity():
+    import src.learning as learning
+    import src.research as research
+    from src.learning.search import discover_rules
+    from src.research.full_history import run_full_strategy_research
+
+    assert learning.discover_rules is discover_rules
+    assert research.run_full_strategy_research is run_full_strategy_research
+    for facade in (learning, research):
+        for name in facade.__all__:
+            assert getattr(facade, name) is getattr(facade, name)
