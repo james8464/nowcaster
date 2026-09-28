@@ -6,7 +6,6 @@ import math
 import os
 import statistics
 from collections.abc import Callable
-from dataclasses import replace
 from datetime import UTC, datetime
 
 import numpy as np
@@ -510,15 +509,14 @@ class LearningTrainer:
                     winner = min(successful, key=lambda event: (-event.payload["fitness"], event.candidate_hash))
                     incumbent = _candidate(winner.payload["candidate"])
                     spaces = [space for space in spaces if space.strategy_id == incumbent.strategy_id]
-                    spaces = [
-                        replace(
-                            spaces[0],
-                            base_parameters=dict(incumbent.parameters) or dict(spaces[0].base_parameters),
-                            seed_rules=(incumbent.rule,) if incumbent.rule else spaces[0].seed_rules,
-                        )
-                    ]
                 generated = [
-                    generate_candidates(space, count=count, seed=campaign.seed + generation - 1, incumbent=incumbent)
+                    generate_candidates(
+                        space,
+                        count=count,
+                        seed=campaign.seed + generation - 1,
+                        incumbent=incumbent,
+                        incumbent_only=generation == 2,
+                    )
                     for space in spaces
                 ]
                 works = []

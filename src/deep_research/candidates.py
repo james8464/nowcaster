@@ -3,8 +3,9 @@ from __future__ import annotations
 import itertools
 import math
 import random
+from collections.abc import Iterator
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Any
 
@@ -216,12 +217,37 @@ def _incumbent_variants(
     return variants
 
 
+def _rule_neighbors(rule: RuleNode, space: CandidateSearchSpace) -> Iterator[RuleNode]:
+    """Change one field of one node, preserving the winner's typed topology."""
+    if rule.operator == "indicator":
+        if rule.lag > space.maximum_lag:
+            raise ValueError("incumbent rule exceeds maximum lag")
+        for name in space.indicators:
+            if name != rule.name:
+                yield replace(rule, name=name)
+        for lag in range(space.maximum_lag + 1):
+            if lag != rule.lag:
+                yield replace(rule, lag=lag)
+    elif rule.operator == "number":
+        for value in space.thresholds:
+            if value != rule.value:
+                yield replace(rule, value=value)
+    elif rule.operator in {"gt", "gte", "lt", "lte"}:
+        for operator in ("gt", "gte", "lt", "lte"):
+            if operator != rule.operator:
+                yield replace(rule, operator=operator)
+    for index, child in enumerate(rule.children):
+        for neighbor in _rule_neighbors(child, space):
+            yield replace(rule, children=rule.children[:index] + (neighbor,) + rule.children[index + 1 :])
+
+
 def generate_candidates(
     space: CandidateSearchSpace,
     *,
     count: int,
     seed: int,
     incumbent: CandidateDefinition | None = None,
+    incumbent_only: bool = False,
 ) -> tuple[CandidateGenerationAttempt, ...]:
     if isinstance(count, bool) or count < 1:
         raise ValueError("candidate count must be positive")
@@ -233,12 +259,25 @@ def generate_candidates(
         space.strategy_id,
         tuple(space.base_parameters.items()),
     )
-    pool = [
-        *_incumbent_variants(space, incumbent, seed=seed),
-        baseline,
-        *_parameter_candidates(space, generator),
-        *_rule_candidates(space, seed, count),
-    ]
+    if incumbent_only:
+        if incumbent is None or incumbent.strategy_id != space.strategy_id:
+            raise ValueError("incumbent-only search requires a matching incumbent")
+        if incumbent.rule is None:
+            pool = _incumbent_variants(space, incumbent, seed=seed)
+        else:
+            incumbent.rule.validate_bounds(max_depth=space.max_depth, max_nodes=space.max_nodes)
+            pool = [replace(incumbent, rule=rule) for rule in _rule_neighbors(incumbent.rule, space)]
+        # A finite neighborhood can be exhausted. Repeated parent/variant
+        # attempts still consume budget; never refill with unrelated candidates.
+        pool = pool or [incumbent]
+        generator.shuffle(pool)
+    else:
+        pool = [
+            *_incumbent_variants(space, incumbent, seed=seed),
+            baseline,
+            *_parameter_candidates(space, generator),
+            *_rule_candidates(space, seed, count),
+        ]
     if not pool:
         raise ValueError("candidate search space is empty")
     attempts: list[CandidateGenerationAttempt] = []

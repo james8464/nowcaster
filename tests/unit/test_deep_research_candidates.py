@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
+import pytest
+
 from src.deep_research.candidates import CandidateDefinition, CandidateSearchSpace, generate_candidates
 from src.learning.grammar import RuleNode, crossover_rules
 
@@ -88,3 +92,77 @@ def test_later_generation_mutates_around_the_development_incumbent_without_open_
     ]
     assert any(parameters.get("incumbent_marker") == 99 for parameters in evolved)
     assert all(attempt.candidate.kind in {"baseline", "parameter", "rule", "crossover"} for attempt in attempts)
+
+
+def test_incumbent_only_parameter_neighbors_preserve_all_other_winner_values():
+    space = CandidateSearchSpace(
+        "ema_adx_trend",
+        {"fast": 5, "slow": 21},
+        {"fast": (5, 13), "slow": (21, 34)},
+        (_rule("rsi", 50),),
+        ("rsi",),
+        (50.0,),
+    )
+    winner = CandidateDefinition("parameter", "ema_adx_trend", (("fast", 13), ("slow", 34), ("marker", 99)))
+    attempts = generate_candidates(space, count=50, seed=19, incumbent=winner, incumbent_only=True)
+    assert len(attempts) == 50
+    assert {attempt.candidate.parameters for attempt in attempts} == {
+        (("fast", 5), ("marker", 99), ("slow", 34)),
+        (("fast", 13), ("marker", 99), ("slow", 21)),
+    }
+    assert all(attempt.candidate.kind == "parameter" and attempt.candidate.rule is None for attempt in attempts)
+    assert sum(attempt.duplicate_of is not None for attempt in attempts) == 48
+    assert attempts == generate_candidates(space, count=50, seed=19, incumbent=winner, incumbent_only=True)
+
+
+def test_incumbent_only_rule_neighbors_change_one_field_not_the_parent_tree():
+    winner = CandidateDefinition(
+        "rule",
+        "rsi_reversal",
+        (("period", 7),),
+        RuleNode.all_of(_rule("rsi", 50), RuleNode.negate(_rule("adx", 20))),
+    )
+    space = CandidateSearchSpace(
+        "rsi_reversal",
+        {"period": 14},
+        {"period": (14, 21)},
+        (_rule("volume", 100),),
+        ("rsi", "adx", "volume"),
+        (20.0, 50.0, 80.0),
+        maximum_lag=1,
+        max_depth=4,
+        max_nodes=8,
+    )
+
+    def changed_fields(parent, child):
+        assert len(parent.children) == len(child.children)
+        assert parent.parameters == child.parameters
+        assert child.lag <= 1
+        return sum(
+            getattr(parent, field) != getattr(child, field) for field in ("operator", "name", "value", "lag")
+        ) + sum(changed_fields(left, right) for left, right in zip(parent.children, child.children, strict=True))
+
+    attempts = generate_candidates(space, count=50, seed=19, incumbent=winner, incumbent_only=True)
+    for attempt in attempts:
+        assert attempt.candidate.parameters == (("period", 7),)
+        assert attempt.candidate.kind == "rule"
+        assert changed_fields(winner.rule, attempt.candidate.rule) == 1
+        assert attempt.candidate.rule.depth == 4
+        assert attempt.candidate.rule.node_count == 8
+    assert any(attempt.duplicate_of is not None for attempt in attempts)
+    assert attempts == generate_candidates(space, count=50, seed=19, incumbent=winner, incumbent_only=True)
+    for invalid_bound in ({"max_depth": 3}, {"max_nodes": 7}, {"maximum_lag": 0}):
+        with pytest.raises(ValueError, match="exceeds"):
+            generate_candidates(
+                replace(space, **invalid_bound), count=50, seed=19, incumbent=winner, incumbent_only=True
+            )
+
+
+def test_exhausted_incumbent_parameter_neighborhood_repeats_parent_for_budget_accounting():
+    space = CandidateSearchSpace("rsi_reversal", {"period": 14}, {}, (), ("rsi",), (50.0,))
+    winner = CandidateDefinition("parameter", "rsi_reversal", (("period", 14),))
+    attempts = generate_candidates(space, count=3, seed=19, incumbent=winner, incumbent_only=True)
+    assert [attempt.candidate for attempt in attempts] == [winner, winner, winner]
+    assert [attempt.duplicate_of for attempt in attempts] == [None, 1, 1]
+    with pytest.raises(ValueError, match="incumbent"):
+        generate_candidates(space, count=3, seed=19, incumbent_only=True)

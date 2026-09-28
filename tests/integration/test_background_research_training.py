@@ -202,6 +202,20 @@ def test_two_generations_consume_100_attempts_including_duplicates_and_resume_wi
     campaign, _, _, registry, batch = reserved(tmp_path, training_count=1440, attempts=100)
     control = ResearchControl(tmp_path / "control", run_id=batch.batch_id, nonce="t" * 32)
     control.initialize()
+    append = registry.append_event
+
+    def crash_at_second_generation(batch_id, event):
+        append(batch_id, event)
+        if event["kind"] == "attempt" and event["payload"]["ordinal"] == 51:
+            raise KeyboardInterrupt("crash after first descendant reservation")
+
+    monkeypatch.setattr(registry, "append_event", crash_at_second_generation)
+    with pytest.raises(KeyboardInterrupt, match="descendant reservation"):
+        LearningTrainer(registry).run_batch(campaign, batch, control=control, emit=lambda _: None)
+    with registry._locked():
+        before, _, _ = registry._read()
+    original_attempts = [event for event in before.events[batch.batch_id] if event.kind == "attempt"]
+    monkeypatch.setattr(registry, "append_event", append)
     status = LearningTrainer(registry).run_batch(campaign, batch, control=control, emit=lambda _: None)
     assert status.batch_attempt_count == 100
     with registry._locked():
@@ -210,6 +224,35 @@ def test_two_generations_consume_100_attempts_including_duplicates_and_resume_wi
     assert [event.payload["generation"] for event in attempts] == [1] * 50 + [2] * 50
     assert any(event.outcome == "rejected" for event in state.events[batch.batch_id])
     results = [event for event in state.events[batch.batch_id] if event.kind == "attempt_result"]
+    assert attempts[:51] == original_attempts
+    assert next(event for event in results if event.payload["ordinal"] == 51).outcome == "interrupted"
+    first_results = [event for event in results if event.outcome == "completed" and event.payload["ordinal"] <= 50]
+    winner = min(first_results, key=lambda event: (-event.payload["fitness"], event.candidate_hash)).payload[
+        "candidate"
+    ]
+    for attempt in attempts[50:]:
+        child = attempt.payload["candidate"]
+        assert child["strategy_id"] == winner["strategy_id"]
+        if winner["rule"] is None:
+            assert child["rule"] is None
+            assert child["kind"] == "parameter"
+            assert sum(child["parameters"].get(key) != value for key, value in winner["parameters"].items()) == 1
+        else:
+            assert child["parameters"] == winner["parameters"]
+            assert child["rule"] is not None
+            # First-generation fixture winners are simple comparisons. Descendants
+            # retain both typed leaves and change exactly one scalar field.
+            parent_fields = [
+                winner["rule"]["operator"],
+                *winner["rule"]["children"][0].values(),
+                *winner["rule"]["children"][1].values(),
+            ]
+            child_fields = [
+                child["rule"]["operator"],
+                *child["rule"]["children"][0].values(),
+                *child["rule"]["children"][1].values(),
+            ]
+            assert sum(left != right for left, right in zip(parent_fields, child_fields, strict=True)) == 1
     assert len(results) == 100
     assert 1 < sum(event.outcome == "completed" for event in results) < 100
     assert (
