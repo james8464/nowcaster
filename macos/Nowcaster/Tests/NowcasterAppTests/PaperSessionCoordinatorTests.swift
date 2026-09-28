@@ -25,6 +25,11 @@ import Testing
     var resumes = 0
     var shutdownBarrier: DrainBarrier?
     var onStatus: (@MainActor (LearningStatus) -> Void)?
+    var preparationBarrier: DrainBarrier?
+    func prepare(preferences: PaperSessionPreferences, configuration: EngineConfiguration) async throws -> PaperSessionPreferences {
+        await preparationBarrier?.arrive("prepare", timeout: .zero)
+        return preferences
+    }
     func start(campaignHash: String, registryURL: URL, configuration: EngineConfiguration) async throws { starts += 1; isRunning = true }
     func pause(reason: String) async { pauses.append(reason) }
     func resume() async throws { resumes += 1 }
@@ -42,7 +47,8 @@ import Testing
     func release() { released = true; for continuation in continuations { continuation.resume() }; continuations = [] }
 }
 
-@MainActor private func session(_ collector: Collector, _ research: Research, learning: Bool = true) -> PaperSessionCoordinator {
+@MainActor private func session(_ collector: Collector, _ research: Research, learning: Bool = true,
+                               monitor: BackgroundResourceMonitor = BackgroundResourceMonitor(sample: { .healthy })) -> PaperSessionCoordinator {
     var preferences = PaperSessionPreferences()
     preferences.learningEnabled = learning
     preferences.source = collector.selectedSource
@@ -50,7 +56,61 @@ import Testing
     preferences.registryURL = URL(fileURLWithPath: "/tmp/synthetic-registry")
     return PaperSessionCoordinator(collector: collector, research: research, preferences: preferences,
         configuration: EngineConfiguration(projectRoot: URL(fileURLWithPath: "/tmp"), pythonExecutable: URL(fileURLWithPath: "/usr/bin/true"), snapshotURL: URL(fileURLWithPath: "/tmp/snapshot"), mode: .demo),
-        monitor: BackgroundResourceMonitor(sample: { .healthy }))
+        monitor: monitor)
+}
+
+@Test @MainActor func paperSessionMonitorSurvivesDisableDuringPreparation() async {
+    let collector = Collector(), research = Research(), barrier = DrainBarrier()
+    research.preparationBarrier = barrier
+    var samples = 0
+    let monitor = BackgroundResourceMonitor(sample: {
+        samples += 1
+        return samples == 1 ? .init(thermal: .unknown) : .healthy
+    })
+    let owner = session(collector, research, monitor: monitor)
+    let start = Task { await owner.start() }
+    while barrier.timeouts["prepare"] == nil { await Task.yield() }
+    for _ in 0..<100 where samples < 2 { await Task.yield() }
+    await owner.setLearningEnabled(false)
+    barrier.release(); await start.value
+    await owner.setLearningEnabled(true)
+    #expect(collector.isRunning)
+    #expect(research.isRunning)
+    #expect(owner.state == .waiting)
+    _ = await owner.shutdown()
+}
+
+@Test @MainActor func paperSessionDisableCompletionCannotOverwriteNewerPause() async {
+    let collector = Collector(), research = Research(), barrier = DrainBarrier()
+    let owner = session(collector, research)
+    await owner.start(); research.shutdownBarrier = barrier
+    let disable = Task { await owner.setLearningEnabled(false) }
+    while barrier.continuations.count < 1 { await Task.yield() }
+    let pause = Task { await owner.pause() }
+    while barrier.continuations.count < 2 { await Task.yield() }
+    // Release newer Pause before the earlier disable operation.
+    barrier.continuations.removeLast().resume()
+    await pause.value
+    #expect(owner.state == .paused)
+    barrier.release(); await disable.value
+    #expect(owner.state == .paused)
+    #expect(!collector.isRunning)
+}
+
+@Test @MainActor func paperSessionRapidLearningToggleWaitsForPreviousDrain() async {
+    let collector = Collector(), research = Research(), barrier = DrainBarrier()
+    let owner = session(collector, research)
+    await owner.start(); research.shutdownBarrier = barrier
+    let disable = Task { await owner.setLearningEnabled(false) }
+    while barrier.continuations.isEmpty { await Task.yield() }
+    let enable = Task { await owner.setLearningEnabled(true) }
+    for _ in 0..<100 { await Task.yield() }
+    #expect(research.starts == 1)
+    barrier.release(); await disable.value; await enable.value
+    #expect(owner.preferences.learningEnabled)
+    #expect(research.isRunning)
+    #expect(owner.state == .waiting)
+    _ = await owner.shutdown()
 }
 
 @Test @MainActor func paperSessionTwoConsumersStartOnlyOneChildAndCanReopen() async {

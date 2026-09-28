@@ -86,6 +86,7 @@ final class LivePaperSignalService: PaperSessionCollecting {
     private(set) var notificationEvidenceDirectory: URL?
     private(set) var notificationEvidenceMessage: String?
     @ObservationIgnored private var process: Process?
+    @ObservationIgnored private var processBirth: BackgroundProcessBirth?
     @ObservationIgnored private var launchEpoch = UUID()
     @ObservationIgnored private var startingCommand: BackgroundProcessHandle?
     @ObservationIgnored private var commandProcesses: [UUID: BackgroundProcessHandle] = [:]
@@ -243,6 +244,7 @@ final class LivePaperSignalService: PaperSessionCollecting {
             }
             try child.run()
             process = child; logHandle = log; self.configuration = configuration
+            processBirth = BackgroundProcessBirth.read(child.processIdentifier)
             directory = configuration.directory; isRunning = child.isRunning
             terminationObserver = NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification,
                 object: nil, queue: .main) { _ in if child.isRunning { child.terminate() } }
@@ -283,6 +285,7 @@ final class LivePaperSignalService: PaperSessionCollecting {
     func shutdown(timeout: Duration) async -> Bool {
         commandsAllowed = false
         launchEpoch = UUID(); monitor?.cancel(); monitor = nil
+        isRunning = false; state = nil
         let clock = ContinuousClock(), deadline = ContinuousClock.now + min(max(timeout, .zero), .seconds(30))
         let pending = startingCommand; pending?.requestStop()
         let commands = Array(commandProcesses.values)
@@ -295,22 +298,26 @@ final class LivePaperSignalService: PaperSessionCollecting {
                 return result
             }
         }
-        // Only a process object launched by this service grants stop authority.
+        // A launched contender may not hold the directory lock. Never send the
+        // directory-wide stop command: it could stop an unrelated lock holder.
         guard let child = process, child.isRunning else {
             let stopped = await pending?.shutdown(timeout: max(.zero, clock.now.duration(to: deadline))) ?? true
             startingCommand = nil; return await commandDrain.value && stopped
         }
-        let stopOwner = BackgroundProcessHandle()
-        let stopCommand = Task { [configuration] in
-            if let configuration { _ = try? await Self.command(configuration, "stop", owner: stopOwner) }
+        let birth = processBirth
+        func stillOwned() -> Bool {
+            child.isRunning && birth != nil && BackgroundProcessBirth.read(child.processIdentifier) == birth
         }
+        // The backend catches KeyboardInterrupt only inside its acquired lock.
+        // Before acquisition SIGINT exits without writing shared stop control.
+        if stillOwned() { child.interrupt() }
         while child.isRunning, clock.now < deadline { try? await Task.sleep(for: .milliseconds(50)) }
         let stopped = !child.isRunning
-        if child.isRunning { child.terminate(); if child.isRunning { kill(child.processIdentifier, SIGKILL) } }
-        _ = await stopOwner.shutdown(timeout: .zero)
+        if stillOwned() { child.terminate(); if stillOwned() { kill(child.processIdentifier, SIGKILL) } }
         _ = await pending?.shutdown(timeout: .zero)
-        stopCommand.cancel(); startingCommand = nil
-        isRunning = child.isRunning; state = nil
+        startingCommand = nil
+        message = stopped ? "Paper collection stopped locally. Retained backend state has not been verified."
+            : "Paper collection was interrupted. Retained backend state has not been verified."
         return await commandDrain.value && stopped
     }
 
@@ -326,10 +333,10 @@ final class LivePaperSignalService: PaperSessionCollecting {
     }
 
     func refresh() async {
-        guard let configuration, process?.isRunning == true else { state = nil; return }
+        guard commandsAllowed, let configuration, process?.isRunning == true else { state = nil; return }
         do {
             let data = try await ownedCommand(configuration, "status")
-            guard !Task.isCancelled, process?.isRunning == true else { return }
+            guard commandsAllowed, !Task.isCancelled, process?.isRunning == true else { return }
             state = try LivePaperSignalState.decode(data, protocolHash: configuration.protocolHash, now: Date())
             events = try Self.readHistory(configuration.directory)
             providerHealth = try Self.readProviderHealth(configuration.directory, protocolHash: configuration.protocolHash)
@@ -406,6 +413,7 @@ final class LivePaperSignalService: PaperSessionCollecting {
         monitor?.cancel(); monitor = nil
         try? logHandle?.close(); logHandle = nil
         process = nil
+        processBirth = nil
         if let terminationObserver { NotificationCenter.default.removeObserver(terminationObserver) }
         terminationObserver = nil
         if status != 0 { message = "The paper research service stopped. Review paper-signal-app.log in the research directory." }

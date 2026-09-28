@@ -53,6 +53,7 @@ extension PaperSessionResearching {
     @ObservationIgnored private var observedResourcePressure = false
     @ObservationIgnored private var resources = BackgroundResourceSnapshot.healthy
     @ObservationIgnored private var shutdownTask: Task<Bool, Never>?
+    @ObservationIgnored private var learningDrain: Task<Bool, Never>?
 
     init(collector: any PaperSessionCollecting, research: any PaperSessionResearching,
          preferences: PaperSessionPreferences = .init(), configuration: EngineConfiguration,
@@ -87,14 +88,15 @@ extension PaperSessionResearching {
             guard collector.isRunning else { throw BackgroundResearchError.missingRegistration }
             resources.collectorHealthy = collector.collectionHealthy
             active = true
-            if preferences.learningEnabled { try await startResearch(token: token) }
-            guard epoch == token else { return }
-            state = preferences.learningEnabled ? (automaticPause ? .paused : research.isStarting ? .starting : .waiting) : .collecting
+            // Resource observation belongs to collection, including cancellable preparation.
             monitor.start { [weak self] snapshot in
                 guard let self else { return }
                 var snapshot = snapshot; snapshot.collectorHealthy = self.collector.collectionHealthy
                 await self.resourcesChanged(snapshot)
             }
+            if preferences.learningEnabled { try await startResearch(token: token) }
+            guard epoch == token else { return }
+            state = preferences.learningEnabled ? (automaticPause ? .paused : research.isStarting ? .starting : .waiting) : .collecting
         } catch {
             guard epoch == token else { return }
             active = false; state = .blocked(error.localizedDescription); explanation = error.localizedDescription
@@ -150,15 +152,31 @@ extension PaperSessionResearching {
     }
 
     func setLearningEnabled(_ enabled: Bool) async {
+        guard shutdownTask == nil, preferences.learningEnabled != enabled else { return }
         preferences.learningEnabled = enabled
         do { try persist() } catch { state = .blocked(error.localizedDescription); return }
         guard active else { return }
+        let token = UUID(); epoch = token
         if !enabled {
-            epoch = UUID(); automaticPause = false
-            _ = await research.shutdown(timeout: .seconds(30))
-            state = .collecting
+            automaticPause = false
+            let previous = learningDrain
+            let drain = Task { @MainActor in
+                if let previous { _ = await previous.value }
+                return await research.shutdown(timeout: .seconds(30))
+            }
+            learningDrain = drain
+            let stopped = await drain.value
+            guard epoch == token, active, !userPaused, !preferences.learningEnabled else { return }
+            learningDrain = nil
+            state = stopped ? .collecting : .blocked(BackgroundResearchError.interrupted.localizedDescription)
         } else {
-            let token = UUID(); epoch = token; state = .starting
+            state = .starting
+            if let drain = learningDrain {
+                let stopped = await drain.value
+                guard epoch == token, active, !userPaused, preferences.learningEnabled else { return }
+                guard stopped else { state = .blocked(BackgroundResearchError.interrupted.localizedDescription); return }
+                learningDrain = nil
+            }
             do {
                 try await startResearch(token: token)
                 if epoch == token { state = automaticPause ? .paused : research.isStarting ? .starting : .waiting }
