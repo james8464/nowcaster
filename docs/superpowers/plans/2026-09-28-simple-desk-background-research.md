@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-28-simple-desk-background-research-design.md` (user approved).
 
-**Execution:** Preserve the user's earlier Subagent-driven preference. This written plan requires review before execution. Tasks 1–6 are sequential integration checkpoints, not permission to start six competing implementations.
+**Execution:** User approved this written plan on 28 September 2026. Preserve the user's earlier Subagent-driven preference. Tasks 1–6 are sequential integration checkpoints, not permission to start six competing implementations.
 
 ## Global Constraints
 
@@ -179,4 +179,4 @@ Use a test repository adapter for the count assertion; it inspects retained rows
 - All five Review Focus items have named test requirements in their owning tasks. Native/Python status and campaign identities are explicit at the boundary.
 - This plan adds scheduling and lifecycle around existing engines; it does not replace the engine, add a broker, relax gates or change the frozen study.
 - Expected outcome can still be **Waiting** or **No qualifying strategy**. Those are retained research results, not reasons to re-run a consumed holdout.
-- Written plan awaits user review; execution has not started.
+- Written plan approved by the user on 28 September 2026; execution in progress.
