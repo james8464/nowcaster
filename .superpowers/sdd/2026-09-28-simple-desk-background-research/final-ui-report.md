@@ -45,3 +45,27 @@ First sampling attempt for the previously observed test-owned PID31359 found it 
 After orderly xcodebuild cancellation, read-only process checks found PID31201 (xcodebuild), PID31269 (test runner) and PID31531 (test app) absent. No prepared test app/runner or `nowcaster-engine … background-research` / `nowcaster-paper-signals … start` process remained in the scoped process check. No unrelated process was signaled, and no real installed app action was taken.
 
 UI verification remains open. Restart requires explicit confirmation that the host is unlocked and the controller's next instruction. No installed acceptance, fresh HIG/VoiceOver/system-mode claim, full-source test result, signed-package result or release approval is implied by this report.
+
+## Unlocked full-scheme continuation — passed
+
+User explicitly confirmed unlocking; controller verified `IOConsoleLocked=No`. On source-equivalent documentation HEAD `0a171de0f338bf5466a7fe1404ff218d42e47df5`, ran the **same complete default scheme**, same prepared DerivedData, same skip-helper flag, no inherited UI opt-ins, with fresh result path:
+
+```sh
+NOWCASTER_SKIP_ENGINE_BUNDLE=1 xcodebuild test \
+  -project macos/Nowcaster/Nowcaster.xcodeproj -scheme Nowcaster \
+  -destination 'platform=macOS,arch=arm64' \
+  -derivedDataPath /tmp/NowcasterRelease8703-20260930.kmY6fX \
+  -resultBundlePath /tmp/NowcasterRelease8703-UI-Unlocked-20260930.RYHbhB/FullScheme.xcresult
+```
+
+**Exit0, TEST SUCCEEDED: 18 tests, 10 passed, 8 explicitly skipped, 0 failures.** XCTest duration364.439s; xcodebuild testing duration378.067s, terminal19:50:38.390 CEST. All ten default tests passed in this single run; no retry or threshold change. Console remained unlocked during periodic read-only checks. Previous locked failures above remain retained and are not erased/reclassified as passes.
+
+Passed tests (seconds): appearance matrix47.828; keyboard11.260; large-text help10.772; minimum Backtests10.958; monitor identifiers4.824; independent settings/menu12.737; all12 primary/advanced destinations232.448; simple routes/setup15.053; wide detail10.426; no-autostart Trade Desk6.339.
+
+Eight skips were the three BackgroundSession installed visual/real/synthetic tests listed above, plus TradeDesk explicit live setup/import, installed normal Quit, installed bundle open, sustained public collection, and synthetic completed lifecycle. Their opt-ins were intentionally absent; **no installed/background acceptance is inferred**.
+
+Evidence directory `/tmp/NowcasterRelease8703-UI-Unlocked-20260930.RYHbhB` retains `test.log`, `FullScheme.xcresult`, `summary.json`, `tests.json`, `Nowcaster-57935-navigation.sample.txt`, and `navigation-sample-command.log`. The result summary reports **two negative-width geometry runtime warnings and ten main-thread-method warnings**; these remain concerns, not test failures hidden by the pass result. No new visual/HIG/accessibility certification is claimed.
+
+The route test was a latency outlier. At one scoped process sample the owned app used74.8% CPU. A three-second read-only stack sample at19:49:49.704 CEST found788/1222 main-thread samples in normal run-loop waiting and390/1222 servicing XCTest accessibility hierarchy requests; this is evidence of accessibility snapshot work during that interval, not a general hang or a proven production-performance cause. Actual timing was preserved without inflating limits.
+
+Terminal read-only check found owned xcodebuild57566, runner57652, navigation app57935 and final app58682 absent. No source/test changes, helper rebuild, install, real campaign action, notification permission, power change or frozen-study access. UI report remains uncommitted pending the controller-authorized subsequent narrow CI compatibility/fixture repair. Remote CI failures are separate release blockers; this UI pass does not clear them.

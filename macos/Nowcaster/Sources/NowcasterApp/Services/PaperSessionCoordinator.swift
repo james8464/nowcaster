@@ -73,8 +73,8 @@ extension PaperSessionResearching {
         self.configuration = configuration; self.monitor = monitor; self.store = store; self.explanation = explanation
         self.resources = monitor.current()
         research.onStatus = { [weak self] status in self?.received(status) }
-        collector.onTermination = { [weak self] message in self?.collectorExited(message) }
-        research.onFailure = { [weak self] message in
+        collector.onTermination = { @MainActor [weak self] message in self?.collectorExited(message) }
+        research.onFailure = { @MainActor [weak self] message in
             guard let self, self.active, !self.userPaused else { return }
             self.state = .blocked(message); self.explanation = message
         }
