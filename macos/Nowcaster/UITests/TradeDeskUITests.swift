@@ -99,8 +99,9 @@ final class TradeDeskUITests: XCTestCase {
         continueAfterFailure = false
         let app = XCUIApplication()
         try isolatePaperAcceptance(app)
-        app.launchArguments = ["--destination=tradeDesk"]
+        app.launchArguments = ["--destination=tradeDesk", "-ApplePersistenceIgnoreState", "YES"]
         app.launch()
+        app.activate()
         defer { app.terminate() }
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 30))
         XCTAssertTrue(app.buttons["paperSession.action"].waitForExistence(timeout: 30), app.debugDescription)

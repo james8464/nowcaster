@@ -59,6 +59,21 @@ import Testing
         monitor: monitor)
 }
 
+@Test @MainActor func menuBarVisibilityIgnoresRepeatedFrameworkValues() throws {
+    let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = PaperSessionPreferenceStore(url: directory.appending(path: "preferences.json"))
+    let owner = PaperSessionCoordinator(collector: Collector(), research: Research(),
+        configuration: EngineConfiguration(projectRoot: directory, pythonExecutable: URL(fileURLWithPath: "/usr/bin/true"),
+            snapshotURL: directory.appending(path: "snapshot"), mode: .demo), store: store)
+    owner.setShowMenuBarExtra(false)
+    #expect(!FileManager.default.fileExists(atPath: store.url.path))
+    owner.setShowMenuBarExtra(true)
+    #expect(store.load().preferences.showMenuBarExtra)
+    owner.setShowMenuBarExtra(false)
+    #expect(!store.load().preferences.showMenuBarExtra)
+}
+
 @Test @MainActor func paperSessionMonitorSurvivesDisableDuringPreparation() async {
     let collector = Collector(), research = Research(), barrier = DrainBarrier()
     research.preparationBarrier = barrier

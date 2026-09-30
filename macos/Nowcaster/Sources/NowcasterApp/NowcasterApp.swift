@@ -175,7 +175,11 @@ struct NowcasterApp: App {
 
         MenuBarExtra("Nowcaster Paper Session", systemImage: "chart.line.uptrend.xyaxis", isInserted: Binding(
             get: { model.paperSession.preferences.showMenuBarExtra },
-            set: { model.paperSession.setShowMenuBarExtra($0) })) {
+            set: { inserted in
+                // AppKit reports status-item visibility while SwiftUI updates its
+                // scene graph. Publishing here synchronously reenters that update.
+                Task { @MainActor in model.paperSession.setShowMenuBarExtra(inserted) }
+            })) {
             PaperSessionMenu(model: model, settings: settings)
         }
         .menuBarExtraStyle(.window)

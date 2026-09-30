@@ -189,6 +189,7 @@ extension PaperSessionResearching {
         do { try persist() } catch { state = .blocked(error.localizedDescription) }
     }
     func setShowMenuBarExtra(_ enabled: Bool) {
+        guard preferences.showMenuBarExtra != enabled else { return }
         preferences.showMenuBarExtra = enabled
         do { try persist() } catch { state = .blocked(error.localizedDescription) }
     }

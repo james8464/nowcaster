@@ -2,10 +2,20 @@ import XCTest
 
 @MainActor
 func isolatePaperAcceptance(_ app: XCUIApplication) throws {
-    let root = ProcessInfo.processInfo.environment["NOWCASTER_UI_STORAGE_ROOT"].map { URL(fileURLWithPath: $0) }
-        ?? URL(fileURLWithPath: "/tmp/UIAcceptanceFixtures/\(UUID().uuidString)")
-    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-    try Data("UI TEST ONLY — isolated preferences and paper research".utf8).write(to: root.appending(path: "UI-TEST-ONLY.md"))
+    let supplied = ProcessInfo.processInfo.environment["NOWCASTER_UI_STORAGE_ROOT"]
+    let root = supplied.map { URL(fileURLWithPath: $0) }
+        ?? FileManager.default.temporaryDirectory.appending(path: "UIAcceptanceFixtures/\(UUID().uuidString)")
+    if supplied != nil {
+        // The sandboxed runner can read a caller-prepared root but cannot rewrite
+        // its marker in /tmp. The app independently validates this same root.
+        guard FileManager.default.fileExists(atPath: root.appending(path: "UI-TEST-ONLY.md").path) else {
+            throw NSError(domain: "NowcasterUIAcceptance", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "Prepare a marked UI acceptance root before running tests."])
+        }
+    } else {
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data("UI TEST ONLY — isolated preferences and paper research".utf8).write(to: root.appending(path: "UI-TEST-ONLY.md"))
+    }
     app.launchEnvironment["NOWCASTER_UI_STORAGE_ROOT"] = root.path
 }
 
@@ -41,25 +51,42 @@ final class NowcasterUITests: XCTestCase {
         continueAfterFailure = false
         let app = XCUIApplication()
         try isolatePaperAcceptance(app)
-        app.launchArguments = ["--destination=tradeDesk"]
+        app.launchArguments = ["--destination=tradeDesk", "-ApplePersistenceIgnoreState", "YES"]
         app.launch()
+        app.activate()
         defer { app.terminate() }
+        // Also exercise the supported reopening route after a previous window
+        // was closed; XCTest can launch with no restored main window.
+        app.menuBars.menuBarItems["Paper Session"].click()
+        app.menuItems["Open Nowcaster"].click()
         XCTAssertTrue(app.buttons["paperSession.action"].waitForExistence(timeout: 30))
+        app.activate()
         app.typeKey(",", modifierFlags: .command)
-        let learning = app.checkBoxes["settings.learning"]
+        // Grouped settings render as switches on newer macOS releases.
+        func toggleValue(_ element: XCUIElement) -> String { String(describing: element.value ?? "missing") }
+        let learning = app.descendants(matching: .any)["settings.learning"]
         XCTAssertTrue(learning.waitForExistence(timeout: 10))
-        XCTAssertEqual(learning.value as? String, "0")
+        XCTAssertEqual(toggleValue(learning), "0")
         learning.click()
-        XCTAssertEqual(learning.value as? String, "1")
-        XCTAssertEqual(app.checkBoxes["settings.resume"].value as? String, "0")
-        XCTAssertEqual(app.checkBoxes["settings.login"].value as? String, "0")
-        XCTAssertEqual(app.checkBoxes["settings.notifications"].value as? String, "0")
-        let menu = app.checkBoxes["settings.menu"]
-        XCTAssertEqual(menu.value as? String, "0")
+        XCTAssertEqual(toggleValue(learning), "1")
+        XCTAssertEqual(toggleValue(app.descendants(matching: .any)["settings.resume"]), "0")
+        XCTAssertEqual(toggleValue(app.descendants(matching: .any)["settings.login"]), "0")
+        XCTAssertEqual(toggleValue(app.descendants(matching: .any)["settings.notifications"]), "0")
+        let menu = app.descendants(matching: .any)["settings.menu"]
+        XCTAssertEqual(toggleValue(menu), "0")
         menu.click()
-        XCTAssertEqual(menu.value as? String, "1")
+        XCTAssertEqual(toggleValue(menu), "1")
         XCTAssertFalse(app.staticTexts["Broker Credentials"].exists)
         menu.click()
+        XCTAssertEqual(toggleValue(menu), "0")
+        app.typeKey("w", modifierFlags: .command)
+        app.typeKey("q", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 30))
+        app.launch()
+        app.activate()
+        app.typeKey(",", modifierFlags: .command)
+        XCTAssertTrue(menu.waitForExistence(timeout: 10))
+        XCTAssertEqual(toggleValue(menu), "0")
     }
     func testPrimarySidebarDestinationsOpenWithoutStartingMonitoring() throws {
         continueAfterFailure = false
