@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 import subprocess
 from pathlib import Path
@@ -31,6 +32,17 @@ PLACEHOLDER_MARKERS = (
     "PRIVATE-SECRET-VALUE",
 )
 
+# Audited 2026-09-30: this immutable historical Swift unit-test blob injects
+# the literal dummy "secret" to prove environment filtering. Do not exempt the
+# file, other findings, changed content, current worktree, or any other blob.
+AUDITED_HISTORY_FIXTURES = {
+    (
+        "a78ec7cde501041fb675399b181364c27d3e7064",
+        "macos/Nowcaster/Tests/NowcasterAppTests/BackgroundResearchServiceTests.swift",
+        "d06ec315002c9c80c73a28f23b58e24bf8549737ceed6c881fbcd0e578296f6b",
+    ): {"47: possible Alpaca credential assignment"},
+}
+
 
 def _assigned_real_value(raw: str) -> bool:
     value = raw.strip().rstrip(",").strip().strip("'\"").strip()
@@ -53,6 +65,14 @@ def scan_text(relative: Path, text: str) -> list[str]:
             if pattern.search(line):
                 findings.append(f"{relative}:{line_number}: possible {label}")
     return findings
+
+
+def scan_history_blob(object_id: str, relative: Path, text: str) -> list[str]:
+    label = Path(f"history-{object_id[:12]}") / relative
+    findings = scan_text(label, text)
+    key = (object_id, relative.as_posix(), hashlib.sha256(text.encode()).hexdigest())
+    excluded = {f"{label}:{finding}" for finding in AUDITED_HISTORY_FIXTURES.get(key, ())}
+    return [finding for finding in findings if finding not in excluded]
 
 
 def scan_git_history(root: Path) -> list[str]:
@@ -99,8 +119,7 @@ def scan_git_history(root: Path) -> list[str]:
             text = payload.decode("utf-8")
         except UnicodeDecodeError:
             continue
-        label = Path(f"history-{object_id[:12]}") / paths[object_id]
-        findings.extend(scan_text(label, text))
+        findings.extend(scan_history_blob(object_id, paths[object_id], text))
     return findings
 
 

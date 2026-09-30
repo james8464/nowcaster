@@ -6,16 +6,15 @@ It collects historical market and company information, asks models what that inf
 
 Nowcaster is a research and risk-control tool. It can monitor **shadow** decisions and submit separately configured **Alpaca paper** orders, but real-money trading remains hard-locked unless every forward-evidence, security, signing, account, and manual-arming gate passes. It cannot guarantee profit and is not investment advice.
 
-**Live paper signals:** Strategy Lab now includes Start/Stop controls for automatic
-public Bitcoin and Ether trend research. Choose a registered Research Round 2
-folder, start collection, and inspect the current research posture, data
-freshness, reasons to stand aside and retained history. Optional macOS
-notifications open the evidence. The Mac release includes its own collector.
-This separate service never connects to an account or makes trades; it can
-remain silent while evidence is insufficient. Paper results are not proof of
-profitability. [Read the beginner-friendly guide](docs/research/live-paper-signals.md).
+**Paper desk:** Trade Desk opens with Bitcoin and Ether, one **Start/Pause**
+control, and dated reasons to stand aside. **History** keeps earlier outcomes;
+**Research** explains optional background learning and its resource limits.
+A started session continues when you close the window. **Quit** stops its
+collector and research workers. It uses public data without an account and
+never places trades. Paper results are not proof of profitability.
+[Read the beginner-friendly guide](#use-the-trade-desk).
 
-**Day-trader decision context:** Strategy Lab explains whether the 1-, 5- and
+**Day-trader decision context:** Trade Desk explains whether the 1-, 5- and
 15-minute trends agree, how volatile the market is, whether quotes are usable,
 and whether a scheduled event calls for standing aside. Completed hypothetical
 outcomes have their own historical section. A target being touched is an observed
@@ -131,8 +130,14 @@ Backtests use only the data actually ingested and verified. Historical candles d
 
 ## What you can explore in the app
 
+The four everyday destinations are **Trade Desk**, **Markets**, **History** and
+**Research**. Start with Trade Desk, select an asset to read its current evidence,
+then use History for dated hypothetical outcomes. Research distinguishes
+collecting observations, training, Waiting, paused and blocked work.
+
+Expand **Advanced** for the existing specialist tools:
+
 - **Today** — a plain overview of the current research snapshot and its warnings.
-- **Markets** — the stock and crypto instruments included in the research universe.
 - **Earnings** — historical company events and revenue forecasts.
 - **Signals** — long, short, and abstain postures with supporting and invalidating evidence.
 - **Backtests** — returns, risk, drawdowns, costs, and development versus final-test results.
@@ -145,7 +150,9 @@ Backtests use only the data actually ingested and verified. Historical candles d
 - **Pipeline Runs** — the steps used to rebuild the local research snapshot.
 - **Execution Center** — broker environment, reconciliation health, paper activity, risk decisions, emergency state, and every reason real-money trading is still locked.
 
-A sensible beginner workflow is: start on **Today**, open one signal, read its invalidation evidence, and only then look at its backtest. Avoid judging a model from its headline return alone.
+Avoid judging a model from its headline return alone. Legacy Live Monitor and
+Execution Center have separate provider and account requirements; starting the
+paper desk does not start them or read broker credentials.
 
 ### Using Live Monitor
 
@@ -263,12 +270,23 @@ Signing is not notarization and does not qualify any trading strategy.
 ### Use the Trade Desk
 
 The opening **Trade Desk** is separate from the historical earnings/demo pages.
-Choose **Set Up Paper Desk**, then **Start** to collect public Bitcoin/USDT and
+Choose **Set Up… → Set Up Paper Desk**, then **Start** to collect public Bitcoin/USDT and
 Ether/USDT spot observations. No account or order permissions are requested.
 Setup creates, or reopens without resetting, this local folder:
 `~/Library/Application Support/Nowcaster/PaperResearch/paper-desk-v1`.
-Relaunching reopens its evidence but does not automatically start collection or
-enable notifications. Quitting stops the app-owned collector.
+**Pause** stops collection and new research dispatch, retaining completed work
+and any interruption. Closing the window keeps the same app-owned session
+running; reopen it from the Dock or **Paper Session → Open Nowcaster**. The
+optional menu-bar item is another view of this same session.
+
+**Quit Nowcaster** checkpoints or records an interruption and exits app-owned
+children within a 30-second shutdown budget. Opening the app again is stopped
+by default. **Settings → Resume paper session when Nowcaster opens** explicitly
+opts in to identity-checked restoration of the saved source and campaign, using
+a fresh execution identity. It does not launch the app after login. **Start
+Nowcaster at login**, notifications, learning and the menu-bar item are separate
+choices, all off by default. A changed campaign, source or runtime identity
+blocks recovery visibly; do not edit old manifests to bypass the error.
 
 New registrations contain six hypotheses: EMA/ADX trend, previous-20-bar Donchian
 breakout and session-VWAP continuation, each for BTC and ETH. They have separate
@@ -280,9 +298,39 @@ VWAP adds volume-weighted price context, not a guarantee of a successful entry
 
 **This is not an immediately qualified signal subscription.** A fresh desk's
 registered schedule is 90 training days, 30 validation days and 30 untouched
-test days, with the existing cost, coverage and minimum-trade gates. The live
-collector does not automatically execute the offline evaluation. After sufficient
-retained observations exist, the developer evaluation command is:
+test days: a complete **150-day calendar window** is needed for the first batch,
+and coverage, freshness, costs and minimum-trade gates still apply. A few days of
+fresh receipts are not enough. **Research → Enable background learning** makes
+the session check this schedule automatically. Waiting for eligible observations
+is expected; it does not mean a strategy has been trained or qualified.
+
+Learning stores its campaign and results separately under
+`~/Library/Application Support/Nowcaster/BackgroundResearch`. It allows at most
+one new batch per asset per UTC day, up to 100 candidate attempts per batch, and
+requires a new eligible data fingerprint. Each candidate is searched using its
+training period; the final holdout is used once for a locked candidate. Winners
+are proposals for a **separate prospective paper evaluation**, never automatic
+promotion or replacement of an existing strategy. Failed attempts, consumed
+holdouts and missing intervals remain in the evidence.
+
+The default **Efficient** profile uses half the logical cores while reserving
+at least two where available, with one numerical thread per worker (five
+workers on an 11-core Mac). **Balanced** may use the remaining cores after
+reserving two. Serious, critical or unknown thermal conditions, low-power mode,
+memory/disk pressure, or an unhealthy collector inhibit new dispatch. A resource
+pause can recover automatically; your own Pause remains paused. A runtime
+capacity warning may require fewer workers or an explicit Retry Research.
+With the current 15-second freshness rule, the one-minute public feed can be
+marked stale between finalized bar receipts. Research can therefore pause while
+collection continues; the main **Pause** action still stops the whole session.
+A running collector is not proof of a fresh or qualified signal.
+
+The app does not change sleep settings. While the Mac is asleep or offline,
+local collection and computation cannot continue; missed intervals stay gaps.
+After waking or reconnecting, fresh data may resume, but gaps do not disappear.
+Neither background mode nor launch-resume is an always-on server.
+
+The existing developer evaluation command remains available separately:
 
 ```bash
 python scripts/run_research_round_two.py evaluate --directory '/absolute/path/to/paper-desk-v1'
@@ -341,6 +389,35 @@ running `xcodebuild test`:
 - `NOWCASTER_UI_INSTALLED_APP=quit` or `verify`: opt-in upgrade checks on exactly
   `/Applications/Nowcaster.app`; normally quit a stopped installed app, or launch
   its Trade Desk and quit again. Do not run against active collection.
+
+New background acceptance uses `BackgroundSessionUITests`, separately from the
+older isolated collection tests. `NOWCASTER_UI_BACKGROUND_REAL=1` and
+`NOWCASTER_UI_REAL_ROOT` explicitly authorize retained public collection in the
+existing user desk, a ten-minute closed-window observation, Pause, Quit and
+stopped-by-default relaunch. It enables learning but must honestly wait when the
+registered history is insufficient. Never run it against an already active app.
+
+For eligible training control-flow acceptance, prepare a unique marked fixture
+with `python -m tests.background_ui_acceptance "$PWD/.superpowers/UIAcceptanceFixtures/<unique-name>"`
+from a nonsymlinked checkout. Avoid `/tmp` and `/var` fixture roots: Foundation
+normalizes their `/private` aliases back to symlinked ancestors, which the
+manifest safety checks correctly reject.
+Set `NOWCASTER_UI_BACKGROUND_SYNTHETIC=1` and `NOWCASTER_UI_BACKGROUND_STORAGE_ROOT` to that
+directory. This test uses the installed app's normal resource supervision,
+worker, checkpoint and opt-in resume paths. Its synthetic receipts and shortened
+test schedule are confined to that directory and prove no market edge. Use the
+`TEST_RUNNER_` prefix with Xcode for each variable. Keep fixtures, failed results,
+old app backups and campaign identities; do not relabel them as live evidence.
+
+XCTest's sandbox cannot launch process-inspection commands. For either lifecycle
+test, run the bounded, read-only observer in a separate terminal:
+`python -m tests.background_acceptance_processes /private/tmp/UIAcceptanceFixtures/<unique-observer> --seconds 1200`.
+Set `TEST_RUNNER_NOWCASTER_UI_PROCESS_SNAPSHOT` to that observer's `snapshot.json`.
+It records only installed Nowcaster process identities and owns one unrelated
+sleep sentinel; it never launches or stops the app or research workers. Stop the
+observer after the test. Missing/stale observations fail the test, never count
+as proof that children exited. The observer can live in `/private/tmp` because
+it is read-only toward the app and does not prepare campaign manifests.
 
 Results and screenshots are in Xcode's `.xcresult` bundle. Keep raw recordings
 local: they can include desktop content. A passing interface test proves the

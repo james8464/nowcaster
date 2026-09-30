@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import subprocess
 from pathlib import Path
@@ -86,3 +87,25 @@ def test_history_scan_finds_a_secret_committed_then_deleted_without_echoing_it(t
 
     assert "possible Binance credential assignment" in rendered
     assert secret_value not in rendered
+
+
+def test_audited_historical_dummy_exception_requires_exact_blob_path_content_and_finding(monkeypatch):
+    text = '"APCA_' + 'API_KEY_ID": "dummy"\n'
+    path = Path("tests/audited.py")
+    object_id = "a" * 40
+    digest = hashlib.sha256(text.encode()).hexdigest()
+    monkeypatch.setattr(
+        scanner,
+        "AUDITED_HISTORY_FIXTURES",
+        {(object_id, path.as_posix(), digest): {"1: possible Alpaca credential assignment"}},
+        raising=False,
+    )
+    assert scanner.scan_history_blob(object_id, path, text) == []
+    assert scanner.scan_history_blob("b" * 40, path, text)
+    assert scanner.scan_history_blob(object_id, Path("config/live.env"), text)
+    assert scanner.scan_history_blob(object_id, path, text.replace("dummy", "unexpected-value"))
+    # Even an audited blob exception cannot hide a different finding on that line.
+    monkeypatch.setattr(scanner, "PATTERNS", {"independent credential": __import__("re").compile("dummy")})
+    findings = scanner.scan_history_blob(object_id, path, text)
+    assert len(findings) == 1 and "independent credential" in findings[0]
+    assert scanner.scan_text(path, text), "Historical exceptions never apply to current files."

@@ -7,6 +7,7 @@ import fcntl
 import json
 import os
 import signal
+import stat
 import sys
 import time
 from collections.abc import Callable
@@ -91,6 +92,20 @@ def process_identity(pid: int) -> tuple[int, int]:
     return int(fields[19]), 0
 
 
+class OwnershipLostError(ValueError):
+    """This execution no longer has authority to dispatch or mutate shared evidence."""
+
+
+class _OwnedControl(ResearchControl):
+    def __init__(self, control: ResearchControl, verify: Callable[[], None]):
+        super().__init__(control.directory, run_id=control.run_id, nonce=control.nonce)
+        self.verify = verify
+
+    def read(self):
+        self.verify()
+        return super().read()
+
+
 @contextmanager
 def _exclusive(path: Path):
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -102,7 +117,22 @@ def _exclusive(path: Path):
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as error:
             raise ValueError("campaign is already owned by another worker") from error
-        yield
+
+        def verify():
+            try:
+                held, current = os.fstat(descriptor), path.lstat()
+            except OSError as error:
+                raise OwnershipLostError("worker lock ownership was lost") from error
+            if (
+                held.st_nlink != 1
+                or current.st_nlink != 1
+                or not stat.S_ISREG(current.st_mode)
+                or (held.st_dev, held.st_ino) != (current.st_dev, current.st_ino)
+            ):
+                raise OwnershipLostError("worker lock ownership was lost")
+
+        verify()
+        yield verify
     finally:
         os.close(descriptor)
 
@@ -111,7 +141,14 @@ class BackgroundLearningRunner:
     def __init__(self, registry: LearningRegistry, trainer: LearningTrainer):
         self.registry, self.trainer = registry, trainer
 
-    def run(self, campaign_hash: str, *, control: ResearchControl, emit: Callable[[dict], None]) -> LearningStatus:
+    def run(
+        self,
+        campaign_hash: str,
+        *,
+        control: ResearchControl,
+        emit: Callable[[dict], None],
+        verify_execution: Callable[[], None] = lambda: None,
+    ) -> LearningStatus:
         with self.registry._locked():
             state, _, _ = self.registry._read()
             campaign = state.campaigns[campaign_hash][0]
@@ -120,13 +157,28 @@ class BackgroundLearningRunner:
         # The command boundary rejects pre-existing terminal executions. A stop
         # arriving after its ownership handshake must still exit successfully.
         control.read()
-        with _exclusive(self.registry.root / f".campaign-{campaign_hash}.worker.lock"):
+        with _exclusive(self.registry.root / f".campaign-{campaign_hash}.worker.lock") as verify_campaign:
+
+            def verify():
+                verify_execution()
+                verify_campaign()
+
+            def progress(event):
+                verify()
+                emit(event)
+                verify()
+
             try:
-                return self._loop(campaign, control, emit)
-            except Exception as error:
+                return self._loop(campaign, _OwnedControl(control, verify), progress, verify)
+            except Exception as caught:
+                error = caught
                 status = self.registry.read_status(campaign_hash)
                 try:
-                    if status.batch_id:
+                    try:
+                        verify()
+                    except OwnershipLostError as lost:
+                        error = lost
+                    if not isinstance(error, OwnershipLostError) and status.batch_id:
                         with self.registry._locked():
                             state, _, _ = self.registry._read()
                         if not state.batch_finished(status.batch_id):
@@ -149,9 +201,11 @@ class BackgroundLearningRunner:
                         emit,
                         event="error",
                     )
-                raise
+                if error is caught:
+                    raise
+                raise error from caught
 
-    def _loop(self, campaign, control, emit):
+    def _loop(self, campaign, control, emit, verify_ownership=lambda: None):
         from src.background_research.data import load_learning_data, read_learning_source
         from src.background_research.scheduler import LearningScheduler
         from src.background_research.training import TerminalControlError
@@ -171,6 +225,7 @@ class BackgroundLearningRunner:
                         finished = {event.attempt_id for event in events if event.kind == "attempt_result"}
                         for event in events:
                             if event.kind == "attempt" and event.attempt_id not in finished:
+                                verify_ownership()
                                 self.registry.append_event(
                                     status.batch_id,
                                     {
@@ -184,6 +239,7 @@ class BackgroundLearningRunner:
                                         },
                                     },
                                 )
+                        verify_ownership()
                         self.registry.append_event(
                             status.batch_id,
                             {
@@ -214,6 +270,7 @@ class BackgroundLearningRunner:
                     if control.read() is not ControlState.RUNNING:
                         continue
                     if state.batch_state(batch.batch_id) in {"paused", "pausing", "blocked"}:
+                        verify_ownership()
                         self.registry.append_event(
                             batch.batch_id,
                             {
@@ -224,6 +281,7 @@ class BackgroundLearningRunner:
                         )
                 elif source.through is not None:
                     for symbol in campaign.symbols:
+                        verify_ownership()
                         batch = scheduler.next_batch(
                             campaign,
                             symbol=symbol,
@@ -247,7 +305,9 @@ class BackgroundLearningRunner:
                         )
 
                     try:
-                        status = self.trainer.run_batch(campaign, batch, control=control, emit=progress)
+                        status = self.trainer.run_batch(
+                            campaign, batch, control=control, emit=progress, verify_ownership=verify_ownership
+                        )
                     except TerminalControlError:
                         # STOP can arrive during trainer preparation after our last
                         # read. Only that typed, authenticated cancellation is orderly;
@@ -329,7 +389,7 @@ def run_background_research(
     if control.path.is_symlink() or (control.path.exists() and control.path.stat().st_nlink > 1):
         raise ValueError("control file cannot be linked")
     # A per-execution lock prevents races while first creating the private channel.
-    with _exclusive(directory / f".{run_id}.execution.lock"):
+    with _exclusive(directory / f".{run_id}.execution.lock") as verify_execution:
         if control.path.exists():
             if control.read() is ControlState.STOPPED:
                 raise ValueError("terminal control requires a fresh execution identity")
@@ -362,7 +422,9 @@ def run_background_research(
             os.fsync(stream.fileno())
         previous = signal.signal(signal.SIGTERM, lambda *_: control.request(ControlState.STOPPED))
         try:
+            verify_execution()
             emit(ownership)
+            verify_execution()
             if control.read() is ControlState.STOPPED:
                 status = registry.read_status(campaign_hash)
                 BackgroundLearningRunner._emit_status(status, emit, event="complete")
@@ -370,7 +432,7 @@ def run_background_research(
             from src.background_research.training import LearningTrainer
 
             return BackgroundLearningRunner(registry, LearningTrainer(registry, workers=workers)).run(
-                campaign_hash, control=control, emit=emit
+                campaign_hash, control=control, emit=emit, verify_execution=verify_execution
             )
         finally:
             signal.signal(signal.SIGTERM, previous)

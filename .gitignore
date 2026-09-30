@@ -31,3 +31,5 @@ macos/**/.build/
 macos/**/.swiftpm/
 macos/**/xcuserdata/
 macos/Nowcaster/Resources/Signing.local.xcconfig
+# Retained synthetic native acceptance evidence is never production research.
+.superpowers/UIAcceptanceFixtures/

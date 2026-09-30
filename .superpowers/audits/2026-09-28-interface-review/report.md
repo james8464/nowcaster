@@ -111,3 +111,88 @@ The user approved the redesign direction. The written specification is at
 `docs/superpowers/specs/2026-09-28-simple-desk-background-research-design.md` and
 awaits its own review before implementation planning. No redesigned product UI
 or background-learning service has been implemented in this review.
+
+## 30 September — installed simplified desk acceptance audit
+
+This dated addendum supersedes the old implementation-status paragraph above,
+not its retained before/failure evidence. Scope: signed installed Nowcaster,
+Trade Desk → selection → Settings → keyboard navigation to Research. No Figma
+or browser artifact was created. Product Design audit context preflight found
+no saved context. Native XCTest captures were explicitly authorized; no CUA
+inspection or UserNotificationCenter access was used.
+
+Fresh saved screenshots 03–09 were inspected as exact files. They show actual
+installed windows with marked isolated acceptance data, not live performance.
+The complete XCTest scheme retained two failures (fixture identity and premature
+geometry assertion); these images are successful captures, not a claim that the
+whole first run passed. The corrected appearance matrix passed independently.
+
+| Capture | Observed finding | Limit |
+| --- | --- | --- |
+| [03 light minimum](03-installed-minimum-light.png), [04 dark minimum](04-installed-minimum-dark.png) | Four everyday destinations, collapsed Advanced, prominent Start, both assets, setup/data/help remain legible at 820×620 points. | Toolbar shield is compressed; duplicate “Unavailable · Unavailable” copy is a retained Minor issue. No contrast-ratio measurement. |
+| [05 light selection](05-installed-selection-light.png), [06 dark selection](06-installed-selection-dark.png) | Selected-asset detail remains reachable and legible at minimum width, with stand-aside and unavailable evidence instead of invented entry levels. | Isolated empty-data state, not a qualified signal or profitability evidence. |
+| [07 Settings](07-installed-settings.png) | Learning, app-open resume, login and notifications are separate; resource explanation and close-window/Quit language are visible. | Login and notification toggles stayed off; no system permission flow exercised. |
+| [08 blocked synthetic identity](08-synthetic-identity-blocked.png) | Needs-attention reason is visible; failed fixture A does not display entry levels. | Retained failure, not successful synthetic training. |
+| [09 keyboard Research](09-installed-keyboard-research-dark.png) | Arrow navigation reached Research; resource profile and five-worker limit are visible. | Schedule is below the captured viewport; this image alone does not prove lower-content access. |
+
+### Applicability and verification updates
+
+| Area | Evidence and disposition |
+| --- | --- |
+| Mac hierarchy/navigation | Installed captures and existing full-route XCTest checks cover four primary routes plus Advanced, selection, setup and Settings. No new cosmetic sweep was made. |
+| Window resizing/appearance | Light/dark, minimum/default sizes and app-controlled enlarged text passed the focused appearance matrix after waiting for actual requested geometry and hittability. Original premature assertion/video retained. |
+| Keyboard/accessibility | Actual sidebar arrow navigation, Command-comma Settings and normal Command-Q were exercised. AX labels and values were checked separately. These are **not** a VoiceOver usability test or exhaustive keyboard-only audit. |
+| Assistive/system settings | VoiceOver, Full Keyboard Access, system contrast, Reduce Motion, Reduce Transparency and alternate display hardware were **not tested**. No blanket accessibility/HIG-conformance claim. |
+| Status/evidence semantics | Empty/stale, stand-aside, blocked identity and retained progress are visible. Separate installed lifecycle/training checks passed as bounded below; an image alone cannot prove a worker ran. |
+| Notifications/privacy | Optional permission remained off. Real banners, delivery and OS permission UI are deliberately out of scope. No account or order flow exists in this acceptance. |
+| Other platforms/capabilities | Other-platform HIG components and absent payment/camera/health/game capabilities remain not applicable. |
+
+This is an evidence-bounded flow audit, not a numeric whole-product score or
+full HIG certification. The two Minor visual/copy issues above are retained;
+actual installed background lifecycle outcomes belong in the Task6 report.
+
+### Real installed closed-window lifecycle evidence
+
+The corrected real XCTest passed758.299s, including12:11:19–12:21:19Z with no
+window, menu reopen, Pause, normal Quit and stopped-by-default relaunch.
+Both assets retained10 new minute receipts, no missing provider minutes in that
+interval; prior ledger prefixes and protocol bytes stayed unchanged. Exact
+collector/worker identities stayed constant. This is collection/lifecycle
+evidence, not actual strategy-training progress: real history is insufficient.
+
+| Fresh saved capture | Observed finding / limit |
+| --- | --- |
+| [10 real Waiting](10-installed-real-waiting.png) | Full “Waiting for eligible data”, actual eligible-observations reason, zero attempts/failures and no checkpoint. No fabricated training. Lower resources/schedule require scrolling. |
+| [11 reopened stale](11-installed-reopened-stale.png) | Same installed window reopened; both assets correctly show stale, stand aside and no entry levels. The original XCTest attachment name says “fresh”, but this image **does not** prove fresh state. Fresh post-close receipts are established independently by retained timestamps. |
+| [12 Pause and selection](12-installed-paused-selection.png) | Selected ETH detail reflects stopped collection, Start action and stand-aside; no stale levels remain shown. |
+| [13 default relaunch](13-installed-relaunch-stopped.png) | Ordinary relaunch is Not started with Start and both assets stopped; no automatic session launched. |
+
+The unchanged15s protocol causes transient resource pauses between1-minute
+receipts. Read-only samples measured91.823s running versus508.177s paused during
+the600s interval. Collection continued throughout. Retained usability concern:
+automatic research pause says “Paused” while the whole-session action remains
+“Pause”; README explains the distinction. No freshness gate was relaxed to make
+the acceptance look continuously green. Actual VoiceOver, system contrast/motion
+settings, and an installed qualified detail expiring while already open remain
+unverified; expiration/stand-aside presentation has native unit coverage.
+
+### Marked synthetic native training / restoration
+
+Installed XCTest passed191.733s on a separate marked fixture, not the real desk.
+Actual native worker advanced while closed from zero to50 reserved attempts and
+checkpoint6; retained results include4 completed evaluations,1 failed candidate,
+11 duplicates and34 interruptions. No qualification/performance conclusion.
+Normal active Quit completed2.200020s, all installed helper descendants exited,
+and an unrelated sentinel remained alive. Opted-in relaunch authenticated a new
+execution for the same campaign/runtime/unfinished batch and retained evidence.
+The test paused immediately afterward: **post-restore training progress was not
+observed**. Restore opt-in was reset off and the app left stopped.
+
+| Fresh saved capture | Observed finding / limit |
+| --- | --- |
+| [14 synthetic checkpoint](14-synthetic-checkpoint-pausing.png) | Research displays50 retained attempts,1 failure and checkpoint6 during Pausing. Hash wraps rather than clipping, but is technical/long; no cosmetic change made. This is explicitly synthetic control-flow evidence. |
+| [15 authenticated restore](15-synthetic-authenticated-restore.png) | Restored session displays Waiting with stale stand-aside cards. Ownership and retained batch identity are independently verified on disk; this capture is not evidence of a new completed training evaluation. |
+
+All added saved images03–15 were individually inspected before this addendum.
+The audit skill drove numbered fresh evidence, applicability and honest limits;
+it did not justify changing system settings or claiming untested accessibility.

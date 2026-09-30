@@ -158,3 +158,80 @@ def test_stop_does_not_hide_unrelated_preparation_failure(tmp_path, monkeypatch)
         )
     assert registry.read_status(campaign.identity_hash).state == "blocked"
     assert emitted[-1]["event"] == "error"
+
+
+@pytest.mark.parametrize("loss", ["unlinked", "replaced", "symlink", "hardlink"])
+def test_lost_campaign_lock_blocks_visible_status_without_new_dispatch(tmp_path, monkeypatch, loss):
+    """Catches continuing under an unlinked lock that a second worker can replace."""
+    from src.deep_research.control import ControlState
+
+    campaign, _, _ = learning_fixture(tmp_path)
+    registry = LearningRegistry(tmp_path / "registry")
+    registry.register(campaign)
+    monkeypatch.setattr(runtime, "runtime_code_identity", lambda: campaign.code_hash)
+    control = ResearchControl(tmp_path / "control", run_id="lost-lock", nonce="n" * 32)
+    control.initialize()
+    prefix = registry.ledger.read_bytes()
+    emitted = []
+
+    def lose_lock(event):
+        emitted.append(event)
+        if event["event"] == "progress":
+            lock = registry.root / f".campaign-{campaign.identity_hash}.worker.lock"
+            if loss == "hardlink":
+                (tmp_path / "aliased-lock").hardlink_to(lock)
+            else:
+                lock.unlink()
+                if loss == "replaced":
+                    lock.touch()
+                elif loss == "symlink":
+                    target = tmp_path / "other-lock"
+                    target.touch()
+                    lock.symlink_to(target)
+
+    # Bound a broken implementation to one further loop; STOP must not hide loss.
+    monkeypatch.setattr(runtime.time, "sleep", lambda _: control.request(ControlState.STOPPED))
+    with pytest.raises(ValueError, match="lock"):
+        runtime.BackgroundLearningRunner(registry, LearningTrainer(registry)).run(
+            campaign.identity_hash, control=control, emit=lose_lock
+        )
+    assert emitted[-1]["event"] == "error"
+    assert emitted[-1]["status"]["state"] == "blocked"
+    assert emitted[-1]["status"]["attempt_count"] == 0
+    assert registry.ledger.read_bytes() == prefix
+
+
+def test_lock_loss_after_training_result_does_not_write_shared_checkpoint_or_disturb_new_owner(tmp_path, monkeypatch):
+    from contextlib import ExitStack
+
+    from tests.unit.test_background_research_data import reserved
+
+    campaign, _, _, registry, batch = reserved(tmp_path, training_count=1440)
+    monkeypatch.setattr(runtime, "runtime_code_identity", lambda: campaign.code_hash)
+    control = ResearchControl(tmp_path / "control", run_id="lost-during-training", nonce="n" * 32)
+    control.initialize()
+    original_append = registry.append_event
+    retained = {}
+    emitted = []
+    with ExitStack() as owners:
+
+        def replace_after_result(batch_id, event):
+            result = original_append(batch_id, event)
+            if event["kind"] == "attempt_result" and not retained:
+                lock = registry.root / f".campaign-{campaign.identity_hash}.worker.lock"
+                lock.unlink()
+                retained["new_owner"] = owners.enter_context(runtime._exclusive(lock))
+                retained["prefix"] = registry.ledger.read_bytes()
+            return result
+
+        monkeypatch.setattr(registry, "append_event", replace_after_result)
+        with pytest.raises(ValueError, match="lock"):
+            runtime.BackgroundLearningRunner(registry, LearningTrainer(registry, workers=1)).run(
+                campaign.identity_hash, control=control, emit=emitted.append
+            )
+        assert retained["prefix"] == registry.ledger.read_bytes()
+        retained["new_owner"]()  # Old execution neither unlinks nor signals a new owner.
+    assert emitted[-1]["event"] == "error"
+    assert emitted[-1]["status"]["state"] == "blocked"
+    assert emitted[-1]["status"]["batch_id"] == batch.batch_id
+    assert "OwnershipLostError" in emitted[-1]["message"]

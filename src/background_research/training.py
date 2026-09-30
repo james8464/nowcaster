@@ -100,6 +100,7 @@ def candidate_payload(
 class LearningTrainer:
     def __init__(self, registry: LearningRegistry, *, workers: int | None = None):
         self.registry = registry
+        self._verify_ownership = lambda: None
         cores = os.cpu_count() or 1
         maximum = max(1, cores - 2)
         self.workers = max(1, min(cores // 2, maximum)) if workers is None else workers
@@ -111,6 +112,7 @@ class LearningTrainer:
             return self.registry._read()[0]
 
     def _append(self, batch, **event):
+        self._verify_ownership()
         self.registry.append_event(batch.batch_id, event)
 
     def _status(self, campaign, batch, state, reason):
@@ -181,6 +183,23 @@ class LearningTrainer:
         return artifacts
 
     def run_batch(
+        self,
+        campaign: LearningCampaign,
+        batch: LearningBatch,
+        *,
+        control: ResearchControl,
+        emit: Callable[[dict], None],
+        verify_ownership: Callable[[], None] = lambda: None,
+    ) -> LearningStatus:
+        previous = self._verify_ownership
+        self._verify_ownership = verify_ownership
+        try:
+            verify_ownership()
+            return self._run_batch(campaign, batch, control=control, emit=emit)
+        finally:
+            self._verify_ownership = previous
+
+    def _run_batch(
         self,
         campaign: LearningCampaign,
         batch: LearningBatch,
@@ -280,6 +299,7 @@ class LearningTrainer:
                 return self._status(campaign, batch, "paused", "Paused before final holdout reservation")
             if "holdout" not in artifacts:
                 try:
+                    self._verify_ownership()
                     exposure = self.registry.reserve_holdout(batch.batch_id, candidate.identity)
                 except ValueError as error:
                     if "already exposed" not in str(error):

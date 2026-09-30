@@ -54,27 +54,26 @@ def campaign_fixture(tmp_path, *, campaign_id="test", seed=0) -> LearningCampaig
     )
 
 
-def learning_fixture(tmp_path, *, attempts=4, observations_per_day=40, training_count=None, maximum_lag=2):
+def learning_fixture(
+    tmp_path, *, attempts=4, observations_per_day=40, training_count=None, maximum_lag=2, native_context=False
+):
     """Small real receipts with deliberately insufficient calendar coverage."""
     from src.research.round_two_quality import append_observations
 
     start = datetime(2026, 1, 1, tzinfo=UTC)
     strategy = "desk_donchian_breakout_1m"
-    protocol = (
-        ResearchRoundProtocol.default(round_id="learning", starts_at=start)
-        .model_copy(
-            update={
-                "symbols": ("BTCUSDT",),
-                "candidates": (RoundCandidate(symbol="BTCUSDT", strategy_id=strategy, strategy_version="1.0.0"),),
-                "schedule": WalkForwardSchedule(
-                    starts_at=start, train_days=1, validation_days=1, sealed_test_days=1, step_days=1
-                ),
-                "warmup_minutes": 1,
-                "maximum_feature_bars": 20,
-            }
-        )
-        .validated()
-    )
+    defaults = ResearchRoundProtocol.default(round_id="learning", starts_at=start)
+    protocol = defaults.model_copy(
+        update={
+            "symbols": ("BTCUSDT",),
+            "candidates": (RoundCandidate(symbol="BTCUSDT", strategy_id=strategy, strategy_version="1.0.0"),),
+            "schedule": WalkForwardSchedule(
+                starts_at=start, train_days=1, validation_days=1, sealed_test_days=1, step_days=1
+            ),
+            "warmup_minutes": 1,
+            "maximum_feature_bars": defaults.maximum_feature_bars if native_context else 20,
+        }
+    ).validated()
     source = register_round(protocol, tmp_path / "source")
     observations = tuple(
         RoundObservation(

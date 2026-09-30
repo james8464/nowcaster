@@ -44,7 +44,7 @@ func backgroundStatusFixture(state: String = "waiting", reason: String = "Waitin
 }
 
 @Test func backgroundResearchEnvironmentRejectsInheritedSecretsAndBootloaderKeys() {
-    let environment = BackgroundResearchEnvironment.make(from: ["HOME": "/tmp/home", "APCA_API_KEY_ID": "secret", "PYTHONPATH": "/unsafe", "_PYI_ARCHIVE_FILE": "unsafe", "OMP_NUM_THREADS": "99"])
+    let environment = BackgroundResearchEnvironment.make(from: ["HOME": "/tmp/home", "APCA_API_KEY_ID": "PLACEHOLDER", "PYTHONPATH": "/unsafe", "_PYI_ARCHIVE_FILE": "unsafe", "OMP_NUM_THREADS": "99"])
     #expect(environment["HOME"] == "/tmp/home")
     #expect(environment["APCA_API_KEY_ID"] == nil); #expect(environment["PYTHONPATH"] == nil)
     #expect(environment["_PYI_ARCHIVE_FILE"] == nil); #expect(environment["OMP_NUM_THREADS"] == "1")

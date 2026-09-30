@@ -154,9 +154,8 @@ final class NowcasterUITests: XCTestCase {
                 try isolatePaperAcceptance(app)
                 app.launchArguments = ["--destination=tradeDesk", "--ui-" + appearance, "--ui-" + size]
                 app.launch()
+                app.activate()
                 XCTAssertTrue(app.buttons["tradeDesk.asset.BTCUSDT"].waitForExistence(timeout: 30))
-                XCTAssertTrue(app.buttons["paperSession.action"].isHittable)
-                XCTAssertTrue(app.staticTexts["paperSession.status"].isHittable)
                 let expectedSize: CGSize = size == "wide" ? CGSize(width: 1440, height: 900)
                     : size == "narrow" ? CGSize(width: 900, height: 700) : CGSize(width: 820, height: 620)
                 let geometryReady = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
@@ -164,6 +163,10 @@ final class NowcasterUITests: XCTestCase {
                     return abs(frame.width - expectedSize.width) < 1 && abs(frame.height - expectedSize.height) < 1
                 }, object: nil)
                 XCTAssertEqual(XCTWaiter.wait(for: [geometryReady], timeout: 10), .completed)
+                let controlsReady = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                    app.buttons["paperSession.action"].isHittable && app.staticTexts["paperSession.status"].isHittable
+                }, object: nil)
+                XCTAssertEqual(XCTWaiter.wait(for: [controlsReady], timeout: 10), .completed)
                 capture(app, "task5-desk-\(appearance)-\(size)")
                 app.buttons["tradeDesk.asset.BTCUSDT"].click()
                 XCTAssertTrue(app.staticTexts["tradeDesk.detail.title"].waitForExistence(timeout: 10))
