@@ -35,7 +35,16 @@ Python/Swift snapshot parity and the tracked-file/reachable-history secret scan
 also passed. The complete suite log is `/tmp/NowcasterRelease8703-Python.log`;
 native and packaged logs use the same `NowcasterRelease8703` prefix.
 
-## UI verification is blocked by the locked Mac
+## UI verification
+
+After the user unlocked the Mac, the full default UI scheme passed: **10 passed,
+8 explicit opt-in skips, 0 failures**, XCTest364.439s. Evidence is retained at
+`/tmp/NowcasterRelease8703-UI-Unlocked-20260930.RYHbhB`. This covered the main
+routes, settings, keyboard navigation, minimum-size layout and appearance/text
+checks. Skipped installed/background scenarios are not counted as passes.
+Two geometry warnings and ten main-thread-method warnings remain in the log;
+the successful run is not a claim of warning-free rendering or exhaustive HIG
+compliance. Earlier locked-host evidence below remains preserved.
 
 The default XCTest scheme could not activate the app while macOS reported
 `IOConsoleLocked=Yes` and `CGSSessionScreenIsLocked=Yes`. It was stopped
@@ -44,9 +53,20 @@ and the remaining tests unrun. None is represented as a UI pass.
 A three-second sample of the exact test-owned app showed normal main-thread
 run-loop waiting, not a demonstrated application threading hang.
 
-The user has been asked to unlock the desktop. No lock, power, notification or
-security settings were changed. The failed result bundle, test logs and stack
-sample remain retained. A fresh UI pass is required once interaction is possible.
+No lock, power, notification or security settings were changed. The failed
+result bundle, test logs and stack sample remain retained separately from the
+subsequent successful unlocked run.
+
+## CI release failures
+
+CI run36725181861 for0a171de failed. Xcode16.2 rejected inferred actor callback
+closures, and the deterministic fixture check found stale source-identity
+hashes. Repair0526ddea adds two explicit actor annotations and refreshes the
+generated identities. Two clean generations match byte-for-byte, with unchanged
+numerical results. The native suite passed170 tests after the annotations;
+fixture decoding passed10 tests after resource regeneration, and eight focused
+Python fixture/provenance tests passed. Exact supported-compiler CI is still
+pending. No failed or pending CI run is represented as successful.
 
 ## Installation and research state
 
@@ -68,7 +88,7 @@ The frozen September 8 study and its paused automation remain untouched.
 
 ## Remaining release gates
 
-Unlocked full UI testing, installed acceptance and explicit runtime handover
+Supported-compiler CI, installed acceptance and explicit runtime handover
 remain. Source publication is limited to the existing authorized branch;
 check GitHub CI against its exact commit separately from these local results.
 No claim

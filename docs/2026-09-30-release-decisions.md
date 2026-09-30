@@ -5,6 +5,19 @@ The ledger contains historical continuation entries out of date order; this is
 not a newly inferred chronology. Each entry retains the reason and risk if wrong.
 No research attempts, losses, evidence or campaign identities are erased by this report.
 
+## 25 — CI release compatibility
+
+Permit a narrow repair of newly observed CI release failures, not another
+whole-branch review/fix wave. Published code must build with the declared
+supported compiler and reproduce its checked fixtures. Keep Swift concurrency
+checks, the CI toolchain and all fixture/evidence gates. Isolated regeneration
+showed only source-derived identity changes, not changed numerical outcomes.
+Risk: refreshing fixtures could conceal behavioral drift or callback annotations
+could weaken isolation. Require semantic comparison, regression verification,
+one scoped review and terminal CI for the repaired commit. No strategy search,
+real-campaign mutation, evidence reset or qualification change is authorized by
+this decision.
+
 ## 1
 
 Ruling: If complete source verification passes while the desktop remains locked, push a clearly labeled checkpoint to the already-authorized feature/research-round-2 branch and verify its CI, without installing or declaring release completion — this preserves the requested one-branch GitHub work while native interaction requires user action — cost if wrong: readers might mistake published source for installed/UI-verified readiness; checkpoint documentation and final response must explicitly retain the UI blocker, stopped old installation, immutable old campaign and outstanding acceptance/handover gates. No PR, merge, force push or new branch.
