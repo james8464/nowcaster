@@ -5,6 +5,43 @@ The ledger contains historical continuation entries out of date order; this is
 not a newly inferred chronology. Each entry retains the reason and risk if wrong.
 No research attempts, losses, evidence or campaign identities are erased by this report.
 
+## 26 — Controlled native test scheduling
+
+Run all native CI tests explicitly serially, retaining every assertion, deadline
+and concurrent operation inside each test. The CI compiler now succeeds, but
+three lifecycle tests miss deadlines while unrelated large fixtures occupy the
+shared main actor. Local sampling confirms that contention; serial comparison
+removes it, although the exact remote failure was not reproduced locally.
+Risk: serial scheduling loses incidental cross-test stress. Keep the dedicated
+concurrency tests and installed background checks; do not claim arbitrary-load
+responsiveness. No application, runtime, toolchain or timing threshold changes.
+Swift Testing's shared-process parallel default and explicit serial option are
+documented by [Apple](https://developer.apple.com/documentation/Testing/Parallelization).
+
+## 27 — Preserved runtime handover
+
+Conditionally authorize recoverable installation and one new runtime-pinned
+campaign in the same registry after review, signature and required CI gates.
+The old runtime cannot safely run the corrected app; keep its campaign, manifest,
+history and complete ledger prefix. New manifest fields must match the old
+manifest except new ID/actual creation time, with the final runtime bound at
+registration. Back up the app/preferences; write a durable comparison receipt
+before switching only active campaign pins. Risk: accidental evidence reset or
+displacement of active work. Abort on unexpected activity, hashes or field
+differences; rollback active app/preferences without deleting registrations.
+No strategy rule, schedule, cost, budget, qualification or opt-in changes.
+
+## 28 — Normal final Start interaction
+
+Permit a separate, default-skipped XCTest handoff action to press normal Start
+on the already ordinarily launched installed app, after checking its stopped
+state and expected campaign pin. This restores the approved paper session
+without silently enabling automatic resume/login. Risk: unintended persistent
+work. Require explicit opt-in, unchanged preferences, no pre-existing owned
+helpers, visible state and independent PID/fresh-receipt checks afterward.
+Existing lifecycle-test teardowns remain unchanged. The handoff test deliberately
+leaves only the user-owned app/session running; it does not place orders.
+
 ## 25 — CI release compatibility
 
 Permit a narrow repair of newly observed CI release failures, not another
