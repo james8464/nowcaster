@@ -283,12 +283,19 @@ private func strategyLabFixtureWithDuplicateContext() throws -> NowcasterSnapsho
         backing: .buffered,
         defer: false
     )
+    window.isReleasedWhenClosed = false
+    defer { window.close() }
     let narrow = NowcasterWindowPresentation(arguments: ["--ui-narrow"])
 
+    let restoredFrame = window.frame
     narrow.apply(to: window)
+    #expect(window.frame == restoredFrame)
 
-    #expect(abs(window.contentLayoutRect.width - 900) <= 1)
-    #expect(abs(window.contentLayoutRect.height - 700) <= 1)
+    // Explicit screenshot dimensions include the title bar. Ordinary minimum
+    // updates must not overwrite the user's restored or subsequently resized frame.
+    narrow.apply(to: window, initial: true)
+    #expect(abs(window.frame.width - 900) <= 1)
+    #expect(abs(window.frame.height - 700) <= 1)
 }
 
 @Test func narrowNavigationAndBudgetControlsReserveReadableSpace() {
