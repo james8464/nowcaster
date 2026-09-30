@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SignalDetailView: View {
     let signal: ResearchSignalSnapshot
+    var navigationTitleOverride: String? = nil
 
     var body: some View {
         ScrollView {
@@ -75,7 +76,7 @@ struct SignalDetailView: View {
             .padding(24)
             .frame(maxWidth: 680, alignment: .leading)
         }
-        .navigationTitle(signal.instrumentId)
+        .navigationTitle(navigationTitleOverride ?? signal.instrumentId)
     }
 
     private func detailSection(_ title: String, text: String, systemImage: String) -> some View {

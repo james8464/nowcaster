@@ -1,8 +1,27 @@
+import AppKit
 import Foundation
 import Testing
 @testable import NowcasterApp
 
 @Suite struct TradeDeskPresentationTests {
+    @Test @MainActor func windowMinimumUsesOuterFrameWithoutResizingExistingWindow() {
+        _ = NSApplication.shared
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 750),
+                              styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: true)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let existingFrame = window.frame
+        NowcasterWindowPresentation(arguments: []).apply(to: window, initial: true)
+        #expect(window.minSize == NSSize(width: 820, height: 620))
+        #expect(window.frame == existingFrame)
+        let narrow = NowcasterWindowPresentation(arguments: ["--ui-narrow"])
+        narrow.apply(to: window, initial: true)
+        #expect(window.frame.size == NSSize(width: 900, height: 700))
+        window.setFrame(existingFrame, display: false)
+        narrow.apply(to: window)
+        #expect(window.frame == existingFrame)
+    }
+
     private let now = ISO8601DateFormatter().date(from: "2026-09-20T12:00:00Z")!
     private func publication() throws -> LivePaperSignalState {
         let hash = String(repeating: "a", count: 64)

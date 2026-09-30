@@ -50,9 +50,9 @@ final class TradeDeskUITests: XCTestCase {
 
     private func assertNotificationsOff(_ app: XCUIApplication) {
         app.typeKey(",", modifierFlags: .command)
-        let toggle = app.checkBoxes["settings.notifications"]
+        let toggle = app.descendants(matching: .any)["settings.notifications"]
         XCTAssertTrue(toggle.waitForExistence(timeout: 10))
-        XCTAssertEqual(toggle.value as? String, "0")
+        XCTAssertEqual(String(describing: toggle.value ?? "missing"), "0")
         app.typeKey("w", modifierFlags: .command)
     }
 
@@ -99,7 +99,7 @@ final class TradeDeskUITests: XCTestCase {
         continueAfterFailure = false
         let app = XCUIApplication()
         try isolatePaperAcceptance(app)
-        app.launchArguments = ["--destination=tradeDesk", "-ApplePersistenceIgnoreState", "YES"]
+        app.launchArguments = ["--destination=tradeDesk"]
         app.launch()
         app.activate()
         defer { app.terminate() }
@@ -111,6 +111,7 @@ final class TradeDeskUITests: XCTestCase {
         capture.name = "01-native-trade-desk"
         capture.lifetime = .keepAlways
         add(capture)
+        assertNotificationsOff(app)
     }
 
     func testOptInInstalledAppNormalQuitForUpgrade() throws {

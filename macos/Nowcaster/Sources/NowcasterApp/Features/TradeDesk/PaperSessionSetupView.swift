@@ -33,12 +33,19 @@ struct PaperResearchHelpView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("About Paper Research").font(.title2)
-            Text("The connected desk covers BTC/USDT and ETH/USDT Binance spot, studying long entries or standing aside. Other assets in Markets are imported or demo data.")
-            Text("Set up a desk, start collection, and import current source-attributed calendar evidence. Missing or expired coverage means stand aside. A trend alone cannot publish research levels.")
-            Text("New desks retain three fixed hypotheses: EMA + ADX trend, Donchian breakout and VWAP continuation. Whipsaws, false breakouts and costs can erase apparent gains. Older folders retain their original rules.")
-            Text("Candidate evidence uses the registered schedule and cost checks. Background learning searches training data; a locked proposal needs a separate prospective evaluation. An inspected final holdout cannot become unseen again.")
-            Text("These experimental hypotheses have not established profitability. No accounts are connected and no orders are placed.")
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("The connected desk covers BTC/USDT and ETH/USDT Binance spot, studying long entries or standing aside. Other assets in Markets are imported or demo data.")
+                    Text("Set up a desk, start collection, and import current source-attributed calendar evidence. Missing or expired coverage means stand aside. A trend alone cannot publish research levels.")
+                    Text("New desks retain three fixed hypotheses: EMA + ADX trend, Donchian breakout and VWAP continuation. Whipsaws, false breakouts and costs can erase apparent gains. Older folders retain their original rules.")
+                    Text("Candidate evidence uses the registered schedule and cost checks. Background learning searches training data; a locked proposal needs a separate prospective evaluation. An inspected final holdout cannot become unseen again.")
+                    Text("These experimental hypotheses have not established profitability. No accounts are connected and no orders are placed.")
+                        .accessibilityIdentifier("paperResearch.limitations")
+                }
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            .accessibilityIdentifier("paperResearch.helpContent")
             HStack { Spacer(); Button("Close") { dismiss() }.keyboardShortcut(.cancelAction) }
-        }.padding(24).frame(width: 540).textSelection(.enabled)
+        }.padding(24).frame(width: 540, height: 500).textSelection(.enabled)
     }
 }

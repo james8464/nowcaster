@@ -9,7 +9,9 @@ struct TradeAssetDetailView: View {
             let row = TradeDeskPresentation.make(service: model.livePaperSignals, session: model.paperSession, now: timeline.date).assets.first { $0.symbol == symbol }
                 VStack(alignment: .leading, spacing: 16) {
                     HStack {
-                        Text(symbol).fontWeight(.semibold).accessibilityIdentifier("tradeDesk.detail.title")
+                        Text(symbol).fontWeight(.semibold)
+                            .accessibilityIdentifier("tradeDesk.detail.title")
+                            .accessibilityValue(symbol)
                         Spacer()
                         Button("Close Details", systemImage: "xmark") { close() }
                             .labelStyle(.iconOnly).accessibilityIdentifier("tradeDesk.closeDetail")
@@ -33,6 +35,6 @@ struct TradeAssetDetailView: View {
                     Text("Trend describes observed direction. Publication also requires fresh receipts, calendar coverage and candidate evidence; it is not a probability of profit.")
                         .foregroundStyle(.secondary)
                 }.padding(20).textSelection(.enabled)
-        }.accessibilityIdentifier("tradeDesk.detail")
+        }
     }
 }

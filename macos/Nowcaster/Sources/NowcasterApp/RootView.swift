@@ -83,7 +83,7 @@ struct RootView: View {
         for _ in 0 ..< 100 {
             if let window = NSApplication.shared.keyWindow
                 ?? NSApplication.shared.windows.first(where: { $0.isVisible }) {
-                presentation.apply(to: window)
+                presentation.apply(to: window, initial: true)
                 return
             }
             try? await Task.sleep(for: .milliseconds(50))
@@ -134,23 +134,30 @@ struct RootView: View {
         [.markets, .earnings, .signals, .backtests, .strategyLab].contains(model.destination)
     }
 
-    @ViewBuilder private var navigationLayout: some View {
-        if usesInspector {
-            NavigationSplitView {
-                sidebar
-            } content: {
-                destinationContent
-                    .navigationTitle(model.destination.title)
-                    .navigationSplitViewColumnWidth(min: 260, ideal: 300, max: 340)
-            } detail: {
-                inspector
+    private var navigationLayout: some View {
+        // Keep the sidebar's native identity and keyboard focus across routes.
+        NavigationSplitView {
+            sidebar
+        } detail: {
+            Group {
+                if usesInspector {
+                    GeometryReader { geometry in
+                        HSplitView {
+                            destinationContent.frame(minWidth: 260, idealWidth: 300, maxWidth: 340)
+                            ScrollView(.horizontal) {
+                                inspector
+                                    .frame(minWidth: max(360, geometry.size.width - 341))
+                                    .frame(height: geometry.size.height)
+                            }
+                            .accessibilityIdentifier("inspector.horizontalViewport")
+                        }
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                    }
+                } else {
+                    destinationContent
+                }
             }
-        } else {
-            NavigationSplitView {
-                sidebar
-            } detail: {
-                destinationContent.navigationTitle(model.destination.title)
-            }
+            .navigationTitle(model.destination.title)
         }
     }
 
@@ -260,7 +267,7 @@ struct RootView: View {
             }
         case .signals:
             if let signal = model.selectedSignal {
-                SignalDetailView(signal: signal)
+                SignalDetailView(signal: signal, navigationTitleOverride: model.destination.title)
             } else {
                 selectionPlaceholder("Select a signal to inspect evidence, catalyst, and invalidation.")
             }

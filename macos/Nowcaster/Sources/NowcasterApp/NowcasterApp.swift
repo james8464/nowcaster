@@ -87,8 +87,10 @@ struct NowcasterWindowPresentation: Sendable {
     let defaultHeight: CGFloat
     let minimumWidth: CGFloat = 820
     let minimumHeight: CGFloat = 620
+    let hasExplicitSize: Bool
 
     init(arguments: [String]) {
+        hasExplicitSize = arguments.contains { ["--ui-wide", "--ui-narrow", "--ui-minimum"].contains($0) }
         if arguments.contains("--ui-minimum") {
             defaultWidth = 820
             defaultHeight = 620
@@ -101,9 +103,42 @@ struct NowcasterWindowPresentation: Sendable {
         }
     }
 
-    @MainActor func apply(to window: NSWindow) {
-        window.setContentSize(NSSize(width: defaultWidth, height: defaultHeight))
-        window.center()
+    @MainActor func apply(to window: NSWindow, initial: Bool = false) {
+        // AppKit measures minSize including the native title bar and toolbar.
+        // A SwiftUI content minimum would add that chrome a second time.
+        window.minSize = NSSize(width: minimumWidth, height: minimumHeight)
+        if initial && hasExplicitSize {
+            // Explicit capture sizes use the outer frame. Normal launches keep
+            // the user's restored geometry, and subsequent resizing stays free.
+            window.setFrame(NSRect(origin: window.frame.origin,
+                                   size: NSSize(width: defaultWidth, height: defaultHeight)), display: true)
+        }
+    }
+}
+
+private struct NativeWindowMinimum: NSViewRepresentable {
+    let presentation: NowcasterWindowPresentation
+
+    func makeNSView(context: Context) -> MinimumView { MinimumView() }
+    func updateNSView(_ view: MinimumView, context: Context) {
+        view.presentation = presentation
+        view.updateMinimum()
+    }
+
+    final class MinimumView: NSView {
+        var presentation = NowcasterWindowPresentation(arguments: [])
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            updateMinimum()
+        }
+        func updateMinimum() {
+            // Apply after scene configuration, without changing restored size
+            // or publishing state during SwiftUI's scene update.
+            Task { @MainActor [weak self] in
+                guard let self, let window else { return }
+                presentation.apply(to: window)
+            }
+        }
     }
 }
 
@@ -135,7 +170,8 @@ struct NowcasterApp: App {
             .defaultAppStorage(AppStorageLocations.defaults)
             .font(.system(size: settings.contentTextSize))
             .preferredColorScheme(forcedColorScheme)
-            .frame(minWidth: windowPresentation.minimumWidth, minHeight: windowPresentation.minimumHeight)
+            .frame(minWidth: windowPresentation.minimumWidth)
+            .background(NativeWindowMinimum(presentation: windowPresentation).frame(width: 0, height: 0))
         }
         .defaultSize(width: windowPresentation.defaultWidth, height: windowPresentation.defaultHeight)
         .commands {
