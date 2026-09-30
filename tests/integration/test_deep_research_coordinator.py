@@ -168,6 +168,122 @@ def test_worker_retries_once_then_records_repeat_failure_without_hiding_the_tria
     assert outcome.evaluated_attempts == 2
 
 
+@pytest.mark.parametrize("boundary", ["initial", "retry"])
+def test_ownership_loss_prevents_every_submission_and_leaves_replacement_owner_intact(tmp_path, monkeypatch, boundary):
+    from concurrent.futures import ThreadPoolExecutor
+    from contextlib import ExitStack
+
+    from src.background_research.runtime import OwnershipLostError, _exclusive, _OwnedControl
+    from src.deep_research import coordinator as module
+
+    database = Database.from_url(f"duckdb:///{tmp_path / 'ownership.duckdb'}")
+    database.initialize()
+    control = ResearchControl(tmp_path / "control", run_id="owner", nonce="n" * 32)
+    control.initialize()
+    lock = tmp_path / "campaign.lock"
+    calls = []
+    original_evaluate = module.evaluate_candidate_work
+    with ExitStack() as owners:
+        verify = owners.enter_context(_exclusive(lock))
+        replacement = []
+
+        def lose():
+            lock.unlink()
+            replacement.append(owners.enter_context(_exclusive(lock)))
+
+        def evaluate(work, attempt):
+            calls.append((work.ordinal, attempt))
+            try:
+                return original_evaluate(work, attempt)
+            finally:
+                if boundary == "retry" and (work.ordinal, attempt) == (1, 1):
+                    lose()  # The real first evaluation fails before the retry boundary.
+
+        class Executor(ThreadPoolExecutor):
+            def submit(self, fn, work, attempt):
+                future = super().submit(fn, work, attempt)
+                if boundary == "initial" and work.ordinal == 1:
+                    future.result(timeout=5)
+                    lose()  # Authority disappears between two initial submissions.
+                return future
+
+        monkeypatch.setattr(module, "ProcessPoolExecutor", Executor)
+        monkeypatch.setattr(module, "evaluate_candidate_work", evaluate)
+        works = (_work(1), _work(2)) if boundary == "initial" else (_work(1, failures_before_success=1),)
+        coordinator = DeepResearchCoordinator(
+            run_id="owner",
+            protocol=_protocol(workers=2, trial_budget=len(works)),
+            repository=DeepResearchRepository(database),
+            control=_OwnedControl(control, verify),
+            sealed_evaluator=lambda _: (),
+        )
+        with pytest.raises(OwnershipLostError):
+            coordinator.run(works, evaluate_final=False)
+        assert calls == [(1, 1)]
+        replacement[0]()
+        assert database.scalar("select count(*) from deep_research_trials") == 0
+
+
+@pytest.mark.parametrize("boundary", ["initial", "retry"])
+@pytest.mark.parametrize("requested", [ControlState.PAUSED, ControlState.STOPPED])
+def test_each_submission_honors_pause_and_stop_without_losing_completed_work(
+    tmp_path, monkeypatch, boundary, requested
+):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from src.deep_research import coordinator as module
+
+    database = Database.from_url(f"duckdb:///{tmp_path / 'submission-control.duckdb'}")
+    database.initialize()
+    control = ResearchControl(tmp_path / "control", run_id="dispatch", nonce="n" * 32)
+    control.initialize()
+    calls, paused = [], []
+    original_evaluate, original_wait = module.evaluate_candidate_work, control.wait_until_runnable
+
+    def evaluate(work, attempt):
+        calls.append((work.ordinal, attempt))
+        try:
+            return original_evaluate(work, attempt)
+        finally:
+            if boundary == "retry" and attempt == 1:
+                control.request(requested)
+
+    class Executor(ThreadPoolExecutor):
+        def submit(self, fn, work, attempt):
+            future = super().submit(fn, work, attempt)
+            if boundary == "initial" and work.ordinal == 1:
+                future.result(timeout=5)
+                control.request(requested)
+            return future
+
+    def resume_when_waiting(**kwargs):
+        if control.read() is ControlState.PAUSED:
+            assert calls == [(1, 1)]
+            paused.append(True)
+            control.request(ControlState.RUNNING)
+        return original_wait(**kwargs)
+
+    monkeypatch.setattr(module, "ProcessPoolExecutor", Executor)
+    monkeypatch.setattr(module, "evaluate_candidate_work", evaluate)
+    monkeypatch.setattr(control, "wait_until_runnable", resume_when_waiting)
+    works = (_work(1), _work(2)) if boundary == "initial" else (_work(1, failures_before_success=1),)
+    outcome = DeepResearchCoordinator(
+        run_id="dispatch",
+        protocol=_protocol(workers=2, trial_budget=len(works)),
+        repository=DeepResearchRepository(database),
+        control=control,
+        sealed_evaluator=lambda _: (),
+    ).run(works, evaluate_final=False)
+    if requested is ControlState.PAUSED:
+        assert paused == [True]
+        assert calls == ([(1, 1), (2, 1)] if boundary == "initial" else [(1, 1), (1, 2)])
+    else:
+        assert calls == [(1, 1)]
+        assert outcome.state is RunState.STOPPED
+        assert database.scalar("select count(*) from deep_research_trials") == 1
+        assert database.scalar("select max(next_ordinal) from deep_research_checkpoints") == 2
+
+
 def test_duplicate_attempt_is_counted_without_worker_evaluation(tmp_path) -> None:
     database, _ = _run(
         tmp_path,

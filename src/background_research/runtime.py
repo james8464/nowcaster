@@ -189,7 +189,10 @@ class BackgroundLearningRunner:
                                     "state": "blocked",
                                     "reason": "Worker checkpoint or persistence failed",
                                 },
+                                verify_ownership=verify,
                             )
+                except OwnershipLostError as lost:
+                    error = lost
                 finally:
                     self._emit_status(
                         status.model_copy(
@@ -238,6 +241,7 @@ class BackgroundLearningRunner:
                                             "reason": "Execution stopped before retained result",
                                         },
                                     },
+                                    verify_ownership=verify_ownership,
                                 )
                         verify_ownership()
                         self.registry.append_event(
@@ -247,6 +251,7 @@ class BackgroundLearningRunner:
                                 "state": "paused",
                                 "reason": "Execution stopped; retained batch may resume",
                             },
+                            verify_ownership=verify_ownership,
                         )
                         status = self.registry.read_status(campaign.identity_hash)
                 self._emit_status(status, emit, event="complete")
@@ -278,6 +283,7 @@ class BackgroundLearningRunner:
                                 "state": "training",
                                 "reason": "Authenticated execution resumes retained batch",
                             },
+                            verify_ownership=verify_ownership,
                         )
                 elif source.through is not None:
                     for symbol in campaign.symbols:
@@ -288,6 +294,7 @@ class BackgroundLearningRunner:
                             data_fingerprint=source.data_fingerprint,
                             through=source.through,
                             now=now,
+                            verify_ownership=verify_ownership,
                         )
                         if batch is not None:
                             break

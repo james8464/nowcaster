@@ -113,7 +113,7 @@ class LearningTrainer:
 
     def _append(self, batch, **event):
         self._verify_ownership()
-        self.registry.append_event(batch.batch_id, event)
+        self.registry.append_event(batch.batch_id, event, verify_ownership=self._verify_ownership)
 
     def _status(self, campaign, batch, state, reason):
         self._append(batch, kind="state", state=state, reason=reason)
@@ -300,7 +300,9 @@ class LearningTrainer:
             if "holdout" not in artifacts:
                 try:
                     self._verify_ownership()
-                    exposure = self.registry.reserve_holdout(batch.batch_id, candidate.identity)
+                    exposure = self.registry.reserve_holdout(
+                        batch.batch_id, candidate.identity, verify_ownership=self._verify_ownership
+                    )
                 except ValueError as error:
                     if "already exposed" not in str(error):
                         raise
@@ -471,7 +473,7 @@ class LearningTrainer:
         def retain_result(attempt, result):
             payload = {"ordinal": attempt.ordinal, "generation": attempt.generation, "candidate": attempt.definition}
             if result is None:
-                outcome = "failed"
+                outcome = "interrupted" if attempt.status is AttemptStatus.INTERRUPTED else "failed"
                 payload["error"] = attempt.error_summary
             else:
                 if result.retained_metrics is None:

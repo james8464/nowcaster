@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+from collections.abc import Callable
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -259,7 +260,16 @@ class LearningRegistry:
             raise ValueError(f"malformed background research ledger: {error}") from error
         return state, raw, rows
 
-    def _commit(self, state: _State, raw: bytes, rows: list[dict], record: dict) -> None:
+    def _commit(
+        self,
+        state: _State,
+        raw: bytes,
+        rows: list[dict],
+        record: dict,
+        *,
+        verify_ownership: Callable[[], None] = lambda: None,
+    ) -> None:
+        verify_ownership()
         state.apply(record)
         row = {"sequence": len(rows), "previous_hash": rows[-1]["record_hash"] if rows else "0" * 64, "record": record}
         row["record_hash"] = canonical_hash(row)
@@ -295,6 +305,9 @@ class LearningRegistry:
                 backups[destination] = backup
             # The ledger is recovery authority. A crash between replacements leaves a
             # stale cache, which every read ignores and derives afresh from the ledger.
+            # Staging can take time: revalidate while the writer lock is still held,
+            # immediately before publishing the ledger-authoritative transaction.
+            verify_ownership()
             for destination, temporary in replacements.items():
                 os.replace(temporary, destination)
                 replaced.append(destination)
@@ -340,26 +353,39 @@ class LearningRegistry:
                 },
             )
 
-    def reserve_batch(self, batch: LearningBatch) -> bool:
+    def reserve_batch(self, batch: LearningBatch, *, verify_ownership: Callable[[], None] = lambda: None) -> bool:
         batch = batch.validated()
         with self._locked():
             state, raw, rows = self._read()
+            verify_ownership()
             campaign = state.campaigns[batch.campaign_hash][0]
             _validate_source(campaign, _source(campaign))
             if not state.can_reserve(batch):
                 return False
-            self._commit(state, raw, rows, {"kind": "batch", "batch": batch.model_dump(mode="json")})
+            self._commit(
+                state,
+                raw,
+                rows,
+                {"kind": "batch", "batch": batch.model_dump(mode="json")},
+                verify_ownership=verify_ownership,
+            )
             return True
 
-    def append_event(self, batch_id: str, event: dict) -> None:
+    def append_event(self, batch_id: str, event: dict, *, verify_ownership: Callable[[], None] = lambda: None) -> None:
         event = LearningEvent.model_validate(event)
         with self._locked():
             state, raw, rows = self._read()
             self._commit(
-                state, raw, rows, {"kind": "event", "batch_id": batch_id, "event": event.model_dump(mode="json")}
+                state,
+                raw,
+                rows,
+                {"kind": "event", "batch_id": batch_id, "event": event.model_dump(mode="json")},
+                verify_ownership=verify_ownership,
             )
 
-    def reserve_holdout(self, batch_id: str, candidate_hash: str) -> str:
+    def reserve_holdout(
+        self, batch_id: str, candidate_hash: str, *, verify_ownership: Callable[[], None] = lambda: None
+    ) -> str:
         exposure_id = canonical_hash({"batch_id": batch_id, "candidate_hash": candidate_hash})
         with self._locked():
             state, raw, rows = self._read()
@@ -368,6 +394,7 @@ class LearningRegistry:
                 raw,
                 rows,
                 {"kind": "holdout", "batch_id": batch_id, "candidate_hash": candidate_hash, "exposure_id": exposure_id},
+                verify_ownership=verify_ownership,
             )
         return exposure_id
 

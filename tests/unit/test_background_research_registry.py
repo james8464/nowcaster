@@ -37,6 +37,66 @@ def snapshot(root):
     return {str(path.relative_to(root)): path.read_bytes() for path in root.rglob("*") if path.is_file()}
 
 
+@pytest.mark.parametrize("operation", ["event", "holdout", "batch"])
+def test_guarded_mutation_revalidates_after_locked_read_without_consuming_evidence(
+    registry, campaign, monkeypatch, operation
+):
+    batch = reserve(registry, campaign)
+    before = snapshot(registry.root)
+    original_read = registry._read
+    valid = True
+
+    def verify():
+        if not valid:
+            raise ValueError("ownership lost during locked read")
+
+    def lose_after_read():
+        nonlocal valid
+        result = original_read()
+        valid = False
+        return result
+
+    monkeypatch.setattr(registry, "_read", lose_after_read)
+    with pytest.raises(ValueError, match="ownership lost"):
+        if operation == "event":
+            registry.append_event(
+                batch.batch_id, {"kind": "checkpoint", "checkpoint": "obsolete"}, verify_ownership=verify
+            )
+        elif operation == "holdout":
+            registry.reserve_holdout(batch.batch_id, "a" * 64, verify_ownership=verify)
+        else:
+            # Even a no-op duplicate must not masquerade as an owned transaction.
+            registry.reserve_batch(batch, verify_ownership=verify)
+    assert snapshot(registry.root) == before
+    monkeypatch.setattr(registry, "_read", original_read)
+    assert registry.reserve_holdout(batch.batch_id, "a" * 64), "Rejected mutation cannot consume holdout"
+
+
+def test_ownership_loss_during_staging_never_publishes_or_consumes_holdout(registry, campaign, monkeypatch):
+    from src.background_research import registry as module
+
+    batch = reserve(registry, campaign)
+    before = snapshot(registry.root)
+    original_append = module.append_jsonl_fsync
+    valid = True
+
+    def verify():
+        if not valid:
+            raise ValueError("ownership lost during staging")
+
+    def stage_then_lose(*args, **kwargs):
+        nonlocal valid
+        original_append(*args, **kwargs)
+        valid = False
+
+    monkeypatch.setattr(module, "append_jsonl_fsync", stage_then_lose)
+    with pytest.raises(ValueError, match="ownership lost"):
+        registry.reserve_holdout(batch.batch_id, "a" * 64, verify_ownership=verify)
+    assert snapshot(registry.root) == before
+    monkeypatch.setattr(module, "append_jsonl_fsync", original_append)
+    assert registry.reserve_holdout(batch.batch_id, "a" * 64)
+
+
 def test_same_asset_day_and_fingerprint_cannot_buy_another_batch(registry, campaign):
     batch = reserve(registry, campaign)
     assert batch is not None

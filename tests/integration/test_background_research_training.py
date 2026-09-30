@@ -204,8 +204,8 @@ def test_two_generations_consume_100_attempts_including_duplicates_and_resume_wi
     control.initialize()
     append = registry.append_event
 
-    def crash_at_second_generation(batch_id, event):
-        append(batch_id, event)
+    def crash_at_second_generation(batch_id, event, **kwargs):
+        append(batch_id, event, **kwargs)
         if event["kind"] == "attempt" and event["payload"]["ordinal"] == 51:
             raise KeyboardInterrupt("crash after first descendant reservation")
 
@@ -273,8 +273,8 @@ def test_parent_result_persistence_crash_resumes_same_attempts_without_dispatchi
     control.initialize()
     append = registry.append_event
 
-    def crash_after_write(batch_id, event):
-        append(batch_id, event)
+    def crash_after_write(batch_id, event, **kwargs):
+        append(batch_id, event, **kwargs)
         if event["kind"] == "attempt_result" and event["outcome"] == "completed":
             raise KeyboardInterrupt("parent crashed after durable result")
 
@@ -346,6 +346,31 @@ def test_paused_control_can_resume_same_execution_after_explicit_authorization(t
     status = trainer.run_batch(campaign, batch, control=control, emit=lambda _: None)
     assert status.state == "waiting"
     assert status.batch_attempt_count == 0
+
+
+def test_stop_before_failed_worker_retry_retains_interruption_in_parent_ledger(tmp_path, monkeypatch):
+    from src.deep_research import coordinator as module
+
+    campaign, _, _, registry, batch = reserved(tmp_path, training_count=1440)
+    control = ResearchControl(tmp_path / "control", run_id="stop-retry", nonce="t" * 32)
+    control.initialize()
+    calls = []
+
+    def fail_in_flight(work, attempt):
+        calls.append((work.ordinal, attempt))
+        control.request(ControlState.STOPPED)
+        raise RuntimeError("worker failed before operator stop")
+
+    monkeypatch.setattr(module, "ProcessPoolExecutor", ThreadPoolExecutor)
+    monkeypatch.setattr(module, "evaluate_candidate_work", fail_in_flight)
+    status = LearningTrainer(registry, workers=1).run_batch(campaign, batch, control=control, emit=lambda _: None)
+    assert status.state == "paused"
+    assert calls == [(1, 1)]
+    with registry._locked():
+        state, _, _ = registry._read()
+    result = next(event for event in state.events[batch.batch_id] if event.kind == "attempt_result")
+    assert result.outcome == "interrupted"
+    assert result.payload["error"] == "worker failed before operator stop"
 
 
 def test_renamed_campaign_cannot_evaluate_an_overlapping_final_interval(tmp_path, monkeypatch):

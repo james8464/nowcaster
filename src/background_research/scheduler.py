@@ -1,5 +1,6 @@
 """Advance only complete, registered windows; recover unfinished batch identities."""
 
+from collections.abc import Callable
 from datetime import datetime, timedelta
 
 from src.background_research.contracts import LearningBatch, LearningCampaign
@@ -20,6 +21,7 @@ class LearningScheduler:
         data_fingerprint: str,
         through: datetime,
         now: datetime,
+        verify_ownership: Callable[[], None] = lambda: None,
     ) -> LearningBatch | None:
         campaign = campaign.validated()
         through, now = _utc(through, "through"), _utc(now, "now")
@@ -30,6 +32,7 @@ class LearningScheduler:
         _validate_source(campaign, _source(campaign))
         with self.registry._locked():
             state, raw, rows = self.registry._read()
+            verify_ownership()
             if campaign.identity_hash not in state.campaigns:
                 raise ValueError("campaign must be registered before dispatch")
             protocol = state.campaigns[campaign.identity_hash][1]
@@ -77,5 +80,11 @@ class LearningScheduler:
             )
             if not state.can_reserve(batch):
                 return None
-            self.registry._commit(state, raw, rows, {"kind": "batch", "batch": batch.model_dump(mode="json")})
+            self.registry._commit(
+                state,
+                raw,
+                rows,
+                {"kind": "batch", "batch": batch.model_dump(mode="json")},
+                verify_ownership=verify_ownership,
+            )
             return batch

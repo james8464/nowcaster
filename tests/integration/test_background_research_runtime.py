@@ -215,8 +215,8 @@ def test_lock_loss_after_training_result_does_not_write_shared_checkpoint_or_dis
     emitted = []
     with ExitStack() as owners:
 
-        def replace_after_result(batch_id, event):
-            result = original_append(batch_id, event)
+        def replace_after_result(batch_id, event, **kwargs):
+            result = original_append(batch_id, event, **kwargs)
             if event["kind"] == "attempt_result" and not retained:
                 lock = registry.root / f".campaign-{campaign.identity_hash}.worker.lock"
                 lock.unlink()
@@ -235,3 +235,40 @@ def test_lock_loss_after_training_result_does_not_write_shared_checkpoint_or_dis
     assert emitted[-1]["status"]["state"] == "blocked"
     assert emitted[-1]["status"]["batch_id"] == batch.batch_id
     assert "OwnershipLostError" in emitted[-1]["message"]
+
+
+def test_training_write_rechecks_ownership_after_waiting_for_registry_lock(tmp_path, monkeypatch):
+    """An outer check cannot authorize a commit after a blocked writer loses its lock."""
+    from concurrent.futures import ThreadPoolExecutor
+    from contextlib import ExitStack, contextmanager
+    from threading import Event
+
+    from tests.unit.test_background_research_data import reserved
+
+    campaign, _, _, registry, batch = reserved(tmp_path)
+    trainer = LearningTrainer(registry, workers=1)
+    writer_waiting = Event()
+    original_locked = registry._locked
+
+    @contextmanager
+    def observed_lock():
+        writer_waiting.set()
+        with original_locked():
+            yield
+
+    monkeypatch.setattr(registry, "_locked", observed_lock)
+    path = registry.root / f".campaign-{campaign.identity_hash}.worker.lock"
+    with runtime._exclusive(path) as verify, ExitStack() as owners, ThreadPoolExecutor(max_workers=1) as executor:
+        trainer._verify_ownership = verify
+        prefix = registry.ledger.read_bytes()
+        with original_locked():
+            pending = executor.submit(trainer._append, batch, kind="state", state="training", reason="obsolete")
+            assert writer_waiting.wait(5)
+            path.unlink()
+            replacement_verify = owners.enter_context(runtime._exclusive(path))
+        with pytest.raises(runtime.OwnershipLostError):
+            pending.result(timeout=5)
+        assert registry.ledger.read_bytes() == prefix
+        replacement_verify()
+        # Replacement lock file is retained, not removed by the obsolete writer.
+        assert path.exists()

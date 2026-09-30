@@ -224,6 +224,18 @@ class DeepResearchCoordinator:
             tuple(sorted(worker_limits or set())),
         )
 
+    def _dispatch_state(self, completed_count: int, total: int) -> ControlState:
+        # Background callers provide an ownership-guarded control. This check
+        # belongs at EVERY submit boundary, including retries of failed futures.
+        state = self.control.read()
+        if state is ControlState.PAUSED:
+            self.repository.set_state(self.run_id, RunState.PAUSED, reason="operator_pause")
+            self._event("paused", completed_count / max(1, total), "dispatch paused")
+            state = self.control.wait_until_runnable()
+            if state is ControlState.RUNNING:
+                self.repository.set_state(self.run_id, RunState.RUNNING, reason="operator_resume")
+        return state
+
     def run(
         self,
         works: Sequence[CandidateWork],
@@ -336,13 +348,7 @@ class DeepResearchCoordinator:
                         "resource_preempted",
                         tuple(sorted(worker_limits)),
                     )
-                state = self.control.read()
-                if state is ControlState.PAUSED:
-                    self.repository.set_state(self.run_id, RunState.PAUSED, reason="operator_pause")
-                    self._event("paused", completed_count / max(1, len(ordered_work)), "dispatch paused")
-                    state = self.control.wait_until_runnable()
-                    if state is ControlState.RUNNING:
-                        self.repository.set_state(self.run_id, RunState.RUNNING, reason="operator_resume")
+                state = self._dispatch_state(completed_count, len(ordered_work))
                 if state is ControlState.STOPPED:
                     next_ordinal = batch[0].ordinal if batch else (ordered_work[-1].ordinal + 1)
                     return self._stopped_outcome(
@@ -354,7 +360,12 @@ class DeepResearchCoordinator:
 
                 batch_attempts: dict[int, CandidateAttempt] = {}
                 futures: dict[Future[WorkerResult], tuple[CandidateWork, int]] = {}
-                for item in batch:
+                stop_next_ordinal = None
+                for index, item in enumerate(batch):
+                    if self._dispatch_state(completed_count, len(ordered_work)) is ControlState.STOPPED:
+                        stop_next_ordinal = item.ordinal
+                        batch = batch[:index]  # Retain/drain only work already dispatched.
+                        break
                     if item.duplicate_of is not None:
                         batch_attempts[item.ordinal] = CandidateAttempt(
                             ordinal=item.ordinal,
@@ -374,15 +385,22 @@ class DeepResearchCoordinator:
                     try:
                         result = future.result()
                     except Exception as error:
-                        if attempt_number == 1:
+                        stopped_retry = False
+                        if (
+                            attempt_number == 1
+                            and self._dispatch_state(completed_count, len(ordered_work)) is not ControlState.STOPPED
+                        ):
                             retry = executor.submit(evaluate_candidate_work, item, 2)
                             futures[retry] = (item, 2)
                             continue
+                        if attempt_number == 1:
+                            stopped_retry = True
+                            stop_next_ordinal = stop_next_ordinal or (batch[-1].ordinal + 1)
                         batch_attempts[item.ordinal] = CandidateAttempt(
                             ordinal=item.ordinal,
                             candidate_hash=item.candidate_hash,
                             definition=item.definition,
-                            status=AttemptStatus.FAILED,
+                            status=AttemptStatus.INTERRUPTED if stopped_retry else AttemptStatus.FAILED,
                             attempted_at=started,
                             completed_at=self._now(),
                             error_summary=str(error)[:500],
@@ -402,6 +420,13 @@ class DeepResearchCoordinator:
                             generation=generation,
                         )
 
+                if not batch:
+                    return self._stopped_outcome(
+                        next_ordinal=stop_next_ordinal,
+                        generation=generation,
+                        evaluated_attempts=completed_count,
+                        worker_limits=worker_limits,
+                    )
                 if self.on_result is not None:
                     for item in batch:
                         self.on_result(batch_attempts[item.ordinal], results.get(item.ordinal))
@@ -441,6 +466,13 @@ class DeepResearchCoordinator:
                     workers=self.worker_count,
                     generation=generation,
                 )
+                if stop_next_ordinal is not None:
+                    return self._stopped_outcome(
+                        next_ordinal=stop_next_ordinal,
+                        generation=generation,
+                        evaluated_attempts=completed_count,
+                        worker_limits=worker_limits,
+                    )
 
         self.repository.append_resource_sample(
             self.run_id,

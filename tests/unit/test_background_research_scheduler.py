@@ -30,6 +30,30 @@ def test_waits_for_complete_registered_windows(tmp_path):
     assert batch.holdout_end == datetime(2026, 5, 31, tzinfo=UTC)
 
 
+def test_scheduler_rechecks_ownership_inside_transaction_before_reserving(tmp_path, monkeypatch):
+    campaign, registry, scheduler = setup(tmp_path)
+    prefix = registry.ledger.read_bytes()
+    original_read = registry._read
+    valid = True
+
+    def verify():
+        if not valid:
+            raise ValueError("ownership lost while scheduling")
+
+    def lose_after_read():
+        nonlocal valid
+        result = original_read()
+        valid = False
+        return result
+
+    monkeypatch.setattr(registry, "_read", lose_after_read)
+    with pytest.raises(ValueError, match="ownership lost"):
+        dispatch(scheduler, campaign, datetime(2026, 5, 31, tzinfo=UTC), verify_ownership=verify)
+    assert registry.ledger.read_bytes() == prefix
+    monkeypatch.setattr(registry, "_read", original_read)
+    assert dispatch(scheduler, campaign, datetime(2026, 5, 31, tzinfo=UTC)) is not None
+
+
 def test_unchanged_fingerprint_cannot_buy_new_batch_later(tmp_path):
     campaign, registry, scheduler = setup(tmp_path)
     batch = dispatch(scheduler, campaign, datetime(2026, 5, 31, tzinfo=UTC))
