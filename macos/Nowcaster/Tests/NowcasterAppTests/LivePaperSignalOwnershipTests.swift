@@ -69,7 +69,7 @@ else: sys.exit(1)
     if externalHolder { try await waitFor("external-ready") }
     let service = LivePaperSignalService()
     var terminations = 0
-    service.onTermination = { _ in terminations += 1 }
+    service.onTermination = { @MainActor _ in terminations += 1 }
     let config = LivePaperSignalConfiguration(projectRoot: root, executable: URL(fileURLWithPath: "/usr/bin/python3"),
         script: script, directory: root, protocolHash: String(repeating: "a", count: 64))
     await service.start(configuration: config)
