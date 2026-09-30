@@ -220,6 +220,17 @@ private func liveDecode(_ payload: [String: Any], now: Date = liveNow) throws ->
         #expect(!service.notificationsEnabled)
     }
 
+    @Test @MainActor func shutdownInvalidatesPendingNotificationPermission() async {
+        let authorizer = PendingPaperAuthorizer()
+        let service = LivePaperSignalService(notifications: authorizer)
+        let request = Task { await service.setNotificationsEnabled(true) }
+        while authorizer.pending == nil { await Task.yield() }
+        _ = await service.shutdown(timeout: .milliseconds(20))
+        authorizer.pending?.resume(returning: true)
+        await request.value
+        #expect(!service.notificationsEnabled)
+    }
+
     @Test @MainActor func explicitStartAndStopOwnTheActualChild() async throws {
         let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -247,10 +258,84 @@ private func liveDecode(_ payload: [String: Any], now: Date = liveNow) throws ->
         #expect(service.state == nil)
     }
 
+    @Test @MainActor func shutdownDuringReservationOwnsHelperAndLeavesOutcomeUncertain() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("{}".utf8).write(to: root.appending(path: "protocol.json"))
+        let formatter = ISO8601DateFormatter(), now = Date()
+        var payload = livePayload()
+        var suggestion = try #require(payload["suggestion"] as? [String: Any])
+        suggestion["decision_at"] = formatter.string(from: now)
+        suggestion["available_at"] = formatter.string(from: now)
+        suggestion["expires_at"] = formatter.string(from: now.addingTimeInterval(15))
+        payload["suggestion"] = suggestion
+        payload["updated_at"] = formatter.string(from: now); payload["evaluated_at"] = formatter.string(from: now)
+        try JSONSerialization.data(withJSONObject: payload).write(to: root.appending(path: "status.json"))
+        let script = root.appending(path: "run_live_paper_signals.py")
+        try #"""
+        import os, sys, time
+        root = sys.argv[3]
+        command = sys.argv[1]
+        with open(root + '/commands', 'a') as log: log.write(command + '\n')
+        if command == 'start':
+            while True: time.sleep(.01)
+        elif command == 'status': print(open(root + '/status.json').read())
+        elif command == 'notification':
+            with open(root + '/reservation', 'w') as marker: marker.write(str(os.getpid()))
+            while True: time.sleep(.01)
+        elif command == 'notification-outcome':
+            with open(root + '/outcome', 'w') as marker: marker.write('unexpected')
+        else: sys.exit(1)
+        """#.write(to: script, atomically: true, encoding: .utf8)
+        let service = LivePaperSignalService(notifications: PausedPaperDelivery())
+        await service.start(configuration: .init(projectRoot: root, executable: URL(fileURLWithPath: "/usr/bin/python3"),
+            script: script, directory: root, protocolHash: liveHash))
+        await service.setNotificationsEnabled(true)
+        let marker = root.appending(path: "reservation")
+        for _ in 0..<300 where !FileManager.default.fileExists(atPath: marker.path) {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let pid = try #require(Int32(String(contentsOf: marker, encoding: .utf8)))
+        let birth = try #require(BackgroundProcessBirth.read(pid))
+        defer { if BackgroundProcessBirth.read(pid) == birth { kill(pid, SIGKILL) } }
+        #expect(BackgroundProcessBirth.read(pid) != nil)
+        #expect(!(await service.shutdown(timeout: .milliseconds(100))))
+        let commands = try Data(contentsOf: root.appending(path: "commands"))
+        for _ in 0..<300 where service.pendingOperationCount > 0 || BackgroundProcessBirth.read(pid) != nil {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(service.pendingOperationCount == 0)
+        #expect(BackgroundProcessBirth.read(pid) == nil)
+        #expect(try Data(contentsOf: root.appending(path: "commands")) == commands)
+        #expect(!FileManager.default.fileExists(atPath: root.appending(path: "outcome").path))
+        #expect(FileManager.default.fileExists(atPath: marker.path))
+    }
+
+    @Test @MainActor func failedFolderSelectionPreservesPreviousServiceBinding() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        let scripts = root.appending(path: "scripts")
+        try FileManager.default.createDirectory(at: scripts, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appending(path: "custom")
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: source.appending(path: "protocol.json"))
+        let status = "{\"kind\":\"stopped\",\"protocol_hash\":\"\(liveHash)\",\"updated_at\":\"2026-09-21T12:00:00Z\",\"evaluated_at\":null,\"reasons\":[],\"suggestion\":null}"
+        try "if [ \"$1\" = status ]; then printf '%s\\n' '\(status)'; else exit 1; fi\n".write(
+            to: scripts.appending(path: "run_live_paper_signals.py"), atomically: true, encoding: .utf8)
+        let service = LivePaperSignalService()
+        await service.open(directory: source, sourceRoot: root, sourcePython: URL(fileURLWithPath: "/bin/sh"))
+        let retained = try #require(service.selectedSource)
+        await service.open(directory: root.appending(path: "missing"), sourceRoot: root, sourcePython: URL(fileURLWithPath: "/bin/sh"))
+        #expect(service.selectedSource == retained)
+        #expect(service.directory == source)
+        #expect(service.message != nil)
+    }
+
     @Test @MainActor func deliveryRechecksRetainedStatusAfterPermissionWait() async throws {
         // The CLI fixture is an external process boundary. The real native
         // controller, strict decoders, permission gate and outcome command run.
-        for invalidKind in ["failed", "abstaining", "stale"] {
+        for invalidKind in ["failed", "abstaining", "stale", "shutdown"] {
             let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             defer { try? FileManager.default.removeItem(at: directory) }
@@ -261,6 +346,7 @@ private func liveDecode(_ payload: [String: Any], now: Date = liveNow) throws ->
             try JSONSerialization.data(withJSONObject: stopped).write(to: stateURL)
             let script = directory.appending(path: "run_live_paper_signals.py")
             try """
+            printf '%s\\n' "$1" >> "$3/commands"
             case "$1" in
               start) while [ ! -f "$3/stop" ]; do sleep 0.1; done ;;
               stop) touch "$3/stop"; cat "$3/status.json" ;;
@@ -298,6 +384,19 @@ private func liveDecode(_ payload: [String: Any], now: Date = liveNow) throws ->
                 try? await Task.sleep(for: .milliseconds(20))
             }
             #expect(delivery.pending != nil)
+            if invalidKind == "shutdown" {
+                #expect(!(await service.shutdown(timeout: .milliseconds(100))))
+                let commands = try Data(contentsOf: directory.appending(path: "commands"))
+                delivery.pending?.resume(); delivery.pending = nil
+                for _ in 0..<250 where service.pendingOperationCount > 0 {
+                    try? await Task.sleep(for: .milliseconds(10))
+                }
+                #expect(service.pendingOperationCount == 0)
+                #expect(!delivery.scheduled)
+                #expect(try Data(contentsOf: directory.appending(path: "commands")) == commands)
+                #expect(!FileManager.default.fileExists(atPath: directory.appending(path: "outcomes").path))
+                continue
+            }
             stopped["kind"] = invalidKind; stopped["updated_at"] = generated
             stopped["reasons"] = ["provider_unavailable"]
             try JSONSerialization.data(withJSONObject: stopped).write(to: stateURL, options: .atomic)

@@ -11,11 +11,16 @@ import Testing
     try await exerciseCollectorStop(externalHolder: false)
 }
 
-@MainActor private func exerciseCollectorStop(externalHolder: Bool) async throws {
+@Test @MainActor func livePaperEarlyContenderExitPublishesTerminationAndCanRetryWithoutAffectingHolder() async throws {
+    try await exerciseCollectorStop(externalHolder: true, exitContender: true)
+}
+
+@MainActor private func exerciseCollectorStop(externalHolder: Bool, exitContender: Bool = false) async throws {
     let root = FileManager.default.temporaryDirectory.appending(path: "native-collector-" + UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
     try Data("{}".utf8).write(to: root.appending(path: "protocol.json"))
+    if exitContender { try Data().write(to: root.appending(path: "exit-contender")) }
     let script = root.appending(path: "run_live_paper_signals.py")
     let code = #"""
 import fcntl, json, os, sys, time
@@ -33,6 +38,7 @@ elif command in ('external', 'start'):
     with open(os.path.join(root, 'live-paper-signal.lock'), 'a+b') as lock:
         if command == 'start' and exists('external-ready'):
             write('contender-ready')
+            if exists('exit-contender'): sys.exit(3)
             while True: time.sleep(.01)  # Deterministic pre-acquisition barrier.
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         write('external-ready' if command == 'external' else 'owned-ready')
@@ -62,9 +68,21 @@ else: sys.exit(1)
     }
     if externalHolder { try await waitFor("external-ready") }
     let service = LivePaperSignalService()
-    await service.start(configuration: .init(projectRoot: root, executable: URL(fileURLWithPath: "/usr/bin/python3"),
-        script: script, directory: root, protocolHash: String(repeating: "a", count: 64)))
+    var terminations = 0
+    service.onTermination = { _ in terminations += 1 }
+    let config = LivePaperSignalConfiguration(projectRoot: root, executable: URL(fileURLWithPath: "/usr/bin/python3"),
+        script: script, directory: root, protocolHash: String(repeating: "a", count: 64))
+    await service.start(configuration: config)
     try await waitFor(externalHolder ? "contender-ready" : "owned-ready")
+    if exitContender {
+        for expected in 1...2 {
+            for _ in 0..<300 where terminations < expected { try await Task.sleep(for: .milliseconds(10)) }
+            #expect(terminations == expected)
+            #expect(!service.isRunning)
+            #expect(external.isRunning)
+            if expected == 1 { await service.start(configuration: config) }
+        }
+    }
     _ = await service.shutdown(timeout: .milliseconds(500))
     #expect(!service.isRunning)
     #expect(service.state == nil)

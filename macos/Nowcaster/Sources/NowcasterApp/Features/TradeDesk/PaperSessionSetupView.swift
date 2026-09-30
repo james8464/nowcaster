@@ -18,9 +18,11 @@ struct PaperSessionSetupView: View {
                 Spacer()
                 if model.livePaperSignals.isBusy { ProgressView().controlSize(.small) }
                 Button("Set Up Paper Desk") {
-                    Task { await model.livePaperSignals.createOrResumeDesk(sourceRoot: settings.configuration.projectRoot,
-                                                                          sourcePython: settings.configuration.pythonExecutable) }
-                }.disabled(model.livePaperSignals.isRunning || model.livePaperSignals.isBusy)
+                    Task {
+                        model.paperSession.configure(settings.configuration)
+                        await model.paperSession.chooseSource(directory: LivePaperSignalService.defaultDirectory, setup: true)
+                    }
+                }.disabled(!model.paperSession.canSelectSource || model.livePaperSignals.isBusy)
                     .accessibilityIdentifier("paperSignals.setup")
                 Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
             }

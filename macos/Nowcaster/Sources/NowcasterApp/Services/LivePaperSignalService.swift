@@ -71,6 +71,7 @@ final class LivePaperSignalService: PaperSessionCollecting {
         AppStorageLocations.root.appending(path: "PaperResearch/paper-desk-v1", directoryHint: .isDirectory)
     }
     private(set) var isRunning = false
+    var onTermination: (@MainActor (String) -> Void)?
     private(set) var isBusy = false
     private(set) var notificationsEnabled = false
     private(set) var state: LivePaperSignalState?
@@ -90,6 +91,10 @@ final class LivePaperSignalService: PaperSessionCollecting {
     @ObservationIgnored private var startingCommand: BackgroundProcessHandle?
     @ObservationIgnored private var commandProcesses: [UUID: BackgroundProcessHandle] = [:]
     @ObservationIgnored private var commandsAllowed = true
+    @ObservationIgnored private var drainCount = 0
+    private var draining: Bool { drainCount > 0 }
+    @ObservationIgnored private var operations: Set<UUID> = []
+    var pendingOperationCount: Int { operations.count }
     @ObservationIgnored private var monitor: Task<Void, Never>?
     @ObservationIgnored private var configuration: LivePaperSignalConfiguration?
     @ObservationIgnored private var logHandle: FileHandle?
@@ -106,6 +111,9 @@ final class LivePaperSignalService: PaperSessionCollecting {
     }
 
     func openNotificationEvidence(materialKey: String, sourceRoot: URL, sourcePython: URL) async {
+        guard commandsAllowed else { return }
+        let operation = UUID(); operations.insert(operation)
+        defer { operations.remove(operation) }
         let request = UUID()
         evidenceRequest = request
         notificationEvidence = nil; notificationEvidenceDirectory = nil
@@ -115,7 +123,7 @@ final class LivePaperSignalService: PaperSessionCollecting {
             let config = try LivePaperSignalConfiguration.application(directory: location.directory,
                 protocolHash: location.protocolHash, sourceRoot: sourceRoot, sourcePython: sourcePython)
             try config.validate()
-            let evidence = try await Self.retainedNotification(location, configuration: config)
+            let evidence = try await retainedNotification(location, configuration: config)
             guard evidenceRequest == request else { return }
             notificationEvidence = evidence; notificationEvidenceDirectory = location.directory
             notificationEvidenceMessage = nil
@@ -126,13 +134,15 @@ final class LivePaperSignalService: PaperSessionCollecting {
     }
 
     func canPresentPaperNotification(materialKey: String) async -> Bool {
-        guard notificationsEnabled, let config = configuration, let child = process, child.isRunning else { return false }
+        guard commandsAllowed, notificationsEnabled, let config = configuration, let child = process, child.isRunning else { return false }
+        let operation = UUID(); operations.insert(operation)
+        defer { operations.remove(operation) }
         do {
             let location = try evidenceStore.lookup(materialKey)
             guard location.protocolHash == config.protocolHash,
                   location.directory.resolvingSymlinksInPath() == config.directory.resolvingSymlinksInPath() else { return false }
-            let evidence = try await Self.retainedNotification(location, configuration: config)
-            let data = try await Self.command(config, "status")
+            let evidence = try await retainedNotification(location, configuration: config)
+            let data = try await ownedCommand(config, "status")
             let current = try LivePaperSignalState.decode(data, protocolHash: config.protocolHash, now: Date())
             return notificationsEnabled && !Task.isCancelled && process === child && child.isRunning
                 && configuration?.directory == config.directory && configuration?.protocolHash == config.protocolHash
@@ -141,21 +151,19 @@ final class LivePaperSignalService: PaperSessionCollecting {
         } catch { return false }
     }
 
-    private static func retainedNotification(_ location: PaperNotificationLocation,
+    private func retainedNotification(_ location: PaperNotificationLocation,
         configuration: LivePaperSignalConfiguration) async throws -> LivePaperNotificationEvidence {
-        let data = try await command(configuration, "notification-evidence", extra: ["--protocol-hash",
+        let data = try await ownedCommand(configuration, "notification-evidence", extra: ["--protocol-hash",
             location.protocolHash, "--material-key", location.materialKey])
         return try LivePaperNotificationEvidence.decode(data, location: location)
     }
 
     func open(directory: URL, sourceRoot: URL, sourcePython: URL) async {
-        guard !isRunning, !isBusy else { return }
+        guard !isRunning, !isBusy, !draining else { return }
         commandsAllowed = true
         let epoch = launchEpoch
         isBusy = true
         defer { isBusy = false }
-        state = nil; events = []; providerHealth = nil; configuration = nil; self.directory = nil
-        decisionEvidence = nil; decisionMessage = nil; lastDecisionRead = nil
         do {
             if let root = AppStorageLocations.acceptanceRoot,
                !directory.resolvingSymlinksInPath().path.hasPrefix(root.path + "/") {
@@ -169,15 +177,19 @@ final class LivePaperSignalService: PaperSessionCollecting {
             guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let identity = root["protocol_hash"] as? String else { throw LivePaperServiceError.invalidConfiguration }
             let current = try LivePaperSignalState.decode(data, protocolHash: identity, now: Date())
-            configuration = try LivePaperSignalConfiguration.application(directory: directory,
+            let selected = try LivePaperSignalConfiguration.application(directory: directory,
                 protocolHash: current.protocolHash, sourceRoot: sourceRoot, sourcePython: sourcePython)
+            let history = try Self.readHistory(directory)
+            let health = try Self.readProviderHealth(directory, protocolHash: current.protocolHash)
+            configuration = selected
             self.directory = directory
             state = current
-            events = try Self.readHistory(directory)
-            providerHealth = try Self.readProviderHealth(directory, protocolHash: current.protocolHash)
+            events = history; providerHealth = health
+            decisionEvidence = nil; decisionMessage = nil; lastDecisionRead = nil
             if let configuration { await readDecisionEvidence(configuration) }
+            guard epoch == launchEpoch, commandsAllowed else { return }
             message = nil
-        } catch { configuration = nil; self.directory = nil; state = nil; events = []; message = error.localizedDescription }
+        } catch { if epoch == launchEpoch { message = error.localizedDescription } }
     }
 
     func startSelected() async {
@@ -186,7 +198,7 @@ final class LivePaperSignalService: PaperSessionCollecting {
     }
 
     func createOrResumeDesk(sourceRoot: URL, sourcePython: URL) async {
-        guard !isRunning, !isBusy else { return }
+        guard !isRunning, !isBusy, !draining else { return }
         commandsAllowed = true
         let epoch = launchEpoch
         isBusy = true
@@ -214,7 +226,7 @@ final class LivePaperSignalService: PaperSessionCollecting {
     }
 
     func start(configuration: LivePaperSignalConfiguration) async {
-        guard !isRunning, !isBusy else { return }
+        guard !isRunning, !isBusy, !draining else { return }
         commandsAllowed = true
         isBusy = true
         let epoch = UUID(); launchEpoch = epoch
@@ -280,13 +292,25 @@ final class LivePaperSignalService: PaperSessionCollecting {
         }
         guard selectedSource == source else { throw BackgroundResearchError.identityMismatch }
     }
+    func chooseSource(directory: URL, configuration: EngineConfiguration, setup: Bool) async throws -> PaperSessionSource {
+        guard !isRunning, !isBusy, !draining else { throw LivePaperServiceError.commandFailed }
+        if setup { await createOrResumeDesk(sourceRoot: configuration.projectRoot, sourcePython: configuration.pythonExecutable) }
+        else { await open(directory: directory, sourceRoot: configuration.projectRoot, sourcePython: configuration.pythonExecutable) }
+        guard message == nil, let source = selectedSource, source.directory == directory else {
+            throw LivePaperServiceError.commandFailed
+        }
+        return source
+    }
     func startCollection() async throws {
         guard configuration != nil else { throw BackgroundResearchError.missingRegistration }
         await startSelected()
         guard isRunning else { throw LivePaperServiceError.commandFailed }
     }
     func shutdown(timeout: Duration) async -> Bool {
+        drainCount += 1
+        defer { drainCount -= 1 }
         commandsAllowed = false
+        authorizationRequest = UUID(); evidenceRequest = UUID(); notificationsEnabled = false
         launchEpoch = UUID(); monitor?.cancel(); monitor = nil
         isRunning = false; state = nil
         let clock = ContinuousClock(), deadline = ContinuousClock.now + min(max(timeout, .zero), .seconds(30))
@@ -305,7 +329,10 @@ final class LivePaperSignalService: PaperSessionCollecting {
         // directory-wide stop command: it could stop an unrelated lock holder.
         guard let child = process, child.isRunning else {
             let stopped = await pending?.shutdown(timeout: max(.zero, clock.now.duration(to: deadline))) ?? true
-            startingCommand = nil; return await commandDrain.value && stopped
+            startingCommand = nil
+            let commandsStopped = await commandDrain.value
+            let settled = await settleOperations(until: deadline)
+            return commandsStopped && stopped && settled
         }
         let birth = processBirth
         func stillOwned() -> Bool {
@@ -321,14 +348,25 @@ final class LivePaperSignalService: PaperSessionCollecting {
         startingCommand = nil
         message = stopped ? "Paper collection stopped locally. Retained backend state has not been verified."
             : "Paper collection was interrupted. Retained backend state has not been verified."
-        return await commandDrain.value && stopped
+        let commandsStopped = await commandDrain.value
+        let settled = await settleOperations(until: deadline)
+        return commandsStopped && stopped && settled
+    }
+
+    private func settleOperations(until deadline: ContinuousClock.Instant) async -> Bool {
+        while !operations.isEmpty, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return operations.isEmpty
     }
 
     func setNotificationsEnabled(_ enabled: Bool) async {
         let request = UUID()
         authorizationRequest = request
         notificationsEnabled = false
-        guard enabled else { return }
+        guard enabled, commandsAllowed else { return }
+        let operation = UUID(); operations.insert(operation)
+        defer { operations.remove(operation) }
         let allowed = await notifications.requestPaperResearchAuthorization()
         guard authorizationRequest == request else { return }
         notificationsEnabled = allowed
@@ -337,6 +375,8 @@ final class LivePaperSignalService: PaperSessionCollecting {
 
     func refresh() async {
         guard commandsAllowed, let configuration, process?.isRunning == true else { state = nil; return }
+        let epoch = launchEpoch, operation = UUID(); operations.insert(operation)
+        defer { operations.remove(operation) }
         do {
             let data = try await ownedCommand(configuration, "status")
             guard commandsAllowed, !Task.isCancelled, process?.isRunning == true else { return }
@@ -346,14 +386,16 @@ final class LivePaperSignalService: PaperSessionCollecting {
             if lastDecisionRead.map({ Date().timeIntervalSince($0) >= 5 }) ?? true {
                 await readDecisionEvidence(configuration)
             }
+            guard epoch == launchEpoch, commandsAllowed, !Task.isCancelled else { return }
             message = nil
             if notificationsEnabled, state?.currentSuggestion(now: Date(), isRunning: isRunning) != nil {
                 await notify(configuration)
             }
-        } catch { state = nil; providerHealth = nil; decisionEvidence = nil; message = error.localizedDescription }
+        } catch { if epoch == launchEpoch, commandsAllowed { state = nil; providerHealth = nil; decisionEvidence = nil; message = error.localizedDescription } }
     }
 
     private func readDecisionEvidence(_ configuration: LivePaperSignalConfiguration) async {
+        let epoch = launchEpoch
         lastDecisionRead = Date()
         do {
             let data = try await ownedCommand(configuration, "decision-context")
@@ -361,22 +403,25 @@ final class LivePaperSignalService: PaperSessionCollecting {
             guard self.configuration?.directory == configuration.directory, !Task.isCancelled else { return }
             decisionEvidence = evidence; decisionMessage = nil
         } catch {
+            guard commandsAllowed, launchEpoch == epoch else { return }
             decisionEvidence = nil
             decisionMessage = "Decision context is unavailable. Retained evidence could not be validated."
         }
     }
 
     private func notify(_ configuration: LivePaperSignalConfiguration) async {
+        let epoch = launchEpoch
+        guard commandsAllowed, !Task.isCancelled else { return }
         do {
             let reservedSuggestion = state?.suggestion
-            let data = try await Self.command(configuration, "notification", extra: ["--enabled", "--protocol-hash", configuration.protocolHash])
+            let data = try await ownedCommand(configuration, "notification", extra: ["--enabled", "--protocol-hash", configuration.protocolHash])
             if String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) == "null" { return }
             let notice = try LivePaperNotification.decodeReservation(data, protocolHash: configuration.protocolHash)
             // Permission requests, process calls and delivery each cross time boundaries.
             // Re-read current evidence after reservation and recheck at actual scheduling.
             var delivered = false
             do {
-                let latest = try await Self.command(configuration, "status")
+                let latest = try await ownedCommand(configuration, "status")
                 let status = try LivePaperSignalState.decode(latest, protocolHash: configuration.protocolHash, now: Date())
                 let accepted = notificationsEnabled && !Task.isCancelled && process?.isRunning == true
                     && status.suggestion == reservedSuggestion && notice.isFresh(at: Date())
@@ -386,11 +431,11 @@ final class LivePaperSignalService: PaperSessionCollecting {
                 if accepted {
                     try evidenceStore.record(notice, directory: configuration.directory)
                     delivered = await notifications.deliverPaperResearch(notice) { [weak self] in
-                        guard let self else { return false }
+                        guard let self, self.commandsAllowed, self.launchEpoch == epoch, !Task.isCancelled else { return false }
                         do {
                             // The monitor is suspended while macOS checks notification
                             // settings. Its cached state cannot authorize scheduling.
-                            let currentData = try await Self.command(configuration, "status")
+                            let currentData = try await self.ownedCommand(configuration, "status")
                             let current = try LivePaperSignalState.decode(currentData,
                                 protocolHash: configuration.protocolHash, now: Date())
                             self.state = current
@@ -399,19 +444,25 @@ final class LivePaperSignalService: PaperSessionCollecting {
                                 && current.currentSuggestion(now: Date(), isRunning: self.isRunning) != nil
                                 && notice.isFresh(at: Date())
                         } catch {
+                            guard self.launchEpoch == epoch, self.commandsAllowed else { return false }
                             self.state = nil
                             self.message = "Paper notification withheld: \(error.localizedDescription)"
                             return false
                         }
                     }
                 }
-            } catch { message = "Paper notification withheld: \(error.localizedDescription)" }
-            _ = try await Self.command(configuration, "notification-outcome", extra: ["--protocol-hash", configuration.protocolHash,
+            } catch { if launchEpoch == epoch, commandsAllowed { message = "Paper notification withheld: \(error.localizedDescription)" } }
+            guard launchEpoch == epoch, commandsAllowed, !Task.isCancelled else { return }
+            _ = try await ownedCommand(configuration, "notification-outcome", extra: ["--protocol-hash", configuration.protocolHash,
                 "--material-key", notice.materialKey, "--outcome", delivered ? "delivered" : "failed"])
-        } catch { message = "Paper notification withheld: \(error.localizedDescription)" }
+        } catch { if launchEpoch == epoch, commandsAllowed { message = "Paper notification withheld: \(error.localizedDescription)" } }
     }
 
     private func finish(status: Int32) {
+        let unexpected = commandsAllowed
+        commandsAllowed = false; launchEpoch = UUID()
+        authorizationRequest = UUID(); evidenceRequest = UUID(); notificationsEnabled = false
+        for command in commandProcesses.values { command.requestStop() }
         isRunning = false; state = nil
         monitor?.cancel(); monitor = nil
         try? logHandle?.close(); logHandle = nil
@@ -420,6 +471,7 @@ final class LivePaperSignalService: PaperSessionCollecting {
         if let terminationObserver { NotificationCenter.default.removeObserver(terminationObserver) }
         terminationObserver = nil
         if status != 0 { message = "The paper research service stopped. Review paper-signal-app.log in the research directory." }
+        if unexpected { onTermination?(message ?? "Paper collection ended. Start to retry; retained evidence is unchanged.") }
     }
 
     private static func readHistory(_ directory: URL) throws -> [LivePaperSignalEvent] {
@@ -459,7 +511,7 @@ final class LivePaperSignalService: PaperSessionCollecting {
         return report.providerHealth
     }
 
-    nonisolated static func command(_ configuration: LivePaperSignalConfiguration, _ command: String, extra: [String] = [], owner: BackgroundProcessHandle? = nil) async throws -> Data {
+    nonisolated private static func command(_ configuration: LivePaperSignalConfiguration, _ command: String, extra: [String] = [], owner: BackgroundProcessHandle) async throws -> Data {
         try await Task.detached {
             let child = Process(), pipe = Pipe()
             child.executableURL = configuration.executable
@@ -467,7 +519,7 @@ final class LivePaperSignalService: PaperSessionCollecting {
             child.currentDirectoryURL = configuration.projectRoot
             child.environment = LivePaperSignalConfiguration.environment
             child.standardOutput = pipe; child.standardError = FileHandle.nullDevice
-            if let owner { try owner.launch(child) } else { try child.run() }
+            try owner.launch(child)
             let timeout = DispatchWorkItem { if child.isRunning { child.terminate() } }
             DispatchQueue.global().asyncAfter(deadline: .now() + 15, execute: timeout)
             defer { timeout.cancel(); try? pipe.fileHandleForReading.close() }
@@ -483,10 +535,13 @@ final class LivePaperSignalService: PaperSessionCollecting {
     }
 
     private func ownedCommand(_ configuration: LivePaperSignalConfiguration, _ command: String, extra: [String] = []) async throws -> Data {
-        guard commandsAllowed else { throw CancellationError() }
+        guard commandsAllowed, !Task.isCancelled else { throw CancellationError() }
+        let epoch = launchEpoch
         let id = UUID(), owner = BackgroundProcessHandle()
         commandProcesses[id] = owner
         defer { commandProcesses[id] = nil }
-        return try await Self.command(configuration, command, extra: extra, owner: owner)
+        let data = try await Self.command(configuration, command, extra: extra, owner: owner)
+        guard commandsAllowed, launchEpoch == epoch, !Task.isCancelled else { throw CancellationError() }
+        return data
     }
 }

@@ -123,8 +123,10 @@ struct LivePaperSignalsView: View {
                 selectionMessage = nil
                 switch importKind {
                 case .directory:
-                    Task { await service.open(directory: file, sourceRoot: settings.configuration.projectRoot,
-                                              sourcePython: settings.configuration.pythonExecutable) }
+                    Task {
+                        model.paperSession.configure(settings.configuration)
+                        await model.paperSession.chooseSource(directory: file)
+                    }
                 case .calendar:
                     Task { await service.importCalendar(file) }
                 }
@@ -140,12 +142,14 @@ struct LivePaperSignalsView: View {
         if service.directory == nil {
             Button("Set Up Paper Desk", systemImage: "plus.circle") {
                 selectionMessage = nil
-                Task { await service.createOrResumeDesk(sourceRoot: settings.configuration.projectRoot,
-                                                       sourcePython: settings.configuration.pythonExecutable) }
-            }.disabled(service.isRunning || service.isBusy).accessibilityIdentifier("paperSignals.setup")
+                Task {
+                    model.paperSession.configure(settings.configuration)
+                    await model.paperSession.chooseSource(directory: LivePaperSignalService.defaultDirectory, setup: true)
+                }
+            }.disabled(!model.paperSession.canSelectSource || service.isBusy).accessibilityIdentifier("paperSignals.setup")
         }
         Button("Choose Research Folder…", systemImage: "folder") { importKind = .directory; choosingFile = true }
-            .disabled(service.isRunning || service.isBusy)
+            .disabled(!model.paperSession.canSelectSource || service.isBusy)
         PaperSessionAction(model: model, settings: settings)
         if let directory = service.directory {
             Button("Import Calendar…", systemImage: "calendar.badge.plus") { importKind = .calendar; choosingFile = true }

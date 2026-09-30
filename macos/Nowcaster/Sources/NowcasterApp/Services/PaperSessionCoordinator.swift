@@ -5,11 +5,17 @@ import Observation
     var isRunning: Bool { get }
     var selectedSource: PaperSessionSource? { get }
     var collectionHealthy: Bool { get }
+    var onTermination: (@MainActor (String) -> Void)? { get set }
+    func chooseSource(directory: URL, configuration: EngineConfiguration, setup: Bool) async throws -> PaperSessionSource
     func selectSource(_ source: PaperSessionSource, configuration: EngineConfiguration) async throws
     func startCollection() async throws
     func shutdown(timeout: Duration) async -> Bool
 }
 extension PaperSessionCollecting {
+    var onTermination: (@MainActor (String) -> Void)? { get { nil } set {} }
+    func chooseSource(directory: URL, configuration: EngineConfiguration, setup: Bool) async throws -> PaperSessionSource {
+        throw BackgroundResearchError.missingRegistration
+    }
     var collectionHealthy: Bool { isRunning }
     func selectSource(_ source: PaperSessionSource, configuration: EngineConfiguration) async throws {
         guard selectedSource == source else { throw BackgroundResearchError.identityMismatch }
@@ -54,6 +60,10 @@ extension PaperSessionResearching {
     @ObservationIgnored private var resources = BackgroundResourceSnapshot.healthy
     @ObservationIgnored private var shutdownTask: Task<Bool, Never>?
     @ObservationIgnored private var learningDrain: Task<Bool, Never>?
+    @ObservationIgnored private var learningDrainID: UUID?
+    @ObservationIgnored private var exitDrain: Task<Void, Never>?
+    @ObservationIgnored private var selecting = false
+    @ObservationIgnored private var selectionWaiters: [CheckedContinuation<Void, Never>] = []
 
     init(collector: any PaperSessionCollecting, research: any PaperSessionResearching,
          preferences: PaperSessionPreferences = .init(), configuration: EngineConfiguration,
@@ -63,6 +73,7 @@ extension PaperSessionResearching {
         self.configuration = configuration; self.monitor = monitor; self.store = store; self.explanation = explanation
         self.resources = monitor.current()
         research.onStatus = { [weak self] status in self?.received(status) }
+        collector.onTermination = { [weak self] message in self?.collectorExited(message) }
         research.onFailure = { [weak self] message in
             guard let self, self.active, !self.userPaused else { return }
             self.state = .blocked(message); self.explanation = message
@@ -71,8 +82,74 @@ extension PaperSessionResearching {
 
     func configure(_ configuration: EngineConfiguration) { self.configuration = configuration }
 
+    var canSelectSource: Bool {
+        !active && !collector.isRunning && !selecting && state != .starting && state != .pausing
+            && exitDrain == nil && learningDrain == nil && shutdownTask == nil
+    }
+
+    func chooseSource(directory: URL, setup: Bool = false) async {
+        guard canSelectSource else { return }
+        selecting = true
+        let token = epoch
+        defer { selectionFinished() }
+        do {
+            let source = try await collector.chooseSource(directory: directory, configuration: configuration, setup: setup)
+            guard epoch == token else { return }
+            var selected = preferences; selected.select(source)
+            do { try store?.save(selected) }
+            catch {
+                // Selection and retained binding are one user operation. Restore
+                // the previous service source if preferences could not commit.
+                if let previous = preferences.source {
+                    let restored = try await collector.chooseSource(directory: previous.directory, configuration: configuration, setup: false)
+                    guard restored == previous else { throw BackgroundResearchError.identityMismatch }
+                }
+                throw error
+            }
+            guard epoch == token else { return }
+            preferences = selected; explanation = nil; state = .idle
+        } catch { if epoch == token { explanation = error.localizedDescription; state = .blocked(error.localizedDescription) } }
+    }
+
+    func loadSelectedSource(defaultDirectory: URL) async {
+        guard canSelectSource, collector.selectedSource == nil else { return }
+        if let retained = preferences.source {
+            selecting = true
+            let token = epoch
+            defer { selectionFinished() }
+            do { try await collector.selectSource(retained, configuration: configuration) }
+            catch { if epoch == token { explanation = error.localizedDescription; state = .blocked(error.localizedDescription) } }
+        } else if FileManager.default.fileExists(atPath: defaultDirectory.appending(path: "protocol.json").path) {
+            await chooseSource(directory: defaultDirectory)
+        }
+    }
+
+    private func selectionFinished() {
+        selecting = false
+        let waiters = selectionWaiters; selectionWaiters = []
+        for waiter in waiters { waiter.resume() }
+    }
+
+    private func collectorExited(_ message: String) {
+        guard !userPaused, shutdownTask == nil, active || state == .starting else { return }
+        let token = UUID(); epoch = token; active = false; automaticPause = false; monitor.stop()
+        state = .pausing; explanation = message
+        exitDrain = Task { @MainActor in
+            async let researchStopped = research.shutdown(timeout: .seconds(30))
+            async let collectorStopped = collector.shutdown(timeout: .seconds(30))
+            let result = await (researchStopped, collectorStopped)
+            exitDrain = nil
+            guard epoch == token, !userPaused else { return }
+            state = .blocked(result.0 && result.1 ? message : BackgroundResearchError.interrupted.localizedDescription)
+        }
+    }
+
     func start() async {
-        guard !active, state != .starting, state != .pausing, shutdownTask == nil else { return }
+        let beforeSelection = epoch
+        if selecting { await withCheckedContinuation { selectionWaiters.append($0) } }
+        guard epoch == beforeSelection else { return }
+        guard !active, !selecting, exitDrain == nil, learningDrain == nil,
+              state != .starting, state != .pausing, shutdownTask == nil else { return }
         let token = UUID(); epoch = token; userPaused = false; state = .starting; explanation = nil
         do {
             if let source = preferences.source {
@@ -108,7 +185,7 @@ extension PaperSessionResearching {
             preferences.campaignID = UUID().uuidString
             preferences.createdAt = ISO8601DateFormatter().string(from: Date())
             let root = PaperSessionPreferenceStore.application.url.deletingLastPathComponent().appending(path: "BackgroundResearch")
-            preferences.registryURL = root.appending(path: "registry")
+            preferences.registryURL = preferences.registryURL ?? root.appending(path: "registry")
             preferences.manifestURL = root.appending(path: "manifests/\(preferences.campaignID!).json")
             // Persist preparation identity before starting the cancellable helper.
             try persist()
@@ -165,9 +242,10 @@ extension PaperSessionResearching {
                 return await research.shutdown(timeout: .seconds(30))
             }
             learningDrain = drain
+            let drainID = UUID(); learningDrainID = drainID
             let stopped = await drain.value
+            if learningDrainID == drainID { learningDrain = nil; learningDrainID = nil }
             guard epoch == token, active, !userPaused, !preferences.learningEnabled else { return }
-            learningDrain = nil
             state = stopped ? .collecting : .blocked(BackgroundResearchError.interrupted.localizedDescription)
         } else {
             state = .starting

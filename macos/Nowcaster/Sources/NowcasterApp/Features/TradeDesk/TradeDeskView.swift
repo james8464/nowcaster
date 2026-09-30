@@ -35,19 +35,17 @@ struct TradeDeskView: View {
                 importMessage = nil
                 Task {
                     if calendarImport { await model.livePaperSignals.importCalendar(url) }
-                    else { await model.livePaperSignals.open(directory: url, sourceRoot: settings.configuration.projectRoot,
-                                                             sourcePython: settings.configuration.pythonExecutable) }
+                    else {
+                        model.paperSession.configure(settings.configuration)
+                        await model.paperSession.chooseSource(directory: url)
+                    }
                 }
             case let .failure(error): importMessage = error.localizedDescription
             }
         }
         .task {
-            let directory = LivePaperSignalService.defaultDirectory
-            if model.livePaperSignals.directory == nil,
-               FileManager.default.fileExists(atPath: directory.appending(path: "protocol.json").path) {
-                await model.livePaperSignals.open(directory: directory, sourceRoot: settings.configuration.projectRoot,
-                                                  sourcePython: settings.configuration.pythonExecutable)
-            }
+            model.paperSession.configure(settings.configuration)
+            await model.paperSession.loadSelectedSource(defaultDirectory: LivePaperSignalService.defaultDirectory)
         }
     }
 
@@ -61,7 +59,7 @@ struct TradeDeskView: View {
                     .accessibilityIdentifier("tradeDesk.setup")
                 Menu("Data") {
                     Button("Choose Research Folder…") { calendarImport = false; importing = true }
-                        .disabled(model.livePaperSignals.isRunning || model.livePaperSignals.isBusy)
+                        .disabled(!model.paperSession.canSelectSource || model.livePaperSignals.isBusy)
                     Button("Import Calendar…") { calendarImport = true; importing = true }
                         .disabled(model.livePaperSignals.directory == nil || model.livePaperSignals.isBusy)
                     if let directory = model.livePaperSignals.directory {

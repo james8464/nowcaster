@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -127,12 +128,55 @@ def load_learning_data(campaign: LearningCampaign, batch: LearningBatch, *, now:
     )
 
 
+def _rule_features(frame, session, warmup_bars):
+    """Frozen grammar features on one finalized, receipt-ordered prefix only."""
+    from src.strategies.indicators import adx, donchian_channels, ema, rolling_zscore, rsi, session_vwap
+
+    if not frame["finalized"].eq(True).all():
+        raise ValueError("rule features require finalized bars")
+    if not frame[["open", "high", "low", "close", "volume"]].map(math.isfinite).all().all():
+        raise ValueError("rule features require finite OHLCV observations")
+    for column in ("open_timestamp", "available_at"):
+        if not frame[column].is_monotonic_increasing or (
+            column == "open_timestamp" and frame[column].duplicated().any()
+        ):
+            raise ValueError("rule features require unique ordered bars and ordered receipts")
+    if not (frame["available_at"] >= frame["open_timestamp"] + pd.Timedelta(minutes=1)).all():
+        raise ValueError("rule features cannot precede bar finality")
+    frame = frame.copy()
+    frame["ema_12"] = ema(frame.close, 12)
+    frame["ema_26"] = ema(frame.close, 26)
+    frame["adx_14"] = adx(frame.high, frame.low, frame.close, 14)
+    frame["donchian_upper"], frame["donchian_lower"] = donchian_channels(frame.high, frame.low, 20)
+    frame["session_vwap"] = session_vwap(
+        frame.high, frame.low, frame.close, frame.volume, frame.open_timestamp, session
+    )
+    frame["rsi"] = rsi(frame.close, min(14, max(2, warmup_bars)))
+    frame["volume_zscore"] = rolling_zscore(frame.volume, min(20, max(3, warmup_bars)))
+    return frame
+
+
+def _rule_active(rule, frame):
+    # Missing operands must stay unavailable even under NOT or OR. Crossovers
+    # additionally require the previous observation, never a filled future value.
+    def available(node):
+        valid = pd.Series(True, index=frame.index)
+        if node.operator == "indicator":
+            return node.evaluate(frame).map(lambda value: pd.notna(value) and math.isfinite(value))
+        for child in node.children:
+            valid &= available(child)
+        if node.operator in ("cross_above", "cross_below"):
+            valid &= valid.shift(1, fill_value=False)
+        return valid
+
+    return rule.evaluate(frame).fillna(False).astype(bool) & available(rule)
+
+
 def evaluate_retained_payload(payload):
     """Use the existing receipt-causal long-only simulator and twice-cost stress."""
     from src.deep_research.evaluation import CandidatePathEvidence
     from src.research.round_two_runtime import _strategy_registry
     from src.research.round_two_walkforward import INITIAL_CASH, _signals, _simulate
-    from src.strategies.indicators import rolling_zscore, rsi
     from src.strategies.registry import RegisteredStrategy
 
     retained = payload.retained_input
@@ -154,9 +198,8 @@ def evaluate_retained_payload(payload):
         raise ValueError("strategy definition does not match the retained source")
 
     def rule_signal(spec, frame, context):
-        frame["rsi"] = rsi(frame["close"], min(14, max(2, spec.warmup_bars)))
-        frame["volume_zscore"] = rolling_zscore(frame["volume"], min(20, max(3, spec.warmup_bars)))
-        active = payload.candidate.rule.evaluate(frame).fillna(False).astype(bool)
+        frame = _rule_features(frame, context.session, spec.warmup_bars)
+        active = _rule_active(payload.candidate.rule, frame)
         return pd.DataFrame(
             {
                 "decision_timestamp": frame["available_at"],

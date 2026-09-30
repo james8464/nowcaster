@@ -5,6 +5,22 @@ import Testing
 @MainActor private final class Collector: PaperSessionCollecting {
     var isRunning = false
     var starts = 0
+    var onTermination: (@MainActor (String) -> Void)?
+    var exitsOnStart = false
+    var rejectSelection = false
+    var restoredSources: [PaperSessionSource] = []
+    var selectionBarrier: DrainBarrier?
+    func selectSource(_ source: PaperSessionSource, configuration: EngineConfiguration) async throws {
+        if let selectedSource, selectedSource != source { throw BackgroundResearchError.identityMismatch }
+        await selectionBarrier?.arrive("selection", timeout: .zero)
+        restoredSources.append(source); selectedSource = source
+    }
+    func chooseSource(directory: URL, configuration: EngineConfiguration, setup: Bool) async throws -> PaperSessionSource {
+        if rejectSelection { throw BackgroundResearchError.invalidPath }
+        let source = PaperSessionSource(directory: directory, protocolHash: String(repeating: directory.lastPathComponent == "B" ? "b" : "a", count: 64))
+        selectedSource = source
+        return source
+    }
     var suspended: CheckedContinuation<Void, Never>?
     var suspendStart = false
     var shutdownBarrier: DrainBarrier?
@@ -13,8 +29,107 @@ import Testing
         starts += 1
         if suspendStart { await withCheckedContinuation { suspended = $0 } }
         isRunning = true
+        if exitsOnStart { exit() }
     }
+    func exit() { isRunning = false; onTermination?("Owned collector exited") }
     func shutdown(timeout: Duration) async -> Bool { await shutdownBarrier?.arrive("collector", timeout: timeout); isRunning = false; return true }
+}
+
+@Test @MainActor func paperSessionOptedRestoreWaitsForInitialSavedSourceLoad() async {
+    let collector = Collector(), research = Research(), barrier = DrainBarrier()
+    let owner = session(collector, research, learning: false)
+    await owner.setResumeOnLaunch(true)
+    collector.selectedSource = nil; collector.selectionBarrier = barrier
+    let load = Task { await owner.loadSelectedSource(defaultDirectory: URL(fileURLWithPath: "/tmp/default")) }
+    while barrier.continuations.isEmpty { await Task.yield() }
+    let restore = Task { await owner.restoreIfOptedIn() }
+    for _ in 0..<100 { await Task.yield() }
+    #expect(collector.starts == 0)
+    barrier.release(); await load.value; await restore.value
+    #expect(collector.starts == 1)
+    #expect(collector.isRunning)
+    await owner.pause()
+}
+
+@Test @MainActor func paperSessionFolderBindingsSurviveRoundTripAndFailedSelection() async {
+    let collector = Collector(), research = Research()
+    let owner = session(collector, research)
+    await owner.start(); await owner.pause()
+    let original = owner.preferences
+    let b = URL(fileURLWithPath: "/tmp/B")
+    await owner.chooseSource(directory: b)
+    #expect(owner.preferences.source?.directory == b)
+    #expect(owner.preferences.campaignID == nil)
+    #expect(owner.preferences.registryURL == original.registryURL)
+    await owner.chooseSource(directory: original.source!.directory)
+    #expect(owner.preferences.campaignID == original.campaignID)
+    #expect(owner.preferences.campaignHash == original.campaignHash)
+    #expect(owner.preferences.manifestURL == original.manifestURL)
+    collector.rejectSelection = true
+    await owner.chooseSource(directory: b)
+    #expect(owner.preferences.source == original.source)
+    #expect(collector.selectedSource == original.source)
+    collector.rejectSelection = false
+    await owner.start()
+    await owner.chooseSource(directory: b)
+    #expect(owner.preferences.source == original.source)
+    await owner.pause()
+}
+
+@Test @MainActor func paperSessionStartupPrefersSavedCustomFolderAndRejectsSwitchWhileDraining() async {
+    let collector = Collector(), research = Research(), barrier = DrainBarrier()
+    let owner = session(collector, research)
+    let retained = owner.preferences.source
+    collector.selectedSource = nil
+    await owner.loadSelectedSource(defaultDirectory: URL(fileURLWithPath: "/tmp/not-the-saved-folder"))
+    #expect(collector.selectedSource == retained)
+    #expect(collector.restoredSources == [retained!])
+    await owner.start()
+    research.shutdownBarrier = barrier
+    let pause = Task { await owner.pause() }
+    while barrier.continuations.isEmpty { await Task.yield() }
+    #expect(!owner.canSelectSource)
+    await owner.chooseSource(directory: URL(fileURLWithPath: "/tmp/B"))
+    #expect(owner.preferences.source == retained)
+    barrier.release(); await pause.value
+    #expect(owner.canSelectSource)
+}
+
+@Test @MainActor func paperSessionRecoversOwnedCollectorExit() async {
+    for learning in [false, true] {
+        let collector = Collector(), research = Research()
+        let owner = session(collector, research, learning: learning)
+        await owner.start()
+        collector.exit()
+        for _ in 0..<100 { await Task.yield() }
+        #expect(!research.isRunning)
+        #expect(owner.state == .blocked("Owned collector exited"))
+        await owner.start()
+        #expect(collector.starts == 2)
+        #expect(collector.isRunning)
+        await owner.pause()
+        #expect(owner.state == .paused)
+    }
+}
+
+@Test @MainActor func paperSessionEarlyExitAndPauseWinOverLateExitDrain() async {
+    let collector = Collector(), research = Research(), barrier = DrainBarrier()
+    let owner = session(collector, research)
+    collector.exitsOnStart = true
+    await owner.start()
+    for _ in 0..<100 { await Task.yield() }
+    collector.exitsOnStart = false
+    await owner.start()
+    #expect(collector.isRunning)
+    research.shutdownBarrier = barrier
+    collector.exit()
+    for _ in 0..<100 { await Task.yield() }
+    let pause = Task { await owner.pause() }
+    for _ in 0..<100 { await Task.yield() }
+    barrier.release(); await pause.value
+    for _ in 0..<100 { await Task.yield() }
+    #expect(owner.state == .paused)
+    #expect(!research.isRunning)
 }
 
 @MainActor private final class Research: PaperSessionResearching {
@@ -107,8 +222,12 @@ import Testing
     barrier.continuations.removeLast().resume()
     await pause.value
     #expect(owner.state == .paused)
+    #expect(!owner.canSelectSource)
+    await owner.start()
+    #expect(collector.starts == 1)
     barrier.release(); await disable.value
     #expect(owner.state == .paused)
+    #expect(owner.canSelectSource)
     #expect(!collector.isRunning)
 }
 
