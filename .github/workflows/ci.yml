@@ -63,7 +63,8 @@ jobs:
       - name: Verify Swift toolchain
         run: swift --version
       - name: Swift tests
-        run: swift test --package-path macos/Nowcaster
+        # Shared MainActor fixture decoding must not starve unrelated lifecycle deadlines.
+        run: swift test --package-path macos/Nowcaster --no-parallel
       - name: Deterministic live-monitor replay
         run: make verify-live-monitor
       - name: Swift release build
