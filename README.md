@@ -23,6 +23,41 @@ calendar or quote timing evidence blocks fresh research suggestions. Public
 Binance ticker events supply timestamped best bid/ask prices and displayed sizes;
 stale, future-dated or malformed events cannot clear that gate.
 
+**Cost-aware advisor (new research policy, not yet installed):** A rising trend
+is not enough. The source-code advisor now estimates what would remain at the
+target, and what would be lost at the stop, after charging both entry and exit
+fees, slippage and spread at twice the declared assumptions. It stands aside
+if the target would not cover those costs or the net reward is smaller than
+the net risk. The latter is a fixed, conservative research choice—not a claim
+that 1:1 is optimal or that lower-ratio strategies cannot be profitable.
+
+This is a scenario calculation, not a prediction. For example, a target 1.5%
+above entry and a stop 1% below entry look like 1.5:1 before costs. With the
+paper desk's 10-basis-point fee and 5-basis-point slippage **per side**, doubled
+for stress, the sampled BTC/ETH quotes on 3 October yielded about 0.56:1 net.
+A stop-or-target-only model would need roughly 64% target hits just to break
+even. That is a **required** success rate, not an estimated success rate. Time
+exits, gaps and changing spreads make the real outcome different.
+
+The policy is named `trend-advisor-v2-cost-screen` and hashed into new advisor
+evidence. Old reports cannot silently switch to it: the existing manifest
+guard requires a separate round. No existing targets, fees, learning budgets,
+results or running session were changed to make a candidate pass. This
+source-only change does not replace the installed app or establish an edge;
+a separately recorded evaluation and deployment are still required. The
+earlier [140-hypothesis audit](docs/day-trading-opportunity-audit-2026-09-01.md)
+selected no strategy. Adding this filter does not turn those failures into wins.
+The model uses declared research costs, not account-specific fees or discounts;
+[Binance documents how actual spot commissions depend on the trade and account](https://github.com/binance/binance-spot-api-docs/blob/master/faqs/commission_faq.md).
+
+Source verification on 3 October 2026: 1,787 Python tests passed in 946 seconds;
+seven packaged-helper checks were explicitly skipped, not counted as passes.
+The preceding engine build was temporarily retained outside the build path and
+restored afterward; it was not represented as a build of this new policy.
+Fifteen native snapshot tests, formatting/lint, secret scanning and scoped review
+also passed. Generated fixture changes were verified to be provenance hashes
+only. These are software checks, not a strategy backtest or evidence of profit.
+
 For a qualified intraday alert, the required probability means “the target is reached before the protective stop within the declared horizon, after the entry decision.” A research model that only measures positive strategy returns cannot supply that probability: it remains research-only. Neither kind of estimate is a promise that a whole account will make money.
 
 ![Nowcaster Today view](docs/images/macos/today-light.png)

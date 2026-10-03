@@ -22,7 +22,8 @@ START = datetime(2026, 1, 5, tzinfo=UTC)
 
 
 def fixture():
-    candidate = RoundCandidate(symbol="BTCUSDT", strategy_id="test_trend")
+    # Explicitly sufficient synthetic payoff; the production default is not changed.
+    candidate = RoundCandidate(symbol="BTCUSDT", strategy_id="test_trend", target_bps=D(250))
     protocol = (
         ResearchRoundProtocol.default(round_id="advisor-test", starts_at=START - timedelta(days=4))
         .model_copy(update={"symbols": ("BTCUSDT",), "candidates": (candidate,)})
@@ -118,8 +119,23 @@ def test_clean_confirmed_trend_has_barrier_derived_research_levels():
     assert suggestion.entry_low == D("106.49")
     assert suggestion.entry_high == D("106.51")
     assert suggestion.invalidation == D("105.4449")
-    assert suggestion.target == D("108.10765")
+    assert suggestion.target == D("109.17275")
     assert suggestion.expires_at == rows[-1].available_at + timedelta(seconds=15)
+
+
+@pytest.mark.parametrize(
+    "target_bps,reason",
+    [(D("20"), "target_does_not_cover_costs"), (D("150"), "net_reward_below_risk")],
+)
+def test_confirmed_trend_does_not_override_unattractive_net_payoff(target_bps, reason):
+    p, result, rows, registry = fixture()
+    candidate = result.candidate.model_copy(update={"target_bps": target_bps})
+    p = p.model_copy(update={"candidates": (candidate,)}).validated()
+    result = result.model_copy(update={"candidate": candidate})
+    suggestion = run_advice(p, result, rows, registry)
+    assert suggestion.posture == "stand_aside"
+    assert suggestion.reasons == (reason,)
+    assert suggestion.entry_low is suggestion.entry_high is suggestion.invalidation is suggestion.target is None
 
 
 @pytest.mark.parametrize(

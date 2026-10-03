@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import math
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -26,7 +27,7 @@ from src.strategies.types import canonical_hash
 
 D = Decimal
 POLICY = {
-    "version": "trend-advisor-v1",
+    "version": "trend-advisor-v2-cost-screen",
     "fast_minutes": 10,
     "slow_minutes": 30,
     "coarse_minutes": 5,
@@ -36,7 +37,65 @@ POLICY = {
     "maximum_minute_volatility": "0.01",
     "minimum_quote_volume": "10000",
     "expiry_seconds": 15,
+    "cost_stress_multiplier": "2",
+    "minimum_net_reward_to_risk": "1",
 }
+
+
+@dataclass(frozen=True)
+class TradeEconomics:
+    """Per-unit barrier scenario, not expected return or a win-probability estimate."""
+
+    entry_debit: Decimal
+    target_credit: Decimal
+    stop_credit: Decimal
+    net_reward: Decimal
+    net_risk: Decimal
+    reward_to_risk: Decimal
+    required_win_rate: Decimal | None
+    reasons: tuple[str, ...]
+
+
+def long_trade_economics(*, bid, ask, stop, target, fee_bps, slippage_bps) -> TradeEconomics:
+    """Screen nominal long barriers against stressed two-sided transaction costs.
+
+    The current half-spread is held constant in price units at both hypothetical
+    exits and stressed along with fees/slippage. Future spread, stop gaps and
+    fills remain unknown: this is a necessary payoff screen, not an edge test.
+    Fees are conservatively modeled in quote currency on each executed notional,
+    without account discounts. Required win rate assumes ONLY stop/target exits;
+    it is algebraic break-even, never a calibrated probability of success.
+    """
+    values = (bid, ask, stop, target, fee_bps, slippage_bps)
+    if any(not isinstance(value, Decimal) or not value.is_finite() for value in values):
+        raise ValueError("economics requires finite Decimal inputs")
+    if not 0 < stop < bid <= ask < target or fee_bps < 0 or slippage_bps < 0:
+        raise ValueError("invalid long barriers, quote or costs")
+    multiplier = D(POLICY["cost_stress_multiplier"])
+    fee, slip = fee_bps * multiplier / 10000, slippage_bps * multiplier / 10000
+    half_spread = (ask - bid) * multiplier / 2
+    if fee >= 1 or slip >= 1 or stop <= half_spread:
+        raise ValueError("cost assumptions cannot produce an executable scenario")
+    debit = ((ask + bid) / 2 + half_spread) * (1 + slip) * (1 + fee)
+    credit_target = (target - half_spread) * (1 - slip) * (1 - fee)
+    credit_stop = (stop - half_spread) * (1 - slip) * (1 - fee)
+    reward, risk = credit_target - debit, debit - credit_stop
+    ratio = reward / risk
+    reasons = ()
+    if reward <= 0:
+        reasons = ("target_does_not_cover_costs",)
+    elif ratio < D(POLICY["minimum_net_reward_to_risk"]):
+        reasons = ("net_reward_below_risk",)
+    return TradeEconomics(
+        debit,
+        credit_target,
+        credit_stop,
+        reward,
+        risk,
+        ratio,
+        risk / (risk + reward) if reward > 0 else None,
+        reasons,
+    )
 
 
 class TrendAdvisorSuggestion(BaseModel):
@@ -239,6 +298,19 @@ def advise(
     target = latest.ask * (1 + candidate.target_bps / D(10000))
     if not stop < latest.bid <= latest.ask < target:
         return TrendAdvisorSuggestion(**base, posture="stand_aside", reasons=("barriers_inside_spread",))
+    try:
+        economics = long_trade_economics(
+            bid=latest.bid,
+            ask=latest.ask,
+            stop=stop,
+            target=target,
+            fee_bps=protocol.fee_bps,
+            slippage_bps=protocol.slippage_bps,
+        )
+    except ValueError:
+        return TrendAdvisorSuggestion(**base, posture="stand_aside", reasons=("trade_economics_unavailable",))
+    if economics.reasons:
+        return TrendAdvisorSuggestion(**base, posture="stand_aside", reasons=economics.reasons)
     return TrendAdvisorSuggestion(
         **base,
         posture="long_research",
