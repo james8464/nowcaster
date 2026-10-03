@@ -5,6 +5,18 @@ The ledger contains historical continuation entries out of date order; this is
 not a newly inferred chronology. Each entry retains the reason and risk if wrong.
 No research attempts, losses, evidence or campaign identities are erased by this report.
 
+## 35 — Keep final evidence publication separate from code verification
+
+Wait for CI37127295230 on code commit9f4325f to finish; do not bypass or cancel
+that verification. Once it succeeds, publish only the final Markdown receipts
+with a documentation-only `[skip ci]` commit, after checking the exact diff and
+remote branch. This avoids restarting the same complete suite solely to record
+its result. Clearly attribute CI to9f4325f, not the later documentation commit.
+Risk: skipped workflows can leave required checks pending for a future pull
+request; no merge is performed here, and any later merge must satisfy its own
+required checks. No executable, test, configuration or generated data change is
+eligible for this documentation-only exception.
+
 ## 34 — Do not manufacture novelty in installed recovery evidence
 
 Read-only production candidate enumeration found zero novel generation-two

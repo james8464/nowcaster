@@ -1,6 +1,6 @@
 # Native app and background research: release checkpoint
 
-Status: updated app installed; final recovery/shutdown and CI failures under repair.
+Status: approved software release verified, installed and running paper-only. Profitability unproven.
 
 ## 3 October continuation
 
@@ -11,14 +11,16 @@ results. Its recovery test now uses four synthetic attempts within the unchanged
 90-second deadline, with stronger completed-result and prefix assertions.
 No production research budget or qualification rule changed.
 
-Current focused checks:40 coordinator/training tests,25 forced-low-core
+Earlier October focused checks:40 coordinator/training tests,25 forced-low-core
 coordinator tests, normal and low-core recovery tests, and eight fixture checks
-passed. Refreshed fixtures differ only in source-derived identities. Current
-native suite:170 passed,107.205 seconds. Current Xcode build, deep/strict signing,
-and exact engine/source/environment verification passed. Full Python release
-verification passed: **1,777 tests, zero skips, 1,386.14 seconds**, including
-the signed packaged engine and collector. The app is now installed with a
-recoverable previous version; installed lifecycle acceptance remains in progress.
+passed. Refreshed fixtures differ only in source-derived identities. Before the
+shutdown correction, native170 passed in107.205 seconds. The corrected native
+suite passed **172 tests in51.081 seconds**. Xcode build, deep/strict signing,
+and exact engine/source/environment verification passed. Full local Python
+verification before the test-only race correction passed **1,777 tests, zero
+skips, 1,386.14 seconds**, including the exact signed engine and collector still
+installed. Subsequent test-only corrections and their verification are recorded
+below; the unchanged engine does not imply every new test has a full-suite pass.
 
 Prepared app: `/tmp/NowcasterFinalRelease-20261003/Build/Products/Debug/Nowcaster.app`.
 Signed engine SHA256:
@@ -35,8 +37,9 @@ check. The cause remains unproven. The final test-only readiness correction
 uses the same ten-second bounds, preserves all assertions, and captures failure
 evidence. The final focused test passed all six normal combinations and 200%
 text, **54.068 seconds**; scoped review approved it. No production layout fix
-is claimed. The final Start action separately passed its default-skipped
-preflight; that is not a running-session pass.
+is claimed. Final Start first passed a default-skipped preflight, which was not
+a running-session pass. The later explicitly opted-in installed handoff passed
+in5.721 seconds and was independently checked, as recorded below.
 
 Release code: `bef65e45419a578725c6cb17f1aac61c41d23ec9`.
 Its [GitHub verification run](https://github.com/james8464/nowcaster/actions/runs/37123233207)
@@ -51,7 +54,16 @@ each passed two tests. The broader file retained 16 passes, one failure against
 an intermediate packaged artifact and one skip; both affected packaged cases
 passed individually against the exact signed shipped engine. The intermediate
 failure's cause remains unproven. No Python production code or timeout changed;
-new remote verification is still required.
+the corrected source is pushed as `9f4325fbded8968f5e57b4dc831348845056efd2`.
+[Verification run](https://github.com/james8464/nowcaster/actions/runs/37127295230)
+completed successfully on that exact code commit at14:29:07 UTC: native172 tests
+passed (39.944 seconds), deterministic replay16 passed, and Python **1,771 passed,
+seven explicitly skipped, 32 warnings** in2,395.52 seconds, with89% coverage.
+The seven CI skips require local packaged artifacts and are not counted as
+passes; local signed-artifact evidence is separately recorded above. Both jobs,
+fixture/secret checks, release assembly and clean deterministic demo succeeded.
+Previous failed runs remain failed. The final documentation-only receipt uses
+`[skip ci]`; CI applies to9f4325f, not that later Markdown-only commit.
 Previous run37121939670 passed native and
 fixture gates but was superseded before Python completed; it is not a successful
 full CI run.
@@ -59,7 +71,9 @@ full CI run.
 Installed app: `/Applications/Nowcaster.app`. Previous version:
 `/Applications/Nowcaster.before-final-20261003-A09BEE4F.app`.
 Post-test-build installed native SHA256:
-`a0521074f280094261eaa490ab7683af7b214077f2ac31d4469fa86c069919e2`.
+`74ab723916b390b2f0ebce81381950e3b83a85d4f634cf321a28352ac58636fa`.
+The immediately preceding installed version is also retained at
+`/Applications/Nowcaster.before-shutdown-20261003-1342.app`.
 Engine source-tree SHA256:
 `1c1a1001e7640a87ae32d57c49f3d7d4599b8f7858d698968651417da2cafa10`.
 The engine hash remains663f… above; signatures and source/environment binding
@@ -87,11 +101,45 @@ It retained five completed evaluations, eleven rejected attempts and 34 unresolv
 reservations, plus its deadline-interruption receipt. A native-only correction
 reserves five seconds for final app cleanup; focused RED/GREEN checks, all
 172 native tests and scoped review passed. Corrected installed recovery/Quit
-and final ordinary Start remain pending. Neither failed run is relabeled green.
+passed on a new marked fixture: the unchanged lifecycle scenario passed in
+178.600 seconds, observed active Quit in 2.895 seconds, and preserved the unrelated
+process. Checkpointing and fresh authenticated ownership on resume passed;
+new evaluation after native resume is not claimed. The separate CLI regression
+verifies a new evaluation when unused candidates remain. The original interrupted
+fixture has zero novel generation-two candidates and remains untouched. Neither
+failed run is relabeled green.
+
+Final ordinary Start passed and intentionally left the installed app running.
+Independent observation verified app34843, collector34995, bootstrap35236 and
+authenticated worker35240, with new BTC/ETH receipts at13:49 and13:50 UTC.
+Provider-to-receipt delays were5.14–9.14 seconds; no new provider errors appeared.
+The last bounded sample was stale/research-paused under the unchanged15-second
+guard, not continuously eligible. All12 preference values and active pins
+were unchanged; resume-on-launch/login/notifications were not enabled. The
+two-campaign registry still had zero batches/attempts and its prior prefix was
+unchanged. Temporary observers were stopped; the normal app-owned session was
+left alone. Closing its window continues collection; Quit stops it. Sleep or
+offline periods prevent local work and remain gaps, not reconstructed evidence.
+
+Detailed receipt: [Installed acceptance](../.superpowers/sdd/2026-09-28-simple-desk-background-research/task6-final-installed-20261003.md).
+
+Final14:30 UTC read-only check confirmed the same four app/collector/research
+PIDs remained alive. Latest inspected BTC/ETH provider minute14:29 arrived at
+14:29:05.134827/14:29:09.135464, with null provider errors. No duplicate launch
+or restart was performed while waiting for CI. These observations do not certify
+continuous freshness or profitability.
 
 The real worker reports Waiting for eligible observations under the unchanged
 90/30/30-day schedule, with zero training attempts. It does not consume Codex
 credits or require an OpenCode model. This is not a qualified trading service.
+
+Remaining evidence limits: actual VoiceOver and system contrast/motion/transparency
+settings, hardware sleep/offline endurance, and selected installed error/detail
+states are not fully verified. Existing UI audit concerns are retained. Local
+development signing is not notarized distribution. This release does not certify
+all HIG rules, continuously usable signals, profitable strategies or safe copying
+with real money. The current automatic desk is BTC/USDT and ETH/USDT Binance spot,
+long/stand-aside only; neither broader markets nor short execution are implied.
 
 ## Retained September checkpoint (historical, not current installation state)
 
