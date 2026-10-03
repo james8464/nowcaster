@@ -1,6 +1,6 @@
 # Native app and background research: release checkpoint
 
-Status: source-verified checkpoint, not a completed installed release.
+Status: updated app installed; final recovery/shutdown and CI failures under repair.
 
 ## 3 October continuation
 
@@ -16,19 +16,86 @@ coordinator tests, normal and low-core recovery tests, and eight fixture checks
 passed. Refreshed fixtures differ only in source-derived identities. Current
 native suite:170 passed,107.205 seconds. Current Xcode build, deep/strict signing,
 and exact engine/source/environment verification passed. Full Python release
-verification is in progress; installation and new CI remain pending.
+verification passed: **1,777 tests, zero skips, 1,386.14 seconds**, including
+the signed packaged engine and collector. The app is now installed with a
+recoverable previous version; installed lifecycle acceptance remains in progress.
 
 Prepared app: `/tmp/NowcasterFinalRelease-20261003/Build/Products/Debug/Nowcaster.app`.
 Signed engine SHA256:
 `663f0f52c510e22fc343559737f8230f435ebeb70da881e87bce77c8e5a9063d`.
-Native executable SHA256:
+Original prepared native executable SHA256 (before subsequent test builds):
 `987fd73d4fb7ab0371202b51609feb250d2465c00a35a1f2b2508c9359f6a202`.
 Logs: `/tmp/NowcasterFinalRelease-20261003-{Build,Native,Python}.log`.
 
-The explicitly opted-in final Start interaction passed its default-skipped
-runner preflight (one skip, zero failures). That is not a real-session pass.
-The retained September results below describe their original revision, not
-the newly prepared runtime.
+The complete default UI run recorded nine passes, nine explicit skips and one
+failure; it is not relabeled green. The first clickability failure coincided
+with runner assertions and an external WhatsApp window. One unchanged retry
+passed all six normal sizes/appearances but failed an immediate large-text
+check. The cause remains unproven. The final test-only readiness correction
+uses the same ten-second bounds, preserves all assertions, and captures failure
+evidence. The final focused test passed all six normal combinations and 200%
+text, **54.068 seconds**; scoped review approved it. No production layout fix
+is claimed. The final Start action separately passed its default-skipped
+preflight; that is not a running-session pass.
+
+Release code: `bef65e45419a578725c6cb17f1aac61c41d23ec9`.
+Its [GitHub verification run](https://github.com/james8464/nowcaster/actions/runs/37123233207)
+finished with native success and one Python recovery timeout (1,769 passed,
+seven skipped). The failing test is
+`test_term_checkpoint_and_authenticated_relaunch_keep_batch_and_attempt_prefix`;
+an isolated reproduction exposed a test race in which every attempt was already
+interrupted and no unreserved work remained. The test-only correction gates the
+first durable reservation until real TERM/STOP, preserving three attempts for
+normal authenticated recovery. Its normal, reduced-core and coverage checks
+each passed two tests. The broader file retained 16 passes, one failure against
+an intermediate packaged artifact and one skip; both affected packaged cases
+passed individually against the exact signed shipped engine. The intermediate
+failure's cause remains unproven. No Python production code or timeout changed;
+new remote verification is still required.
+Previous run37121939670 passed native and
+fixture gates but was superseded before Python completed; it is not a successful
+full CI run.
+
+Installed app: `/Applications/Nowcaster.app`. Previous version:
+`/Applications/Nowcaster.before-final-20261003-A09BEE4F.app`.
+Post-test-build installed native SHA256:
+`a0521074f280094261eaa490ab7683af7b214077f2ac31d4469fa86c069919e2`.
+Engine source-tree SHA256:
+`1c1a1001e7640a87ae32d57c49f3d7d4599b8f7858d698968651417da2cafa10`.
+The engine hash remains663f… above; signatures and source/environment binding
+were reverified. The original native hash changed during Xcode test-build and
+re-signing, and is not presented as the installed identity.
+
+New runtime campaign: `A09BEE4F-F0DE-40B1-B566-EF69008B9B8B`.
+The old campaign and complete ledger prefix remain. Manifest preparation changed
+only ID/creation time; registration bound the corrected runtime. Only five
+active preference pins changed; other settings and opt-ins remained unchanged.
+Recoverable backups and the complete comparison receipt are under
+`/Users/james/Library/Application Support/NowcasterReleaseHandover/20261003-preflight.Mfnspp`.
+Installed real lifecycle acceptance passed: one test, 728.698 seconds. During
+ten minutes with the window closed, the same app-owned process set retained
+ten BTC and ten ETH observations with zero missing provider minutes. Reopen,
+Pause with no new append, Quit and stopped default relaunch passed. Complete
+preferences, source prefixes and campaign history remained intact.
+
+This did not establish continuous signal readiness: the provider was classified
+stale for approximately 510 of 600 seconds under the unchanged 15-second gate.
+The first isolated synthetic run stopped before registration on an unrelated
+PaperCreator informational alert. The unchanged retry advanced research with
+the window closed but failed the 30-second Quit bound at 30.779632 seconds.
+It retained five completed evaluations, eleven rejected attempts and 34 unresolved
+reservations, plus its deadline-interruption receipt. A native-only correction
+reserves five seconds for final app cleanup; focused RED/GREEN checks, all
+172 native tests and scoped review passed. Corrected installed recovery/Quit
+and final ordinary Start remain pending. Neither failed run is relabeled green.
+
+The real worker reports Waiting for eligible observations under the unchanged
+90/30/30-day schedule, with zero training attempts. It does not consume Codex
+credits or require an OpenCode model. This is not a qualified trading service.
+
+## Retained September checkpoint (historical, not current installation state)
+
+The results and pending items below describe their original revision/date.
 
 The simplified macOS interface and app-owned background paper-research worker
 are implemented. The final correction fixes missing research indicators,
@@ -114,10 +181,11 @@ Synthetic tests verify software behavior, not an investment advantage. Prior
 failed strategies, missing-data gaps and failed evaluations are preserved.
 The frozen September 8 study and its paused automation remain untouched.
 
-## Remaining release gates
+## September release gates (historical)
 
-Supported-compiler CI, installed acceptance and explicit runtime handover
-remain. Source publication is limited to the existing authorized branch;
+At that checkpoint, supported-compiler CI, installed acceptance and explicit
+runtime handover remained. See the October continuation above for current results.
+Source publication is limited to the existing authorized branch;
 check GitHub CI against its exact commit separately from these local results.
 No claim
 of profitability, safe copy trading, all-HIG compliance, hardware endurance or

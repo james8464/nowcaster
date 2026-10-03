@@ -110,7 +110,7 @@ final class AppModel {
         thermalMonitor?.cancel(); thermalMonitor = nil
         async let paperStopped = paperSession.shutdown()
         async let legacyStopped: Void = liveMonitor.shutdownForApplicationTermination()
-        async let legacyJobsStopped: Void = runner.shutdown(timeout: .seconds(30))
+        async let legacyJobsStopped: Void = runner.shutdown(timeout: NativeShutdownBudget.ownedDrain)
         let result = await (paperStopped, legacyStopped, legacyJobsStopped)
         return result.0
     }

@@ -24,6 +24,7 @@ import Testing
     var suspended: CheckedContinuation<Void, Never>?
     var suspendStart = false
     var shutdownBarrier: DrainBarrier?
+    var shutdownTimeouts: [Duration] = []
     var selectedSource: PaperSessionSource? = .init(directory: URL(fileURLWithPath: "/tmp/synthetic"), protocolHash: String(repeating: "a", count: 64))
     func startCollection() async throws {
         starts += 1
@@ -32,7 +33,7 @@ import Testing
         if exitsOnStart { exit() }
     }
     func exit() { isRunning = false; onTermination?("Owned collector exited") }
-    func shutdown(timeout: Duration) async -> Bool { await shutdownBarrier?.arrive("collector", timeout: timeout); isRunning = false; return true }
+    func shutdown(timeout: Duration) async -> Bool { shutdownTimeouts.append(timeout); await shutdownBarrier?.arrive("collector", timeout: timeout); isRunning = false; return true }
 }
 
 @Test @MainActor func paperSessionOptedRestoreWaitsForInitialSavedSourceLoad() async {
@@ -139,6 +140,7 @@ import Testing
     var pauses: [String] = []
     var resumes = 0
     var shutdownBarrier: DrainBarrier?
+    var shutdownTimeouts: [Duration] = []
     var onStatus: (@MainActor (LearningStatus) -> Void)?
     var preparationBarrier: DrainBarrier?
     func prepare(preferences: PaperSessionPreferences, configuration: EngineConfiguration) async throws -> PaperSessionPreferences {
@@ -148,7 +150,7 @@ import Testing
     func start(campaignHash: String, registryURL: URL, configuration: EngineConfiguration) async throws { starts += 1; isRunning = true }
     func pause(reason: String) async { pauses.append(reason) }
     func resume() async throws { resumes += 1 }
-    func shutdown(timeout: Duration) async -> Bool { await shutdownBarrier?.arrive("research", timeout: timeout); isRunning = false; return true }
+    func shutdown(timeout: Duration) async -> Bool { shutdownTimeouts.append(timeout); await shutdownBarrier?.arrive("research", timeout: timeout); isRunning = false; return true }
 }
 
 @MainActor private final class DrainBarrier {
@@ -218,6 +220,7 @@ import Testing
     while barrier.continuations.count < 1 { await Task.yield() }
     let pause = Task { await owner.pause() }
     while barrier.continuations.count < 2 { await Task.yield() }
+    #expect(barrier.timeouts.values.allSatisfy { $0 <= .seconds(25) })
     // Release newer Pause before the earlier disable operation.
     barrier.continuations.removeLast().resume()
     await pause.value
@@ -266,10 +269,35 @@ import Testing
     let shutdown = Task { await owner.shutdown() }
     for _ in 0..<100 where barrier.timeouts.count < 2 { await Task.yield() }
     #expect(barrier.timeouts.count == 2)
-    #expect(barrier.timeouts.values.allSatisfy { $0 <= .seconds(30) })
+    #expect(barrier.timeouts.values.allSatisfy { $0 <= .seconds(25) })
     barrier.release()
     #expect(await shutdown.value)
     #expect(await owner.shutdown())
+    #expect(collector.shutdownTimeouts.count == 1)
+    #expect(research.shutdownTimeouts.count == 1)
+}
+
+@Test(arguments: ["pause", "learningOff", "retry", "collectorExit"])
+@MainActor func paperSessionStopPathsReserveTimeForApplicationCleanup(_ route: String) async {
+    let collector = Collector(), research = Research(), barrier = DrainBarrier()
+    let owner = session(collector, research)
+    await owner.start()
+    collector.shutdownBarrier = barrier; research.shutdownBarrier = barrier
+    let operation = Task {
+        switch route {
+        case "pause": await owner.pause()
+        case "learningOff": await owner.setLearningEnabled(false)
+        case "retry": await owner.retryResearch()
+        case "collectorExit": collector.exit()
+        default: Issue.record("Unexpected stop route")
+        }
+    }
+    let expectedDrains = route == "pause" || route == "collectorExit" ? 2 : 1
+    while barrier.continuations.count < expectedDrains { await Task.yield() }
+    #expect(research.shutdownTimeouts == [.seconds(25)])
+    #expect(collector.shutdownTimeouts == (expectedDrains == 2 ? [.seconds(25)] : []))
+    barrier.release(); await operation.value
+    _ = await owner.shutdown()
 }
 
 @Test @MainActor func paperSessionRapidPauseRejectsLateStartPublication() async {
@@ -281,6 +309,7 @@ import Testing
     await owner.pause()
     collector.suspended?.resume(); await start.value
     #expect(owner.state == .paused); #expect(!collector.isRunning); #expect(research.starts == 0)
+    #expect(collector.shutdownTimeouts == [.seconds(25), .seconds(25)])
 }
 
 @Test @MainActor func paperSessionUserPauseWinsOverResourceRecoveryAndLearningOffKeepsCollection() async {

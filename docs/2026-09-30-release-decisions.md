@@ -5,6 +5,76 @@ The ledger contains historical continuation entries out of date order; this is
 not a newly inferred chronology. Each entry retains the reason and risk if wrong.
 No research attempts, losses, evidence or campaign identities are erased by this report.
 
+## 34 — Do not manufacture novelty in installed recovery evidence
+
+Read-only production candidate enumeration found zero novel generation-two
+candidates in the interrupted synthetic fixture: all fifty slots duplicate its
+retained baseline winner. A proposed one-off UI assertion requiring a new
+completion would therefore be impossible. Remove only that newly added, unrun
+test; retain its diagnosis and the original fixture unchanged. Rerun the existing
+unchanged installed lifecycle scenario in a new marked synthetic fixture after
+the native shutdown correction. It verifies checkpoint/ownership/resume/Quit,
+not a new evaluation after resume. The separate deterministic CLI regression
+verifies actual newly completed recovery work. Risk: these are separate evidence
+layers; report them separately and never call exhausted candidates new learning.
+
+## 33 — Make the recovery-test precondition deterministic
+
+CI37123233207 failed the resumed-worker WAITING predicate. An isolated unchanged
+engine reproduction reserved all four fixture attempts, stopped successfully,
+retained all four as interrupted, then authenticated resume correctly reached
+FAILED in 3.10 seconds because no evaluable candidate or unreserved attempt
+remained. The test would wait its full 90 seconds for an impossible WAITING state.
+This proves a fixture race; attribution to that exact CI run remains an inference
+because the old failure output omitted worker events. Permit a test-only repair
+that gates immediately after the first durable reservation until the parent's
+real TERM/STOP, retaining three unreserved attempts and asserting a genuinely new
+completion. Keep the four-attempt fixture, deadline, history and production budgets intact.
+Retain the exhausted-budget reproduction and improve failure diagnostics.
+Risk: a test barrier can diverge from production timing; it changes only timing,
+uses the real durable append and signal handler, has a bounded failure path,
+and is absent from the normal resumed worker. Normal, reduced-core and coverage
+conditions must pass before publication.
+
+## 32 — Reserve native application shutdown headroom
+
+The unchanged installed synthetic retry failed its 30-second end-to-end Quit
+assertion at 30.779632 seconds. Process observations and the durable interruption
+receipt confirm the worker consumed its full 30-second grace before authenticated
+deadline cleanup; this was not merely an assertion timing artifact. Preserve the
+failed run, completed outcomes and 34 unresolved reservations. Permit a minimal
+native-only drain-budget correction that reserves application cleanup headroom
+inside the existing outer 30-second contract. Keep the UI assertion, ownership
+checks, durable STOP, interruption receipts and research protocol unchanged.
+Require failing regression evidence, full native verification, scoped review,
+and corrected installed checkpoint/resume acceptance. Risk: less graceful drain
+time can interrupt more in-flight work; retained authenticated recovery must pass.
+
+## 31 — Narrow informational-alert dismissal
+
+The installed synthetic test stopped before registration at an unrelated
+CoreServicesUIAgent alert: “The application ‘PaperCreator’ is not open anymore.”
+The controller verified that exact text and sole OK button using native
+accessibility, then attempted only its non-binding dismissal. The action and
+subsequent observations timed out, so dismissal was not assumed successful.
+Permit one unchanged synthetic retry with a fresh bounded observer; preserve
+the failed run and stop on any remaining unknown, permission or security prompt.
+No permission, security setting, document or research state is changed.
+Risk: the obstruction may remain; the existing interruption monitor stays intact.
+
+## 30 — Bounded large-text UI readiness
+
+Add explicit activation and the same existing ten-second geometry/hittability
+readiness bounds to the large-text test phase. Preserve all original assertions,
+seven text-size shortcuts, the 200% setting check and ordinary Quit. Store
+readiness outcomes before diagnostic capture so the capture cannot rescue a
+missed deadline. Two earlier runs failed differently; the diagnostic run and
+final focused test passed, but the original cause remains unproven. No production
+layout fix is claimed. Risk: waiting can hide transient behavior; retain strict
+bounds and both failed result bundles, plus future failure screenshots/AX data.
+Scoped review approved the correction. Minor deferred: the compact diagnostic
+status label is blank, but the full accessibility attachment retains its value.
+
 ## 29 — Reduced-core Python release failures (3 October)
 
 Revalidate ownership before publishing each completed evaluation, including the

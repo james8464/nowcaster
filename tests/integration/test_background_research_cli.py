@@ -99,6 +99,43 @@ def launch(tmp_path, campaign_hash, *, run_id="execution-1", nonce="n" * 32, ent
     return process
 
 
+def reservation_gate_entry(tmp_path, ordinal):
+    """Hold a real worker at a durable reservation until the parent's TERM."""
+    entry = tmp_path / "reservation-gate.py"
+    entry.write_text(
+        f"""
+import sys
+sys.path.insert(0, {str(ROOT)!r})
+if __name__ == "__main__":
+    import time
+    from pathlib import Path
+    from src.background_research.registry import LearningRegistry
+    from src.deep_research.control import ControlState, ResearchControl
+    from scripts.live_engine_entry import main
+
+    args = sys.argv
+    control = ResearchControl(
+        Path(args[args.index("--control-directory") + 1]),
+        run_id=args[args.index("--run-id") + 1],
+        nonce=args[args.index("--control-nonce") + 1],
+    )
+    append = LearningRegistry.append_event
+    def append_with_gate(registry, batch_id, event, **kwargs):
+        result = append(registry, batch_id, event, **kwargs)
+        if event.get("kind") == "attempt" and event["payload"]["ordinal"] == {ordinal}:
+            deadline = time.monotonic() + 45
+            while control.read() is ControlState.RUNNING and time.monotonic() < deadline:
+                time.sleep(0.01)
+            if control.read() is not ControlState.STOPPED:
+                raise RuntimeError("Reservation barrier timed out waiting for parent TERM/STOP")
+        return result
+    LearningRegistry.append_event = append_with_gate
+    raise SystemExit(main())
+"""
+    )
+    return [sys.executable, str(entry)]
+
+
 def event_until(process, predicate, timeout=45):
     deadline = time.monotonic() + timeout
     # Unbuffered OS reads avoid select() missing lines already buffered by TextIO.
@@ -123,7 +160,17 @@ def event_until(process, predicate, timeout=45):
             if predicate(event):
                 process._event_pending = pending
                 return event
-    raise AssertionError("Worker event timed out")
+            status = event.get("status", {})
+            if status.get("state") in {"failed", "blocked"}:
+                raise AssertionError(
+                    f"Worker terminal state {status['state']}: {status.get('reason')}; "
+                    f"status={status}; seen_events={process._seen_events[-5:]}"
+                )
+    events = getattr(process, "_seen_events", [])
+    raise AssertionError(
+        f"Worker event timed out; returncode={process.poll()}; "
+        f"status={events[-1].get('status') if events else None}; seen_events={events[-5:]}"
+    )
 
 
 def stop(process, tmp_path, *, run_id="execution-1", nonce="n" * 32):
@@ -263,7 +310,7 @@ def test_broken_pipe_stops_owned_worker_retains_results_and_releases_lock(tmp_pa
 
 def test_term_checkpoint_and_authenticated_relaunch_keep_batch_and_attempt_prefix(tmp_path):
     campaign_hash, _, _ = register(tmp_path, eligible=True, attempts=4)
-    process = launch(tmp_path, campaign_hash, workers=1)
+    process = launch(tmp_path, campaign_hash, workers=1, entry=reservation_gate_entry(tmp_path, 1))
     registry = LearningRegistry(tmp_path / "registry")
     try:
         event_until(process, lambda e: e["event"] == "ownership")
@@ -271,14 +318,18 @@ def test_term_checkpoint_and_authenticated_relaunch_keep_batch_and_attempt_prefi
         while registry.read_status(campaign_hash).batch_attempt_count == 0 and time.monotonic() < deadline:
             time.sleep(0.02)
         status = registry.read_status(campaign_hash)
-        assert status.batch_attempt_count > 0
+        assert status.batch_attempt_count == 1
         process.send_signal(signal.SIGTERM)
         process.wait(timeout=45)
         assert process.returncode == 0, process.stderr.read()
+        assert (
+            ResearchControl(tmp_path / "control", run_id="execution-1", nonce="n" * 32).read() is ControlState.STOPPED
+        )
         with registry._locked():
             state, _, _ = registry._read()
         prefix = tuple(e for e in state.events[status.batch_id] if e.kind == "attempt")
         results = {e.attempt_id for e in state.events[status.batch_id] if e.kind == "attempt_result"}
+        assert len(prefix) == 1  # Three attempts remain unreserved for the fresh execution.
         assert results == {e.attempt_id for e in prefix}
         old_control = (tmp_path / "control/execution-1.control.json").read_bytes()
         old_databases = {
@@ -302,6 +353,37 @@ def test_term_checkpoint_and_authenticated_relaunch_keep_batch_and_attempt_prefi
             assert any(e.outcome == "completed" and e.attempt_id not in results for e in retained_results)
             assert (tmp_path / "control/execution-1.control.json").read_bytes() == old_control
             assert all(path.read_bytes() == content for path, content in old_databases.items())
+            stop(resumed, tmp_path, run_id="execution-2")
+        finally:
+            cleanup(resumed)
+    finally:
+        cleanup(process)
+
+
+def test_exhausted_interrupted_budget_reports_terminal_failure_instead_of_waiting(tmp_path):
+    campaign_hash, _, _ = register(tmp_path, eligible=True, attempts=4)
+    registry = LearningRegistry(tmp_path / "registry")
+    process = launch(tmp_path, campaign_hash, workers=1, entry=reservation_gate_entry(tmp_path, 4))
+    try:
+        event_until(process, lambda e: e["event"] == "ownership")
+        deadline = time.monotonic() + 45
+        while registry.read_status(campaign_hash).batch_attempt_count < 4 and time.monotonic() < deadline:
+            time.sleep(0.02)
+        status = registry.read_status(campaign_hash)
+        assert status.batch_attempt_count == 4
+        process.send_signal(signal.SIGTERM)
+        process.wait(timeout=45)
+        assert process.returncode == 0, process.stderr.read()
+        with registry._locked():
+            state, _, _ = registry._read()
+        results = [e for e in state.events[status.batch_id] if e.kind == "attempt_result"]
+        assert len(results) == 4 and all(e.outcome == "interrupted" for e in results)
+        resumed = launch(tmp_path, campaign_hash, run_id="execution-2", workers=1)
+        try:
+            with pytest.raises(AssertionError, match="Worker terminal state failed:.*No evaluable training candidate"):
+                event_until(resumed, lambda e: e.get("status", {}).get("state") == "waiting")
+            after = registry.read_status(campaign_hash)
+            assert after.state == "failed" and after.batch_attempt_count == 4
             stop(resumed, tmp_path, run_id="execution-2")
         finally:
             cleanup(resumed)

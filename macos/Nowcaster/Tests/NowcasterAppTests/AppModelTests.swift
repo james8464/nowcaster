@@ -88,6 +88,29 @@ private final class ControlledEngineRunner: EngineRunning, @unchecked Sendable {
     var recordedJobs: [EngineJob] { lock.withLock { jobs } }
 }
 
+private actor TerminationBudgetRunner: EngineRunning {
+    private(set) var timeout: Duration?
+    private var continuation: CheckedContinuation<Void, Never>?
+    nonisolated func run(_ job: EngineJob, configuration: EngineConfiguration) -> AsyncThrowingStream<EngineProgressEvent, Error> {
+        AsyncThrowingStream { $0.finish() }
+    }
+    func shutdown(timeout: Duration) async {
+        self.timeout = timeout
+        await withCheckedContinuation { continuation = $0 }
+    }
+    func release() { continuation?.resume(); continuation = nil }
+}
+
+@Test @MainActor func applicationQuitReservesCleanupTimeForLegacyJobsAndDrainsPaperConcurrently() async {
+    let runner = TerminationBudgetRunner(), model = AppModel(runner: runner)
+    let shutdown = Task { await model.shutdownForApplicationTermination() }
+    while await runner.timeout == nil || model.paperSession.state != .paused { await Task.yield() }
+    #expect(await runner.timeout == .seconds(25))
+    #expect(model.paperSession.state == .paused)
+    await runner.release()
+    #expect(await shutdown.value)
+}
+
 private struct StructuredFailureRunner: EngineRunning {
     func run(
         _ job: EngineJob,

@@ -1,6 +1,11 @@
 import Foundation
 import Observation
 
+enum NativeShutdownBudget {
+    // Leave five seconds of the 30-second Quit contract for final app cleanup.
+    static let ownedDrain: Duration = .seconds(25)
+}
+
 @MainActor protocol PaperSessionCollecting: AnyObject, Sendable {
     var isRunning: Bool { get }
     var selectedSource: PaperSessionSource? { get }
@@ -135,8 +140,8 @@ extension PaperSessionResearching {
         let token = UUID(); epoch = token; active = false; automaticPause = false; monitor.stop()
         state = .pausing; explanation = message
         exitDrain = Task { @MainActor in
-            async let researchStopped = research.shutdown(timeout: .seconds(30))
-            async let collectorStopped = collector.shutdown(timeout: .seconds(30))
+            async let researchStopped = research.shutdown(timeout: NativeShutdownBudget.ownedDrain)
+            async let collectorStopped = collector.shutdown(timeout: NativeShutdownBudget.ownedDrain)
             let result = await (researchStopped, collectorStopped)
             exitDrain = nil
             guard epoch == token, !userPaused else { return }
@@ -161,7 +166,7 @@ extension PaperSessionResearching {
             preferences.source = source
             try persist()
             try await collector.startCollection()
-            guard epoch == token else { _ = await collector.shutdown(timeout: .seconds(30)); return }
+            guard epoch == token else { _ = await collector.shutdown(timeout: NativeShutdownBudget.ownedDrain); return }
             guard collector.isRunning else { throw BackgroundResearchError.missingRegistration }
             resources.collectorHealthy = collector.collectionHealthy
             active = true
@@ -201,8 +206,8 @@ extension PaperSessionResearching {
     func pause() async {
         guard shutdownTask == nil else { return }
         epoch = UUID(); active = false; userPaused = true; automaticPause = false; state = .pausing; monitor.stop()
-        async let researchStopped = research.shutdown(timeout: .seconds(30))
-        async let collectorStopped = collector.shutdown(timeout: .seconds(30))
+        async let researchStopped = research.shutdown(timeout: NativeShutdownBudget.ownedDrain)
+        async let collectorStopped = collector.shutdown(timeout: NativeShutdownBudget.ownedDrain)
         let stopped = await (researchStopped, collectorStopped)
         state = stopped.0 && stopped.1 ? .paused : .blocked(BackgroundResearchError.interrupted.localizedDescription)
     }
@@ -211,8 +216,8 @@ extension PaperSessionResearching {
         if let shutdownTask { return await shutdownTask.value }
         epoch = UUID(); active = false; userPaused = true; automaticPause = false; state = .pausing; monitor.stop()
         let task = Task { @MainActor in
-            async let researchStopped = research.shutdown(timeout: .seconds(30))
-            async let collectorStopped = collector.shutdown(timeout: .seconds(30))
+            async let researchStopped = research.shutdown(timeout: NativeShutdownBudget.ownedDrain)
+            async let collectorStopped = collector.shutdown(timeout: NativeShutdownBudget.ownedDrain)
             let result = await (researchStopped, collectorStopped)
             state = result.0 && result.1 ? .paused : .blocked(BackgroundResearchError.interrupted.localizedDescription)
             return result.0 && result.1
@@ -239,7 +244,7 @@ extension PaperSessionResearching {
             let previous = learningDrain
             let drain = Task { @MainActor in
                 if let previous { _ = await previous.value }
-                return await research.shutdown(timeout: .seconds(30))
+                return await research.shutdown(timeout: NativeShutdownBudget.ownedDrain)
             }
             learningDrain = drain
             let drainID = UUID(); learningDrainID = drainID
@@ -281,7 +286,7 @@ extension PaperSessionResearching {
     func retryResearch() async {
         guard active, preferences.learningEnabled, !userPaused, state != .starting else { return }
         let token = UUID(); epoch = token; automaticPause = false; observedResourcePressure = false; state = .starting
-        guard await research.shutdown(timeout: .seconds(30)) else {
+        guard await research.shutdown(timeout: NativeShutdownBudget.ownedDrain) else {
             if epoch == token { state = .blocked(BackgroundResearchError.interrupted.localizedDescription) }
             return
         }
