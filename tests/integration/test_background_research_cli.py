@@ -262,7 +262,7 @@ def test_broken_pipe_stops_owned_worker_retains_results_and_releases_lock(tmp_pa
 
 
 def test_term_checkpoint_and_authenticated_relaunch_keep_batch_and_attempt_prefix(tmp_path):
-    campaign_hash, _, _ = register(tmp_path, eligible=True, attempts=20)
+    campaign_hash, _, _ = register(tmp_path, eligible=True, attempts=4)
     process = launch(tmp_path, campaign_hash, workers=1)
     registry = LearningRegistry(tmp_path / "registry")
     try:
@@ -291,10 +291,15 @@ def test_term_checkpoint_and_authenticated_relaunch_keep_batch_and_attempt_prefi
             event_until(resumed, lambda e: e.get("status", {}).get("state") == "waiting", timeout=90)
             after = registry.read_status(campaign_hash)
             assert after.batch_id == status.batch_id
+            assert after.batch_attempt_count == 4
             with registry._locked():
                 state, _, _ = registry._read()
             attempts = tuple(e for e in state.events[status.batch_id] if e.kind == "attempt")
             assert attempts[: len(prefix)] == prefix
+            retained_results = tuple(e for e in state.events[status.batch_id] if e.kind == "attempt_result")
+            assert len(attempts) == len(retained_results) == 4
+            assert {e.attempt_id for e in retained_results} == {e.attempt_id for e in attempts}
+            assert any(e.outcome == "completed" and e.attempt_id not in results for e in retained_results)
             assert (tmp_path / "control/execution-1.control.json").read_bytes() == old_control
             assert all(path.read_bytes() == content for path, content in old_databases.items())
             stop(resumed, tmp_path, run_id="execution-2")

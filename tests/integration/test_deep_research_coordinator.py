@@ -168,8 +168,11 @@ def test_worker_retries_once_then_records_repeat_failure_without_hiding_the_tria
     assert outcome.evaluated_attempts == 2
 
 
-@pytest.mark.parametrize("boundary", ["initial", "retry"])
-def test_ownership_loss_prevents_every_submission_and_leaves_replacement_owner_intact(tmp_path, monkeypatch, boundary):
+@pytest.mark.parametrize("workers", [1, 2])
+@pytest.mark.parametrize("boundary", ["initial", "retry", "completion", "publication"])
+def test_ownership_loss_prevents_every_submission_and_leaves_replacement_owner_intact(
+    tmp_path, monkeypatch, boundary, workers
+):
     from concurrent.futures import ThreadPoolExecutor
     from contextlib import ExitStack
 
@@ -182,6 +185,7 @@ def test_ownership_loss_prevents_every_submission_and_leaves_replacement_owner_i
     control.initialize()
     lock = tmp_path / "campaign.lock"
     calls = []
+    published = []
     original_evaluate = module.evaluate_candidate_work
     with ExitStack() as owners:
         verify = owners.enter_context(_exclusive(lock))
@@ -191,13 +195,18 @@ def test_ownership_loss_prevents_every_submission_and_leaves_replacement_owner_i
             lock.unlink()
             replacement.append(owners.enter_context(_exclusive(lock)))
 
+        def publish(attempt, result):
+            published.append(attempt.ordinal)
+            if boundary == "publication" and attempt.ordinal == 1:
+                lose()
+
         def evaluate(work, attempt):
             calls.append((work.ordinal, attempt))
             try:
                 return original_evaluate(work, attempt)
             finally:
-                if boundary == "retry" and (work.ordinal, attempt) == (1, 1):
-                    lose()  # The real first evaluation fails before the retry boundary.
+                if boundary in {"retry", "completion"} and (work.ordinal, attempt) == (1, 1):
+                    lose()  # Authority disappears after evaluation, before retry/publication.
 
         class Executor(ThreadPoolExecutor):
             def submit(self, fn, work, attempt):
@@ -209,19 +218,28 @@ def test_ownership_loss_prevents_every_submission_and_leaves_replacement_owner_i
 
         monkeypatch.setattr(module, "ProcessPoolExecutor", Executor)
         monkeypatch.setattr(module, "evaluate_candidate_work", evaluate)
-        works = (_work(1), _work(2)) if boundary == "initial" else (_work(1, failures_before_success=1),)
+        monkeypatch.setattr(module.os, "cpu_count", lambda: workers + 2)
+        works = (
+            (_work(1), _work(2))
+            if boundary in {"initial", "publication"}
+            else (_work(1, failures_before_success=int(boundary == "retry")),)
+        )
         coordinator = DeepResearchCoordinator(
             run_id="owner",
             protocol=_protocol(workers=2, trial_budget=len(works)),
             repository=DeepResearchRepository(database),
             control=_OwnedControl(control, verify),
             sealed_evaluator=lambda _: (),
+            on_result=publish,
         )
+        assert coordinator.worker_count == workers
         with pytest.raises(OwnershipLostError):
             coordinator.run(works, evaluate_final=False)
-        assert calls == [(1, 1)]
+        assert sorted(calls) == ([(1, 1), (2, 1)] if boundary == "publication" and workers == 2 else [(1, 1)])
         replacement[0]()
+        assert published == ([1] if boundary == "publication" else [])
         assert database.scalar("select count(*) from deep_research_trials") == 0
+        assert database.scalar("select count(*) from deep_research_checkpoints") == 0
 
 
 @pytest.mark.parametrize("boundary", ["initial", "retry"])

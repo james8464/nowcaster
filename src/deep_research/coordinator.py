@@ -429,7 +429,11 @@ class DeepResearchCoordinator:
                     )
                 if self.on_result is not None:
                     for item in batch:
+                        # Revalidate ownership after evaluation; an authorized STOP
+                        # still drains completed work, so do not gate on its value.
+                        self.control.read()
                         self.on_result(batch_attempts[item.ordinal], results.get(item.ordinal))
+                self.control.read()
                 self.repository.append_attempts_ordered(self.run_id, [batch_attempts[item.ordinal] for item in batch])
                 attempts.update(batch_attempts)
                 for item in batch:

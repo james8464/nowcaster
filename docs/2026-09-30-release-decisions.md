@@ -5,6 +5,19 @@ The ledger contains historical continuation entries out of date order; this is
 not a newly inferred chronology. Each entry retains the reason and risk if wrong.
 No research attempts, losses, evidence or campaign identities are erased by this report.
 
+## 29 — Reduced-core Python release failures (3 October)
+
+Revalidate ownership before publishing each completed evaluation, including the
+last result. Deterministic reduced-core tests reproduced writes after ownership
+loss; this is a release blocker, not a reason to weaken evidence assertions.
+Reduce only the synthetic recovery test budget from20to4 attempts, retaining
+the90second deadline, real evaluation and immutable-prefix checks, and assert
+resumed completed results. The old test completed10of12 evaluations by82seconds
+with one worker but exceeded its deadline while still working. Risk: a smaller
+fixture covers fewer candidates; retain separate budget and ownership tests.
+Production budgets and research gates remain unchanged. Require scoped review,
+fresh source-derived fixtures, packaged helper and final verification.
+
 ## 26 — Controlled native test scheduling
 
 Run all native CI tests explicitly serially, retaining every assertion, deadline
