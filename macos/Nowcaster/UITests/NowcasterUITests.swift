@@ -180,8 +180,43 @@ final class NowcasterUITests: XCTestCase {
         try isolatePaperAcceptance(app)
         app.launchArguments = ["--destination=tradeDesk", "--ui-minimum", "--ui-dark"]
         app.launch()
+        app.activate()
         XCTAssertTrue(app.buttons["tradeDesk.asset.BTCUSDT"].waitForExistence(timeout: 30))
+        let geometryReady = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            app.windows.firstMatch.frame.size == CGSize(width: 820, height: 620)
+        }, object: nil)
+        let geometryResult = XCTWaiter.wait(for: [geometryReady], timeout: 10)
         for _ in 0..<7 { app.typeKey("+", modifierFlags: .command) }
+        let action = app.buttons["paperSession.action"]
+        let controlsReady = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            action.isHittable
+        }, object: nil)
+        let controlsResult = XCTWaiter.wait(for: [controlsReady], timeout: 10)
+        // Record readiness before diagnostics so collecting evidence cannot
+        // turn a missed deadline into a passing test.
+        let diagnostic = """
+        Large-text readiness: geometry=\(geometryResult) controls=\(controlsResult) app.state=\(app.state.rawValue)
+        window.frame=\(app.windows.firstMatch.frame)
+        action.frame=\(action.frame)
+        action.exists=\(action.exists) action.enabled=\(action.isEnabled) action.hittable=\(action.isHittable)
+        action.label=\(action.label)
+        status.label=\(app.staticTexts["paperSession.status"].label)
+        """
+        print(diagnostic)
+        let state = XCTAttachment(string: diagnostic)
+        state.name = "large-text-pre-assertion-state"
+        state.lifetime = .keepAlways
+        add(state)
+        let tree = XCTAttachment(string: app.debugDescription)
+        tree.name = "large-text-pre-assertion-accessibility"
+        tree.lifetime = .keepAlways
+        add(tree)
+        let screen = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        screen.name = "large-text-pre-assertion-screen"
+        screen.lifetime = .keepAlways
+        add(screen)
+        XCTAssertEqual(geometryResult, .completed)
+        XCTAssertEqual(controlsResult, .completed)
         XCTAssertTrue(app.buttons["paperSession.action"].isHittable)
         let larger = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
         larger.name = "task5-desk-200percent-minimum"
