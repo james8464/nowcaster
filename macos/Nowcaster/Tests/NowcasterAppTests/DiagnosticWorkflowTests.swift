@@ -41,6 +41,7 @@ private func workflowPosition() -> [String: Any] {
     ["origin": workflowDecision(), "entryAt": workflowTime, "entrySourceKey": "later-bar", "entryQuoteKey": "later-quote",
      "initialQuantity": "1", "quantity": "1", "entryPrice": "101", "entryFee": "0.1", "entrySlippage": "0.05",
      "unitDebit": "101.1", "initialRisk": "2.1", "stop": "99", "stopEffectiveAt": workflowTime, "target": "105", "realizedPnl": "0",
+     "stopHistory": [["stop": "99", "effectiveAt": workflowTime]],
      "exitNotional": "0", "exitFees": "0", "exitSlippage": "0"]
 }
 
@@ -51,6 +52,7 @@ private func workflowPosition() -> [String: Any] {
         account["lastAt"] = "2026-10-04T12:00:05Z"; payload["account"] = account
         let now = workflowNow.addingTimeInterval(5)
         for stamp in [workflowTime, "2026-10-04T12:00:05Z"] {
+            position["stopHistory"] = [["stop": "99", "effectiveAt": stamp]]
             position["stopEffectiveAt"] = stamp; payload["positions"] = [position]
             let value = try DiagnosticWorkflow.decode(workflowData(payload), protocolHash: workflowProtocol, now: now)
             #expect(value.positions.first?.string("stopEffectiveAt") == stamp)
@@ -64,6 +66,55 @@ private func workflowPosition() -> [String: Any] {
         #expect(throws: (any Error).self) { try DiagnosticWorkflow.decode(workflowData(payload), protocolHash: workflowProtocol, now: now) }
         position.removeValue(forKey: "stopEffectiveAt"); payload["positions"] = [position]
         #expect(throws: (any Error).self) { try DiagnosticWorkflow.decode(workflowData(payload), protocolHash: workflowProtocol, now: now) }
+    }
+
+    @Test func stopHistoryRequiresBoundedChronologicalRatchetsAndMatchingTail() throws {
+        var payload = workflowPayload(), account = payload["account"] as! [String: Any], position = workflowPosition()
+        account["lastAt"] = "2026-10-04T12:00:05Z"; payload["account"] = account
+        payload["state"] = "position_open"
+        position["stop"] = "101"; position["stopEffectiveAt"] = "2026-10-04T12:00:05Z"
+        let initial: [String: Any] = ["stop": "99", "effectiveAt": workflowTime]
+        let tail: [String: Any] = ["stop": "101", "effectiveAt": "2026-10-04T12:00:05Z"]
+        position["stopHistory"] = [initial, tail]; payload["positions"] = [position]
+        let now = workflowNow.addingTimeInterval(5)
+        let value = try DiagnosticWorkflow.decode(workflowData(payload), protocolHash: workflowProtocol, now: now)
+        #expect(value.positions.first?.rows("stopHistory").count == 2)
+        let badHistories: [Any] = [NSNull(), [], ["bad"], Array(repeating: initial, count: 129),
+            [initial, initial, tail], [tail, initial],
+            [["stop": "98", "effectiveAt": workflowTime], tail],
+            [["stop": "102", "effectiveAt": workflowTime], tail],
+            [["stop": "99", "effectiveAt": "2026-10-04T11:59:59Z"], tail],
+            [["stop": "99", "effectiveAt": "2026-10-04T12:00:06Z"], tail],
+            [["stop": "NaN", "effectiveAt": workflowTime], tail],
+            [["stop": "0", "effectiveAt": workflowTime], tail],
+            [["stop": "99", "effectiveAt": "bad"], tail],
+            [["stop": "99", "effectiveAt": workflowTime, "extra": true], tail],
+            [initial], [["stop": "100", "effectiveAt": "2026-10-04T12:00:05Z"]],
+            [["stop": "101", "effectiveAt": "2026-10-04T12:00:04Z"]]]
+        for history in badHistories {
+            position["stopHistory"] = history; payload["positions"] = [position]
+            #expect(throws: (any Error).self) { try DiagnosticWorkflow.decode(workflowData(payload), protocolHash: workflowProtocol, now: now) }
+        }
+        position.removeValue(forKey: "stopHistory"); payload["positions"] = [position]
+        #expect(throws: (any Error).self) { try DiagnosticWorkflow.decode(workflowData(payload), protocolHash: workflowProtocol, now: now) }
+        let formatter = ISO8601DateFormatter()
+        let checkpoints: [[String: Any]] = (0..<129).map { index in
+            ["stop": NSDecimalNumber(decimal: 99 + Decimal(index) / 100).stringValue,
+             "effectiveAt": formatter.string(from: workflowNow.addingTimeInterval(Double(index * 25)))]
+        }
+        let boundaryNow = workflowNow.addingTimeInterval(3200)
+        account["lastAt"] = formatter.string(from: boundaryNow); payload["account"] = account
+        for size in [128, 129] {
+            let checkpoint = checkpoints[size - 1]
+            position["stop"] = checkpoint["stop"]; position["stopEffectiveAt"] = checkpoint["effectiveAt"]
+            position["stopHistory"] = Array(checkpoints.prefix(size)); payload["positions"] = [position]
+            if size == 128 {
+                let bounded = try DiagnosticWorkflow.decode(workflowData(payload), protocolHash: workflowProtocol, now: boundaryNow)
+                #expect(bounded.positions.first?.rows("stopHistory").count == 128)
+            } else {
+                #expect(throws: (any Error).self) { try DiagnosticWorkflow.decode(workflowData(payload), protocolHash: workflowProtocol, now: boundaryNow) }
+            }
+        }
     }
 
     @Test func decodesActualCamelCaseDecimalProjectionWithoutInventingValuation() throws {

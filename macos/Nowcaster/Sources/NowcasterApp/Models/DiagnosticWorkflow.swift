@@ -211,7 +211,7 @@ private struct WorkflowValidation {
         } else if row.values["pendingExit"] != .null { throw workflowInvalid() }
     }
     func position(_ row: WorkflowFields, source: String, lastAt: Date) throws {
-        try keys(row, "origin entryAt entrySourceKey entryQuoteKey initialQuantity quantity entryPrice entryFee entrySlippage unitDebit initialRisk stop stopEffectiveAt target realizedPnl exitNotional exitFees exitSlippage")
+        try keys(row, "origin entryAt entrySourceKey entryQuoteKey initialQuantity quantity entryPrice entryFee entrySlippage unitDebit initialRisk stop stopEffectiveAt stopHistory target realizedPnl exitNotional exitFees exitSlippage")
         guard let origin = row.fields("origin") else { throw workflowInvalid() }
         try decision(origin, source: source); try time(row, "entryAt"); try time(row, "stopEffectiveAt")
         for key in ["entrySourceKey", "entryQuoteKey"] { _ = try workflowString(row, key) }
@@ -223,6 +223,21 @@ private struct WorkflowValidation {
               row.date("entryAt")! <= row.date("stopEffectiveAt")!, row.date("stopEffectiveAt")! <= lastAt,
               row.decimal("quantity")! <= row.decimal("initialQuantity")!, row.decimal("stop")! >= origin.decimal("stop")!,
               row.decimal("target") == origin.decimal("target") else { throw workflowInvalid() }
+        let history = try array(row, "stopHistory", limit: 128)
+        guard let tail = history.last else { throw workflowInvalid() }
+        var previous: WorkflowFields?
+        for checkpoint in history {
+            try keys(checkpoint, "stop effectiveAt")
+            try amount(checkpoint, "stop", positive: true); try time(checkpoint, "effectiveAt")
+            guard checkpoint.date("effectiveAt")! >= row.date("entryAt")!, checkpoint.date("effectiveAt")! <= lastAt,
+                  checkpoint.decimal("stop")! >= origin.decimal("stop")! else { throw workflowInvalid() }
+            if let previous {
+                guard checkpoint.date("effectiveAt")! > previous.date("effectiveAt")!,
+                      checkpoint.decimal("stop")! > previous.decimal("stop")! else { throw workflowInvalid() }
+            }
+            previous = checkpoint
+        }
+        guard tail.decimal("stop") == row.decimal("stop"), tail.date("effectiveAt") == row.date("stopEffectiveAt") else { throw workflowInvalid() }
     }
     func outcome(_ row: WorkflowFields) throws {
         try keys(row, "decisionId symbol setup entryAt exitAt entrySourceKey exitSourceKey quantity entryPrice exitPrice fees slippageCost netPnl netReturn reason")

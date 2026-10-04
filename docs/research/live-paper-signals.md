@@ -102,8 +102,11 @@ Intent expiry is 60 seconds. Exits use a subsequent usable bid and charge fees
 and modeled slippage. Stops precede targets on ambiguous touches, a trailing
 stop ratchets only after one initial risk unit, and a 60-minute holding limit
 applies. The retained position binds each stop to its effective UTC time, starting
-at entry and advancing only when the stop ratchets. A tightened stop applies only
-to later quotes or complete candles starting at or after that time. Pending exits
+at entry and advancing only when the stop ratchets. Its bounded stop history
+preserves the threshold active at each candle's start. A tightened stop applies
+only to later quotes and candles starting at or after its effective time; a
+straddling candle still checks the earlier active stop before the target. Pending
+exits
 survive gaps and recovery; missing quotes can delay
 liquidation, so a displayed stop is not a guaranteed exit price.
 
