@@ -29,6 +29,19 @@ calendar or quote timing evidence blocks fresh research suggestions. Public
 Binance ticker events supply timestamped best bid/ask prices and displayed sizes;
 stale, future-dated or malformed events cannot clear that gate.
 
+**Diagnostic simulator (source build):** Choose a registered paper source and
+select **Enable Diagnostic Simulator** in Trade Desk, then **Start** the paper
+session. The separate opt-in ledger starts with 10,000 simulated USDT and tracks
+observed breakout/pullback hypotheses, later hypothetical fills, paid exits,
+cash, marked equity and completed net outcomes. It shows losses as well as wins;
+open positions are excluded from completed outcomes. Stale quotes and valuation
+times remain visible. Setup evidence and post-trade review expand on demand.
+This does not qualify an alert, request notification permission or place orders.
+Public spot BTC/ETH supports long/flat only; missing imported calendar coverage
+blocks entry and no news interpretation is invented. A closed window keeps the
+started session running; Quit, sleep or an unavailable feed stops progress. No
+daemon or app installation is added. [Policy and evidence details](docs/research/live-paper-signals.md#diagnostic-simulator).
+
 **Cost-aware advisor (new research policy, not yet installed):** A rising trend
 is not enough. The source-code advisor now estimates what would remain at the
 target, and what would be lost at the stop, after charging both entry and exit

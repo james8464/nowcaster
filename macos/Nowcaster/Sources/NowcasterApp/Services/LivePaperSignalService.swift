@@ -81,6 +81,11 @@ final class LivePaperSignalService: PaperSessionCollecting {
     private(set) var providerHealth: ResearchRoundProviderHealth?
     private(set) var decisionEvidence: DayTraderEvidence?
     private(set) var decisionMessage: String?
+    private(set) var workflow: DiagnosticWorkflow?
+    private(set) var workflowMessage: String?
+    private(set) var workflowBusy = false
+    @ObservationIgnored private var lastWorkflowRead: Date?
+    @ObservationIgnored private var workflowRequest = UUID()
     @ObservationIgnored private var lastDecisionRead: Date?
     private(set) var notificationEvidence: LivePaperNotificationEvidence?
     private(set) var notificationEvidenceDirectory: URL?
@@ -164,6 +169,10 @@ final class LivePaperSignalService: PaperSessionCollecting {
         let epoch = launchEpoch
         isBusy = true
         defer { isBusy = false }
+        // Source selection invalidates every projection before any asynchronous work.
+        configuration = nil; self.directory = nil; state = nil; events = []; providerHealth = nil
+        decisionEvidence = nil; decisionMessage = nil; lastDecisionRead = nil
+        clearWorkflow()
         do {
             if let root = AppStorageLocations.acceptanceRoot,
                !directory.resolvingSymlinksInPath().path.hasPrefix(root.path + "/") {
@@ -187,6 +196,7 @@ final class LivePaperSignalService: PaperSessionCollecting {
             events = history; providerHealth = health
             decisionEvidence = nil; decisionMessage = nil; lastDecisionRead = nil
             if let configuration { await readDecisionEvidence(configuration) }
+            await readWorkflow(selected)
             guard epoch == launchEpoch, commandsAllowed else { return }
             message = nil
         } catch { if epoch == launchEpoch { message = error.localizedDescription } }
@@ -195,6 +205,53 @@ final class LivePaperSignalService: PaperSessionCollecting {
     func startSelected() async {
         guard let configuration else { return }
         await start(configuration: configuration)
+    }
+
+    func enableWorkflow() async {
+        guard let configuration, !isBusy, !workflowBusy, !draining else { return }
+        // This explicit action may run while collection is paused. It owns
+        // only a bounded CLI request and does not launch a collector.
+        commandsAllowed = true
+        let operation = UUID(); operations.insert(operation)
+        isBusy = true; workflowBusy = true
+        defer { operations.remove(operation); isBusy = false; workflowBusy = false }
+        let epoch = launchEpoch, request = UUID(); workflowRequest = request
+        let policy = workflow?.policyHash
+        workflow = nil; workflowMessage = "Enabling diagnostic simulator…"
+        do {
+            try configuration.validate()
+            let data = try await ownedCommand(configuration, "workflow-enable")
+            let value = try DiagnosticWorkflow.decode(data, protocolHash: configuration.protocolHash, policyHash: policy, now: Date())
+            guard commandsAllowed, epoch == launchEpoch, workflowRequest == request,
+                  self.configuration?.directory == configuration.directory,
+                  self.configuration?.protocolHash == configuration.protocolHash, !Task.isCancelled else { return }
+            workflow = value; workflowMessage = nil; lastWorkflowRead = Date()
+        } catch {
+            guard commandsAllowed, epoch == launchEpoch, workflowRequest == request else { return }
+            workflow = nil; workflowMessage = "Diagnostic simulator unavailable. Its retained evidence could not be validated."
+        }
+    }
+
+    private func clearWorkflow() {
+        workflowRequest = UUID(); workflow = nil; workflowMessage = nil; lastWorkflowRead = nil
+    }
+
+    private func readWorkflow(_ configuration: LivePaperSignalConfiguration) async {
+        guard !workflowBusy else { return }
+        let epoch = launchEpoch, request = UUID(); workflowRequest = request
+        let policy = workflow?.policyHash
+        lastWorkflowRead = Date()
+        do {
+            let data = try await ownedCommand(configuration, "workflow-status")
+            let value = try DiagnosticWorkflow.decode(data, protocolHash: configuration.protocolHash, policyHash: policy, now: Date())
+            guard commandsAllowed, epoch == launchEpoch, workflowRequest == request,
+                  self.configuration?.directory == configuration.directory,
+                  self.configuration?.protocolHash == configuration.protocolHash, !Task.isCancelled else { return }
+            workflow = value; workflowMessage = nil
+        } catch {
+            guard commandsAllowed, epoch == launchEpoch, workflowRequest == request else { return }
+            workflow = nil; workflowMessage = "Diagnostic simulator unavailable. Its retained evidence could not be validated."
+        }
     }
 
     func createOrResumeDesk(sourceRoot: URL, sourcePython: URL) async {
@@ -234,6 +291,7 @@ final class LivePaperSignalService: PaperSessionCollecting {
         defer { isBusy = false }
         state = nil; events = []; providerHealth = nil; message = nil
         decisionEvidence = nil; decisionMessage = nil; lastDecisionRead = nil
+        clearWorkflow()
         do {
             try configuration.validate()
             let initial = try await Self.command(configuration, "status", owner: commandOwner)
@@ -313,6 +371,7 @@ final class LivePaperSignalService: PaperSessionCollecting {
         authorizationRequest = UUID(); evidenceRequest = UUID(); notificationsEnabled = false
         launchEpoch = UUID(); monitor?.cancel(); monitor = nil
         isRunning = false; state = nil
+        clearWorkflow()
         let clock = ContinuousClock(), deadline = ContinuousClock.now + min(max(timeout, .zero), .seconds(30))
         let pending = startingCommand; pending?.requestStop()
         let commands = Array(commandProcesses.values)
@@ -374,7 +433,7 @@ final class LivePaperSignalService: PaperSessionCollecting {
     }
 
     func refresh() async {
-        guard commandsAllowed, let configuration, process?.isRunning == true else { state = nil; return }
+        guard commandsAllowed, let configuration, process?.isRunning == true else { state = nil; clearWorkflow(); return }
         let epoch = launchEpoch, operation = UUID(); operations.insert(operation)
         defer { operations.remove(operation) }
         do {
@@ -386,12 +445,13 @@ final class LivePaperSignalService: PaperSessionCollecting {
             if lastDecisionRead.map({ Date().timeIntervalSince($0) >= 5 }) ?? true {
                 await readDecisionEvidence(configuration)
             }
+            if lastWorkflowRead.map({ Date().timeIntervalSince($0) >= 5 }) ?? true { await readWorkflow(configuration) }
             guard epoch == launchEpoch, commandsAllowed, !Task.isCancelled else { return }
             message = nil
             if notificationsEnabled, state?.currentSuggestion(now: Date(), isRunning: isRunning) != nil {
                 await notify(configuration)
             }
-        } catch { if epoch == launchEpoch, commandsAllowed { state = nil; providerHealth = nil; decisionEvidence = nil; message = error.localizedDescription } }
+        } catch { if epoch == launchEpoch, commandsAllowed { state = nil; providerHealth = nil; decisionEvidence = nil; clearWorkflow(); workflowMessage = "Diagnostic simulator unavailable while collection has an error."; message = error.localizedDescription } }
     }
 
     private func readDecisionEvidence(_ configuration: LivePaperSignalConfiguration) async {
@@ -464,6 +524,7 @@ final class LivePaperSignalService: PaperSessionCollecting {
         authorizationRequest = UUID(); evidenceRequest = UUID(); notificationsEnabled = false
         for command in commandProcesses.values { command.requestStop() }
         isRunning = false; state = nil
+        clearWorkflow()
         monitor?.cancel(); monitor = nil
         try? logHandle?.close(); logHandle = nil
         process = nil

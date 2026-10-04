@@ -52,6 +52,8 @@ struct TradeDeskView: View {
     private var desk: some View {
         VStack(alignment: .leading, spacing: 20) {
             PaperSessionHeader(model: model, settings: settings)
+            DiagnosticWorkflowView(service: model.livePaperSignals,
+                transitioning: model.paperSession.state == .starting || model.paperSession.state == .pausing)
             HStack {
                 Text("Connected market coverage").fontWeight(.semibold)
                 Spacer()

@@ -47,9 +47,83 @@ price at which that hypothesis fails; the target is its hypothetical objective.
 The current-posture view hides levels after expiry, feed failure or stopping.
 Historical notification evidence retains its original levels and expiry, clearly
 marked as historical and not a current suggestion. The app does not
-track your holdings, open or close positions, send orders, connect to accounts,
-or use broker credentials. Its future broker interface is disabled. Other app
+track your real holdings, send orders, connect to accounts,
+or use broker credentials. The separately enabled diagnostic simulator below
+tracks hypothetical positions only. Its future broker interface is disabled. Other app
 features and the frozen prospective study are independent of this service.
+
+## Diagnostic simulator
+
+In **Trade Desk**, select a registered source using **Data → Choose Research
+Folder…** (or the existing desk setup), then select **Enable Diagnostic
+Simulator**. Enabling creates a separate, fixed-policy paper ledger; it does not
+start collection. Select **Start** to advance it with newly available public
+observations. The control is disabled during session transitions and engine
+requests. Re-enabling the same manifest is idempotent; there is no reset or
+automatic history repair. **Pause** stops processing. Enabled evidence remains
+registered for later sessions on that source.
+
+The compact simulator card separates simulated cash, equity at the last mark,
+closed net P&L and fees from qualified research suggestions. It shows pending
+entry, open position, pending exit, entry limits, stale source or unavailable
+evidence explicitly. Position symbols come from their retained setup origin.
+Both source observation age and executable valuation age are displayed; neither
+is refreshed merely by polling. Stale or stopped sessions cannot show a current
+setup. An old position can appear only as retained context. Invalid responses,
+engine failures and source changes clear the previous projection.
+
+Expand **Setup evidence and post-trade review** for blocked reasons, scheduled
+calendar availability, setup levels, fixed limits, drawdown, modeled slippage,
+setup-group outcomes and the latest completed close. Results include losses and
+costs. Open or pending positions do not count as completed wins; recent closes
+are a bounded display and the complete evidence remains on disk. No confidence,
+profit probability or automatic strategy promotion is inferred from this ledger.
+
+The fixed policy watches credential-free Binance spot `BTCUSDT` and `ETHUSDT`,
+long/flat only. It requires causal 5/15-minute upward context, usable quotes and
+sizes, trailing liquidity, calendar coverage and an actually observed breakout
+above the preceding 20 finalized highs or pullback/reclaim of the preceding
+20-bar mean. The stop uses the lower of the trailing 10-bar low and entry minus
+1.5 trailing ATR; the target is twice the initial price risk. The stressed
+two-sided cost screen remains required. Calendar evidence is imported locally:
+scheduled-event risk is supported, automatic news understanding is unavailable.
+
+Initial simulated cash is 10,000 USDT. A pending intent requires a later fresh
+quote for its hypothetical ask-side fill; it is not a same-observation fill.
+One correlated BTC/ETH position is allowed, with modeled loss capped at 0.5% of
+equity, entry debit at 25% of equity, participation at 1% of reported bar volume
+and displayed ask size, and quantity rounded down to the declared lot increment.
+Intent expiry is 60 seconds. Exits use a subsequent usable bid and charge fees
+and modeled slippage. Stops precede targets on ambiguous touches, a trailing
+stop ratchets only after one initial risk unit, and a 60-minute holding limit
+applies. Pending exits survive gaps and recovery; missing quotes can delay
+liquidation, so a displayed stop is not a guaranteed exit price.
+
+New entries freeze at 2% realized UTC-day losses, six daily entries, or three
+consecutive losing closes (a 60-minute cooldown). Day rollover resets day
+counters, never total losses, cash or history. Review produces descriptive
+research hypotheses; it never rewrites an open position or changes the live
+policy. Existing background model learning remains independent.
+
+All simulator evidence is retained beneath the selected source in
+`diagnostic-workflow-v1`: immutable source/policy/implementation manifest,
+append-only hash-chained transitions and a guarded bounded status checkpoint.
+Startup/recovery audits the retained journal before advancing it. An inconsistent
+or torn journal fails closed; the checkpoint does not substitute for account
+history. This detects accidental corruption and identity mismatch, and is not
+an authenticated ledger against an attacker rewriting all evidence. Frozen
+`ProspectiveStudies` and `live-paper-study` paths are refused. Older protocols,
+candidate qualification, losses and notification paths remain separate. Warmup
+can read prior bars, but only data available after explicit activation can trade.
+
+The simulator advances inside the existing collector, without another provider
+service or installed daemon. Closing the window continues a started session
+while Nowcaster runs; Quit stops owned workers. Keep the Mac awake, online and
+the public feed available. After sleep, data gaps, an app restart or Pause,
+retained positions remain historical until processing resumes and validates new
+observations. Missing calendar coverage continues to block entries. Enabling
+does not request notifications, account access or broker credentials. The source
+build does not replace the installed app or any running study automatically.
 
 ## Evidence requirements
 
@@ -126,6 +200,8 @@ python scripts/run_live_paper_signals.py status --directory /path/to/registered-
 python scripts/run_live_paper_signals.py start --directory /path/to/registered-round
 python scripts/run_live_paper_signals.py stop --directory /path/to/registered-round
 python scripts/run_live_paper_signals.py decision-context --directory /path/to/registered-round
+python scripts/run_live_paper_signals.py workflow-status --directory /path/to/registered-round
+python scripts/run_live_paper_signals.py workflow-enable --directory /path/to/registered-round
 python scripts/run_live_paper_signals.py import-calendar --directory /path/to/registered-round --file /path/to/calendar.json
 ```
 
