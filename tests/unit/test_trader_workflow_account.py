@@ -385,3 +385,89 @@ def test_partial_exit_quote_capacity_is_not_reused_by_new_bar_envelope():
     refreshed = quote(at + timedelta(seconds=3), bid="94", ask="94.02", size=1)
     later = advance(repeated.account, (), (refreshed,), at + timedelta(seconds=3), p)
     assert later.account.position.quantity == remaining - 1
+
+
+def ratcheted_position():
+    p, ds, account, advance = entered()
+    at = NOW.replace(second=0) + timedelta(minutes=2, seconds=2)
+    candle_end = at.replace(second=0)
+    row = quote(
+        at, bid="106", ask="106.02", provider_at=candle_end, open=D(105), high=D("106.5"), low=D(104), close=D(105)
+    )
+    raised = advance(account, (), (row,), at, p).account
+    assert raised.position.stop == D("104.188145") and raised.pending_exit is None
+    return p, raised, advance, at, row
+
+
+@pytest.mark.parametrize("restart", [False, True])
+def test_same_candle_enrichment_cannot_retroactively_hit_ratcheted_stop(restart):
+    p, raised, advance, at, row = ratcheted_position()
+    if restart:
+        from src.research.trader_workflow_account import WorkflowAccount
+
+        raised = WorkflowAccount.model_validate_json(raised.model_dump_json())
+    later = at + timedelta(seconds=1)
+    enriched = row.model_copy(
+        update=dict(
+            source_key="same-candle-new-quote",
+            received_at=later,
+            available_at=later,
+            quote_source_key="later-quote",
+            quote_provider_at=later,
+            quote_received_at=later,
+            quote_available_at=later,
+        )
+    )
+    result = advance(raised, (), (enriched,), later, p).account
+    assert result.pending_exit is None
+    assert result.position.stop == D("104.188145")
+
+
+def test_candle_straddling_ratchet_time_cannot_hit_new_stop_but_next_bar_can():
+    p, raised, advance, at, row = ratcheted_position()
+    from src.research.trader_workflow_account import WorkflowAccount
+
+    raised = WorkflowAccount.model_validate_json(raised.model_dump_json())
+    straddling_end = at.replace(second=0) + timedelta(minutes=1)
+    later = straddling_end + timedelta(seconds=2)
+    straddling = quote(
+        later,
+        bid="106",
+        ask="106.02",
+        provider_at=straddling_end,
+        open=D(105),
+        high=D("106.5"),
+        low=D(104),
+        close=D(105),
+    )
+    result = advance(raised, (), (straddling,), later, p).account
+    assert result.pending_exit is None
+    next_end = straddling_end + timedelta(minutes=1)
+    next_at = next_end + timedelta(seconds=2)
+    next_bar = quote(
+        next_at, bid="106", ask="106.02", provider_at=next_end, open=D(105), high=D("106.5"), low=D(104), close=D(105)
+    )
+    stopped = advance(result, (), (next_bar,), next_at, p).account
+    assert stopped.pending_exit.reason == "stop"
+
+
+def test_quote_from_before_ratchet_cannot_hit_new_stop_after_later_receipt():
+    p, raised, advance, at, row = ratcheted_position()
+    later = at + timedelta(seconds=1)
+    old_quote = row.model_copy(
+        update=dict(
+            source_key="delayed-pre-ratchet-quote",
+            bid=D(104),
+            ask=D("104.02"),
+            received_at=later,
+            available_at=later,
+            quote_source_key="older-quote",
+            quote_provider_at=at - timedelta(seconds=1),
+            quote_received_at=later,
+            quote_available_at=later,
+        )
+    )
+    result = advance(raised, (), (old_quote,), later, p).account
+    assert result.pending_exit is None
+    actual = quote(later + timedelta(seconds=1), bid="104", ask="104.02")
+    assert advance(result, (), (actual,), later + timedelta(seconds=1), p).account.pending_exit.reason == "stop"

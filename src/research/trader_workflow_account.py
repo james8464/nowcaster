@@ -37,6 +37,7 @@ class WorkflowPosition(WorkflowModel):
     unit_debit: Decimal = Field(gt=0)
     initial_risk: Decimal = Field(gt=0)
     stop: Decimal = Field(gt=0)
+    stop_effective_at: datetime
     target: Decimal = Field(gt=0)
     realized_pnl: Decimal = D(0)
     exit_notional: Decimal = Field(default=D(0), ge=0)
@@ -47,6 +48,8 @@ class WorkflowPosition(WorkflowModel):
     def coherent_position(self):
         if self.quantity > self.initial_quantity or self.stop < self.origin.stop or self.target != self.origin.target:
             raise ValueError("position contradicts immutable origin")
+        if self.stop_effective_at < self.entry_at:
+            raise ValueError("stop cannot be effective before entry")
         return self
 
     @property
@@ -142,6 +145,8 @@ class WorkflowAccount(WorkflowModel):
             raise ValueError("future consumed quote")
         if self.position and self.pending_entry or self.pending_exit and not self.position:
             raise ValueError("invalid account position/intents")
+        if self.position and self.position.stop_effective_at > self.last_at:
+            raise ValueError("future effective stop")
         origins = [self.pending_entry] if self.pending_entry else [self.position.origin] if self.position else []
         for origin in origins:
             if (origin.policy_hash, origin.protocol_hash, origin.source_identity_hash) != (
@@ -395,9 +400,14 @@ def advance_account(
         elif not pending_exit:
             reason = None
             complete_bar = fresh_input and row.finalized and row.provider_at - timedelta(minutes=1) >= position.entry_at
-            low = row.low if complete_bar else None
+            # A ratchet affects later quotes and whole future candles only.
+            # Enriching a prior/straddling candle cannot make its earlier low
+            # retrospectively cross the newly installed trailing stop.
+            stop_bar = complete_bar and row.provider_at - timedelta(minutes=1) >= position.stop_effective_at
+            low = row.low if stop_bar else None
             high = row.high if complete_bar else None
-            if (usable and row.bid <= position.stop) or (low is not None and low <= position.stop):
+            stop_quote = usable and row.quote_provider_at > position.stop_effective_at
+            if (stop_quote and row.bid <= position.stop) or (low is not None and low <= position.stop):
                 reason = "stop"
             elif (usable and row.bid >= position.target) or (high is not None and high >= position.target):
                 reason = "target"
@@ -446,10 +456,10 @@ def advance_account(
                     source_key=row.source_key if row else None,
                     reasons=(reason,),
                 )
-            elif usable and row.bid - position.entry_price >= position.initial_risk:
+            elif stop_quote and row.bid - position.entry_price >= position.initial_risk:
                 new_stop = max(position.stop, row.bid - position.initial_risk)
                 if new_stop > position.stop:
-                    position = position.model_copy(update={"stop": new_stop})
+                    position = position.model_copy(update={"stop": new_stop, "stop_effective_at": now})
                     a["position"] = position
                     emit("trailing_stop", symbol=position.symbol, price=new_stop, source_key=row.source_key)
         if position and usable:
@@ -536,6 +546,7 @@ def advance_account(
                         unit_debit=debit,
                         initial_risk=price - pending.stop,
                         stop=pending.stop,
+                        stop_effective_at=now,
                         target=pending.target,
                     )
                     a.update(
