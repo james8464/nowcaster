@@ -154,9 +154,11 @@ private func workflowPosition() -> [String: Any] {
         try workflowData(workflowPayload()).write(to: path)
         await service.open(directory: root, sourceRoot: root, sourcePython: URL(fileURLWithPath: "/bin/sh"))
         #expect(service.workflow != nil)
+        let retainedSource = service.selectedSource
         await service.open(directory: root.appending(path: "missing"), sourceRoot: root, sourcePython: URL(fileURLWithPath: "/bin/sh"))
         #expect(service.workflow == nil)
-        #expect(service.selectedSource == nil)
+        #expect(service.selectedSource == retainedSource)
+        #expect(service.directory == root)
         await service.open(directory: root, sourceRoot: root, sourcePython: URL(fileURLWithPath: "/bin/sh"))
         try Data().write(to: root.appending(path: "delay"))
         let enabling = Task { await service.enableWorkflow() }

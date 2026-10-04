@@ -169,9 +169,8 @@ final class LivePaperSignalService: PaperSessionCollecting {
         let epoch = launchEpoch
         isBusy = true
         defer { isBusy = false }
-        // Source selection invalidates every projection before any asynchronous work.
-        configuration = nil; self.directory = nil; state = nil; events = []; providerHealth = nil
-        decisionEvidence = nil; decisionMessage = nil; lastDecisionRead = nil
+        // Clear diagnostics immediately, but replace the existing source binding
+        // only after the requested folder and retained status validate.
         clearWorkflow()
         do {
             if let root = AppStorageLocations.acceptanceRoot,
