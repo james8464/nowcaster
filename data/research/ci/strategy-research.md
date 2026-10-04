@@ -5,10 +5,10 @@ Missing history is unavailable evidence, never a successful result.
 
 - Profile: ci
 - Fixed UTC cutoff: 2026-08-20T00:00:00Z
-- Semantic snapshot hash: `02b91abc75c66e473d0e4dee251a0fb042733196ec29e2add9dc0e08b5b02080`
+- Semantic snapshot hash: `aeaf973bf0ebba8e7e2b7b14b23685ce18336b77ef790c8b2ceb587c9382ba4d`
 - Dataset hash: `74b4419166a532bddedd5cf31a206ef5b5832eb5a8bda8531432599bea158757`
 - Config hash: `0107032d52995d9f13c666d47f4f0c998e54c7e40a0fcd04e96b9fbd11ca013e`
-- Code hash: `cae1c0e32f6919292fdd8c239d123934ae85df42724bf5e5992f4d218ca2c03f`
+- Code hash: `573d33b3844abce3c19187fa743c27067938d01ead666627c26312cb438eb709`
 - Strategy statuses: {"evaluated": 15, "unavailable": 4}
 
 The compact report omits raw provider bars. Review docs/research-results.md before interpreting any metric.
