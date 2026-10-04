@@ -1,0 +1,1171 @@
+{
+  "candidates": [
+    {
+      "long_signals_below_cost_floor": 325,
+      "parameters": {
+        "adx_period": 14,
+        "adx_threshold": 20,
+        "fast_period": 12,
+        "slow_period": 26
+      },
+      "periods": {
+        "later_check": {
+          "base": {
+            "closed_trade_index_drawdown": 0.15219957976648135,
+            "daily_average_net_bps": {
+              "2026-09-22": -70.69745692157584,
+              "2026-09-23": -84.36165714658536,
+              "2026-09-24": -40.30952548422011,
+              "2026-09-25": -88.27573347083548,
+              "2026-09-28": -41.84311157622453,
+              "2026-09-29": -52.0298050852179,
+              "2026-09-30": -54.496364298529805,
+              "2026-10-01": -17.085585183299656,
+              "2026-10-02": -72.20264059838347
+            },
+            "daily_lower_net_bps": -84.71441017597235,
+            "exit_days": 9,
+            "exit_reasons": {
+              "expired": 5,
+              "stop": 19,
+              "target": 5
+            },
+            "mean_gross_bps": -22.575672951065606,
+            "mean_net_bps": -56.57567295106559,
+            "net_win_rate": 0.2413793103448276,
+            "trades": 29
+          },
+          "diagnostics": {
+            "gap_blocked": 0,
+            "gap_truncated": 0,
+            "invalid_risk": 0,
+            "late_decision": 0,
+            "overlap_blocked": 153,
+            "right_censored": 0,
+            "scored_opportunities": 29,
+            "signals_considered": 182
+          },
+          "end_exclusive": "2026-10-04T00:00:00+00:00",
+          "quality": {
+            "duplicate_opens": 0,
+            "expected_bars": 1152,
+            "invalid_boundary_rows_in_source": 0,
+            "missing_bars": 0,
+            "observed_bars": 1152
+          },
+          "reasons": [
+            "fewer_than_100_trades",
+            "fewer_than_10_exit_days",
+            "base_average_not_positive",
+            "stressed_average_not_positive",
+            "adjusted_daily_lower_bound_not_positive"
+          ],
+          "start": "2026-09-22T00:00:00+00:00",
+          "stress": {
+            "closed_trade_index_drawdown": 0.23236805319807075,
+            "daily_average_net_bps": {
+              "2026-09-22": -104.69745692157584,
+              "2026-09-23": -118.36165714658536,
+              "2026-09-24": -74.30952548422012,
+              "2026-09-25": -122.27573347083548,
+              "2026-09-28": -75.84311157622453,
+              "2026-09-29": -86.0298050852179,
+              "2026-09-30": -88.49636429852981,
+              "2026-10-01": -51.085585183299656,
+              "2026-10-02": -106.20264059838347
+            },
+            "daily_lower_net_bps": -118.71441017597235,
+            "exit_days": 9,
+            "exit_reasons": {
+              "expired": 5,
+              "stop": 19,
+              "target": 5
+            },
+            "mean_gross_bps": -22.575672951065606,
+            "mean_net_bps": -90.57567295106561,
+            "net_win_rate": 0.1724137931034483,
+            "trades": 29
+          }
+        },
+        "screen": {
+          "base": {
+            "closed_trade_index_drawdown": 0.06831311855618971,
+            "daily_average_net_bps": {
+              "2026-09-09": -43.66303234403017,
+              "2026-09-11": -67.55743478805101,
+              "2026-09-14": -31.980771345554576,
+              "2026-09-15": -92.39486831541785,
+              "2026-09-18": 51.03806731318064,
+              "2026-09-19": -24.312757719851387,
+              "2026-09-20": -80.29038411127051,
+              "2026-09-21": 1.0892188112421597
+            },
+            "daily_lower_net_bps": -96.10713068498552,
+            "exit_days": 8,
+            "exit_reasons": {
+              "expired": 6,
+              "stop": 12,
+              "target": 11
+            },
+            "mean_gross_bps": 15.53764717007725,
+            "mean_net_bps": -18.462352829922754,
+            "net_win_rate": 0.4482758620689655,
+            "trades": 29
+          },
+          "diagnostics": {
+            "gap_blocked": 0,
+            "gap_truncated": 0,
+            "invalid_risk": 0,
+            "late_decision": 0,
+            "overlap_blocked": 220,
+            "right_censored": 14,
+            "scored_opportunities": 29,
+            "signals_considered": 263
+          },
+          "end_exclusive": "2026-09-22T00:00:00+00:00",
+          "quality": {
+            "duplicate_opens": 0,
+            "expected_bars": 1248,
+            "invalid_boundary_rows_in_source": 0,
+            "missing_bars": 0,
+            "observed_bars": 1248
+          },
+          "reasons": [
+            "fewer_than_100_trades",
+            "fewer_than_10_exit_days",
+            "base_average_not_positive",
+            "stressed_average_not_positive",
+            "adjusted_daily_lower_bound_not_positive",
+            "censored_outcomes_present"
+          ],
+          "start": "2026-09-09T00:00:00+00:00",
+          "stress": {
+            "closed_trade_index_drawdown": 0.14346771452544482,
+            "daily_average_net_bps": {
+              "2026-09-09": -77.66303234403017,
+              "2026-09-11": -101.55743478805101,
+              "2026-09-14": -65.98077134555457,
+              "2026-09-15": -126.39486831541785,
+              "2026-09-18": 17.038067313180647,
+              "2026-09-19": -58.31275771985138,
+              "2026-09-20": -114.29038411127051,
+              "2026-09-21": -32.910781188757845
+            },
+            "daily_lower_net_bps": -130.10713068498552,
+            "exit_days": 8,
+            "exit_reasons": {
+              "expired": 6,
+              "stop": 12,
+              "target": 11
+            },
+            "mean_gross_bps": 15.53764717007725,
+            "mean_net_bps": -52.46235282992276,
+            "net_win_rate": 0.41379310344827586,
+            "trades": 29
+          }
+        }
+      },
+      "prefix_checks": [
+        {
+          "mismatch_column": null,
+          "mismatch_row": null,
+          "passed": true,
+          "reason": "prefix signals are invariant"
+        },
+        {
+          "mismatch_column": null,
+          "mismatch_row": null,
+          "passed": true,
+          "reason": "prefix signals are invariant"
+        },
+        {
+          "mismatch_column": null,
+          "mismatch_row": null,
+          "passed": true,
+          "reason": "prefix signals are invariant"
+        }
+      ],
+      "screen_survivor": false,
+      "short_signals_not_traded": 798,
+      "strategy": "ema_adx_trend",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "long_signals_below_cost_floor": 68,
+      "parameters": {
+        "lookback": 20
+      },
+      "periods": {
+        "later_check": {
+          "base": {
+            "closed_trade_index_drawdown": 0.09053009148998004,
+            "daily_average_net_bps": {
+              "2026-09-22": -84.15418267357185,
+              "2026-09-23": -82.03338603590446,
+              "2026-09-24": -94.00548665576089,
+              "2026-09-25": -51.99285417085295,
+              "2026-09-28": -97.80797986697273,
+              "2026-09-29": 17.799389888629314,
+              "2026-09-30": 54.91473372947489,
+              "2026-10-01": 1.413052720579261,
+              "2026-10-02": -95.153838215946
+            },
+            "daily_lower_net_bps": -114.83977553427339,
+            "exit_days": 9,
+            "exit_reasons": {
+              "expired": 3,
+              "stop": 11,
+              "target": 3
+            },
+            "mean_gross_bps": -21.50512331203029,
+            "mean_net_bps": -55.50512331203029,
+            "net_win_rate": 0.23529411764705882,
+            "trades": 17
+          },
+          "diagnostics": {
+            "gap_blocked": 0,
+            "gap_truncated": 0,
+            "invalid_risk": 0,
+            "late_decision": 0,
+            "overlap_blocked": 11,
+            "right_censored": 0,
+            "scored_opportunities": 17,
+            "signals_considered": 28
+          },
+          "end_exclusive": "2026-10-04T00:00:00+00:00",
+          "quality": {
+            "duplicate_opens": 0,
+            "expected_bars": 1152,
+            "invalid_boundary_rows_in_source": 0,
+            "missing_bars": 0,
+            "observed_bars": 1152
+          },
+          "reasons": [
+            "fewer_than_100_trades",
+            "fewer_than_10_exit_days",
+            "base_average_not_positive",
+            "stressed_average_not_positive",
+            "adjusted_daily_lower_bound_not_positive"
+          ],
+          "start": "2026-09-22T00:00:00+00:00",
+          "stress": {
+            "closed_trade_index_drawdown": 0.14197104136238536,
+            "daily_average_net_bps": {
+              "2026-09-22": -118.15418267357187,
+              "2026-09-23": -116.03338603590446,
+              "2026-09-24": -128.0054866557609,
+              "2026-09-25": -85.99285417085295,
+              "2026-09-28": -131.80797986697274,
+              "2026-09-29": -16.200610111370686,
+              "2026-09-30": 20.914733729474897,
+              "2026-10-01": -32.586947279420734,
+              "2026-10-02": -129.153838215946
+            },
+            "daily_lower_net_bps": -148.83977553427337,
+            "exit_days": 9,
+            "exit_reasons": {
+              "expired": 3,
+              "stop": 11,
+              "target": 3
+            },
+            "mean_gross_bps": -21.50512331203029,
+            "mean_net_bps": -89.50512331203029,
+            "net_win_rate": 0.17647058823529413,
+            "trades": 17
+          }
+        },
+        "screen": {
+          "base": {
+            "closed_trade_index_drawdown": 0.0530993860331499,
+            "daily_average_net_bps": {
+              "2026-09-11": -34.2991230653876,
+              "2026-09-14": -32.453367846764365,
+              "2026-09-16": -98.90164115313668,
+              "2026-09-17": -98.24378634894535,
+              "2026-09-18": 59.02034632574285,
+              "2026-09-19": -83.09577316591474,
+              "2026-09-20": -80.29038411127051,
+              "2026-09-21": -15.055898963045127
+            },
+            "daily_lower_net_bps": -117.23717782345919,
+            "exit_days": 8,
+            "exit_reasons": {
+              "expired": 2,
+              "stop": 9,
+              "target": 7
+            },
+            "mean_gross_bps": 8.602124548050169,
+            "mean_net_bps": -25.397875451949833,
+            "net_win_rate": 0.4444444444444444,
+            "trades": 18
+          },
+          "diagnostics": {
+            "gap_blocked": 0,
+            "gap_truncated": 0,
+            "invalid_risk": 0,
+            "late_decision": 0,
+            "overlap_blocked": 11,
+            "right_censored": 0,
+            "scored_opportunities": 18,
+            "signals_considered": 29
+          },
+          "end_exclusive": "2026-09-22T00:00:00+00:00",
+          "quality": {
+            "duplicate_opens": 0,
+            "expected_bars": 1248,
+            "invalid_boundary_rows_in_source": 0,
+            "missing_bars": 0,
+            "observed_bars": 1248
+          },
+          "reasons": [
+            "fewer_than_100_trades",
+            "fewer_than_10_exit_days",
+            "base_average_not_positive",
+            "stressed_average_not_positive",
+            "adjusted_daily_lower_bound_not_positive"
+          ],
+          "start": "2026-09-09T00:00:00+00:00",
+          "stress": {
+            "closed_trade_index_drawdown": 0.10573730950757176,
+            "daily_average_net_bps": {
+              "2026-09-11": -68.2991230653876,
+              "2026-09-14": -66.45336784676437,
+              "2026-09-16": -132.9016411531367,
+              "2026-09-17": -132.24378634894535,
+              "2026-09-18": 25.020346325742857,
+              "2026-09-19": -117.09577316591474,
+              "2026-09-20": -114.29038411127051,
+              "2026-09-21": -49.05589896304513
+            },
+            "daily_lower_net_bps": -151.23717782345918,
+            "exit_days": 8,
+            "exit_reasons": {
+              "expired": 2,
+              "stop": 9,
+              "target": 7
+            },
+            "mean_gross_bps": 8.602124548050169,
+            "mean_net_bps": -59.39787545194984,
+            "net_win_rate": 0.3888888888888889,
+            "trades": 18
+          }
+        }
+      },
+      "prefix_checks": [
+        {
+          "mismatch_column": null,
+          "mismatch_row": null,
+          "passed": true,
+          "reason": "prefix signals are invariant"
+        },
+        {
+          "mismatch_column": null,
+          "mismatch_row": null,
+          "passed": true,
+          "reason": "prefix signals are invariant"
+        },
+        {
+          "mismatch_column": null,
+          "mismatch_row": null,
+          "passed": true,
+          "reason": "prefix signals are invariant"
+        }
+      ],
+      "screen_survivor": false,
+      "short_signals_not_traded": 109,
+      "strategy": "donchian_breakout",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "long_signals_below_cost_floor": 525,
+      "parameters": {
+        "slope_bars": 5
+      },
+      "periods": {
+        "later_check": {
+          "base": {
+            "closed_trade_index_drawdown": 0.15183203941605872,
+            "daily_average_net_bps": {
+              "2026-09-22": -55.46804307305683,
+              "2026-09-23": -40.209452550479114,
+              "2026-09-24": -57.684273707342456,
+              "2026-09-25": -51.446783319080566,
+              "2026-09-28": -92.82768751068487,
+              "2026-09-29": -63.88675806970043,
+              "2026-09-30": -75.18521192604058,
+              "2026-10-01": 18.325368981252687,
+              "2026-10-02": -58.77326519094454
+            },
+            "daily_lower_net_bps": -88.55102614266887,
+            "exit_days": 9,
+            "exit_reasons": {
+              "expired": 8,
+              "stop": 18,
+              "target": 4
+            },
+            "mean_gross_bps": -20.574855431187643,
+            "mean_net_bps": -54.57485543118764,
+            "net_win_rate": 0.26666666666666666,
+            "trades": 30
+          },
+          "diagnostics": {
+            "gap_blocked": 0,
+            "gap_truncated": 0,
+            "invalid_risk": 0,
+            "late_decision": 0,
+            "overlap_blocked": 239,
+            "right_censored": 0,
+            "scored_opportunities": 30,
+            "signals_considered": 269
+          },
+          "end_exclusive": "2026-10-04T00:00:00+00:00",
+          "quality": {
+            "duplicate_opens": 0,
+            "expected_bars": 1152,
+            "invalid_boundary_rows_in_source": 0,
+            "missing_bars": 0,
+            "observed_bars": 1152
+          },
+          "reasons": [
+            "fewer_than_100_trades",
+            "fewer_than_10_exit_days",
+            "base_average_not_positive",
+            "stressed_average_not_positive",
+            "adjusted_daily_lower_bound_not_positive"
+          ],
+          "start": "2026-09-22T00:00:00+00:00",
+          "stress": {
+            "closed_trade_index_drawdown": 0.23464498343803664,
+            "daily_average_net_bps": {
+              "2026-09-22": -89.46804307305683,
+              "2026-09-23": -74.20945255047911,
+              "2026-09-24": -91.68427370734247,
+              "2026-09-25": -85.44678331908057,
+              "2026-09-28": -126.82768751068487,
+              "2026-09-29": -97.88675806970043,
+              "2026-09-30": -109.18521192604058,
+              "2026-10-01": -15.674631018747307,
+              "2026-10-02": -92.77326519094456
+            },
+            "daily_lower_net_bps": -122.55102614266889,
+            "exit_days": 9,
+            "exit_reasons": {
+              "expired": 8,
+              "stop": 18,
+              "target": 4
+            },
+            "mean_gross_bps": -20.574855431187643,
+            "mean_net_bps": -88.57485543118763,
+            "net_win_rate": 0.13333333333333333,
+            "trades": 30
+          }
+        },
+        "screen": {
+          "base": {
+            "closed_trade_index_drawdown": 0.1076625259512729,
+            "daily_average_net_bps": {
+              "2026-09-09": -43.90417160037079,
+              "2026-09-10": -79.6698100584163,
+              "2026-09-11": -42.12472189565039,
+              "2026-09-14": -3.028055159421994,
+              "2026-09-15": -102.79373641319242,
+              "2026-09-16": -78.84921099949524,
+              "2026-09-17": -54.06517046940881,
+              "2026-09-18": 51.03806731318064,
+              "2026-09-19": -32.72166516707406,
+              "2026-09-20": -80.29038411127051,
+              "2026-09-21": 11.710178675162853
+            },
+            "daily_lower_net_bps": -86.85854497624373,
+            "exit_days": 11,
+            "exit_reasons": {
+              "expired": 9,
+              "stop": 17,
+              "target": 16
+            },
+            "mean_gross_bps": 12.612409560287794,
+            "mean_net_bps": -21.38759043971221,
+            "net_win_rate": 0.47619047619047616,
+            "trades": 42
+          },
+          "diagnostics": {
+            "gap_blocked": 0,
+            "gap_truncated": 0,
+            "invalid_risk": 0,
+            "late_decision": 0,
+            "overlap_blocked": 288,
+            "right_censored": 14,
+            "scored_opportunities": 42,
+            "signals_considered": 344
+          },
+          "end_exclusive": "2026-09-22T00:00:00+00:00",
+          "quality": {
+            "duplicate_opens": 0,
+            "expected_bars": 1248,
+            "invalid_boundary_rows_in_source": 0,
+            "missing_bars": 0,
+            "observed_bars": 1248
+          },
+          "reasons": [
+            "fewer_than_100_trades",
+            "base_average_not_positive",
+            "stressed_average_not_positive",
+            "adjusted_daily_lower_bound_not_positive",
+            "censored_outcomes_present"
+          ],
+          "start": "2026-09-09T00:00:00+00:00",
+          "stress": {
+            "closed_trade_index_drawdown": 0.210027890140829,
+            "daily_average_net_bps": {
+              "2026-09-09": -77.90417160037079,
+              "2026-09-10": -113.6698100584163,
+              "2026-09-11": -76.1247218956504,
+              "2026-09-14": -37.02805515942199,
+              "2026-09-15": -136.79373641319242,
+              "2026-09-16": -112.84921099949524,
+              "2026-09-17": -88.06517046940881,
+              "2026-09-18": 17.038067313180647,
+              "2026-09-19": -66.72166516707405,
+              "2026-09-20": -114.29038411127051,
+              "2026-09-21": -22.289821324837146
+            },
+            "daily_lower_net_bps": -120.85854497624372,
+            "exit_days": 11,
+            "exit_reasons": {
+              "expired": 9,
+              "stop": 17,
+              "target": 16
+            },
+            "mean_gross_bps": 12.612409560287794,
+            "mean_net_bps": -55.38759043971221,
+            "net_win_rate": 0.38095238095238093,
+            "trades": 42
+          }
+        }
+      },
+      "prefix_checks": [
+        {
+          "mismatch_column": null,
+          "mismatch_row": null,
+          "passed": true,
+          "reason": "prefix signals are invariant"
+        },
+        {
+          "mismatch_column": null,
+          "mismatch_row": null,
+          "passed": true,
+          "reason": "prefix signals are invariant"
+        },
+        {
+          "mismatch_column": null,
+          "mismatch_row": null,
+          "passed": true,
+          "reason": "prefix signals are invariant"
+        }
+      ],
+      "screen_survivor": false,
+      "short_signals_not_traded": 1072,
+      "strategy": "vwap_trend_continuation",
+      "symbol": "BTCUSDT"
+    },
+    {
+      "long_signals_below_cost_floor": 123,
+      "parameters": {
+        "adx_period": 14,
+        "adx_threshold": 20,
+        "fast_period": 12,
+        "slow_period": 26
+      },
+      "periods": {
+        "later_check": {
+          "base": {
+            "closed_trade_index_drawdown": 0.1799782565212391,
+            "daily_average_net_bps": {
+              "2026-09-22": -120.6306122079182,
+              "2026-09-23": -107.19534687064589,
+              "2026-09-24": -52.19642584368331,
+              "2026-09-25": -65.11512348875812,
+              "2026-09-28": -25.155130525177512,
+              "2026-09-29": -56.47415420250088,
+              "2026-09-30": -55.767760915760995,
+              "2026-10-01": -37.490873586248966,
+              "2026-10-02": -38.70589364081687
+            },
+            "daily_lower_net_bps": -99.10802969174232,
+            "exit_days": 9,
+            "exit_reasons": {
+              "expired": 4,
+              "stop": 22,
+              "target": 9
+            },
+            "mean_gross_bps": -22.22026731130563,
+            "mean_net_bps": -56.22026731130565,
+            "net_win_rate": 0.2571428571428571,
+            "trades": 35
+          },
+          "diagnostics": {
+            "gap_blocked": 0,
+            "gap_truncated": 0,
+            "invalid_risk": 0,
+            "late_decision": 0,
+            "overlap_blocked": 169,
+            "right_censored": 0,
+            "scored_opportunities": 35,
+            "signals_considered": 204
+          },
+          "end_exclusive": "2026-10-04T00:00:00+00:00",
+          "quality": {
+            "duplicate_opens": 0,
+            "expected_bars": 1152,
+            "invalid_boundary_rows_in_source": 0,
+            "missing_bars": 0,
+            "observed_bars": 1152
+          },
+          "reasons": [
+            "fewer_than_100_trades",
+            "fewer_than_10_exit_days",
+            "base_average_not_positive",
+            "stressed_average_not_positive",
+            "adjusted_daily_lower_bound_not_positive"
+          ],
+          "start": "2026-09-22T00:00:00+00:00",
+          "stress": {
+            "closed_trade_index_drawdown": 0.27262260182916653,
+            "daily_average_net_bps": {
+              "2026-09-22": -154.6306122079182,
+              "2026-09-23": -141.1953468706459,
+              "2026-09-24": -86.19642584368331,
+              "2026-09-25": -99.11512348875812,
+              "2026-09-28": -59.15513052517751,
+              "2026-09-29": -90.47415420250088,
+              "2026-09-30": -89.767760915761,
+              "2026-10-01": -71.49087358624897,
+              "2026-10-02": -72.70589364081687
+            },
+            "daily_lower_net_bps": -133.10802969174233,
+            "exit_days": 9,
+            "exit_reasons": {
+              "expired": 4,
+              "stop": 22,
+              "target": 9
+            },
+            "mean_gross_bps": -22.22026731130563,
+            "mean_net_bps": -90.22026731130563,
+            "net_win_rate": 0.2571428571428571,
+            "trades": 35
+          }
+        },
+        "screen": {
+          "base": {
+            "closed_trade_index_drawdown": 0.11749325450744685,
+            "daily_average_net_bps": {
+              "2026-09-09": -32.98570535862152,
+              "2026-09-10": -72.54296331280428,
+              "2026-09-11": -52.812766616304046,
+              "2026-09-13": -91.03368992265423,
+              "2026-09-14": -45.26966600644264,
+              "2026-09-17": -24.452682107639852,
+              "2026-09-18": 59.05393895625728,
+              "2026-09-19": -13.890617691055402,
+              "2026-09-20": 55.670740908728284,
+              "2026-09-21": 20.94800775315747
+            },
+            "daily_lower_net_bps": -73.97672421619424,
+            "exit_days": 10,
+            "exit_reasons": {
+              "expired": 10,
+              "stop": 19,
+              "target": 21
+            },
+            "mean_gross_bps": 22.466947783580338,
+            "mean_net_bps": -11.533052216419664,
+            "net_win_rate": 0.54,
+            "trades": 50
+          },
+          "diagnostics": {
+            "gap_blocked": 0,
+            "gap_truncated": 0,
+            "invalid_risk": 0,
+            "late_decision": 0,
+            "overlap_blocked": 402,
+            "right_censored": 11,
+            "scored_opportunities": 50,
+            "signals_considered": 463
+          },
+          "end_exclusive": "2026-09-22T00:00:00+00:00",
+          "quality": {
+            "duplicate_opens": 0,
+            "expected_bars": 1248,
+            "invalid_boundary_rows_in_source": 0,
+            "missing_bars": 0,
+            "observed_bars": 1248
+          },
+          "reasons": [
+            "fewer_than_100_trades",
+            "base_average_not_positive",
+            "stressed_average_not_positive",
+            "adjusted_daily_lower_bound_not_positive",
+            "censored_outcomes_present"
+          ],
+          "start": "2026-09-09T00:00:00+00:00",
+          "stress": {
+            "closed_trade_index_drawdown": 0.20969185520345668,
+            "daily_average_net_bps": {
+              "2026-09-09": -66.98570535862153,
+              "2026-09-10": -106.54296331280428,
+              "2026-09-11": -86.81276661630405,
+              "2026-09-13": -125.03368992265423,
+              "2026-09-14": -79.26966600644263,
+              "2026-09-17": -58.452682107639845,
+              "2026-09-18": 25.053938956257277,
+              "2026-09-19": -47.8906176910554,
+              "2026-09-20": 21.67074090872829,
+              "2026-09-21": -13.051992246842534
+            },
+            "daily_lower_net_bps": -107.97672421619424,
+            "exit_days": 10,
+            "exit_reasons": {
+              "expired": 10,
+              "stop": 19,
+              "target": 21
+            },
+            "mean_gross_bps": 22.466947783580338,
+            "mean_net_bps": -45.53305221641967,
+            "net_win_rate": 0.46,
+            "trades": 50
+          }
+        }
+      },
+      "prefix_checks": [
+        {
+          "mismatch_column": null,
+          "mismatch_row": null,
+          "passed": true,
+          "reason": "prefix signals are invariant"
+        },
+        {
+          "mismatch_column": null,
+          "mismatch_row": null,
+          "passed": true,
+          "reason": "prefix signals are invariant"
+        },
+        {
+          "mismatch_column": null,
+          "mismatch_row": null,
+          "passed": true,
+          "reason": "prefix signals are invariant"
+        }
+      ],
+      "screen_survivor": false,
+      "short_signals_not_traded": 737,
+      "strategy": "ema_adx_trend",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "long_signals_below_cost_floor": 28,
+      "parameters": {
+        "lookback": 20
+      },
+      "periods": {
+        "later_check": {
+          "base": {
+            "closed_trade_index_drawdown": 0.11912754164105754,
+            "daily_average_net_bps": {
+              "2026-09-22": -108.09335164167031,
+              "2026-09-23": -103.68004091677416,
+              "2026-09-24": -113.2543603403717,
+              "2026-09-25": -27.44285644168662,
+              "2026-09-28": -61.91450481208287,
+              "2026-09-29": -16.9806217674133,
+              "2026-09-30": -3.544312088639562,
+              "2026-10-01": -80.564785688617,
+              "2026-10-02": -54.16473045384511
+            },
+            "daily_lower_net_bps": -110.96126000222796,
+            "exit_days": 9,
+            "exit_reasons": {
+              "stop": 15,
+              "target": 6
+            },
+            "mean_gross_bps": -25.947746459846133,
+            "mean_net_bps": -59.947746459846144,
+            "net_win_rate": 0.2857142857142857,
+            "trades": 21
+          },
+          "diagnostics": {
+            "gap_blocked": 0,
+            "gap_truncated": 0,
+            "invalid_risk": 0,
+            "late_decision": 0,
+            "overlap_blocked": 15,
+            "right_censored": 0,
+            "scored_opportunities": 21,
+            "signals_considered": 36
+          },
+          "end_exclusive": "2026-10-04T00:00:00+00:00",
+          "quality": {
+            "duplicate_opens": 0,
+            "expected_bars": 1152,
+            "invalid_boundary_rows_in_source": 0,
+            "missing_bars": 0,
+            "observed_bars": 1152
+          },
+          "reasons": [
+            "fewer_than_100_trades",
+            "fewer_than_10_exit_days",
+            "base_average_not_positive",
+            "stressed_average_not_positive",
+            "adjusted_daily_lower_bound_not_positive"
+          ],
+          "start": "2026-09-22T00:00:00+00:00",
+          "stress": {
+            "closed_trade_index_drawdown": 0.18028626576974294,
+            "daily_average_net_bps": {
+              "2026-09-22": -142.0933516416703,
+              "2026-09-23": -137.68004091677415,
+              "2026-09-24": -147.2543603403717,
+              "2026-09-25": -61.44285644168662,
+              "2026-09-28": -95.91450481208288,
+              "2026-09-29": -50.980621767413304,
+              "2026-09-30": -37.54431208863956,
+              "2026-10-01": -114.564785688617,
+              "2026-10-02": -88.16473045384512
+            },
+            "daily_lower_net_bps": -144.96126000222796,
+            "exit_days": 9,
+            "exit_reasons": {
+              "stop": 15,
+              "target": 6
+            },
+            "mean_gross_bps": -25.947746459846133,
+            "mean_net_bps": -93.94774645984613,
+            "net_win_rate": 0.2857142857142857,
+            "trades": 21
+          }
+        },
+        "screen": {
+          "base": {
+            "closed_trade_index_drawdown": 0.04112601244589975,
+            "daily_average_net_bps": {
+              "2026-09-09": -23.899868267418384,
+              "2026-09-10": -86.54979547107631,
+              "2026-09-11": -31.590125508562522,
+              "2026-09-13": 47.463050489296585,
+              "2026-09-14": 3.939723558028657,
+              "2026-09-16": -96.04048086691505,
+              "2026-09-17": -23.193096895983007,
+              "2026-09-18": 57.19952881779432,
+              "2026-09-19": -64.9187022825025,
+              "2026-09-20": 6.1484169785974245,
+              "2026-09-21": -36.50953145979588
+            },
+            "daily_lower_net_bps": -71.30268051147516,
+            "exit_days": 11,
+            "exit_reasons": {
+              "expired": 5,
+              "stop": 12,
+              "target": 14
+            },
+            "mean_gross_bps": 25.053517179508184,
+            "mean_net_bps": -8.946482820491816,
+            "net_win_rate": 0.5483870967741935,
+            "trades": 31
+          },
+          "diagnostics": {
+            "gap_blocked": 0,
+            "gap_truncated": 0,
+            "invalid_risk": 0,
+            "late_decision": 0,
+            "overlap_blocked": 24,
+            "right_censored": 0,
+            "scored_opportunities": 31,
+            "signals_considered": 55
+          },
+          "end_exclusive": "2026-09-22T00:00:00+00:00",
+          "quality": {
+            "duplicate_opens": 0,
+            "expected_bars": 1248,
+            "invalid_boundary_rows_in_source": 0,
+            "missing_bars": 0,
+            "observed_bars": 1248
+          },
+          "reasons": [
+            "fewer_than_100_trades",
+            "base_average_not_positive",
+            "stressed_average_not_positive",
+            "adjusted_daily_lower_bound_not_positive"
+          ],
+          "start": "2026-09-09T00:00:00+00:00",
+          "stress": {
+            "closed_trade_index_drawdown": 0.12688576212548508,
+            "daily_average_net_bps": {
+              "2026-09-09": -57.899868267418384,
+              "2026-09-10": -120.54979547107631,
+              "2026-09-11": -65.59012550856252,
+              "2026-09-13": 13.463050489296588,
+              "2026-09-14": -30.06027644197134,
+              "2026-09-16": -130.04048086691506,
+              "2026-09-17": -57.19309689598301,
+              "2026-09-18": 23.199528817794327,
+              "2026-09-19": -98.9187022825025,
+              "2026-09-20": -27.851583021402572,
+              "2026-09-21": -70.50953145979588
+            },
+            "daily_lower_net_bps": -105.30268051147516,
+            "exit_days": 11,
+            "exit_reasons": {
+              "expired": 5,
+              "stop": 12,
+              "target": 14
+            },
+            "mean_gross_bps": 25.053517179508184,
+            "mean_net_bps": -42.946482820491816,
+            "net_win_rate": 0.4838709677419355,
+            "trades": 31
+          }
+        }
+      },
+      "prefix_checks": [
+        {
+          "mismatch_column": null,
+          "mismatch_row": null,
+          "passed": true,
+          "reason": "prefix signals are invariant"
+        },
+        {
+          "mismatch_column": null,
+          "mismatch_row": null,
+          "passed": true,
+          "reason": "prefix signals are invariant"
+        },
+        {
+          "mismatch_column": null,
+          "mismatch_row": null,
+          "passed": true,
+          "reason": "prefix signals are invariant"
+        }
+      ],
+      "screen_survivor": false,
+      "short_signals_not_traded": 107,
+      "strategy": "donchian_breakout",
+      "symbol": "ETHUSDT"
+    },
+    {
+      "long_signals_below_cost_floor": 236,
+      "parameters": {
+        "slope_bars": 5
+      },
+      "periods": {
+        "later_check": {
+          "base": {
+            "closed_trade_index_drawdown": 0.16931888819698337,
+            "daily_average_net_bps": {
+              "2026-09-22": -49.79932323870992,
+              "2026-09-23": -101.39526709609589,
+              "2026-09-24": -26.656947601971932,
+              "2026-09-25": -52.01102592419668,
+              "2026-09-28": -25.155130525177512,
+              "2026-09-29": -35.65263449192173,
+              "2026-09-30": -44.94876602499429,
+              "2026-10-01": -74.12745891768661,
+              "2026-10-02": -24.749204142057586
+            },
+            "daily_lower_net_bps": -77.93324494530431,
+            "exit_days": 9,
+            "exit_reasons": {
+              "expired": 5,
+              "stop": 24,
+              "target": 14
+            },
+            "mean_gross_bps": -8.739475287406549,
+            "mean_net_bps": -42.73947528740656,
+            "net_win_rate": 0.3488372093023256,
+            "trades": 43
+          },
+          "diagnostics": {
+            "gap_blocked": 0,
+            "gap_truncated": 0,
+            "invalid_risk": 0,
+            "late_decision": 0,
+            "overlap_blocked": 282,
+            "right_censored": 0,
+            "scored_opportunities": 43,
+            "signals_considered": 325
+          },
+          "end_exclusive": "2026-10-04T00:00:00+00:00",
+          "quality": {
+            "duplicate_opens": 0,
+            "expected_bars": 1152,
+            "invalid_boundary_rows_in_source": 0,
+            "missing_bars": 0,
+            "observed_bars": 1152
+          },
+          "reasons": [
+            "fewer_than_100_trades",
+            "fewer_than_10_exit_days",
+            "base_average_not_positive",
+            "stressed_average_not_positive",
+            "adjusted_daily_lower_bound_not_positive"
+          ],
+          "start": "2026-09-22T00:00:00+00:00",
+          "stress": {
+            "closed_trade_index_drawdown": 0.28294106073605296,
+            "daily_average_net_bps": {
+              "2026-09-22": -83.79932323870992,
+              "2026-09-23": -135.3952670960959,
+              "2026-09-24": -60.656947601971936,
+              "2026-09-25": -86.01102592419669,
+              "2026-09-28": -59.15513052517751,
+              "2026-09-29": -69.65263449192173,
+              "2026-09-30": -78.94876602499428,
+              "2026-10-01": -108.12745891768662,
+              "2026-10-02": -58.749204142057586
+            },
+            "daily_lower_net_bps": -111.93324494530431,
+            "exit_days": 9,
+            "exit_reasons": {
+              "expired": 5,
+              "stop": 24,
+              "target": 14
+            },
+            "mean_gross_bps": -8.739475287406549,
+            "mean_net_bps": -76.73947528740655,
+            "net_win_rate": 0.3488372093023256,
+            "trades": 43
+          }
+        },
+        "screen": {
+          "base": {
+            "closed_trade_index_drawdown": 0.18032933344816326,
+            "daily_average_net_bps": {
+              "2026-09-09": -47.19517647958069,
+              "2026-09-10": -76.09234864206583,
+              "2026-09-11": -75.00789043438894,
+              "2026-09-13": -90.42062723059117,
+              "2026-09-14": -30.508815504464298,
+              "2026-09-15": -115.74902219388325,
+              "2026-09-16": -49.61486955653585,
+              "2026-09-17": -45.76444486342465,
+              "2026-09-18": 36.336547061032746,
+              "2026-09-19": -2.623561008516545,
+              "2026-09-20": 53.27599098247607,
+              "2026-09-21": 11.325093187841754
+            },
+            "daily_lower_net_bps": -83.91655863956946,
+            "exit_days": 12,
+            "exit_reasons": {
+              "ambiguous_stop_first": 1,
+              "expired": 11,
+              "stop": 25,
+              "target": 22
+            },
+            "mean_gross_bps": 9.749026095698925,
+            "mean_net_bps": -24.250973904301087,
+            "net_win_rate": 0.4745762711864407,
+            "trades": 59
+          },
+          "diagnostics": {
+            "gap_blocked": 0,
+            "gap_truncated": 0,
+            "invalid_risk": 0,
+            "late_decision": 0,
+            "overlap_blocked": 509,
+            "right_censored": 11,
+            "scored_opportunities": 59,
+            "signals_considered": 579
+          },
+          "end_exclusive": "2026-09-22T00:00:00+00:00",
+          "quality": {
+            "duplicate_opens": 0,
+            "expected_bars": 1248,
+            "invalid_boundary_rows_in_source": 0,
+            "missing_bars": 0,
+            "observed_bars": 1248
+          },
+          "reasons": [
+            "fewer_than_100_trades",
+            "base_average_not_positive",
+            "stressed_average_not_positive",
+            "adjusted_daily_lower_bound_not_positive",
+            "censored_outcomes_present"
+          ],
+          "start": "2026-09-09T00:00:00+00:00",
+          "stress": {
+            "closed_trade_index_drawdown": 0.2971124818375438,
+            "daily_average_net_bps": {
+              "2026-09-09": -81.1951764795807,
+              "2026-09-10": -110.09234864206583,
+              "2026-09-11": -109.00789043438894,
+              "2026-09-13": -124.42062723059117,
+              "2026-09-14": -64.5088155044643,
+              "2026-09-15": -149.74902219388326,
+              "2026-09-16": -83.61486955653585,
+              "2026-09-17": -79.76444486342466,
+              "2026-09-18": 2.3365470610327517,
+              "2026-09-19": -36.62356100851654,
+              "2026-09-20": 19.275990982476074,
+              "2026-09-21": -22.674906812158248
+            },
+            "daily_lower_net_bps": -117.91655863956946,
+            "exit_days": 12,
+            "exit_reasons": {
+              "ambiguous_stop_first": 1,
+              "expired": 11,
+              "stop": 25,
+              "target": 22
+            },
+            "mean_gross_bps": 9.749026095698925,
+            "mean_net_bps": -58.2509739043011,
+            "net_win_rate": 0.3898305084745763,
+            "trades": 59
+          }
+        }
+      },
+      "prefix_checks": [
+        {
+          "mismatch_column": null,
+          "mismatch_row": null,
+          "passed": true,
+          "reason": "prefix signals are invariant"
+        },
+        {
+          "mismatch_column": null,
+          "mismatch_row": null,
+          "passed": true,
+          "reason": "prefix signals are invariant"
+        },
+        {
+          "mismatch_column": null,
+          "mismatch_row": null,
+          "passed": true,
+          "reason": "prefix signals are invariant"
+        }
+      ],
+      "screen_survivor": false,
+      "short_signals_not_traded": 1062,
+      "strategy": "vwap_trend_continuation",
+      "symbol": "ETHUSDT"
+    }
+  ],
+  "drawdown_definition": "Peak-to-trough closed-trade return index, assuming serial full-notional trades. Not an app account, marked-to-market or portfolio drawdown. No pooling overlapping candidates.",
+  "live_qualification": false,
+  "protocol_sha256": "87e485270a6ef2936726fd074454987695110b524a726ad077767862865d8ad6",
+  "status": "completed",
+  "verification": {
+    "verified_at": "2026-10-04T15:32:45.451058+02:00",
+    "status": "passed",
+    "trade_records_checked": 404,
+    "candidate_periods_checked": 12,
+    "checks": [
+      "retained runner SHA-256",
+      "format-only AST equivalence",
+      "result SHA-256",
+      "every trade gross/net return reconstructed from entry/exit prices",
+      "period containment and within-candidate non-overlap",
+      "all base/stress mean returns and closed-trade-index drawdowns independently recomputed",
+      "all six candidates retained, zero survivors"
+    ],
+    "limits": "Does not independently reimplement indicators, infer missing intrabar order, validate historical quote execution, or establish untouched data."
+  },
+  "evidence_directory": "/Users/james/Library/Application Support/Nowcaster/CandidateCampaigns/trend-check-2026-10-04-attempt-001"
+}

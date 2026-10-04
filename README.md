@@ -1,5 +1,11 @@
 # Nowcaster for macOS
 
+**Latest measured strategy check (4 October 2026):** A fixed six-candidate
+BTC/ETH trend comparison completed. All six lost after modeled costs in both
+date windows; none advances to a new paper study. This separate 15-minute
+experiment does not change the installed app or the retained live studies.
+[Read the trades, costs, data limits and decision](docs/research/trend-check-2026-10-04.md).
+
 Nowcaster is a native Mac app for learning how a computer can study stocks and cryptocurrencies without pretending that it can predict the future.
 
 It collects historical market and company information, asks models what that information might have suggested at the time, and then checks those ideas against what happened later. The app presents the result as a **research posture**—long, short, or abstain—along with the evidence, risks, and historical test results behind it.

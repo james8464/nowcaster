@@ -1,0 +1,498 @@
+{
+  "BTCUSDT": {
+    "manifest": [
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5530,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "BTCUSDT-15m-2026-09-07.zip",
+        "selected_rows": 96,
+        "sha256": "dc15b8902d19f4f41310a9c509c6acee0f62c2d7bd4c0144ca5eb66992f5069a"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5575,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "BTCUSDT-15m-2026-09-08.zip",
+        "selected_rows": 96,
+        "sha256": "156d8bf8fe7c296576e774a8b126484dac92d10554665ef0ac0072ce1cf4191e"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5625,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "BTCUSDT-15m-2026-09-09.zip",
+        "selected_rows": 96,
+        "sha256": "7422152007d32cc61751ac67f75805a6e42d8888f19abc0e4f6c2b91746ab445"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5548,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "BTCUSDT-15m-2026-09-10.zip",
+        "selected_rows": 96,
+        "sha256": "4fd24514007ebca848775707f3118a5b1dfbf74f03afb1f9dd6f7fb7b7490e15"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5589,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "BTCUSDT-15m-2026-09-11.zip",
+        "selected_rows": 96,
+        "sha256": "3b4f4a427d1e0a458922ab19a87faa8807ff018bf15267d9766f6fb9d78ddc34"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5362,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "BTCUSDT-15m-2026-09-12.zip",
+        "selected_rows": 96,
+        "sha256": "290d0491ed2291335b28725b971c8413daa66aa923166079226796c5028936d0"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5403,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "BTCUSDT-15m-2026-09-13.zip",
+        "selected_rows": 96,
+        "sha256": "f37084004185fdaf1eba6e16759797e7a0cbf9519116131c1b0e80d9d24b2cc0"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5580,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "BTCUSDT-15m-2026-09-14.zip",
+        "selected_rows": 96,
+        "sha256": "b935839252a5595935367202ec6279c0f6e1f2d8d7b34482f478c390f1c0cd1d"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5662,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "BTCUSDT-15m-2026-09-15.zip",
+        "selected_rows": 96,
+        "sha256": "a7e0a48bf79ffdf32e693d1545ad3eac10811ecc70ae7c26dce7b6ac479cf8d6"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5583,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "BTCUSDT-15m-2026-09-16.zip",
+        "selected_rows": 96,
+        "sha256": "93c9b4c4ca4c383794792863afaafce79f23cf710d99df1ff10326188c348223"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5501,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "BTCUSDT-15m-2026-09-17.zip",
+        "selected_rows": 96,
+        "sha256": "927a0a7291f612b74945d7b02dce3a4125ffc25c9e3b079414f2f746f45a4e91"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5635,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "BTCUSDT-15m-2026-09-18.zip",
+        "selected_rows": 96,
+        "sha256": "23c2e2c8f9dc8cc552d6d771bdc03f55f359a313aaa358fae4e50dc1703b8a45"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5459,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "BTCUSDT-15m-2026-09-19.zip",
+        "selected_rows": 96,
+        "sha256": "129e751e7072e79a2fe94e12c2a980ada8c15c96fad63b4fa2d4411251b873a1"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5505,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "BTCUSDT-15m-2026-09-20.zip",
+        "selected_rows": 96,
+        "sha256": "eecf63a4fd437dd7e576a5c22b35e11f66250473dbbcad8551a6d22dd92edd86"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5713,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "BTCUSDT-15m-2026-09-21.zip",
+        "selected_rows": 96,
+        "sha256": "ef367fa3f1f26b7de8d39e60e5500cc7e47257a1ceffc604e28fef0826dca474"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5657,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "BTCUSDT-15m-2026-09-22.zip",
+        "selected_rows": 96,
+        "sha256": "430e762e586c9d2c2f117d6e22babc34a69bf7ca03dd985f4f7db2583d5edc80"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5652,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "BTCUSDT-15m-2026-09-23.zip",
+        "selected_rows": 96,
+        "sha256": "d3250d928b7d349247183bd5ce5699603d2b429b18b96aa89718ebaf1222284b"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5589,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "BTCUSDT-15m-2026-09-24.zip",
+        "selected_rows": 96,
+        "sha256": "90e44e2492f6c26a86b79c46fdddf10551f033e5e913c485670bff03af311459"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5546,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "BTCUSDT-15m-2026-09-25.zip",
+        "selected_rows": 96,
+        "sha256": "46c4cfbe7897e282b5afc814569405b17bb1eed30912990097428a89dac11f4e"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5437,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "BTCUSDT-15m-2026-09-26.zip",
+        "selected_rows": 96,
+        "sha256": "1bea0331fd1515262c3180d7385079c33b6de55e24011d1036fbfd8b2add6280"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5415,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "BTCUSDT-15m-2026-09-27.zip",
+        "selected_rows": 96,
+        "sha256": "6a089a518b28ab0e1c0eea89c18c78e8c4ef37a6b70d6cb5a7d6e8910df45489"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5609,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "BTCUSDT-15m-2026-09-28.zip",
+        "selected_rows": 96,
+        "sha256": "11b6e8275077badff8891ba8cf2f2729b97083497e756020f522b3cfe977ff69"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5530,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "BTCUSDT-15m-2026-09-29.zip",
+        "selected_rows": 96,
+        "sha256": "1f4f604a4f29a49431cf1a3c1b3fb65d939f21a253f9b3df6143ac9e4c46e496"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5595,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "BTCUSDT-15m-2026-09-30.zip",
+        "selected_rows": 96,
+        "sha256": "8c1502ffc0fa450303ef874ab44481797854748f60b99c890fb0386872364d04"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5615,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "BTCUSDT-15m-2026-10-01.zip",
+        "selected_rows": 96,
+        "sha256": "4329590fe606ba6f2d5eff81d5d553972514a201909784225fe8fbff1e663b48"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5647,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "BTCUSDT-15m-2026-10-02.zip",
+        "selected_rows": 96,
+        "sha256": "c6490393fec64e9c49f435431216a2ad82acef095428f068037cab05860ecf7f"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5355,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "BTCUSDT-15m-2026-10-03.zip",
+        "selected_rows": 96,
+        "sha256": "058d49efcc9e9966793d14c869d06cf17b5377eca68c39ab65768b55f2905d10"
+      }
+    ],
+    "unavailable": []
+  },
+  "ETHUSDT": {
+    "manifest": [
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5323,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "ETHUSDT-15m-2026-09-07.zip",
+        "selected_rows": 96,
+        "sha256": "21111e8aa234dc68a51ab190725676556b11f23419e069a8aa36a921df798c04"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5326,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "ETHUSDT-15m-2026-09-08.zip",
+        "selected_rows": 96,
+        "sha256": "9ba0b89da49794bdce52f3a46710f13fd237ccd81c377f4ded2932adb848f6d9"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5365,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "ETHUSDT-15m-2026-09-09.zip",
+        "selected_rows": 96,
+        "sha256": "2357ee205fffffa81b9a98f58ecda346a88e8b02569833ddc81e9ff59431fd30"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5358,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "ETHUSDT-15m-2026-09-10.zip",
+        "selected_rows": 96,
+        "sha256": "9f4ab258982dc009b5f937eab6a0ede150dcb216aa8e56a4f34ff3e55c7bff44"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5443,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "ETHUSDT-15m-2026-09-11.zip",
+        "selected_rows": 96,
+        "sha256": "5b70feb2c5bfb9c90eb9228e2f1fbf2616a7db4b166ce4680f9e28b8ff8864d7"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5202,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "ETHUSDT-15m-2026-09-12.zip",
+        "selected_rows": 96,
+        "sha256": "94a1ba020f8405d6e9fadf5ca9732cd0132c2d1709e864ae62efddefb04b3f8f"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5228,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "ETHUSDT-15m-2026-09-13.zip",
+        "selected_rows": 96,
+        "sha256": "31fe391218d92c0750dda36b800d4a3b015e481fd91567a03ecb5e2a97afffa0"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5387,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "ETHUSDT-15m-2026-09-14.zip",
+        "selected_rows": 96,
+        "sha256": "937788e4dee05aba0b0fb21689dbdf26ed25b3a4310588c26420080c56972c78"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5385,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "ETHUSDT-15m-2026-09-15.zip",
+        "selected_rows": 96,
+        "sha256": "975b5291fe3b5ee509cee63f5263f93f90aaef022cd305f9287e1211d5857430"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5356,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "ETHUSDT-15m-2026-09-16.zip",
+        "selected_rows": 96,
+        "sha256": "8592b6de8ab60fb912696d66221636bda164a5cfddf11fb95b3cd37ab23303b7"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5279,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "ETHUSDT-15m-2026-09-17.zip",
+        "selected_rows": 96,
+        "sha256": "faf33c7b68db15d024a19cc601c5eda19c8de0f4761970f1980e2d133aef43d1"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5470,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "ETHUSDT-15m-2026-09-18.zip",
+        "selected_rows": 96,
+        "sha256": "79505093fecdabe9fd6b64edbeea332361d915961a679dc8c85e486f332b664a"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5278,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "ETHUSDT-15m-2026-09-19.zip",
+        "selected_rows": 96,
+        "sha256": "093c88d8f35a9683d96b5cdcca4b6e68df2d65d97185922a6e9b1a79e73ee9e6"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5302,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "ETHUSDT-15m-2026-09-20.zip",
+        "selected_rows": 96,
+        "sha256": "9231b68f682800d079e40cd9de694b1249599628259e4639909fbfc18f5bab4b"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5507,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "ETHUSDT-15m-2026-09-21.zip",
+        "selected_rows": 96,
+        "sha256": "7a14ec24e941068c739e271367f825bb439002704b442c8a84a26dde6dc9dfe2"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5363,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "ETHUSDT-15m-2026-09-22.zip",
+        "selected_rows": 96,
+        "sha256": "24f29465758e338c92a47b981644d2f4b85ead2ac0e86cfb307908daa84a4831"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5352,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "ETHUSDT-15m-2026-09-23.zip",
+        "selected_rows": 96,
+        "sha256": "78fd1e4553d421f3af8b5a15271bdd99afba6dfd467983d6c6c3a054ff7873e3"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5369,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "ETHUSDT-15m-2026-09-24.zip",
+        "selected_rows": 96,
+        "sha256": "6c7db8c65523c4d485f8d71003ed7286b4af5b0804e57a746caaf1a82e4da057"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5319,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "ETHUSDT-15m-2026-09-25.zip",
+        "selected_rows": 96,
+        "sha256": "e9aad1daf34e613113c3f34c11f675a0d0aadc413f23fa159512e1d5b2d18ea9"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5106,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "ETHUSDT-15m-2026-09-26.zip",
+        "selected_rows": 96,
+        "sha256": "e82a6e6c24895a592ccb57c12592b853bbbf3227698a31d9e9f2a4bd45ebb6e4"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5231,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "ETHUSDT-15m-2026-09-27.zip",
+        "selected_rows": 96,
+        "sha256": "1fecdb287aa5c53d305b3866873a25a980e84a552f5b5c96a23bb7e96c9b3260"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5352,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "ETHUSDT-15m-2026-09-28.zip",
+        "selected_rows": 96,
+        "sha256": "b74bd40870289ad95eae1370053e8cd750c1c88fa33ad5840f87eadfb56d3f77"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5395,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "ETHUSDT-15m-2026-09-29.zip",
+        "selected_rows": 96,
+        "sha256": "1fd82a3044bb62fca82191385592481739c4aed3ac6269c8955771c48e40dbd6"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5312,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "ETHUSDT-15m-2026-09-30.zip",
+        "selected_rows": 96,
+        "sha256": "eb27770b4ad28a35f0781d8547dc69da1e322c24f9aa9a86fc58d3b3cc08d0e9"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5353,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "ETHUSDT-15m-2026-10-01.zip",
+        "selected_rows": 96,
+        "sha256": "55f1139b09bcc5fba4ef9a78a765b301128f6e1d502b60db44c7c201f4b1a870"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5374,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "ETHUSDT-15m-2026-10-02.zip",
+        "selected_rows": 96,
+        "sha256": "a138056564172ce30f260af839a0ed409b7b1dbc59bad343d5a94c376434bfb9"
+      },
+      {
+        "checksum_verified": true,
+        "compressed_bytes": 5098,
+        "frequency": "daily",
+        "invalid_boundary_rows": 0,
+        "name": "ETHUSDT-15m-2026-10-03.zip",
+        "selected_rows": 96,
+        "sha256": "844d8640e27e81230736da2c9bfae77e3afeda2239d5e40c082fd7df9b51a514"
+      }
+    ],
+    "unavailable": []
+  }
+}
