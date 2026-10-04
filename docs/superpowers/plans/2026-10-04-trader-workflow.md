@@ -40,7 +40,7 @@
 
 ### Task 2: Durable opt-in collector integration
 
-**Files:** Create `src/research/trader_workflow_runtime.py`, `tests/integration/test_trader_workflow_runtime.py`; modify `src/research/live_paper_signal_runtime.py`, `scripts/run_live_paper_signals.py`.
+**Files:** Create `src/research/trader_workflow_runtime.py`, `tests/integration/test_trader_workflow_runtime.py`; modify `src/research/live_paper_signal_runtime.py`, `scripts/run_live_paper_signals.py`, `scripts/build_paper_signals_bundle.sh` and its focused packaging test if needed to retain implementation-identity source bytes in the installed helper.
 
 **Interfaces:** Consume Task 1 signatures from its report. Provide `enable_workflow(directory, now=None)`, `advance_workflow(directory, observations, calendar, now)`, `workflow_status(directory, now=None)`; all bind the loaded round and use `<directory>/diagnostic-workflow-v1`. Status is bounded JSON, paperOnly=true and schemaVersion=1; fields must include protocolHash, policyHash, updatedAt, state, reasons, decisions, account, positions, recentTrades, review. Persist manifest and hash-chained transition evidence; output exact native wire contract in report.
 
