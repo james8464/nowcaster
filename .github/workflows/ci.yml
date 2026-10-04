@@ -14,8 +14,8 @@ concurrency:
 jobs:
   python:
     runs-on: macos-15
-    # Coverage takes about 29 minutes on hosted macOS; leave time for verified rebuilds.
-    timeout-minutes: 45
+    # Coverage reached 42 minutes on hosted macOS; allow the clean demo to finish.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
