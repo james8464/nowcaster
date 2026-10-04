@@ -7,19 +7,20 @@ import pytest
 
 from src.trading.alpaca import AlpacaCredentials
 from src.trading.live import LiveBrokerFactory, LiveLockContext, LiveLockedError, LivePilotPolicy
-from src.trading.readiness import ReadinessGate, ReadinessReceipt
+from src.trading.readiness import REQUIRED_READINESS_GATES, ReadinessGate, ReadinessReceipt
 
 NOW = datetime(2026, 8, 24, 12, tzinfo=UTC)
 
 
 def _receipt():
-    gate = ReadinessGate(name="all", passed=True, detail="passed")
     return ReadinessReceipt(
         receipt_id="receipt",
         cohort_hash="c" * 64,
         evidence_hash="e" * 64,
         policy_hash="p" * 64,
-        gates=(gate,),
+        gates=tuple(
+            ReadinessGate(name=name, passed=True, detail="passed") for name in sorted(REQUIRED_READINESS_GATES)
+        ),
         issued_at=NOW - timedelta(hours=1),
         expires_at=NOW + timedelta(hours=1),
     )
@@ -75,6 +76,15 @@ def test_live_factory_constructs_fixed_live_adapter_only_when_every_lock_passes(
         client=httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(500))),
     )
     assert client.environment.value == "live"
+
+
+def test_incomplete_gate_receipt_cannot_unlock_live_adapter() -> None:
+    with pytest.raises(LiveLockedError, match="readiness_receipt_invalid"):
+        LiveBrokerFactory().create(
+            _context(readiness_receipt=_receipt().model_copy(update={"gates": _receipt().gates[:-1]})),
+            AlpacaCredentials(key_id="live-key", secret_key="live-secret"),
+            client=httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(500))),
+        )
 
 
 @pytest.mark.parametrize(

@@ -11,6 +11,7 @@ Every gate must pass for one unchanged cohort:
 - unique, non-overlapping, completed UTC forward periods with finite paper and stressed returns and drawdown; crypto days must be consecutive, and the latest period must have ended within the receipt's 24-hour window;
 - zero unresolved reconciliation differences, unknown broker events, causal failures, or health breakers;
 - positive observed paper edge and positive edge under stressed live costs;
+- geometrically compounded positive paper and stressed returns, with no impossible return, drawdown, or cost ordering; arithmetic sums do not qualify a losing account;
 - matching causal/no-repaint evidence;
 - bootstrap probability and deflated-Sharpe probability at least 95%, probability of backtest overfitting at most 40%, parameter stability at least 70%, and bounded slippage-model error;
 - a readiness receipt issued in the last 24 hours;

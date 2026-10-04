@@ -171,3 +171,55 @@ def test_crypto_calendar_gap_cannot_unlock() -> None:
     )
     assert result.status == "locked"
     assert not result.gate("observation_integrity").passed
+
+
+def test_positive_sum_with_negative_compounded_wealth_stays_locked() -> None:
+    cohort = _cohort()
+    rows = list(_evidence(cohort, 60, 100))
+    rows = [
+        row.model_copy(
+            update={
+                "paper_net_return": Decimal("0.6") if index == 0 else Decimal("-0.5") if index == 1 else Decimal(0),
+                "stressed_net_return": Decimal("0.6") if index == 0 else Decimal("-0.5") if index == 1 else Decimal(0),
+            }
+        )
+        for index, row in enumerate(rows)
+    ]
+
+    result = ReadinessEvaluator().evaluate(cohort, tuple(rows), _robustness(cohort), as_of=NOW)
+
+    assert result.status == "locked"
+    assert not result.gate("positive_paper_edge").passed
+    assert not result.gate("stressed_net_edge").passed
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"paper_net_return": Decimal("-1")},
+        {"stressed_net_return": Decimal("-1.01")},
+        {"stressed_net_return": Decimal("0.03")},
+        {"drawdown": Decimal("-0.01")},
+        {"drawdown": Decimal("1.01")},
+    ],
+)
+def test_impossible_forward_accounting_stays_locked(change) -> None:
+    cohort = _cohort()
+    rows = _evidence(cohort, 60, 100)
+    rows = rows[:-1] + (rows[-1].model_copy(update=change),)
+
+    result = ReadinessEvaluator().evaluate(cohort, rows, _robustness(cohort), as_of=NOW)
+
+    assert result.status == "locked"
+    assert not result.gate("return_accounting").passed
+
+
+def test_receipt_rejects_missing_or_duplicate_gate_names() -> None:
+    cohort = _cohort()
+    issued = ReadinessEvaluator().evaluate(cohort, _evidence(cohort, 60, 100), _robustness(cohort), as_of=NOW).receipt
+    assert issued is not None
+    assert issued.valid_at(NOW, cohort_hash=cohort.cohort_hash)
+    incomplete = issued.model_copy(update={"gates": issued.gates[:-1]})
+    duplicate = issued.model_copy(update={"gates": issued.gates + (issued.gates[0],)})
+    assert not incomplete.valid_at(NOW, cohort_hash=cohort.cohort_hash)
+    assert not duplicate.valid_at(NOW, cohort_hash=cohort.cohort_hash)

@@ -25,20 +25,9 @@ from src.models.drift import (
 )
 from src.strategies.library import StrategyContext, generate_signals
 from src.strategies.types import BarInterval, StrategyMode, StrategySpec, canonical_hash
+from src.trading.readiness import REQUIRED_READINESS_GATES
 
 EMPTY_COHORT_HASH = "0" * 64
-REQUIRED_READINESS_GATES = frozenset(
-    {
-        "causal_integrity",
-        "cohort_integrity",
-        "minimum_forward_observations",
-        "observation_integrity",
-        "operational_integrity",
-        "positive_paper_edge",
-        "robustness",
-        "stressed_net_edge",
-    }
-)
 LIVE_READINESS_POLICY = {
     "minimum_equity_sessions": 60,
     "minimum_crypto_days": 90,
@@ -84,7 +73,7 @@ class ActiveReadinessReceipt(LiveMonitorModel):
         return (
             self.issued_at <= instant < self.expires_at
             and cohort_hash == self.cohort_hash
-            and bool(self.gates)
+            and len(self.gates) == len(REQUIRED_READINESS_GATES)
             and all(gate.passed for gate in self.gates)
             and {gate.name for gate in self.gates} == REQUIRED_READINESS_GATES
         )

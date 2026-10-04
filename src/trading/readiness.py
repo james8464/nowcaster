@@ -2,11 +2,26 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
+from math import prod
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.strategies.types import canonical_hash
 from src.trading.forward import ForwardCohortIdentity, ForwardDailyEvidence
+
+REQUIRED_READINESS_GATES = frozenset(
+    {
+        "causal_integrity",
+        "cohort_integrity",
+        "minimum_forward_observations",
+        "observation_integrity",
+        "operational_integrity",
+        "positive_paper_edge",
+        "return_accounting",
+        "robustness",
+        "stressed_net_edge",
+    }
+)
 
 
 class ReadinessPolicy(BaseModel):
@@ -48,6 +63,8 @@ class ReadinessReceipt(BaseModel):
             and instant.utcoffset() == timedelta(0)
             and self.issued_at <= instant < self.expires_at
             and cohort_hash == self.cohort_hash
+            and len(self.gates) == len(REQUIRED_READINESS_GATES)
+            and {gate.name for gate in self.gates} == REQUIRED_READINESS_GATES
             and all(gate.passed for gate in self.gates)
         )
 
@@ -120,10 +137,17 @@ class ReadinessEvaluator:
             and item.execution_error_upper_ratio <= self.policy.maximum_slippage_model_error
             for item in ordered
         )
+        return_accounting = observation_integrity and all(
+            item.paper_net_return > -1
+            and item.stressed_net_return > -1
+            and item.stressed_net_return <= item.paper_net_return
+            and 0 <= item.drawdown <= 1
+            for item in ordered
+        )
         paper_positive = stressed_positive = False
-        if observation_integrity:
-            paper_positive = sum((item.paper_net_return for item in ordered), Decimal(0)) > 0
-            stressed_positive = sum((item.stressed_net_return for item in ordered), Decimal(0)) > 0
+        if return_accounting:
+            paper_positive = prod((1 + item.paper_net_return for item in ordered), start=Decimal(1)) > 1
+            stressed_positive = prod((1 + item.stressed_net_return for item in ordered), start=Decimal(1)) > 1
         robustness_match = robustness.get("cohort_hash") == cohort.cohort_hash
         causal = robustness_match and robustness.get("causal_passed") is True
         try:
@@ -147,6 +171,11 @@ class ReadinessEvaluator:
                         name="observation_integrity",
                         passed=observation_integrity,
                         detail="unique chronological completed periods with finite returns and recent coverage",
+                    ),
+                    ReadinessGate(
+                        name="return_accounting",
+                        passed=return_accounting,
+                        detail="feasible period returns and drawdown; stressed return never improves paper return",
                     ),
                     ReadinessGate(
                         name="cohort_integrity",
@@ -174,12 +203,12 @@ class ReadinessEvaluator:
                     ReadinessGate(
                         name="positive_paper_edge",
                         passed=paper_positive,
-                        detail="aggregate observed paper return must be positive",
+                        detail="compounded observed paper return must be positive",
                     ),
                     ReadinessGate(
                         name="stressed_net_edge",
                         passed=stressed_positive,
-                        detail="aggregate return remains positive under live-cost stress",
+                        detail="compounded return remains positive under live-cost stress",
                     ),
                     ReadinessGate(
                         name="robustness",
@@ -210,6 +239,7 @@ class ReadinessEvaluator:
 
 
 __all__ = [
+    "REQUIRED_READINESS_GATES",
     "ReadinessEvaluation",
     "ReadinessEvaluator",
     "ReadinessGate",

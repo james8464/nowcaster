@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 from src.database.engine import Database
 from src.trading.arming import ArmingService, ArmRequest
-from src.trading.readiness import ReadinessGate, ReadinessReceipt
+from src.trading.readiness import REQUIRED_READINESS_GATES, ReadinessGate, ReadinessReceipt
 
 NOW = datetime(2026, 8, 24, 12, tzinfo=UTC)
 
@@ -15,7 +15,9 @@ def _receipt(expires=NOW + timedelta(hours=1)):
         cohort_hash="c" * 64,
         evidence_hash="e" * 64,
         policy_hash="p" * 64,
-        gates=(ReadinessGate(name="all", passed=True, detail="passed"),),
+        gates=tuple(
+            ReadinessGate(name=name, passed=True, detail="passed") for name in sorted(REQUIRED_READINESS_GATES)
+        ),
         issued_at=NOW - timedelta(hours=1),
         expires_at=expires,
     )
@@ -61,3 +63,13 @@ def test_arm_does_not_survive_process_restart_and_disarm_is_immediate(tmp_path) 
     assert restarted.current(account_suffix="1234", at=NOW) is None
     first.disarm("operator")
     assert first.current(account_suffix="1234", at=NOW) is None
+
+
+def test_incomplete_gate_receipt_cannot_arm(tmp_path) -> None:
+    service = _service(tmp_path)
+    arm = service.arm(
+        ArmRequest(account_suffix="1234", phrase="ARM LIVE 1234 LOSS 25"),
+        account_suffix="1234",
+        receipt=_receipt().model_copy(update={"gates": _receipt().gates[:-1]}),
+    )
+    assert arm is None
