@@ -115,6 +115,27 @@ def test_missing_robustness_metrics_lock_instead_of_crashing() -> None:
 
 
 @pytest.mark.parametrize(
+    ("metric", "value"),
+    [
+        ("bootstrap_probability_positive", "Infinity"),
+        ("deflated_sharpe_probability", "1.01"),
+        ("pbo", "-0.01"),
+        ("parameter_stability", "Infinity"),
+        ("slippage_model_error", "-0.01"),
+    ],
+)
+def test_unbounded_robustness_metric_cannot_unlock(metric, value) -> None:
+    cohort = _cohort()
+    robustness = _robustness(cohort)
+    robustness[metric] = value
+
+    result = ReadinessEvaluator().evaluate(cohort, _evidence(cohort, 60, 100), robustness, as_of=NOW)
+
+    assert result.status == "locked"
+    assert not result.gate("robustness").passed
+
+
+@pytest.mark.parametrize(
     "change",
     [
         lambda rows: rows + (rows[-1],),

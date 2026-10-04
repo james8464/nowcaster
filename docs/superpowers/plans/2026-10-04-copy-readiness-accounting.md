@@ -36,6 +36,7 @@
 - [x] Run the new tests and confirm failures for the intended missing behavior.
 - [x] Implement minimal return validation and geometric aggregation, then run the readiness suite.
 - [x] Update `docs/live-readiness.md` to explain the new gate.
+- [x] Regression-test and reject non-finite or out-of-range robustness fields that would pass a one-sided threshold.
 
 ### Task 2: Receipt contract and native lock
 

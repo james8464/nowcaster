@@ -151,15 +151,27 @@ class ReadinessEvaluator:
         robustness_match = robustness.get("cohort_hash") == cohort.cohort_hash
         causal = robustness_match and robustness.get("causal_passed") is True
         try:
-            robustness_passed = robustness_match and all(
-                (
-                    Decimal(str(robustness["bootstrap_probability_positive"]))
-                    >= self.policy.minimum_bootstrap_probability,
-                    Decimal(str(robustness["deflated_sharpe_probability"]))
-                    >= self.policy.minimum_deflated_sharpe_probability,
-                    Decimal(str(robustness["pbo"])) <= self.policy.maximum_pbo,
-                    Decimal(str(robustness["parameter_stability"])) >= self.policy.minimum_parameter_stability,
-                    Decimal(str(robustness["slippage_model_error"])) <= self.policy.maximum_slippage_model_error,
+            metrics = {
+                name: Decimal(str(robustness[name]))
+                for name in (
+                    "bootstrap_probability_positive",
+                    "deflated_sharpe_probability",
+                    "pbo",
+                    "parameter_stability",
+                    "slippage_model_error",
+                )
+            }
+            robustness_passed = (
+                robustness_match
+                and all(value.is_finite() for value in metrics.values())
+                and all(
+                    (
+                        self.policy.minimum_bootstrap_probability <= metrics["bootstrap_probability_positive"] <= 1,
+                        self.policy.minimum_deflated_sharpe_probability <= metrics["deflated_sharpe_probability"] <= 1,
+                        0 <= metrics["pbo"] <= self.policy.maximum_pbo,
+                        self.policy.minimum_parameter_stability <= metrics["parameter_stability"] <= 1,
+                        0 <= metrics["slippage_model_error"] <= self.policy.maximum_slippage_model_error,
+                    )
                 )
             )
         except (InvalidOperation, KeyError, TypeError, ValueError):

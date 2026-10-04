@@ -10,6 +10,8 @@ Harden the existing forward-readiness gate, rather than add more signals or a br
 
 An issued base readiness receipt is valid only if it carries the exact current set of unique, passing gates. Add a new `return_accounting` gate and require it in the live-monitor receipt contract too. This invalidates older receipts lacking the stronger accounting proof. A receipt remains time-limited and cohort-bound. No rule changes or retroactive edits are made to any existing study.
 
+Statistical robustness fields are also required to be finite and within their feasible ranges: probabilities, PBO, and parameter stability in [0, 1], and slippage-model error nonnegative. Otherwise an infinity or negative error could falsely satisfy a one-sided threshold.
+
 ## Alternatives rejected
 
 - Loosen thresholds to obtain more signals: risks selecting noise and does not fix execution uncertainty.
