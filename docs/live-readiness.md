@@ -8,6 +8,7 @@ Every gate must pass for one unchanged cohort:
 
 - at least 60 completed equity sessions or 90 crypto calendar days;
 - at least 100 closed paper trades;
+- unique, non-overlapping, completed UTC forward periods with finite paper and stressed returns and drawdown; crypto days must be consecutive, and the latest period must have ended within the receipt's 24-hour window;
 - zero unresolved reconciliation differences, unknown broker events, causal failures, or health breakers;
 - positive observed paper edge and positive edge under stressed live costs;
 - matching causal/no-repaint evidence;

@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+import pytest
+
 from src.trading.forward import ForwardCohortIdentity, ForwardDailyEvidence
 from src.trading.readiness import ReadinessEvaluator, ReadinessPolicy
 
@@ -110,3 +112,62 @@ def test_missing_robustness_metrics_lock_instead_of_crashing() -> None:
 
     assert result.status == "locked"
     assert not result.gate("robustness").passed
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda rows: rows + (rows[-1],),
+        lambda rows: rows[:-1] + (rows[-1].model_copy(update={"period_start": rows[-2].period_start}),),
+        lambda rows: rows[:-1] + (rows[-1].model_copy(update={"period_end": NOW + timedelta(days=1)}),),
+        lambda rows: rows[:-1] + (rows[-1].model_copy(update={"closed_at": NOW + timedelta(seconds=1)}),),
+        lambda rows: rows[:-1] + (rows[-1].model_copy(update={"closed_at": NOW - timedelta(days=1)}),),
+        lambda rows: rows[:-1] + (rows[-1].model_copy(update={"paper_net_return": None}),),
+        lambda rows: rows[:-1] + (rows[-1].model_copy(update={"drawdown": None}),),
+        lambda rows: rows[:-1] + (rows[-1].model_copy(update={"evidence_hash": rows[-2].evidence_hash}),),
+        lambda rows: rows[:-1] + (rows[-1].model_copy(update={"stressed_net_return": Decimal("NaN")}),),
+    ],
+)
+def test_invalid_forward_periods_cannot_unlock(change) -> None:
+    cohort = _cohort()
+    result = ReadinessEvaluator().evaluate(cohort, change(_evidence(cohort, 60, 100)), _robustness(cohort), as_of=NOW)
+    assert result.status == "locked"
+    assert not result.gate("observation_integrity").passed
+
+
+def test_stale_forward_evidence_cannot_unlock() -> None:
+    cohort = _cohort()
+    result = ReadinessEvaluator().evaluate(
+        cohort, _evidence(cohort, 60, 100), _robustness(cohort), as_of=NOW + timedelta(days=2)
+    )
+    assert result.status == "locked"
+    assert not result.gate("observation_integrity").passed
+
+
+def test_receipt_expires_when_latest_forward_period_becomes_stale() -> None:
+    cohort = _cohort()
+    result = ReadinessEvaluator().evaluate(
+        cohort, _evidence(cohort, 60, 100), _robustness(cohort), as_of=NOW + timedelta(hours=12)
+    )
+    assert result.receipt is not None
+    assert result.receipt.expires_at == NOW + timedelta(hours=24)
+
+
+def test_crypto_calendar_gap_cannot_unlock() -> None:
+    cohort = _cohort("crypto")
+    rows = _evidence(cohort, 90, 100)
+    shifted = tuple(
+        row.model_copy(
+            update={
+                "period_start": row.period_start + timedelta(days=1),
+                "period_end": row.period_end + timedelta(days=1),
+                "closed_at": NOW + timedelta(days=1),
+            }
+        )
+        for row in rows[45:]
+    )
+    result = ReadinessEvaluator().evaluate(
+        cohort, rows[:45] + shifted, _robustness(cohort), as_of=NOW + timedelta(days=1)
+    )
+    assert result.status == "locked"
+    assert not result.gate("observation_integrity").passed

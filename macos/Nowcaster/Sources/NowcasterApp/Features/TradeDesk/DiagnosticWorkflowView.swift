@@ -24,6 +24,9 @@ struct DiagnosticWorkflowView: View {
                     }
                     Text("Hypothetical fills after modeled fees and slippage · BTC / ETH spot · long / flat")
                         .font(.caption).foregroundStyle(.secondary)
+                    Label("Not cleared for real-money copying", systemImage: "hand.raised")
+                        .font(.caption).foregroundStyle(.orange)
+                        .accessibilityIdentifier("diagnosticWorkflow.copyReadiness")
                     if let message = service.workflowMessage {
                         Label(message, systemImage: "exclamationmark.circle").foregroundStyle(.secondary)
                     }

@@ -677,6 +677,14 @@ def test_selected_identity_and_readiness_receipt_must_be_exact_current_and_all_p
     )
 
     assert receipt is not None and receipt.cohort_hash == selected
+    legacy = row.copy()
+    legacy.at[0, "gates"] = [gate for gate in gates if gate["name"] != "observation_integrity"]
+    assert (
+        load_active_readiness_receipt(
+            FrameDatabase([pd.DataFrame(columns=["evidence"]), legacy]), cohorts=cohorts, now=NOW
+        )
+        is None
+    )
     failed = row.copy()
     failed.at[0, "gates"] = [
         {**gate, "passed": False} if gate["name"] == "causal_integrity" else gate for gate in gates

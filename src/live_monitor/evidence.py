@@ -32,6 +32,7 @@ REQUIRED_READINESS_GATES = frozenset(
         "causal_integrity",
         "cohort_integrity",
         "minimum_forward_observations",
+        "observation_integrity",
         "operational_integrity",
         "positive_paper_edge",
         "robustness",

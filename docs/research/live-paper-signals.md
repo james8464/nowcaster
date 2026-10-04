@@ -66,7 +66,9 @@ registered for later sessions on that source.
 The compact simulator card separates simulated cash, equity at the last mark,
 closed net P&L and fees from qualified research suggestions. It shows pending
 entry, open position, pending exit, entry limits, stale source or unavailable
-evidence explicitly. Position symbols come from their retained setup origin.
+evidence explicitly. Its persistent “Not cleared for real-money copying” label
+applies even when a hypothetical setup or positive paper balance appears.
+Position symbols come from their retained setup origin.
 Both source observation age and executable valuation age are displayed; neither
 is refreshed merely by polling. Stale or stopped sessions cannot show a current
 setup. An old position can appear only as retained context. Invalid responses,

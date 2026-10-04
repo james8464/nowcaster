@@ -78,6 +78,32 @@ class ReadinessEvaluator:
         if as_of.tzinfo is None or as_of.utcoffset() != timedelta(0):
             raise ValueError("readiness evaluation requires explicit UTC")
         ordered = tuple(sorted(evidence, key=lambda item: (item.period_start, item.period_end)))
+        observation_integrity = bool(ordered) and all(
+            item.period_start < item.period_end <= item.closed_at <= as_of
+            and all(
+                value is not None and value.is_finite()
+                for value in (item.paper_net_return, item.stressed_net_return, item.drawdown)
+            )
+            for item in ordered
+        )
+        observation_integrity = observation_integrity and all(
+            previous.period_end <= current.period_start
+            and (cohort.asset_class != "crypto" or previous.period_end == current.period_start)
+            for previous, current in zip(ordered, ordered[1:], strict=False)
+        )
+        observation_integrity = observation_integrity and len({item.evidence_hash for item in ordered}) == len(ordered)
+        if ordered:
+            observation_integrity = (
+                observation_integrity
+                and ordered[-1].period_end <= as_of
+                and as_of - ordered[-1].period_end < timedelta(hours=self.policy.receipt_hours)
+            )
+        if cohort.asset_class == "crypto":
+            observation_integrity = observation_integrity and all(
+                item.period_start.time() == datetime.min.time()
+                and item.period_end - item.period_start == timedelta(days=1)
+                for item in ordered
+            )
         periods_required = (
             self.policy.minimum_equity_sessions if cohort.asset_class == "equity" else self.policy.minimum_crypto_days
         )
@@ -94,8 +120,10 @@ class ReadinessEvaluator:
             and item.execution_error_upper_ratio <= self.policy.maximum_slippage_model_error
             for item in ordered
         )
-        stressed_total = sum((item.stressed_net_return or Decimal(0) for item in ordered), Decimal(0))
-        paper_total = sum((item.paper_net_return or Decimal(0) for item in ordered), Decimal(0))
+        paper_positive = stressed_positive = False
+        if observation_integrity:
+            paper_positive = sum((item.paper_net_return for item in ordered), Decimal(0)) > 0
+            stressed_positive = sum((item.stressed_net_return for item in ordered), Decimal(0)) > 0
         robustness_match = robustness.get("cohort_hash") == cohort.cohort_hash
         causal = robustness_match and robustness.get("causal_passed") is True
         try:
@@ -115,6 +143,11 @@ class ReadinessEvaluator:
         gates = tuple(
             sorted(
                 (
+                    ReadinessGate(
+                        name="observation_integrity",
+                        passed=observation_integrity,
+                        detail="unique chronological completed periods with finite returns and recent coverage",
+                    ),
                     ReadinessGate(
                         name="cohort_integrity",
                         passed=cohort_matches and robustness_match,
@@ -140,12 +173,12 @@ class ReadinessEvaluator:
                     ),
                     ReadinessGate(
                         name="positive_paper_edge",
-                        passed=paper_total > 0,
+                        passed=paper_positive,
                         detail="aggregate observed paper return must be positive",
                     ),
                     ReadinessGate(
                         name="stressed_net_edge",
-                        passed=stressed_total > 0,
+                        passed=stressed_positive,
                         detail="aggregate return remains positive under live-cost stress",
                     ),
                     ReadinessGate(
@@ -168,7 +201,10 @@ class ReadinessEvaluator:
             policy_hash=policy_hash,
             gates=gates,
             issued_at=as_of,
-            expires_at=as_of + timedelta(hours=self.policy.receipt_hours),
+            expires_at=min(
+                as_of + timedelta(hours=self.policy.receipt_hours),
+                ordered[-1].period_end + timedelta(hours=self.policy.receipt_hours),
+            ),
         )
         return ReadinessEvaluation(status="eligible", gates=gates, receipt=receipt)
 
