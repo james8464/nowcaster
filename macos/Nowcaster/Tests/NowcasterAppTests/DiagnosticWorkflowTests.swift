@@ -218,6 +218,9 @@ private func workflowPosition() -> [String: Any] {
         let value = try DiagnosticWorkflow.decode(workflowData(payload), protocolHash: workflowProtocol, now: workflowNow)
         #expect(value.review?.count("losses") == 1)
         #expect(value.recentTrades.first?.string("netPnl") == "-2")
+        let presentation = DiagnosticWorkflowPresentation.make(value, message: nil, isRunning: true, now: workflowNow)
+        #expect(presentation.completedPnl == -2)
+        #expect(presentation.openPositionRealizedPnl == nil)
         for (key, bad) in [("exitAt", "2026-10-04T12:00:01Z"), ("fees", "-1"), ("quantity", "0"), ("symbol", "SHORT"), ("netReturn", "NaN")] {
             var invalid = outcome; invalid[key] = bad; payload["recentTrades"] = [invalid]
             #expect(throws: (any Error).self) { try DiagnosticWorkflow.decode(workflowData(payload), protocolHash: workflowProtocol, now: workflowNow) }
@@ -228,5 +231,46 @@ private func workflowPosition() -> [String: Any] {
         #expect(throws: (any Error).self) {
             try DiagnosticWorkflow.decode(workflowData(workflowPayload()), protocolHash: workflowProtocol, policyHash: workflowSource, now: workflowNow)
         }
+    }
+
+    @Test func partialExitDoesNotBecomeCompletedTradePnl() throws {
+        var payload = workflowPayload(), account = payload["account"] as! [String: Any], position = workflowPosition()
+        payload["state"] = "position_open"; account["totalEntries"] = 1
+        account["realizedPnl"] = "2"; account["fees"] = "0.2"
+        position["quantity"] = "0.5"; position["realizedPnl"] = "2"
+        position["exitNotional"] = "52"; position["exitFees"] = "0.1"; position["exitSlippage"] = "0.05"
+        payload["account"] = account; payload["positions"] = [position]
+        var review = payload["review"] as! [String: Any]
+        review["netPnl"] = "2"; review["fees"] = "0.2"; payload["review"] = review
+        let value = try DiagnosticWorkflow.decode(workflowData(payload), protocolHash: workflowProtocol, now: workflowNow)
+        let presentation = DiagnosticWorkflowPresentation.make(value, message: nil, isRunning: true, now: workflowNow)
+        #expect(value.review?.count("completedTrades") == 0)
+        #expect(presentation.completedPnl == 0)
+        #expect(presentation.openPositionRealizedPnl == 2)
+        // Earlier completed losses coexist with a partial gain in the open
+        // position. The account/review lifetime realized total is their sum.
+        account["totalEntries"] = 2; account["completedTrades"] = 1; account["totalLosses"] = 1
+        position["realizedPnl"] = "5"; payload["account"] = account; payload["positions"] = [position]
+        review["completedTrades"] = 1; review["losses"] = 1
+        review["setups"] = [["setup": "breakout", "completed": 1, "wins": 0, "losses": 1, "netPnl": "-3", "fees": "0.1"]]
+        payload["review"] = review
+        let mixed = try DiagnosticWorkflow.decode(workflowData(payload), protocolHash: workflowProtocol, now: workflowNow)
+        let mixedPresentation = DiagnosticWorkflowPresentation.make(mixed, message: nil, isRunning: true, now: workflowNow)
+        #expect(mixedPresentation.completedPnl == -3)
+        #expect(mixedPresentation.openPositionRealizedPnl == 5)
+    }
+
+    @Test func backendEvidenceErrorExposesReasonAndInvestigationRecovery() throws {
+        var payload = workflowPayload(); payload["state"] = "error"
+        for key in ["account", "review", "updatedAt"] { payload[key] = NSNull() }
+        payload["reasons"] = ["workflow_evidence_unavailable"]
+        let value = try DiagnosticWorkflow.decode(workflowData(payload), protocolHash: workflowProtocol, now: workflowNow)
+        let presentation = DiagnosticWorkflowPresentation.make(value, message: nil, isRunning: false, now: workflowNow)
+        #expect(presentation.backendErrorReasons == ["workflow_evidence_unavailable"])
+        #expect(presentation.recovery == .investigateAndReload)
+        #expect(presentation.completedPnl == nil)
+        payload["state"] = "disabled"; payload["reasons"] = []
+        let disabled = try DiagnosticWorkflow.decode(workflowData(payload), protocolHash: workflowProtocol, now: workflowNow)
+        #expect(DiagnosticWorkflowPresentation.make(disabled, message: nil, isRunning: false, now: workflowNow).recovery == .chooseAndEnable)
     }
 }

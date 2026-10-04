@@ -29,7 +29,7 @@ struct DiagnosticWorkflowView: View {
                     }
                     if let workflow, let account = workflow.account {
                         Text(presentation.sourceAge).font(.caption).foregroundStyle(.secondary)
-                        accountSummary(account, historical: presentation.historical || account.date("valuationAt").map { timeline.date.timeIntervalSince($0) >= 15 } ?? true)
+                        accountSummary(account, presentation: presentation, historical: presentation.historical || account.date("valuationAt").map { timeline.date.timeIntervalSince($0) >= 15 } ?? true)
                         Text(presentation.valuation).font(.caption).foregroundStyle(.secondary)
                             .accessibilityIdentifier("diagnosticWorkflow.valuation")
                         if let position = workflow.positions.first {
@@ -55,8 +55,16 @@ struct DiagnosticWorkflowView: View {
                             details(workflow, account: account, historical: presentation.historical, now: timeline.date)
                         }.accessibilityIdentifier("diagnosticWorkflow.details")
                     } else {
-                        Text("Choose a registered source, then enable explicitly. Start the paper session to advance the simulator.")
-                            .foregroundStyle(.secondary)
+                        if presentation.recovery == .investigateAndReload {
+                            Label(presentation.backendErrorReasons.isEmpty ? "Retained diagnostic evidence is unavailable."
+                                  : presentation.backendErrorReasons.map(plain).joined(separator: ", "), systemImage: "exclamationmark.circle")
+                                .foregroundStyle(.secondary).accessibilityIdentifier("diagnosticWorkflow.backendError")
+                            Text("Inspect Data → Show Evidence Folder and retained logs. After resolving the evidence issue, choose the same source again to retry status. Preserve the journal; do not reset it.")
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text("Choose a registered source, then enable explicitly. Start the paper session to advance the simulator.")
+                                .foregroundStyle(.secondary)
+                        }
                     }
                     Text("Diagnostic paper simulation. Results do not qualify research suggestions. No orders or notifications are enabled.")
                         .font(.caption).foregroundStyle(.secondary)
@@ -66,11 +74,14 @@ struct DiagnosticWorkflowView: View {
         }
     }
 
-    private func accountSummary(_ account: WorkflowFields, historical: Bool) -> some View {
+    private func accountSummary(_ account: WorkflowFields, presentation: DiagnosticWorkflowPresentation, historical: Bool) -> some View {
         Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 5) {
             GridRow { Text("Simulated cash"); Text("\(money(account, "cash")) USDT").monospacedDigit() }
             GridRow { Text(historical ? "Equity at last mark" : "Simulated equity"); Text("\(money(account, "equity")) USDT").monospacedDigit() }
-            GridRow { Text("Closed net P&L"); Text("\(money(account, "realizedPnl")) USDT").monospacedDigit() }
+            GridRow { Text("Completed trade net P&L"); Text("\(money(presentation.completedPnl)) USDT").monospacedDigit() }
+            if let partial = presentation.openPositionRealizedPnl, partial != 0 {
+                GridRow { Text("Open position realized P&L"); Text("\(money(partial)) USDT").monospacedDigit() }
+            }
             GridRow { Text("Fees paid"); Text("\(money(account, "fees")) USDT").monospacedDigit() }
         }.font(.callout).accessibilityIdentifier("diagnosticWorkflow.account")
     }
@@ -107,7 +118,10 @@ struct DiagnosticWorkflowView: View {
     }
 
     private func money(_ row: WorkflowFields, _ key: String) -> String {
-        guard let value = row.decimal(key) else { return "Unavailable" }
+        money(row.decimal(key))
+    }
+    private func money(_ amount: Decimal?) -> String {
+        guard let value = amount else { return "Unavailable" }
         let formatter = NumberFormatter(); formatter.numberStyle = .decimal
         formatter.minimumFractionDigits = 2; formatter.maximumFractionDigits = 2
         return formatter.string(from: NSDecimalNumber(decimal: value)) ?? "Unavailable"

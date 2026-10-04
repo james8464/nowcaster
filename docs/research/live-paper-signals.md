@@ -71,6 +71,11 @@ Both source observation age and executable valuation age are displayed; neither
 is refreshed merely by polling. Stale or stopped sessions cannot show a current
 setup. An old position can appear only as retained context. Invalid responses,
 engine failures and source changes clear the previous projection.
+Completed trade net P&L sums only completed setup outcomes. Realized cash from a
+partial exit of an open position appears separately as open-position realized
+P&L; it cannot count as a completed win or loss. A backend evidence error shows
+its retained reason and directs you to inspect the evidence and logs, then
+reselect the same source to retry status without resetting history.
 
 Expand **Setup evidence and post-trade review** for blocked reasons, scheduled
 calendar availability, setup levels, fixed limits, drawdown, modeled slippage,
