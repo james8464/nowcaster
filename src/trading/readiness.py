@@ -6,22 +6,9 @@ from math import prod
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from src.readiness_contract import REQUIRED_READINESS_GATES
 from src.strategies.types import canonical_hash
 from src.trading.forward import ForwardCohortIdentity, ForwardDailyEvidence
-
-REQUIRED_READINESS_GATES = frozenset(
-    {
-        "causal_integrity",
-        "cohort_integrity",
-        "minimum_forward_observations",
-        "observation_integrity",
-        "operational_integrity",
-        "positive_paper_edge",
-        "return_accounting",
-        "robustness",
-        "stressed_net_edge",
-    }
-)
 
 
 class ReadinessPolicy(BaseModel):

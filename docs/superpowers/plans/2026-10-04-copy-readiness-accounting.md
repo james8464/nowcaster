@@ -47,6 +47,7 @@
 - [x] Add failing tests for incomplete/duplicate gate receipts in the base, broker, and live-monitor paths; adapt positive fixtures to use exact gates.
 - [x] Run the tests and confirm they fail for the intended contract gap.
 - [x] Implement exact gate-set validation; run affected suites.
+- [x] Preserve read-only monitor isolation by sharing gate names through a neutral module; verify the packaging boundary test.
 
 ### Task 3: Deterministic evidence and delivery
 

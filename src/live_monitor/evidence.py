@@ -23,9 +23,9 @@ from src.models.drift import (
     DriftPolicy,
     StreamingDriftMonitor,
 )
+from src.readiness_contract import REQUIRED_READINESS_GATES
 from src.strategies.library import StrategyContext, generate_signals
 from src.strategies.types import BarInterval, StrategyMode, StrategySpec, canonical_hash
-from src.trading.readiness import REQUIRED_READINESS_GATES
 
 EMPTY_COHORT_HASH = "0" * 64
 LIVE_READINESS_POLICY = {
