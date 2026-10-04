@@ -35,6 +35,8 @@ def main(arguments=None):
         "notification-evidence",
         "import-calendar",
         "decision-context",
+        "workflow-enable",
+        "workflow-status",
     ):
         command = commands.add_parser(name)
         command.add_argument("--directory", required=True, type=Path)
@@ -51,6 +53,14 @@ def main(arguments=None):
         if name == "notification-outcome":
             command.add_argument("--outcome", choices=("delivered", "failed"), required=True)
     args = parser.parse_args(arguments)
+    if args.command in {"workflow-enable", "workflow-status"}:
+        import json
+
+        from src.research.trader_workflow_runtime import enable_workflow, workflow_status
+
+        action = enable_workflow if args.command == "workflow-enable" else workflow_status
+        print(json.dumps(action(args.directory), allow_nan=False))
+        return 0
     if args.command == "setup":
         from src.research.paper_desk_setup import initialize_paper_desk
 

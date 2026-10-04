@@ -10,7 +10,7 @@ import fcntl
 import json
 import time
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -263,6 +263,7 @@ class FinalizedSpotFeed:
         self, *, fetch_json: Callable = _public_json, fetch_quote: Callable = _public_quote, clock: Callable = _now
     ):
         self.fetch_json, self.fetch_quote, self.clock = fetch_json, fetch_quote, clock
+        self.collect_workflow_quotes = False
 
     def observations(self, symbols: tuple[str, ...]) -> tuple[RoundObservation, ...]:
         rows = []
@@ -291,7 +292,7 @@ class FinalizedSpotFeed:
                 continue
             boundary, candle = max(finalized, key=lambda item: item[0])
             # Old candles remain absent, never re-labelled as fresh on receipt.
-            if candle_received - boundary >= timedelta(seconds=15):
+            if candle_received - boundary >= timedelta(seconds=15) and not self.collect_workflow_quotes:
                 continue
             quote = self.fetch_quote(symbol)
             received = _utc(self.clock(), "receipt")
@@ -622,6 +623,9 @@ class LivePaperSignalRunner:
 
     def _run_once(self, directory: Path) -> LiveSignalState:
         protocol = load_round_protocol(directory)
+        workflow_enabled = (directory / "diagnostic-workflow-v1").exists()
+        if isinstance(self.feed, FinalizedSpotFeed):
+            self.feed.collect_workflow_quotes = workflow_enabled
         ledger = SignalEventLedger(directory, protocol_hash=protocol.identity_hash)
         previous = _retained_state(directory, protocol.identity_hash)
         now = _utc(self.clock(), "evaluation timestamp")
@@ -686,6 +690,7 @@ class LivePaperSignalRunner:
         existing = {row.source_key: row for row in retained}
         novel = []
         novel_context = []
+        workflow_rows = []
         try:
             for fetched_row in fetched:
                 enriched = (
@@ -697,25 +702,45 @@ class LivePaperSignalRunner:
                     fetched_row.model_dump(include=set(RoundObservation.model_fields))
                 )
                 row.validate_for(protocol)
+                old = existing.get(row.source_key)
                 if (
                     (enriched is not None and not enriched.finalized)
                     or row.close is None
                     or row.provider_error is not None
                     or row.available_at > now
-                    or now - row.provider_at >= timedelta(seconds=min(15, protocol.maximum_observation_age_seconds))
+                    or (
+                        now - row.provider_at >= timedelta(seconds=min(15, protocol.maximum_observation_age_seconds))
+                        and not (workflow_enabled and old is not None and enriched is not None)
+                    )
                 ):
                     raise ValueError("invalid observation timing or finality")
-                old = existing.get(row.source_key)
                 if old is not None:
                     # Re-polling does not revise the first receipt or its quote.
                     fields = {"received_at", "available_at", "bid", "ask"}
                     if old.model_dump(exclude=fields) != row.model_dump(exclude=fields):
                         raise ValueError("conflicting finalized candle")
+                    if enriched is not None:
+                        # Bind the fresh quote separately without revising the
+                        # study candle or appending another finalized minute.
+                        workflow_rows.append(
+                            enriched.model_copy(
+                                update={
+                                    "source_key": "workflow-quote:"
+                                    + canonical_hash(
+                                        {
+                                            "bar": row.source_key,
+                                            "quote": enriched.quote_source_key,
+                                        }
+                                    )
+                                }
+                            )
+                        )
                     continue
                 latest = max((item.provider_at for item in retained if item.symbol == row.symbol), default=None)
                 if latest is not None and row.provider_at <= latest:
                     raise ValueError("late observation")
                 novel.append(row)
+                workflow_rows.append(enriched if enriched is not None else row)
                 if enriched is not None:
                     novel_context.append(enriched)
             append_observations(directory, protocol, novel)
@@ -730,6 +755,21 @@ class LivePaperSignalRunner:
         except (ValueError, AttributeError):
             ledger.append(LiveSignalEvent(kind="gap", at=now, detail="invalid_observation"))
             return save("abstaining", ("invalid_observation",))
+        # Opt-in diagnostics consume retained finality and fresh quote evidence
+        # before independent legacy qualification/warmup gates. Failures surface
+        # only through the diagnostic status; they cannot relabel this study.
+        from src.research.trader_workflow_runtime import (
+            WORKFLOW_DIRECTORY,
+            _record_collection_error,
+            advance_workflow,
+        )
+
+        if (directory / WORKFLOW_DIRECTORY).exists():
+            try:
+                advance_workflow(directory, workflow_rows, _calendar_at(directory, now), now)
+            except (OSError, ValueError, KeyError, TypeError):
+                with suppress(OSError, ValueError):
+                    _record_collection_error(directory, now)
         # The display state can become stale/warming during empty successful
         # polls. Recover from retained interruption evidence, never that projection.
         interrupted = False

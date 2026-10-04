@@ -143,6 +143,21 @@ def test_packaged_helper_reads_registered_state_without_python_or_checkout(tmp_p
     for relative in required:
         assert (resources / relative).read_bytes() == (source / relative).read_bytes()
 
+    # Workflow registration must work from bundled implementation source bytes.
+    activated = subprocess.run(
+        [str(helper), "workflow-enable", "--directory", str(directory)],
+        cwd=tmp_path,
+        env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "TMPDIR": str(tmp_path)},
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert activated.returncode == 0, activated.stderr
+    workflow = json.loads(activated.stdout)
+    assert workflow["paperOnly"] is True and workflow["account"]["cash"] == "10000"
+    assert (directory / "protocol.json").read_bytes() == retained
+
 
 @pytest.mark.skipif(not os.environ.get("NOWCASTER_PAPER_HELPER"), reason="requires a built release helper")
 def test_packaged_helper_evaluates_live_bar_with_retained_protocol(tmp_path, market_proxy):

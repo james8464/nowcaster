@@ -17,6 +17,9 @@ RESOURCE_ARGS=(--add-data "$PROJECT_ROOT/config/strategies.yaml:config"
   --add-data "$PROJECT_ROOT/src/research/paper_desk_strategies.py:src/research"
   --add-data "$PROJECT_ROOT/src/research/round_two_walkforward.py:src/research"
   --add-data "$PROJECT_ROOT/src/research/trend_advisor.py:src/research")
+for source in trader_workflow_runtime trader_workflow trader_workflow_account day_trader_context round_two_contracts live_paper_signal_runtime; do
+  RESOURCE_ARGS+=(--add-data "$PROJECT_ROOT/src/research/$source.py:src/research")
+done
 for source in "$PROJECT_ROOT"/src/strategies/**/*.py(N); do
   relative=${source#$PROJECT_ROOT/}
   RESOURCE_ARGS+=(--add-data "$source:${relative:h}")
