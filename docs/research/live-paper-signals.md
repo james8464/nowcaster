@@ -101,7 +101,10 @@ and displayed ask size, and quantity rounded down to the declared lot increment.
 Intent expiry is 60 seconds. Exits use a subsequent usable bid and charge fees
 and modeled slippage. Stops precede targets on ambiguous touches, a trailing
 stop ratchets only after one initial risk unit, and a 60-minute holding limit
-applies. Pending exits survive gaps and recovery; missing quotes can delay
+applies. The retained position binds each stop to its effective UTC time, starting
+at entry and advancing only when the stop ratchets. A tightened stop applies only
+to later quotes or complete candles starting at or after that time. Pending exits
+survive gaps and recovery; missing quotes can delay
 liquidation, so a displayed stop is not a guaranteed exit price.
 
 New entries freeze at 2% realized UTC-day losses, six daily entries, or three

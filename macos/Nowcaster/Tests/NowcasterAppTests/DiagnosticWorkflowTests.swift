@@ -40,11 +40,32 @@ private func workflowDecision() -> [String: Any] {
 private func workflowPosition() -> [String: Any] {
     ["origin": workflowDecision(), "entryAt": workflowTime, "entrySourceKey": "later-bar", "entryQuoteKey": "later-quote",
      "initialQuantity": "1", "quantity": "1", "entryPrice": "101", "entryFee": "0.1", "entrySlippage": "0.05",
-     "unitDebit": "101.1", "initialRisk": "2.1", "stop": "99", "target": "105", "realizedPnl": "0",
+     "unitDebit": "101.1", "initialRisk": "2.1", "stop": "99", "stopEffectiveAt": workflowTime, "target": "105", "realizedPnl": "0",
      "exitNotional": "0", "exitFees": "0", "exitSlippage": "0"]
 }
 
 @Suite struct DiagnosticWorkflowTests {
+    @Test func positionStopTimestampRequiresCausalEntryAndAccountBounds() throws {
+        var payload = workflowPayload(), account = payload["account"] as! [String: Any], position = workflowPosition()
+        payload["state"] = "position_open"
+        account["lastAt"] = "2026-10-04T12:00:05Z"; payload["account"] = account
+        let now = workflowNow.addingTimeInterval(5)
+        for stamp in [workflowTime, "2026-10-04T12:00:05Z"] {
+            position["stopEffectiveAt"] = stamp; payload["positions"] = [position]
+            let value = try DiagnosticWorkflow.decode(workflowData(payload), protocolHash: workflowProtocol, now: now)
+            #expect(value.positions.first?.string("stopEffectiveAt") == stamp)
+        }
+        for invalid: Any in [NSNull(), "bad", "2026-10-04T12:00:00+00:00", "2026-10-04T11:59:59Z", "2026-10-04T12:00:06Z"] {
+            position["stopEffectiveAt"] = invalid; payload["positions"] = [position]
+            #expect(throws: (any Error).self) { try DiagnosticWorkflow.decode(workflowData(payload), protocolHash: workflowProtocol, now: now) }
+        }
+        account["lastAt"] = workflowTime; payload["account"] = account
+        position["stopEffectiveAt"] = "2026-10-04T12:00:01Z"; payload["positions"] = [position]
+        #expect(throws: (any Error).self) { try DiagnosticWorkflow.decode(workflowData(payload), protocolHash: workflowProtocol, now: now) }
+        position.removeValue(forKey: "stopEffectiveAt"); payload["positions"] = [position]
+        #expect(throws: (any Error).self) { try DiagnosticWorkflow.decode(workflowData(payload), protocolHash: workflowProtocol, now: now) }
+    }
+
     @Test func decodesActualCamelCaseDecimalProjectionWithoutInventingValuation() throws {
         let value = try DiagnosticWorkflow.decode(workflowData(workflowPayload()), protocolHash: workflowProtocol, now: workflowNow)
         #expect(value.account?.string("cash") == "10000")

@@ -142,7 +142,7 @@ private struct WorkflowValidation {
         try validateAccount(account, source: source)
         for item in decisions { try decision(item, source: source) }
         guard Set(decisions.compactMap { $0.string("symbol") }).count == decisions.count else { throw workflowInvalid() }
-        for item in positions { try position(item, source: source) }
+        for item in positions { try position(item, source: source, lastAt: account.date("lastAt")!) }
         for item in trades { try outcome(item) }
         guard trades.compactMap({ $0.date("exitAt") }) == trades.compactMap({ $0.date("exitAt") }).sorted() else { throw workflowInvalid() }
         try validateReview(review, account: account)
@@ -210,16 +210,17 @@ private struct WorkflowValidation {
             guard exit.date("triggeredAt")! <= last else { throw workflowInvalid() }
         } else if row.values["pendingExit"] != .null { throw workflowInvalid() }
     }
-    func position(_ row: WorkflowFields, source: String) throws {
-        try keys(row, "origin entryAt entrySourceKey entryQuoteKey initialQuantity quantity entryPrice entryFee entrySlippage unitDebit initialRisk stop target realizedPnl exitNotional exitFees exitSlippage")
+    func position(_ row: WorkflowFields, source: String, lastAt: Date) throws {
+        try keys(row, "origin entryAt entrySourceKey entryQuoteKey initialQuantity quantity entryPrice entryFee entrySlippage unitDebit initialRisk stop stopEffectiveAt target realizedPnl exitNotional exitFees exitSlippage")
         guard let origin = row.fields("origin") else { throw workflowInvalid() }
-        try decision(origin, source: source); try time(row, "entryAt")
+        try decision(origin, source: source); try time(row, "entryAt"); try time(row, "stopEffectiveAt")
         for key in ["entrySourceKey", "entryQuoteKey"] { _ = try workflowString(row, key) }
         for key in ["initialQuantity", "quantity", "entryPrice", "unitDebit", "initialRisk", "stop", "target"] { try amount(row, key, positive: true) }
         for key in ["entryFee", "entrySlippage", "exitNotional", "exitFees", "exitSlippage"] { try amount(row, key) }
         try amount(row, "realizedPnl", minimum: -Decimal(string: "1e30")!)
         guard origin.string("status") == "ready", row.date("entryAt")! > origin.date("decisionAt")!,
               row.date("entryAt")! <= origin.date("expiresAt")!,
+              row.date("entryAt")! <= row.date("stopEffectiveAt")!, row.date("stopEffectiveAt")! <= lastAt,
               row.decimal("quantity")! <= row.decimal("initialQuantity")!, row.decimal("stop")! >= origin.decimal("stop")!,
               row.decimal("target") == origin.decimal("target") else { throw workflowInvalid() }
     }
