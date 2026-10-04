@@ -4,6 +4,7 @@ import importlib.util
 import json
 import subprocess
 import sys
+import time
 from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -316,3 +317,123 @@ def test_public_feed_refreshes_old_closed_candle_quote_only_when_enabled():
     rows = feed.observations(("BTCUSDT",))
     assert len(rows) == 1 and rows[0].quote_provider_at == at
     assert rows[0].provider_at == NOW.replace(second=0)
+
+
+def test_no_change_heartbeats_do_not_append_account_snapshots(registered):
+    enabled(registered)
+    path = registered / SUBDIR / "transitions.jsonl"
+    before = path.read_bytes()
+    started = time.perf_counter()
+    for second in range(1, 5001):
+        result = advance(registered, (), NOW + timedelta(seconds=second))
+    elapsed = time.perf_counter() - started
+    assert path.read_bytes() == before
+    assert result["account"]["lastAt"] == "2026-09-22T13:00:00Z"
+    # Skipped heartbeats still protect the writer's monotonic clock.
+    with pytest.raises(ValueError, match="clock"):
+        advance(registered, (), NOW + timedelta(seconds=4999))
+    print(f"5000 empty ticks: {elapsed:.6f}s total; journal growth {path.stat().st_size - len(before)} bytes")
+
+
+def test_verified_writer_replays_only_on_recovery(registered, monkeypatch):
+    runtime = api()
+    original, calls = runtime._replay, []
+
+    def observed_replay(*args):
+        calls.append(1)
+        return original(*args)
+
+    monkeypatch.setattr(runtime, "_replay", observed_replay)
+    enabled(registered)
+    for second in range(1, 21):
+        at = NOW + timedelta(seconds=second)
+        result = runtime.advance_workflow(registered, (quote(at),), None, at)
+        assert result["account"]["totalEntries"] == 0
+    assert len(calls) == 1
+    assert len((registered / SUBDIR / "transitions.jsonl").read_text().splitlines()) == 20
+    runtime._WRITERS.clear()
+    resumed = runtime.advance_workflow(registered, (), None, at + timedelta(seconds=1))
+    assert resumed["account"]["cash"] == "10000" and len(calls) == 2
+
+
+def test_status_is_bounded_without_writer_cache_and_detects_middle_damage(registered, monkeypatch):
+    """A 5,000-record fixture catches full-journal status reads and stale guards."""
+    from src.research.trader_workflow import WorkflowPolicy
+    from src.research.trader_workflow_account import WorkflowAccount
+    from src.strategies.types import canonical_hash, canonical_json
+
+    enabled(registered)
+    root = registered / SUBDIR
+    manifest = json.loads((root / "manifest.json").read_text())
+    activated = NOW - timedelta(seconds=2)
+    policy = WorkflowPolicy(round_protocol=protocol())
+    account = WorkflowAccount.initial(policy, activated).model_dump(mode="json")
+    previous, chunks, offset = manifest["hash"], [], 0
+    for index in range(5000):
+        at = activated + timedelta(seconds=index + 1)
+        account["last_at"] = at.isoformat().replace("+00:00", "Z")
+        record = {
+            "sequence": index + 1,
+            "previousHash": previous,
+            "at": account["last_at"],
+            "observations": [],
+            "calendar": None,
+            "sourceAt": manifest["activatedAt"],
+            "updatedAt": manifest["activatedAt"],
+            "transition": {"account": dict(account), "events": [], "decisions": []},
+        }
+        record["hash"] = canonical_hash(record)
+        previous = record["hash"]
+        payload = (canonical_json(record) + "\n").encode()
+        last_offset = offset
+        offset += len(payload)
+        chunks.append(payload)
+    journal = root / "transitions.jsonl"
+    journal.write_bytes(b"".join(chunks))
+    stat = journal.stat()
+    head = {
+        "sequence": 5000,
+        "hash": previous,
+        "manifestHash": manifest["hash"],
+        "journalStat": [stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns],
+        "lastOffset": last_offset,
+        "clockAt": account["last_at"],
+    }
+    (root / "head.json").write_text(canonical_json(head))
+    api()._WRITERS.clear()
+    original = Path.read_bytes
+
+    def bounded_read(path):
+        assert path != journal, "status must not load the complete journal"
+        return original(path)
+
+    monkeypatch.setattr(Path, "read_bytes", bounded_read)
+    started = time.perf_counter()
+    result = api().workflow_status(registered, now=at)
+    elapsed = time.perf_counter() - started
+    assert result["account"]["cash"] == "10000" and result["state"] == "stale"
+    assert elapsed < 1, f"bounded status exceeded 1 second: {elapsed}"
+    started = time.perf_counter()
+    recovered = api().advance_workflow(registered, (), None, at + timedelta(seconds=1))
+    recovery_elapsed = time.perf_counter() - started
+    assert recovered["account"]["cash"] == "10000"
+    # Alter an older byte, preserving total size; the saved stat guard must fail.
+    with journal.open("r+b") as stream:
+        stream.seek(100)
+        old = stream.read(1)
+        stream.seek(100)
+        stream.write(b"0" if old != b"0" else b"1")
+    assert api().workflow_status(registered, now=at)["state"] == "error"
+    print(
+        f"5000-record bounded status: {elapsed:.6f}s; startup audit: {recovery_elapsed:.6f}s; "
+        f"journal {stat.st_size} bytes"
+    )
+
+
+def test_empty_tick_expiry_is_durable_and_recovers_identically(registered):
+    enabled(registered)
+    advance(registered, (bars()[-1],))
+    result = advance(registered, (), NOW + timedelta(seconds=60))
+    assert result["account"]["pendingEntry"] is None
+    assert len((registered / SUBDIR / "transitions.jsonl").read_text().splitlines()) == 2
+    assert api().workflow_status(registered, now=NOW + timedelta(seconds=60)) == result

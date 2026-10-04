@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -21,6 +22,8 @@ from src.research.trader_workflow_account import WorkflowAccount, WorkflowTransi
 from src.strategies.types import canonical_hash, canonical_json
 
 WORKFLOW_DIRECTORY = "diagnostic-workflow-v1"
+MAX_RECORD_BYTES = 1024 * 1024
+_WRITERS = {}
 IMPLEMENTATION_SOURCES = (
     "trader_workflow_runtime.py",
     "trader_workflow.py",
@@ -49,7 +52,7 @@ def _implementation_hash():
     return canonical_hash(sources)
 
 
-def _read_json(path):
+def _decode_json(data):
     def unique(pairs):
         result = {}
         for key, value in pairs:
@@ -58,7 +61,112 @@ def _read_json(path):
             result[key] = value
         return result
 
-    return json.loads(path.read_bytes(), object_pairs_hook=unique)
+    return json.loads(data, object_pairs_hook=unique)
+
+
+def _read_json(path):
+    with path.open("rb") as stream:
+        data = stream.read(MAX_RECORD_BYTES + 1)
+    if len(data) > MAX_RECORD_BYTES:
+        raise ValueError("oversized workflow evidence")
+    return _decode_json(data)
+
+
+def _signature(path):
+    try:
+        stat = path.stat()
+    except FileNotFoundError as error:
+        raise ValueError("missing workflow evidence") from error
+    return [stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns]
+
+
+def _source_times(account, features):
+    return (
+        max(
+            account.activated_at,
+            max((r.quote_provider_at or r.provider_at for r in features), default=account.activated_at),
+        ),
+        max(account.activated_at, max((r.available_at for r in features), default=account.activated_at)),
+    )
+
+
+def _head(directory, manifest):
+    root = directory / WORKFLOW_DIRECTORY
+    if (root / "error.json").exists():
+        raise ValueError("workflow collection evidence unavailable")
+    head = _read_json(root / "head.json")
+    if set(head) != {"sequence", "hash", "manifestHash", "journalStat", "lastOffset", "clockAt"}:
+        raise ValueError("invalid workflow checkpoint")
+    if head["manifestHash"] != manifest["hash"] or head["journalStat"] != _signature(root / "transitions.jsonl"):
+        raise ValueError("workflow journal checkpoint mismatch")
+    if type(head["sequence"]) is not int or head["sequence"] < 0 or type(head["lastOffset"]) is not int:
+        raise ValueError("invalid workflow checkpoint sequence/offset")
+    if not 0 <= head["lastOffset"] <= head["journalStat"][2]:
+        raise ValueError("invalid workflow checkpoint offset")
+    _at(head["clockAt"])
+    return head
+
+
+@dataclass
+class _VerifiedWriter:
+    state: tuple
+    implementation_hash: str
+    manifest_stat: list
+    head_stat: list
+    journal_stat: list
+    offset: int
+    clock: datetime
+
+
+def _remember(directory, state, implementation_hash):
+    root = directory / WORKFLOW_DIRECTORY
+    head = _read_json(root / "head.json")
+    writer = _VerifiedWriter(
+        state,
+        implementation_hash,
+        _signature(root / "manifest.json"),
+        _signature(root / "head.json"),
+        _signature(root / "transitions.jsonl"),
+        head["lastOffset"],
+        _at(head["clockAt"]),
+    )
+    # A process normally collects one directory. Limit retained inactive writers.
+    if directory not in _WRITERS and len(_WRITERS) >= 8:
+        _WRITERS.pop(next(iter(_WRITERS)))
+    _WRITERS[directory] = writer
+    return writer
+
+
+def _writer(directory, policy):
+    root = directory / WORKFLOW_DIRECTORY
+    implementation_hash = _implementation_hash()
+    writer = _WRITERS.get(directory)
+    if writer is not None and (
+        writer.state[0].policy_hash == policy.identity_hash
+        and writer.implementation_hash == implementation_hash
+        and writer.manifest_stat == _signature(root / "manifest.json")
+        and writer.head_stat == _signature(root / "head.json")
+        and writer.journal_stat == _signature(root / "transitions.jsonl")
+        and not (root / "error.json").exists()
+    ):
+        return writer
+    _WRITERS.pop(directory, None)
+    return _remember(directory, _replay(directory, policy), implementation_hash)
+
+
+def _write_head(directory, *, count, digest, manifest_hash, offset, clock):
+    root = directory / WORKFLOW_DIRECTORY
+    _write_atomic_json(
+        root / "head.json",
+        {
+            "sequence": count,
+            "hash": digest,
+            "manifestHash": manifest_hash,
+            "journalStat": _signature(root / "transitions.jsonl"),
+            "lastOffset": offset,
+            "clockAt": clock.isoformat().replace("+00:00", "Z"),
+        },
+    )
 
 
 def _at(value):
@@ -158,49 +266,111 @@ def _replay(directory, policy):
     if (directory / WORKFLOW_DIRECTORY / "error.json").exists():
         raise ValueError("workflow collection evidence unavailable")
     manifest, activated, features = _bind_manifest(directory, policy)
+    if not (directory / WORKFLOW_DIRECTORY / "transitions.jsonl").is_file():
+        raise ValueError("missing workflow journal")
+    head = _head(directory, manifest)
     account = WorkflowAccount.initial(policy, activated)
     seen = {r.source_key: canonical_hash(r.model_dump(mode="json")) for r in features}
     features = _features(features)
     journal = directory / WORKFLOW_DIRECTORY / "transitions.jsonl"
     if not journal.is_file():
         raise ValueError("missing workflow journal")
-    data = journal.read_bytes()
-    if data and not data.endswith(b"\n"):
-        raise ValueError("torn workflow journal")
     previous, count, decisions = manifest["hash"], 0, ()
-    for line in data.splitlines():
-        if not line:
-            raise ValueError("empty workflow journal record")
-        record = json.loads(line)
-        if set(record) != {"sequence", "previousHash", "at", "observations", "calendar", "transition", "hash"}:
-            raise ValueError("invalid workflow journal record")
-        body = {k: v for k, v in record.items() if k != "hash"}
-        if (
-            record["sequence"] != count + 1
-            or record["previousHash"] != previous
-            or record["hash"] != canonical_hash(body)
-        ):
-            raise ValueError("workflow journal hash mismatch")
-        now = _at(record["at"])
-        if now < account.last_at:
-            raise ValueError("workflow clock regression")
-        rows = _new_rows(record["observations"], seen, activated, now, policy)
-        if [r.model_dump(mode="json") for r in rows] != record["observations"]:
-            raise ValueError("invalid workflow journal observation replay")
-        calendar = CalendarSnapshot.model_validate(record["calendar"]) if record["calendar"] is not None else None
-        rebuilt, features = _transition(account, features, rows, calendar, now, policy)
-        retained = WorkflowTransition.model_validate(record["transition"])
-        if rebuilt != retained:
-            raise ValueError("workflow transition replay mismatch")
-        account, decisions = rebuilt.account, rebuilt.decisions
-        seen.update({r.source_key: canonical_hash(r.model_dump(mode="json")) for r in rows})
-        previous, count = record["hash"], count + 1
+    offset, last_offset = 0, 0
+    with journal.open("rb") as stream:
+        while line := stream.readline(MAX_RECORD_BYTES + 1):
+            if len(line) > MAX_RECORD_BYTES or not line.endswith(b"\n"):
+                raise ValueError("torn or oversized workflow journal")
+            record = _decode_json(line)
+            _validate_record(record)
+            if record["sequence"] != count + 1 or record["previousHash"] != previous:
+                raise ValueError("workflow journal hash mismatch")
+            now = _at(record["at"])
+            if now < account.last_at:
+                raise ValueError("workflow clock regression")
+            rows = _new_rows(record["observations"], seen, activated, now, policy)
+            if [r.model_dump(mode="json") for r in rows] != record["observations"]:
+                raise ValueError("invalid workflow journal observation replay")
+            calendar = CalendarSnapshot.model_validate(record["calendar"]) if record["calendar"] is not None else None
+            rebuilt, features = _transition(account, features, rows, calendar, now, policy)
+            retained = WorkflowTransition.model_validate(record["transition"])
+            if rebuilt != retained or _source_times(rebuilt.account, features) != (
+                _at(record["sourceAt"]),
+                _at(record["updatedAt"]),
+            ):
+                raise ValueError("workflow transition replay mismatch")
+            account, decisions = rebuilt.account, rebuilt.decisions
+            seen.update({r.source_key: canonical_hash(r.model_dump(mode="json")) for r in rows})
+            previous, count = record["hash"], count + 1
+            last_offset, offset = offset, offset + len(line)
     # Detect missing/truncated complete tails as well as torn records. A crash
     # between journal fsync and checkpoint fails closed, never silently rolls back.
-    head = _read_json(directory / WORKFLOW_DIRECTORY / "head.json")
-    if head != {"sequence": count, "hash": previous}:
+    if head["sequence"] != count or head["hash"] != previous or head["lastOffset"] != last_offset:
         raise ValueError("workflow journal checkpoint mismatch")
+    if _at(head["clockAt"]) < account.last_at:
+        raise ValueError("workflow clock regression")
     return account, decisions, features, seen, previous, count
+
+
+def _validate_record(record):
+    if set(record) != {
+        "sequence",
+        "previousHash",
+        "at",
+        "observations",
+        "calendar",
+        "transition",
+        "hash",
+        "sourceAt",
+        "updatedAt",
+    }:
+        raise ValueError("invalid workflow journal record")
+    if record["hash"] != canonical_hash({k: v for k, v in record.items() if k != "hash"}):
+        raise ValueError("workflow journal hash mismatch")
+
+
+def _bounded_projection(directory, policy):
+    """Read verified writer's final journal record, guarded against any file edit.
+
+    Account reconstruction remains the writer's startup/audit responsibility.
+    Status never silently repairs a changed checkpoint or journal.
+    """
+    manifest, activated, warmup = _bind_manifest(directory, policy)
+    head = _head(directory, manifest)
+    journal = directory / WORKFLOW_DIRECTORY / "transitions.jsonl"
+    if not head["sequence"]:
+        if head["journalStat"][2] != 0 or head["hash"] != manifest["hash"] or head["lastOffset"] != 0:
+            raise ValueError("workflow journal checkpoint mismatch")
+        account = WorkflowAccount.initial(policy, activated)
+        decisions = ()
+        source_at, updated_at = _source_times(account, warmup)
+    else:
+        if not 0 < head["journalStat"][2] - head["lastOffset"] <= MAX_RECORD_BYTES:
+            raise ValueError("invalid workflow journal tail")
+        with journal.open("rb") as stream:
+            stream.seek(head["lastOffset"])
+            data = stream.read(MAX_RECORD_BYTES + 1)
+        if not data.endswith(b"\n") or data.count(b"\n") != 1:
+            raise ValueError("torn workflow journal tail")
+        record = _decode_json(data)
+        _validate_record(record)
+        transition = WorkflowTransition.model_validate(record["transition"])
+        if record["sequence"] != head["sequence"] or record["hash"] != head["hash"]:
+            raise ValueError("workflow journal checkpoint mismatch")
+        account, decisions = transition.account, transition.decisions
+        if (
+            (account.policy_hash, account.protocol_hash, account.source_identity_hash)
+            != (policy.identity_hash, policy.round_protocol.identity_hash, policy.source_identity_hash)
+            or account.activated_at != activated
+            or account.last_at != _at(record["at"])
+        ):
+            raise ValueError("workflow account identity mismatch")
+        source_at, updated_at = _at(record["sourceAt"]), _at(record["updatedAt"])
+        if not activated <= source_at <= updated_at <= account.last_at:
+            raise ValueError("invalid workflow source chronology")
+    if _at(head["clockAt"]) < account.last_at:
+        raise ValueError("workflow clock regression")
+    return account, decisions, source_at, updated_at, _at(head["clockAt"])
 
 
 def _record_collection_error(directory, now):
@@ -233,7 +403,18 @@ def _camel(value):
     return value
 
 
-def _status(policy, account=None, decisions=(), *, now, error=None, disabled=False, source_rows=()):
+def _status(
+    policy,
+    account=None,
+    decisions=(),
+    *,
+    now,
+    error=None,
+    disabled=False,
+    source_rows=(),
+    source_at=None,
+    updated_at=None,
+):
     result = {
         "schemaVersion": 1,
         "paperOnly": True,
@@ -269,9 +450,8 @@ def _status(policy, account=None, decisions=(), *, now, error=None, disabled=Fal
         state, reasons = "limited", ["entry_limits_active"]
     if now < account.last_at:
         return _status(policy, now=now, error="workflow_clock_regression")
-    source_at = max((r.quote_provider_at or r.provider_at for r in source_rows), default=account.activated_at)
-    updated_at = max((r.available_at for r in source_rows), default=account.activated_at)
-    source_at, updated_at = max(source_at, account.activated_at), max(updated_at, account.activated_at)
+    if source_at is None:
+        source_at, updated_at = _source_times(account, source_rows)
     if now - source_at >= timedelta(seconds=min(15, policy.round_protocol.maximum_observation_age_seconds)):
         state, reasons = "stale", ["workflow_source_stale"]
     values = account.model_dump(mode="json")
@@ -324,9 +504,12 @@ def enable_workflow(directory, now=None):
             }
             manifest["hash"] = canonical_hash(manifest)
             _write_first_manifest(root / "transitions.jsonl", b"")
-            _write_atomic_json(root / "head.json", {"sequence": 0, "hash": manifest["hash"]})
+            _write_head(
+                directory, count=0, digest=manifest["hash"], manifest_hash=manifest["hash"], offset=0, clock=now
+            )
             _write_first_manifest(root / "manifest.json", (canonical_json(manifest) + "\n").encode())
-        account, decisions, features, *_ = _replay(directory, policy)
+        writer = _remember(directory, _replay(directory, policy), _implementation_hash())
+        account, decisions, features, *_ = writer.state
         return _status(policy, account, decisions, now=account.last_at, source_rows=features)
 
 
@@ -339,14 +522,36 @@ def advance_workflow(directory, observations, calendar, now):
     if not root.exists():
         return _status(policy, now=now, disabled=True)
     with jsonl_writer_lock(root / "transitions.jsonl"):
-        account, decisions, features, seen, previous, count = _replay(directory, policy)
-        if now < account.last_at:
+        writer = _writer(directory, policy)
+        account, decisions, features, seen, previous, count = writer.state
+        if now < writer.clock:
             raise ValueError("workflow clock regression")
         rows = _new_rows(observations, seen, account.activated_at, now, policy)
         if not rows and now == account.last_at:
             return _status(policy, account, decisions, now=now, source_rows=features)
         calendar = CalendarSnapshot.model_validate(calendar) if isinstance(calendar, dict) else calendar
         transition, features = _transition(account, features, rows, calendar, now, policy)
+        # Receipt-free heartbeats carry no new evidence. Persist only actual
+        # economic/state changes (expiry, limits, rollover resets, holding exit).
+        if (
+            not rows
+            and not transition.events
+            and transition.account.model_dump(exclude={"last_at", "utc_day"})
+            == (account.model_dump(exclude={"last_at", "utc_day"}))
+        ):
+            head = _read_json(root / "head.json")
+            if now > writer.clock:
+                _write_head(
+                    directory,
+                    count=count,
+                    digest=previous,
+                    manifest_hash=head["manifestHash"],
+                    offset=writer.offset,
+                    clock=now,
+                )
+                writer.clock, writer.head_stat = now, _signature(root / "head.json")
+            return _status(policy, account, decisions, now=now, source_rows=features)
+        source_at, updated_at = _source_times(transition.account, features)
         record = {
             "sequence": count + 1,
             "previousHash": previous,
@@ -354,15 +559,34 @@ def advance_workflow(directory, observations, calendar, now):
             "observations": [r.model_dump(mode="json") for r in rows],
             "calendar": calendar.model_dump(mode="json") if calendar is not None else None,
             "transition": transition.model_dump(mode="json"),
+            "sourceAt": source_at.isoformat().replace("+00:00", "Z"),
+            "updatedAt": updated_at.isoformat().replace("+00:00", "Z"),
         }
         record["hash"] = canonical_hash(record)
+        if len((canonical_json(record) + "\n").encode()) > MAX_RECORD_BYTES:
+            raise ValueError("oversized workflow transition")
+        offset = writer.journal_stat[2]
         append_jsonl_fsync(root / "transitions.jsonl", [record], writer_lock_held=True)
-        _write_atomic_json(root / "head.json", {"sequence": count + 1, "hash": record["hash"]})
+        head = _read_json(root / "head.json")
+        _write_head(
+            directory,
+            count=count + 1,
+            digest=record["hash"],
+            manifest_hash=head["manifestHash"],
+            offset=offset,
+            clock=now,
+        )
+        seen.update({r.source_key: canonical_hash(r.model_dump(mode="json")) for r in rows})
+        _remember(
+            directory,
+            (transition.account, transition.decisions, features, seen, record["hash"], count + 1),
+            writer.implementation_hash,
+        )
         return _status(policy, transition.account, transition.decisions, now=now, source_rows=features)
 
 
 def workflow_status(directory, now=None):
-    """Read-only replay; corrupt evidence clears all positive account instructions."""
+    """Bounded read-only projection; any changed evidence clears positive state."""
     directory = _directory(directory)
     policy = WorkflowPolicy(round_protocol=load_round_protocol(directory))
     now = _utc(now or datetime.now(UTC), "workflow status")
@@ -376,7 +600,9 @@ def workflow_status(directory, now=None):
     try:
         with (root / ".transitions.jsonl.lock").open("rb") as lock:
             fcntl.flock(lock.fileno(), fcntl.LOCK_SH)
-            account, decisions, features, *_ = _replay(directory, policy)
-        return _status(policy, account, decisions, now=now, source_rows=features)
+            account, decisions, source_at, updated_at, clock = _bounded_projection(directory, policy)
+        if now < clock:
+            return _status(policy, now=now, error="workflow_clock_regression")
+        return _status(policy, account, decisions, now=now, source_at=source_at, updated_at=updated_at)
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return _status(policy, now=now, error="workflow_evidence_unavailable")
