@@ -125,6 +125,9 @@ class WorkflowAccount(WorkflowModel):
     position: WorkflowPosition | None = None
     pending_exit: WorkflowExit | None = None
     last_observation_hash: str | None = Field(default=None, pattern=HASH)
+    last_consumed_quote_key: str | None = None
+    last_consumed_quote_at: datetime | None = None
+    last_consumed_quote_quantity: Decimal | None = Field(default=None, gt=0)
     history: tuple[WorkflowOutcome, ...] = Field(default=(), max_length=1000)
     setup_reviews: tuple[WorkflowSetupReview, ...] = Field(default=(), max_length=2)
 
@@ -132,6 +135,11 @@ class WorkflowAccount(WorkflowModel):
     def coherent_account(self):
         if self.last_at < self.activated_at or (self.valuation_at and self.valuation_at > self.last_at):
             raise ValueError("invalid account chronology")
+        consumed = (self.last_consumed_quote_key, self.last_consumed_quote_at, self.last_consumed_quote_quantity)
+        if any(value is not None for value in consumed) and any(value is None for value in consumed):
+            raise ValueError("incomplete consumed quote identity/capacity")
+        if self.last_consumed_quote_at is not None and self.last_consumed_quote_at > self.last_at:
+            raise ValueError("future consumed quote")
         if self.position and self.pending_entry or self.pending_exit and not self.position:
             raise ValueError("invalid account position/intents")
         origins = [self.pending_entry] if self.pending_entry else [self.position.origin] if self.position else []
@@ -278,11 +286,21 @@ def advance_account(
     )
     row_hash = canonical_hash(row.model_dump(mode="json")) if row else None
     fresh_input = row is not None and row_hash != a["last_observation_hash"]
+    # A new candle envelope does not replenish an already consumed book quote.
+    # Provider time must advance as well as quote identity before another fill.
+    unconsumed_quote = row is not None and (
+        a["last_consumed_quote_at"] is None
+        or (
+            row.quote_provider_at is not None
+            and row.quote_provider_at > a["last_consumed_quote_at"]
+            and row.quote_source_key != a["last_consumed_quote_key"]
+        )
+    )
 
     if position:
         pending_exit = a["pending_exit"]
         usable = fresh_input and _usable_quote(row, now, policy)
-        if pending_exit and usable and row.quote_provider_at > pending_exit.triggered_at:
+        if pending_exit and usable and unconsumed_quote and row.quote_provider_at > pending_exit.triggered_at:
             quantity = min(position.quantity, row.bid_size)
             quantity = (quantity / policy.lot_step(position.symbol)).to_integral_value(
                 rounding=ROUND_DOWN
@@ -300,6 +318,9 @@ def advance_account(
                     daily_loss=a["daily_loss"] + loss,
                     fees=a["fees"] + exit_fee,
                     slippage_cost=a["slippage_cost"] + exit_slip,
+                    last_consumed_quote_key=row.quote_source_key,
+                    last_consumed_quote_at=row.quote_provider_at,
+                    last_consumed_quote_quantity=quantity,
                 )
                 emit(
                     "exit",
@@ -386,6 +407,10 @@ def advance_account(
                 reason = "maximum_holding"
             elif any(
                 d.symbol == position.symbol
+                and usable
+                and d.decision_at == now
+                and d.source_key == row.source_key
+                and d.observation_hash == row_hash
                 and d.context_hash
                 and any(
                     r in d.reasons
@@ -462,6 +487,7 @@ def advance_account(
             and current.reasons in ((), ("setup_not_triggered",))
             and current.observation_hash == row_hash
             and fresh_input
+            and unconsumed_quote
             and _usable_quote(row, now, policy, entry=True)
             and row.quote_provider_at > pending.decision_at
         ):
@@ -520,6 +546,9 @@ def advance_account(
                         total_entries=a["total_entries"] + 1,
                         fees=a["fees"] + entry_fee,
                         slippage_cost=a["slippage_cost"] + entry_slip,
+                        last_consumed_quote_key=row.quote_source_key,
+                        last_consumed_quote_at=row.quote_provider_at,
+                        last_consumed_quote_quantity=quantity,
                     )
                     value = quantity * row.bid * (1 - slip) * (1 - fee)
                     a.update(equity=a["cash"] + value, unrealized_pnl=value - quantity * debit, valuation_at=now)

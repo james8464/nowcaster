@@ -315,3 +315,73 @@ def test_quote_only_entry_waits_for_current_calendar_and_regime_evidence():
     canceled = advance_account(pending, blocked, (current,), at, p)
     assert canceled.account.position is None and canceled.account.pending_entry is None
     assert "calendar_missing" in canceled.events[0].reasons
+
+
+@pytest.mark.parametrize("evidence", ["absent", "stale_decision", "mismatched_observation"])
+def test_adverse_regime_requires_current_matching_observation(evidence):
+    p, ds, account, advance = entered()
+    at = NOW + timedelta(seconds=301 if evidence != "mismatched_observation" else 2)
+    row = quote(at, bid="104", ask="104.02")
+    from src.strategies.types import canonical_hash
+
+    changed = dict(
+        status="blocked",
+        reasons=("trend_not_aligned_up",),
+        source_key=row.source_key,
+        observation_hash=canonical_hash(row.model_dump(mode="json")),
+    )
+    if evidence == "mismatched_observation":
+        changed.update(decision_at=at, expires_at=at + timedelta(seconds=60), observation_hash="0" * 64)
+    decision = ds[0].model_copy(update=changed)
+    result = advance(account, (decision,), () if evidence == "absent" else (row,), at, p)
+    assert result.account.pending_exit is None
+    assert not any(event.kind == "exit_trigger" for event in result.events)
+
+
+def test_current_matching_adverse_context_triggers_risk_exit():
+    p, ds, account, advance = entered()
+    at = NOW + timedelta(seconds=2)
+    row = quote(at, bid="104", ask="104.02")
+    from src.strategies.types import canonical_hash
+
+    decision = ds[0].model_copy(
+        update=dict(
+            status="blocked",
+            reasons=("trend_not_aligned_up",),
+            decision_at=at,
+            expires_at=at + timedelta(seconds=60),
+            source_key=row.source_key,
+            observation_hash=canonical_hash(row.model_dump(mode="json")),
+        )
+    )
+    assert advance(account, (decision,), (row,), at, p).account.pending_exit.reason == "adverse_regime"
+
+
+def test_partial_exit_quote_capacity_is_not_reused_by_new_bar_envelope():
+    p, ds, account, advance = entered()
+    at = NOW + timedelta(seconds=2)
+    triggered = advance(account, (), (quote(at, bid="95", ask="95.02"),), at, p).account
+    executable = quote(at + timedelta(seconds=1), bid="94", ask="94.02", size=1)
+    partial = advance(triggered, (), (executable,), at + timedelta(seconds=1), p).account
+    remaining = partial.position.quantity
+    assert remaining == account.position.quantity - 1
+    # New bar provenance cannot replenish the same quote key/time and capacity.
+    changed = executable.model_copy(
+        update=dict(
+            source_key="new-bar-envelope",
+            volume=D(999),
+            received_at=at + timedelta(seconds=2),
+            available_at=at + timedelta(seconds=2),
+        )
+    )
+    from src.research.trader_workflow_account import WorkflowAccount
+
+    resumed = WorkflowAccount.model_validate_json(partial.model_dump_json())
+    repeated = advance(resumed, (), (changed,), at + timedelta(seconds=2), p)
+    assert repeated.account.position.quantity == remaining
+    assert repeated.account.cash == partial.cash
+    assert repeated.account.fees == partial.fees
+    assert not any(event.kind == "exit" for event in repeated.events)
+    refreshed = quote(at + timedelta(seconds=3), bid="94", ask="94.02", size=1)
+    later = advance(repeated.account, (), (refreshed,), at + timedelta(seconds=3), p)
+    assert later.account.position.quantity == remaining - 1
