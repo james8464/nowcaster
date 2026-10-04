@@ -24,6 +24,11 @@ class WorkflowExit(WorkflowModel):
     source_key: str | None = None
 
 
+class WorkflowStopCheckpoint(WorkflowModel):
+    stop: Decimal = Field(gt=0)
+    effective_at: datetime
+
+
 class WorkflowPosition(WorkflowModel):
     origin: WorkflowDecision
     entry_at: datetime
@@ -38,6 +43,7 @@ class WorkflowPosition(WorkflowModel):
     initial_risk: Decimal = Field(gt=0)
     stop: Decimal = Field(gt=0)
     stop_effective_at: datetime
+    stop_history: tuple[WorkflowStopCheckpoint, ...] = Field(min_length=1, max_length=128)
     target: Decimal = Field(gt=0)
     realized_pnl: Decimal = D(0)
     exit_notional: Decimal = Field(default=D(0), ge=0)
@@ -50,6 +56,18 @@ class WorkflowPosition(WorkflowModel):
             raise ValueError("position contradicts immutable origin")
         if self.stop_effective_at < self.entry_at:
             raise ValueError("stop cannot be effective before entry")
+        if (self.stop_history[-1].stop, self.stop_history[-1].effective_at) != (self.stop, self.stop_effective_at):
+            raise ValueError("stop history contradicts current stop")
+        if any(
+            checkpoint.effective_at < self.entry_at or checkpoint.stop < self.origin.stop
+            for checkpoint in self.stop_history
+        ):
+            raise ValueError("stop history predates immutable entry")
+        if any(
+            b.effective_at <= a.effective_at or b.stop <= a.stop
+            for a, b in zip(self.stop_history, self.stop_history[1:], strict=False)
+        ):
+            raise ValueError("stop history must ratchet chronologically")
         return self
 
     @property
@@ -221,6 +239,21 @@ def _limits(a: dict, now: datetime, policy: WorkflowPolicy) -> tuple[str, ...]:
     if a["cooldown_until"] is not None and now < a["cooldown_until"]:
         reasons.append("losing_streak_cooldown")
     return tuple(reasons)
+
+
+def _record_stop(position: WorkflowPosition, stop: Decimal, now: datetime) -> tuple[WorkflowStopCheckpoint, ...]:
+    """Keep the boundary threshold and latest raise per UTC minute.
+
+    Intermediate intraminute stops cannot be the threshold at a finalized
+    candle's start. Compression retains exact start thresholds and bounds a
+    60-minute holding period to at most 122 checkpoints.
+    """
+    history = position.stop_history
+    last = history[-1].effective_at
+    minute = now.replace(second=0, microsecond=0)
+    if last.replace(second=0, microsecond=0) == minute and last != minute:
+        history = history[:-1]
+    return (*history, WorkflowStopCheckpoint(stop=stop, effective_at=now))
 
 
 def advance_account(
@@ -400,14 +433,21 @@ def advance_account(
         elif not pending_exit:
             reason = None
             complete_bar = fresh_input and row.finalized and row.provider_at - timedelta(minutes=1) >= position.entry_at
-            # A ratchet affects later quotes and whole future candles only.
-            # Enriching a prior/straddling candle cannot make its earlier low
-            # retrospectively cross the newly installed trailing stop.
-            stop_bar = complete_bar and row.provider_at - timedelta(minutes=1) >= position.stop_effective_at
-            low = row.low if stop_bar else None
+            # Straddling candles retain their earlier active threshold. New
+            # stops cannot apply retrospectively, but the old stop still takes
+            # precedence over a target if both were touched during that candle.
+            bar_stop = next(
+                (
+                    checkpoint.stop
+                    for checkpoint in reversed(position.stop_history)
+                    if complete_bar and checkpoint.effective_at <= row.provider_at - timedelta(minutes=1)
+                ),
+                None,
+            )
+            low = row.low if bar_stop is not None else None
             high = row.high if complete_bar else None
             stop_quote = usable and row.quote_provider_at > position.stop_effective_at
-            if (stop_quote and row.bid <= position.stop) or (low is not None and low <= position.stop):
+            if (stop_quote and row.bid <= position.stop) or (low is not None and low <= bar_stop):
                 reason = "stop"
             elif (usable and row.bid >= position.target) or (high is not None and high >= position.target):
                 reason = "target"
@@ -459,7 +499,13 @@ def advance_account(
             elif stop_quote and row.bid - position.entry_price >= position.initial_risk:
                 new_stop = max(position.stop, row.bid - position.initial_risk)
                 if new_stop > position.stop:
-                    position = position.model_copy(update={"stop": new_stop, "stop_effective_at": now})
+                    position = position.model_copy(
+                        update={
+                            "stop": new_stop,
+                            "stop_effective_at": now,
+                            "stop_history": _record_stop(position, new_stop, now),
+                        }
+                    )
                     a["position"] = position
                     emit("trailing_stop", symbol=position.symbol, price=new_stop, source_key=row.source_key)
         if position and usable:
@@ -547,6 +593,7 @@ def advance_account(
                         initial_risk=price - pending.stop,
                         stop=pending.stop,
                         stop_effective_at=now,
+                        stop_history=(WorkflowStopCheckpoint(stop=pending.stop, effective_at=now),),
                         target=pending.target,
                     )
                     a.update(

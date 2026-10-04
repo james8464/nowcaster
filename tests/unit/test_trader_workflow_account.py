@@ -471,3 +471,68 @@ def test_quote_from_before_ratchet_cannot_hit_new_stop_after_later_receipt():
     assert result.pending_exit is None
     actual = quote(later + timedelta(seconds=1), bid="104", ask="104.02")
     assert advance(result, (), (actual,), later + timedelta(seconds=1), p).account.pending_exit.reason == "stop"
+
+
+@pytest.mark.parametrize("second_ratchet", [False, True])
+@pytest.mark.parametrize("low,reason", [("101", "stop"), ("102", "target")])
+def test_straddling_candle_uses_stop_active_at_start_before_target_after_restart(second_ratchet, low, reason):
+    p, raised, advance, at, row = ratcheted_position()
+    if second_ratchet:
+        later = at + timedelta(seconds=1)
+        refresh = row.model_copy(
+            update=dict(
+                source_key="second-raise",
+                bid=D("106.5"),
+                ask=D("106.52"),
+                received_at=later,
+                available_at=later,
+                quote_source_key="second-raise-quote",
+                quote_provider_at=later,
+                quote_received_at=later,
+                quote_available_at=later,
+            )
+        )
+        raised = advance(raised, (), (refresh,), later, p).account
+        assert raised.position.stop == D("104.688145")
+    from src.research.trader_workflow_account import WorkflowAccount
+
+    raised = WorkflowAccount.model_validate_json(raised.model_dump_json())
+    end = at.replace(second=0) + timedelta(minutes=1)
+    next_at = end + timedelta(seconds=2)
+    candle = quote(
+        next_at, bid="106.5", ask="106.52", provider_at=end, open=D(105), high=D(108), low=D(low), close=D(105)
+    )
+    result = advance(raised, (), (candle,), next_at, p).account
+    assert result.pending_exit.reason == reason
+
+
+@pytest.mark.parametrize("low,reason", [("104.1", "stop"), ("104.4", "target")])
+def test_boundary_ratchet_is_preserved_when_later_same_minute_stop_increases(low, reason):
+    p, ds, account, advance = entered()
+    at = NOW.replace(second=0) + timedelta(minutes=2)
+    row = quote(at, bid="106", ask="106.02", provider_at=at, open=D(105), high=D("106.5"), low=D(104), close=D(105))
+    raised = advance(account, (), (row,), at, p).account
+    later = at + timedelta(seconds=2)
+    refresh = row.model_copy(
+        update=dict(
+            source_key="boundary-followup",
+            bid=D("106.5"),
+            ask=D("106.52"),
+            received_at=later,
+            available_at=later,
+            quote_source_key="boundary-followup-quote",
+            quote_provider_at=later,
+            quote_received_at=later,
+            quote_available_at=later,
+        )
+    )
+    raised = advance(raised, (), (refresh,), later, p).account
+    from src.research.trader_workflow_account import WorkflowAccount
+
+    raised = WorkflowAccount.model_validate_json(raised.model_dump_json())
+    end = at + timedelta(minutes=1)
+    next_at = end + timedelta(seconds=2)
+    candle = quote(
+        next_at, bid="106.5", ask="106.52", provider_at=end, open=D(105), high=D(108), low=D(low), close=D(105)
+    )
+    assert advance(raised, (), (candle,), next_at, p).account.pending_exit.reason == reason
