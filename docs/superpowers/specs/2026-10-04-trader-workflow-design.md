@@ -1,0 +1,37 @@
+# End to end diagnostic day trader design
+
+## Intent and scope
+
+Implement the approved market-selection, context, setup, position-management and review workflow in the native Mac app. The user authorized autonomous choices and previously selected subagent-driven execution. Approval handoffs are therefore waived; retain design decisions here and execute the plan. Software completion is not a claim that the strategy earns money.
+
+Existing context and lifecycle code already explains trends and hypothetical barrier touches, but an indicator suggestion is neither a trade setup nor an accounted paper position. Add an explicitly **diagnostic simulator** alongside, not inside, the qualified-suggestion path. Never turn failed historical candidates into qualified alerts. Reuse the public feed and causal context extraction; do not build another provider service.
+
+Alternatives considered: expanding the current qualified advisor alone still prevents diagnostic trades while evidence accrues; replacing its qualification gates destroys evidence separation. A separate opt-in simulation ledger uses the existing feed, retains losses and makes the whole decision process testable without either problem.
+
+## Boundaries
+
+- Only supported credential-free Binance spot BTCUSDT and ETHUSDT; long/flat, no shorts, leverage, credentials, broker calls or qualified notifications.
+- No writes to frozen study checkouts, environments or directories; no edits/reset of any old protocol, candidate, loss, gap, position or ledger. New workflow evidence is separately versioned and opt-in; old studies remain unchanged.
+- No installation, daemon, power-setting change or automatic replacement of the running app. Build a new app artifact; preserve active research. Document launch/setup requirements.
+- Existing calendar and quote freshness gates remain intact. Missing catalysts/calendar evidence is “unavailable”, never invented news. Scheduled-event risk is supported; unsourced news inference is not.
+- Parameters are fixed per workflow manifest. Learning produces review evidence and research hypotheses, never rewrites an open position, past decision or live policy. Existing background learning remains separate.
+
+## Workflow
+
+1. **Selection and context.** Rank only eligible supported assets using trailing volatility relative to spread, not a confidence/profit probability. Retain a reason for every blocked candidate. Require complete causal context, fresh quote provenance, adequate quote sizes and trailing volume, no calendar blackout, and aligned upward 5/15-minute trends. Range, conflicting, illiquid and extreme-volatility regimes stand aside. Reuse context validation and retain the context hash/session/catalyst availability.
+2. **Setups.** Two fixed hypotheses: breakout above the preceding 20 finalized one-minute highs (exclude current candle), and pullback/reclaim of the preceding trailing 20-bar mean in an aligned trend. A trigger must actually be observed; an upward indicator alone is insufficient. Stop at the lower of trailing 10-bar low and entry minus 1.5 trailing ATR; target at twice this initial price risk. Reject stale, crossed or excessive spread quotes and non-positive/non-finite levels. Apply the existing stressed two-sided cost screen. No threshold search or fitting in the running workflow.
+3. **Entry and portfolio risk.** A ready setup creates a pending paper intent, never a same-observation fill. Fill only on a later fresh observation at ask plus modeled slippage and entry fee, rechecking original expiry, trigger, costs, liquidity and risk. One position across BTC/ETH avoids double-counting correlated exposure. Initial simulated cash 10,000 USDT; maximum entry notional including fee 25% of current equity, maximum modeled loss including costs 0.5% of current equity, maximum participation 1% of reported bar volume, and displayed ask-size cap. Use existing lot increments and round down. Cancel an unfilled intent after 60 seconds or a gap. No real fill is claimed.
+4. **Management.** Mark at executable bid after costs; loss/stop accounting includes both fees and slippage. Stop precedes target if both were touched. Do not use extrema from before entry. Triggered exits execute at a subsequent usable bid, not a retrospectively convenient barrier. Exit on invalidation, target, a 60-minute holding limit or valid adverse regime context. Trailing stop activates after one initial risk unit of favorable movement, only ratchets upward and affects future observations. Preserve pending exits through missing quotes and price recovery. Missing data blocks entry but not later risk-reducing liquidation.
+5. **Limits and review.** Freeze new entries after realized UTC-day losses reach 2% of initial cash, six entries in a UTC day, or three consecutive losing closes (60-minute cooldown). Daily rollover resets only day counters, never cash/history/total losses. Retain each entry/exit, source key, decision rationale, costs and modeled return. Display completed net P&L, unrealized marked P&L, fees, drawdown, wins/losses and grouped setup outcomes; open or censored positions never count as completed wins. Reviews are descriptive; no fitted confidence percentage and no automatic strategy promotion.
+
+## Evidence and integration
+
+Pure immutable decision/account transitions live in focused new modules. A versioned append-only hash-chained workflow journal binds the source round hash, policy, runtime implementation identity and every transition input; an independently rebuildable summary is not authoritative. Duplicate input is idempotent; changed duplicate, clock regression, torn history and identity mismatch fail closed. Resume reconstructs the same cash, positions and counters. Do not replay pre-registration bars into retrospective paper profits. Process only observations newly available after activation; warmup can read prior bars as features.
+
+Add explicit `workflow-enable` and read-only `workflow-status` commands to the existing paper-service CLI. Enabling binds a separate workflow subdirectory to the chosen non-protected paper round without changing that round's protocol or rules. Existing collector ticks advance it only when enabled; errors surface separately and cannot break or relabel the existing study. Entry selection is diagnostic, not conditional on a claim of historical profitability; context, market-data, cost and risk checks still apply.
+
+The native Trade Desk offers a clearly labeled diagnostic simulation action and compact state: selected/watching assets, ready/pending setup, open paper position, stop/target, net account results and last review. Advanced explanations remain on demand. Show source age and explicit stale/error/unavailable states; never turn malformed or stale backend data into a positive instruction. No orders, notification permission or account access is implied by enabling.
+
+## Acceptance
+
+Tests must exercise a complete recorded-feed sequence from selection through later entry and paid exit, a loss and daily stop, restart/idempotence, future-data perturbation, trailing ratchet, simultaneous stop/target, gaps and stale quotes, source/policy mismatch, and old-protocol isolation. Native tests cover parsing, stale/error clearing and honest diagnostic labeling. Run the full Python suite, native tests and a fresh app build; report any skips or launch limitations separately from financial outcomes. Retain research results unchanged.
