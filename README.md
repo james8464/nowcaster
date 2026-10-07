@@ -1,5 +1,45 @@
 # Nowcaster for macOS
 
+## Intraday rebuild: experimental paper research
+
+Nowcaster now has a separate, **paper-only** intraday research track for
+Germany 40 and US 500 index CFDs, EUR/USD, and conditionally West Texas oil.
+It studies three understandable ideas: an opening-range breakout, a pullback
+within a trend, and a return toward the middle of a range. Each idea can say
+**no trade**. A possible trade includes its direction, entry condition, stop,
+target and time exit; later account quotes determine a hypothetical result.
+This does not place a broker order or establish that the strategy makes money.
+
+The new panel in **Trade Desk** shows feed health, a paper opportunity or a
+reason to stand aside, open paper positions and the evidence status. It does
+not turn a diagnostic opportunity into a qualified alert. The existing BTC/ETH
+study and its results remain separate and unchanged.
+
+To evaluate a broker product, create your own OANDA **practice** account and
+put its account ID and token in the `OANDA_PRACTICE_ACCOUNT_ID` and
+`OANDA_PRACTICE_TOKEN` environment variables. The research command
+`scripts/run_intraday_research.py` can list the demo account's products
+(`inventory`), check an exact product (`discover`), save exploratory historical
+bid/ask bars (`fetch`), and follow one specified UTC paper session (`run`).
+The `run` command also needs a cost file with a source and explicit user-attested
+spread/slippage, commission and financing assumptions. It never accepts a
+credential as an argument and has no order-submission operation. The optional
+[Pine visual companion](docs/pine/nowcaster-intraday-companion.pine) shows
+approximate confirmed-bar setups on a chart; chart prices are **not** the
+account-specific bid/ask prices used for paper fills.
+
+This track is **not yet ready to copy with real money**: no UK demo account,
+product terms, actual costs or sustained forward quotes have been verified in
+this checkout. The command follows one session at a time; later sessions can
+retain the same frozen paper study, but automatic reconnect and unattended
+multi-day collection are not complete. [OANDA's account stream](https://developer.oanda.com/rest-live-v20/pricing-ep/)
+samples prices rather than sending every price change, and its
+[historical prices can differ from account pricing](https://help.oanda.com/us/en/faqs/rest-v20-api-troubleshooting-guide.htm?Highlight=api).
+The release gate remains at least 90 calendar
+days and 100 closed prospective paper trades, reliable session coverage, and
+positive net results even under the predeclared uncertainty and cost checks.
+None of those conditions is currently met. No paid data feed is assumed.
+
 **Latest measured strategy check (4 October 2026):** A fixed six-candidate
 BTC/ETH trend comparison completed. All six lost after modeled costs in both
 date windows; none advances to a new paper study. This separate 15-minute

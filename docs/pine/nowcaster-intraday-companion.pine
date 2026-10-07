@@ -1,0 +1,61 @@
+//@version=6
+indicator("Nowcaster Intraday Companion — visual research only", overlay = true)
+
+// This companion uses TradingView chart OHLC, not the OANDA practice account's
+// bid/ask stream. It cannot verify spread, entry fills, stop fills or P&L.
+// Use the same five-minute product and broker session as the frozen Python rule.
+sessionInput = input.session("0800-1700", "Broker session — verify against account")
+family = input.string("Opening range 15", "Visual family", options = ["Opening range 15", "Opening range 30", "Trend pullback", "Range reversion"])
+isFiveMinute = timeframe.isminutes and timeframe.multiplier == 5
+inSession = not na(time(timeframe.period, sessionInput))
+newSession = inSession and not inSession[1]
+
+var int sessionBar = na
+var float range15High = na
+var float range15Low = na
+var float range30High = na
+var float range30Low = na
+if newSession
+    sessionBar := 0
+    range15High := na
+    range15Low := na
+    range30High := na
+    range30Low := na
+// Recompute from the last committed bar on each real-time update. Restricting
+// this to the first update would roll back before bar close and repaint later.
+else if inSession and not na(sessionBar)
+    sessionBar += 1
+
+if isFiveMinute and inSession and barstate.isconfirmed and not na(sessionBar)
+    if sessionBar < 3
+        range15High := na(range15High) ? high : math.max(range15High, high)
+        range15Low := na(range15Low) ? low : math.min(range15Low, low)
+    if sessionBar < 6
+        range30High := na(range30High) ? high : math.max(range30High, high)
+        range30Low := na(range30Low) ? low : math.min(range30Low, low)
+
+or15Long = isFiveMinute and inSession and barstate.isconfirmed and sessionBar == 3 and not na(range15High) and close > range15High
+or15Short = isFiveMinute and inSession and barstate.isconfirmed and sessionBar == 3 and not na(range15Low) and close < range15Low
+or30Long = isFiveMinute and inSession and barstate.isconfirmed and sessionBar == 6 and not na(range30High) and close > range30High
+or30Short = isFiveMinute and inSession and barstate.isconfirmed and sessionBar == 6 and not na(range30Low) and close < range30Low
+
+priorEMA20 = ta.ema(close[1], 20)
+priorEMA60 = ta.ema(close[1], 60)
+priorATR = ta.atr(14)[1]
+trendLong = isFiveMinute and inSession and barstate.isconfirmed and sessionBar >= 61 and priorEMA20 > priorEMA60 and low[1] <= priorEMA20 + priorATR / 2 and close > high[1]
+trendShort = isFiveMinute and inSession and barstate.isconfirmed and sessionBar >= 61 and priorEMA20 < priorEMA60 and high[1] >= priorEMA20 - priorATR / 2 and close < low[1]
+
+priorMean = ta.sma(close[1], 20)
+priorVolatility = ta.stdev(close[1], 20)
+float priorTravel = 0.0
+for i = 1 to 19
+    priorTravel += math.abs(close[i] - close[i + 1])
+priorEfficiency = priorTravel > 0 ? math.abs(close[1] - close[20]) / priorTravel : 1.0
+rangeLong = isFiveMinute and inSession and barstate.isconfirmed and sessionBar >= 20 and priorVolatility > 0 and priorEfficiency <= 0.35 and close < priorMean - 2 * priorVolatility
+rangeShort = isFiveMinute and inSession and barstate.isconfirmed and sessionBar >= 20 and priorVolatility > 0 and priorEfficiency <= 0.35 and close > priorMean + 2 * priorVolatility
+
+showLong = family == "Opening range 15" ? or15Long : family == "Opening range 30" ? or30Long : family == "Trend pullback" ? trendLong : rangeLong
+showShort = family == "Opening range 15" ? or15Short : family == "Opening range 30" ? or30Short : family == "Trend pullback" ? trendShort : rangeShort
+plotshape(showLong, "Visual long hypothesis", shape.triangleup, location.belowbar, color.new(color.teal, 0), size = size.tiny)
+plotshape(showShort, "Visual short hypothesis", shape.triangledown, location.abovebar, color.new(color.orange, 0), size = size.tiny)
+bgcolor(not isFiveMinute ? color.new(color.red, 90) : na, title = "Five-minute chart required")

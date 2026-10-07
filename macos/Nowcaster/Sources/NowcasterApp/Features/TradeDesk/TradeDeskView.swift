@@ -52,6 +52,7 @@ struct TradeDeskView: View {
     private var desk: some View {
         VStack(alignment: .leading, spacing: 20) {
             PaperSessionHeader(model: model, settings: settings)
+            IntradayResearchView()
             DiagnosticWorkflowView(service: model.livePaperSignals,
                 transitioning: model.paperSession.state == .starting || model.paperSession.state == .pausing)
             HStack {
@@ -69,7 +70,7 @@ struct TradeDeskView: View {
                     }
                 }.accessibilityIdentifier("tradeDesk.data")
             }
-            Text("Bitcoin and Ether · Binance spot · long / stand aside").foregroundStyle(.secondary)
+            Text("Separate legacy study · Bitcoin and Ether · Binance spot · long / stand aside").foregroundStyle(.secondary)
             TimelineView(.periodic(from: .now, by: 1)) { timeline in
                 let presentation = TradeDeskPresentation.make(service: model.livePaperSignals, session: model.paperSession, now: timeline.date)
                 VStack(spacing: 0) {
