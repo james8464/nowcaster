@@ -22,8 +22,14 @@ from src.strategies.types import canonical_hash
 class LiveRule(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     strategy_id: Literal["opening_range_15", "opening_range_30", "trend_pullback", "range_reversion"]
-    direction: Literal["long", "short"]
+    direction: Literal["long", "short", "both"]
     selection_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    @model_validator(mode="after")
+    def both_directions_are_watch_only(self):
+        if self.direction == "both" and self.selection_hash != "0" * 64:
+            raise ValueError("both-direction rule cannot be a selected paper rule")
+        return self
 
 
 class LiveSessionWindow(BaseModel):
@@ -94,6 +100,7 @@ class LiveIndicatorSession:
         self.latest_opportunity: OpportunityStatus | None = None
         self.new_plan: SetupDecision | None = None
         self.last_quote: MarketQuote | None = None
+        self.latest_no_trade_reason = "Waiting for a complete confirmed bar and sufficient live history."
         self.status = self._status(restart_at, "stale", "Awaiting fresh account quotes after start or restart.")
         if events:
             self.journal.append("gap", restart_at, {"reason": "process_restart"})
@@ -150,6 +157,9 @@ class LiveIndicatorSession:
             self.bars[symbol] = []
             self.pending[symbol] = False
         self.latest_opportunity = None
+        self.latest_no_trade_reason = (
+            f"{symbol or 'Account feed'}: {reason.replace('_', ' ')}. Waiting for new confirmed bars."
+        )
         self.journal.append("gap", at, {"reason": reason, "broker_symbol": symbol})
         status = self._status(at, "stale", reason)
         self._publish(status)
@@ -255,7 +265,21 @@ class LiveIndicatorSession:
                 self.journal.append("decision", received_at, decision)
                 self.decision_bars.add(bar_key)
                 self.new_plan = plan
-                if plan.status == "ready" and plan.direction == self.manifest.rules[symbol].direction:
+                if plan.status == "no_trade":
+                    self.latest_no_trade_reason = (
+                        f"{symbol}: {plan.reason.replace('_', ' ')}. No paper trade was opened."
+                    )
+                elif self.manifest.rules[symbol].direction not in ("both", plan.direction):
+                    self.latest_no_trade_reason = (
+                        f"{symbol}: observed {plan.direction} setup is outside this round's frozen direction. "
+                        "No paper trade was opened."
+                    )
+                if plan.status == "ready" and self.manifest.rules[symbol].direction in ("both", plan.direction):
+                    if self.manifest.rules[symbol].selection_hash == "0" * 64:
+                        self.latest_no_trade_reason = (
+                            f"{symbol}: diagnostic setup expired; no paper trade was opened because "
+                            "there is no selected, cost-verified rule."
+                        )
                     self.latest_opportunity = OpportunityStatus(
                         market=quote.instrument.market,
                         broker_symbol=symbol,
@@ -271,6 +295,6 @@ class LiveIndicatorSession:
                         explanation=plan.reason,
                         evidence_hash=plan.evidence_hash,
                     )
-        status = self._status(received_at, "healthy", "No confirmed setup on the current account quotes.")
+        status = self._status(received_at, "healthy", self.latest_no_trade_reason)
         self._publish(status)
         return status

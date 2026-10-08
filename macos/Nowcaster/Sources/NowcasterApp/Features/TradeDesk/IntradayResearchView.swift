@@ -62,6 +62,13 @@ struct IntradayDeskStatus: Decodable {
     let paperPositions: [Position]
     let noTradeReason: String
 
+    func opportunityStateLabel(_ idea: Opportunity) -> String {
+        let diagnostic = markets.contains {
+            $0.market == idea.market && $0.brokerSymbol == idea.brokerSymbol && $0.eligibility == "diagnostic"
+        }
+        return diagnostic ? "Diagnostic setup — not a paper trade" : "Paper-eligible setup — check positions below"
+    }
+
     static func decode(_ data: Data) throws -> Self {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
@@ -200,10 +207,10 @@ struct IntradayResearchView: View {
                         if fresh && status.feedHealth == "healthy" {
                             ForEach(status.opportunities) { idea in
                                 VStack(alignment: .leading, spacing: 4) {
-                                    Text("Experimental \(idea.direction.capitalized) · \(idea.brokerSymbol)").fontWeight(.semibold)
-                                    Text("Entry \(idea.entry) · Stop \(idea.stop) · Target \(idea.target) · Exit by \(idea.exitBy)")
+                                    Text("\(status.opportunityStateLabel(idea)) · \(idea.direction.capitalized) · \(idea.brokerSymbol)").fontWeight(.semibold)
+                                    Text("Indicative entry \(idea.entry) · Stop \(idea.stop) · Target \(idea.target) · Exit by \(idea.exitBy)")
                                         .font(.caption.monospacedDigit())
-                                    Text("Decided \(idea.decidedAt) · Paper entry \(idea.entryAt) · Estimated round-trip cost \(idea.estimatedRoundtripCost)")
+                                    Text("Decided \(idea.decidedAt) · Quote observed \(idea.entryAt) · Observed spread \(idea.estimatedRoundtripCost) quote points; other costs unverified")
                                         .font(.caption).foregroundStyle(.secondary)
                                     Text(idea.explanation).font(.caption).foregroundStyle(.secondary)
                                 }

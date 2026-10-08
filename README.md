@@ -112,6 +112,16 @@ products and watches account quotes, but does not auto-authorize a paper
 entry from an unverified cost schedule or an unselected rule. It never sends
 broker orders. **Pause Monitoring** requests a clean stop; quitting the app
 stops this diagnostic helper.
+The watch-only trend hypothesis can observe either long or short setups, but
+neither direction is selected for paper execution. Its setup is labelled
+**diagnostic**, with an indicative entry and observed quote spread; it is not
+counted as a trade. Any actual paper position is displayed separately from
+setup observations, so a later fill or slippage cannot be confused with the
+proposed entry. The main no-trade message retains the latest
+specific confirmed-bar reason (such as insufficient live history) instead of
+briefly showing that reason and reverting to a generic message. A software
+update preserves an already-started day's immutable rule and only uses new
+watch-only defaults in a fresh daily round.
 The Trade Desk refreshes product quote ages and shows a compact paper-results
 summary. Expand **Costs and evidence** for gross/net results, modeled charges,
 sample limits and coverage; an open paper ticket, if one exists in an

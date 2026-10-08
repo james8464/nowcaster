@@ -20,8 +20,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.intraday.contracts import InstrumentSpec  # noqa: E402
 from src.intraday.capture_quality import summarize_capture  # noqa: E402
+from src.intraday.contracts import InstrumentSpec  # noqa: E402
 from src.intraday.desk import DeskStatus, MarketStatus  # noqa: E402
 from src.intraday.journal import PaperJournal  # noqa: E402
 from src.intraday.live_service import LiveIndicatorSession, LiveRoundManifest, LiveRule, LiveSessionWindow  # noqa: E402
@@ -63,14 +63,32 @@ def _session(now: datetime, instruments: tuple[InstrumentSpec, ...], account_id:
         round_id=f"diagnostic-{day.isoformat()}",
         account_feed_hash=hashlib.sha256(account_id.encode()).hexdigest(),
         instruments=instruments,
-        # Zero selection hash explicitly denotes diagnostic observation, not
-        # an elected positive historical rule or paper-entry authorization.
+        # Observe both sides, but a zero selection hash explicitly denies
+        # paper-entry authorization and any historical-performance claim.
         rules={
-            item.broker_symbol: LiveRule(strategy_id="trend_pullback", direction="long", selection_hash="0" * 64)
+            item.broker_symbol: LiveRule(strategy_id="trend_pullback", direction="both", selection_hash="0" * 64)
             for item in instruments
         },
         sessions=windows,
     )
+
+
+def _session_for_day(
+    directory: Path, now: datetime, instruments: tuple[InstrumentSpec, ...], account_id: str
+) -> LiveRoundManifest:
+    proposed = _session(now, instruments, account_id)
+    path = directory / now.date().isoformat() / "live_round.json"
+    if not path.exists():
+        return proposed
+    retained = LiveRoundManifest.model_validate_json(path.read_text(encoding="utf-8"))
+    if (
+        retained.account_feed_hash != proposed.account_feed_hash
+        or retained.instruments != proposed.instruments
+        or retained.round_id != proposed.round_id
+        or any(rule.selection_hash != "0" * 64 for rule in retained.rules.values())
+    ):
+        raise ValueError("retained diagnostic round identity or products changed")
+    return retained
 
 
 def _validate_retained_account(directory: Path, account_feed_hash: str) -> None:
@@ -216,7 +234,7 @@ def run_paper_indicator(
     )
     _atomic_json(directory / "summary.json", waiting.model_dump(mode="json"))
     initial = now()
-    initial_manifest = _session(initial, instruments, account_id)
+    initial_manifest = _session_for_day(directory, initial, instruments, account_id)
     active_day = initial.date()
     manifest = initial_manifest
     session = LiveIndicatorSession.restore(directory / active_day.isoformat(), manifest, restart_at=initial)
@@ -224,15 +242,15 @@ def run_paper_indicator(
     PaperJournal(directory / "PaperRounds" / active_day.isoformat(), manifest.identity_hash)
     _atomic_json(directory / "report.json", reports.snapshot(initial))
 
-    def publish_quality(as_of: datetime, round_manifest: LiveRoundManifest, round_session: LiveIndicatorSession) -> None:
+    def publish_quality(
+        as_of: datetime, round_manifest: LiveRoundManifest, round_session: LiveIndicatorSession
+    ) -> None:
         events = round_session.journal.events()
         markets = []
         for instrument in round_manifest.instruments:
             window = round_manifest.sessions[instrument.broker_symbol]
             end = max(window.opened_at, min(as_of, window.closed_at))
-            markets.append(
-                summarize_capture(instrument, window.opened_at, end, events).model_dump(mode="json")
-            )
+            markets.append(summarize_capture(instrument, window.opened_at, end, events).model_dump(mode="json"))
         result = {
             "generated_at": as_of.isoformat(),
             "round_id": round_manifest.round_id,
@@ -269,7 +287,7 @@ def run_paper_indicator(
                         pending = None
                     publish_quality(received, manifest, session)
                     active_day = received.date()
-                    manifest = _session(received, instruments, account_id)
+                    manifest = _session_for_day(directory, received, instruments, account_id)
                     day_directory = directory / active_day.isoformat()
                     session = LiveIndicatorSession.restore(day_directory, manifest, restart_at=received)
                     PaperJournal(directory / "PaperRounds" / active_day.isoformat(), manifest.identity_hash)

@@ -1,6 +1,6 @@
 import inspect
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -36,7 +36,9 @@ def test_practice_http_stream_failure_retries_without_exposing_account(tmp_path,
     def interrupted(directory, **_kwargs):
         attempts.append(directory)
         if len(attempts) == 1:
-            request = httpx.Request("GET", "https://stream-fxpractice.oanda.com/v3/accounts/private-account/pricing/stream")
+            request = httpx.Request(
+                "GET", "https://stream-fxpractice.oanda.com/v3/accounts/private-account/pricing/stream"
+            )
             httpx.Response(520, request=request).raise_for_status()
         (directory / "pause.request").write_text("pause\n")
 
@@ -77,12 +79,20 @@ def test_practice_runner_publishes_retained_account_capture_quality(tmp_path):
         def price_lines(self, instruments):
             for minute in (1, 6):
                 clock[0] = start + timedelta(minutes=minute)
-                yield json.dumps({
-                    "type": "PRICE", "instrument": "DE30_EUR", "time": clock[0].isoformat(),
-                    "tradeable": True, "bids": [{"price": "24000"}], "asks": [{"price": "24002"}],
-                })
+                yield json.dumps(
+                    {
+                        "type": "PRICE",
+                        "instrument": "DE30_EUR",
+                        "time": clock[0].isoformat(),
+                        "tradeable": True,
+                        "bids": [{"price": "24000"}],
+                        "asks": [{"price": "24002"}],
+                    }
+                )
 
-    run_paper_indicator(tmp_path, account_id="private-account", token="private-token", feed=QualityFeed(), now=lambda: clock[0])
+    run_paper_indicator(
+        tmp_path, account_id="private-account", token="private-token", feed=QualityFeed(), now=lambda: clock[0]
+    )
     quality = json.loads((tmp_path / "capture_quality.json").read_text())
     assert quality["price_scope"] == "account_stream_observation"
     assert quality["markets"][0]["broker_symbol"] == "DE30_EUR"
@@ -98,6 +108,90 @@ def test_practice_boundary_has_no_order_route_or_live_host():
     assert PRACTICE_STREAM == "https://stream-fxpractice.oanda.com"
     assert "/orders" not in source
     assert "api-fxtrade.oanda.com" not in source
+
+
+def test_default_watch_round_observes_both_directions_without_selecting_a_paper_rule():
+    from decimal import Decimal
+
+    from src.intraday.contracts import InstrumentSpec
+
+    instrument = InstrumentSpec(
+        provider="oanda_practice",
+        broker_symbol="SPX500_USD",
+        market="us500",
+        product="cfd",
+        quote_currency="USD",
+        point_value=Decimal(1),
+    )
+    round_manifest = entry._session(datetime(2026, 10, 8, 9, tzinfo=UTC), (instrument,), "private-account")
+    rule = round_manifest.rules["SPX500_USD"]
+    assert rule.direction == "both"
+    assert rule.selection_hash == "0" * 64
+
+
+def test_existing_daily_rule_identity_is_not_rewritten_by_new_watch_defaults(tmp_path):
+    from decimal import Decimal
+
+    from src.intraday.contracts import InstrumentSpec
+    from src.intraday.live_service import LiveRoundManifest, LiveRule, LiveSessionWindow
+    from src.intraday.session_journal import SessionJournal
+
+    at = datetime(2026, 10, 8, 9, tzinfo=UTC)
+    instrument = InstrumentSpec(
+        provider="oanda_practice",
+        broker_symbol="DE30_EUR",
+        market="germany40",
+        product="cfd",
+        quote_currency="EUR",
+        point_value=Decimal(1),
+    )
+    legacy = LiveRoundManifest(
+        round_id="diagnostic-2026-10-08",
+        account_feed_hash=entry.hashlib.sha256(b"private-account").hexdigest(),
+        instruments=(instrument,),
+        rules={
+            instrument.broker_symbol: LiveRule(strategy_id="trend_pullback", direction="long", selection_hash="0" * 64)
+        },
+        sessions={
+            instrument.broker_symbol: LiveSessionWindow(
+                opened_at=at.replace(hour=7),
+                closed_at=at.replace(hour=20),
+            )
+        },
+    )
+    daily = tmp_path / "2026-10-08"
+    SessionJournal(daily, legacy.model_dump(mode="json"))
+    before = (daily / "live_round.json").read_bytes()
+    run_paper_indicator(
+        tmp_path,
+        account_id="private-account",
+        token="private-token",
+        feed=FakeFeed(),
+        now=lambda: at,
+    )
+    assert (daily / "live_round.json").read_bytes() == before
+    assert json.loads((tmp_path / "summary.json").read_text())["feed_health"] == "healthy"
+
+
+def test_previous_day_manifest_in_current_directory_is_rejected(tmp_path):
+    from decimal import Decimal
+
+    from src.intraday.contracts import InstrumentSpec
+    from src.intraday.session_journal import SessionJournal
+
+    at = datetime(2026, 10, 8, 9, tzinfo=UTC)
+    instrument = InstrumentSpec(
+        provider="oanda_practice",
+        broker_symbol="DE30_EUR",
+        market="germany40",
+        product="cfd",
+        quote_currency="EUR",
+        point_value=Decimal(1),
+    )
+    wrong_day = entry._session(at - timedelta(days=1), (instrument,), "private-account")
+    SessionJournal(tmp_path / "2026-10-08", wrong_day.model_dump(mode="json"))
+    with pytest.raises(ValueError, match="retained diagnostic round identity"):
+        entry._session_for_day(tmp_path, at, (instrument,), "private-account")
 
 
 def test_practice_report_refreshes_during_same_session(tmp_path):

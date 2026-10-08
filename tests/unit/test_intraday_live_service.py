@@ -2,6 +2,8 @@ import json
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+import pytest
+
 from src.intraday.contracts import InstrumentSpec
 from src.intraday.live_service import LiveIndicatorSession, LiveRoundManifest, LiveRule, LiveSessionWindow
 
@@ -136,3 +138,52 @@ def test_new_plan_is_exposed_once_for_downstream_paper_admission(tmp_path):
     next_quote = seal + timedelta(seconds=2)
     session.on_event(line("DE30_EUR", next_quote), next_quote + timedelta(milliseconds=100))
     assert len([event for event in session.journal.events() if event["kind"] == "decision"]) == 1
+
+
+def test_no_trade_reason_survives_unrelated_quotes_until_next_decision(tmp_path):
+    session = LiveIndicatorSession.restore(tmp_path, manifest())
+    for seconds in range(0, 300, 10):
+        at = NOW + timedelta(seconds=seconds)
+        session.on_event(line("DE30_EUR", at), at + timedelta(milliseconds=100))
+    seal = NOW + timedelta(minutes=5)
+    session.on_event(line("DE30_EUR", seal), seal + timedelta(milliseconds=100))
+    later = seal + timedelta(seconds=1)
+    decision_status = session.on_event(line("DE30_EUR", later), later + timedelta(milliseconds=100))
+    assert "trend history unavailable" in decision_status.no_trade_reason.lower()
+    other_status = session.on_event(line("SPX500_USD", later), later + timedelta(milliseconds=200))
+    assert "DE30_EUR" in other_status.no_trade_reason
+    assert "trend history unavailable" in other_status.no_trade_reason.lower()
+
+
+def test_watch_only_rule_can_explain_a_confirmed_short_without_opening_paper_position(tmp_path):
+    item = PRODUCTS[0]
+    watch = LiveRoundManifest(
+        round_id="watch-only-both-directions",
+        account_feed_hash="a" * 64,
+        instruments=(item,),
+        rules={item.broker_symbol: LiveRule(strategy_id="opening_range_15", direction="both", selection_hash="0" * 64)},
+        sessions={item.broker_symbol: LiveSessionWindow(opened_at=NOW, closed_at=NOW + timedelta(hours=2))},
+    )
+    session = LiveIndicatorSession.restore(tmp_path, watch, restart_at=NOW)
+    for seconds in range(0, 1200, 10):
+        at = NOW + timedelta(seconds=seconds)
+        bid, ask = ("100", "101") if seconds < 900 else ("97", "98")
+        session.on_event(line(item.broker_symbol, at, bid, ask), at + timedelta(milliseconds=100))
+    seal = NOW + timedelta(minutes=20)
+    session.on_event(line(item.broker_symbol, seal, "97", "98"), seal + timedelta(milliseconds=100))
+    after_seal = seal + timedelta(seconds=1)
+    status = session.on_event(
+        line(item.broker_symbol, after_seal, "97", "98"), after_seal + timedelta(milliseconds=100)
+    )
+    assert len(status.opportunities) == 1
+    assert status.opportunities[0].direction == "short"
+    assert status.markets[0].eligibility == "diagnostic"
+    assert status.paper_positions == ()
+    expired = session._status(after_seal + timedelta(seconds=121), "healthy", session.latest_no_trade_reason)
+    assert expired.opportunities == ()
+    assert "diagnostic setup expired" in expired.no_trade_reason.lower()
+
+
+def test_both_direction_watch_rule_cannot_carry_a_selected_rule_hash():
+    with pytest.raises(ValueError):
+        LiveRule(strategy_id="trend_pullback", direction="both", selection_hash="b" * 64)
