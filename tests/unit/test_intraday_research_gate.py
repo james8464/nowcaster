@@ -4,7 +4,7 @@ from decimal import Decimal
 import pytest
 
 from src.intraday.contracts import InstrumentSpec
-from src.intraday.research import IntradayRound, ProspectiveEvidence, assess_prospective
+from src.intraday.research import IntradayRound, ProspectiveEvidence, _daily_block_lower, assess_prospective
 
 T = datetime(2026, 10, 6, tzinfo=UTC)
 INSTRUMENT = InstrumentSpec(
@@ -88,7 +88,23 @@ def test_missing_cost_or_calendar_provenance_cannot_be_supported():
         assert not result.supported
         assert field in result.reasons
     partial = evidence(daily_net_pnl=tuple((T + timedelta(days=n), Decimal("8")) for n in range(99)))
-    assert "daily_ledger_incomplete" in assess_prospective(protocol(), partial).reasons
+    incomplete = assess_prospective(protocol(), partial)
+    assert "daily_ledger_incomplete" in incomplete.reasons
+    assert incomplete.lower_net_daily_pnl == 0
+
+
+def test_daily_lower_resamples_clusters_not_independent_days():
+    clustered = (Decimal(4),) * 60 + (Decimal(-5),) * 30
+    assert sum(clustered) > 0
+    assert _daily_block_lower(clustered) < 0
+
+
+def test_current_incomplete_day_cannot_improve_forward_lower_bound():
+    current_day = evidence(daily_net_pnl=tuple((T + timedelta(days=n), Decimal("8")) for n in range(101)))
+    result = assess_prospective(protocol(), current_day)
+    assert not result.supported
+    assert "daily_ledger_incomplete" in result.reasons
+    assert result.lower_net_daily_pnl == 0
 
 
 def test_round_cannot_weaken_minimum_forward_or_risk_limits():

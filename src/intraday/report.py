@@ -42,6 +42,7 @@ class PaperDecisionReport(BaseModel):
     round_id: str
     started_at: datetime
     generated_at: datetime
+    declared_session_end_at: datetime | None = None
     price_scope: Literal["account_practice_paper"] = "account_practice_paper"
     evidence_status: Literal["insufficient_evidence"] = "insufficient_evidence"
     rule_identity_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
@@ -79,6 +80,12 @@ class PaperDecisionReport(BaseModel):
             raise ValueError("report time must be UTC")
         if self.generated_at < self.started_at or self.closed_trades != len(self.trades):
             raise ValueError("report chronology or trade count invalid")
+        if self.declared_session_end_at is not None and (
+            self.declared_session_end_at.tzinfo is None
+            or self.declared_session_end_at.utcoffset() != timedelta(0)
+            or self.declared_session_end_at <= self.started_at
+        ):
+            raise ValueError("declared session end must be UTC and after report start")
         if self.open_positions != len(self.unresolved_positions):
             raise ValueError("unresolved position count invalid")
         if self.net_pnl_gbp != self.gross_pnl_gbp - self.commission_gbp - self.financing_gbp - self.conversion_fee_gbp:
@@ -272,12 +279,15 @@ def build_report(
         and account_quote_coverage is not None
         and account_quote_coverage >= D("0.99")
         and eligible_gaps == 0
+        and manifest is not None
+        and as_of >= max(window.closed_at for window in manifest.sessions.values())
         else None
     )
     return PaperDecisionReport(
         round_id=round_id,
         started_at=started_at,
         generated_at=as_of,
+        declared_session_end_at=max(window.closed_at for window in manifest.sessions.values()) if manifest else None,
         rule_identity_hash=(
             canonical_hash(manifest.model_dump(mode="json", exclude={"round_id", "sessions"}))
             if manifest is not None and all(rule.selection_hash != "0" * 64 for rule in manifest.rules.values())
@@ -361,6 +371,10 @@ def aggregate_reports(
     round_dates = [item.started_at.date() for item in ordered]
     calendar_days = (as_of.date() - round_dates[0]).days + 1
     complete_calendar = len(ordered) == calendar_days and len(set(round_dates)) == calendar_days
+    completed_sessions = all(
+        item.declared_session_end_at is not None and item.generated_at >= item.declared_session_end_at
+        for item in ordered
+    )
     daily = {day: D(0) for day in round_dates}
     for trade in trades:
         day = datetime.fromisoformat(trade.close["closed_at"]).date()
@@ -371,6 +385,7 @@ def aggregate_reports(
     lower = (
         _daily_block_lower(tuple(daily[day] for day in sorted(daily)))
         if complete_calendar
+        and completed_sessions
         and as_of - ordered[0].started_at >= timedelta(days=90)
         and len(trades) >= 100
         and coverage is not None
@@ -383,6 +398,7 @@ def aggregate_reports(
         round_id="all-retained-practice-rounds",
         started_at=ordered[0].started_at,
         generated_at=as_of,
+        declared_session_end_at=(max(item.declared_session_end_at for item in ordered) if completed_sessions else None),
         rule_identity_hash=shared_rule,
         coverage_status="measured" if coverage is not None else "not_measured",
         account_quote_coverage=coverage,

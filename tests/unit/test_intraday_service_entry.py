@@ -52,6 +52,31 @@ def test_practice_http_stream_failure_retries_without_exposing_account(tmp_path,
     assert "private-token" not in stderr
 
 
+@pytest.mark.parametrize(
+    "failure",
+    [ValueError("quote journal chain mismatch"), RuntimeError("retained report changed"), OSError("disk full")],
+)
+def test_practice_integrity_failure_stops_instead_of_reconnecting(tmp_path, monkeypatch, capsys, failure):
+    monkeypatch.setenv("OANDA_PRACTICE_ACCOUNT_ID", "private-account")
+    monkeypatch.setenv("OANDA_PRACTICE_TOKEN", "private-token")
+    attempts = []
+
+    def broken(directory, **_kwargs):
+        attempts.append(directory)
+        if len(attempts) > 1:
+            (directory / "pause.request").write_text("pause\n")
+        raise failure
+
+    monkeypatch.setattr(entry, "run_paper_indicator", broken)
+    monkeypatch.setattr(entry.time, "sleep", lambda _seconds: None)
+    assert entry.main(["run", "--directory", str(tmp_path)]) == 2
+    assert attempts == [tmp_path]
+    stderr = capsys.readouterr().err
+    assert "monitoring stopped" in stderr
+    assert "private-account" not in stderr
+    assert "private-token" not in stderr
+
+
 def test_practice_runner_keeps_token_and_account_out_of_files(tmp_path):
     run_paper_indicator(
         tmp_path,

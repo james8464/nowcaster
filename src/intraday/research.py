@@ -9,6 +9,7 @@ import random
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
+from math import ceil
 from pathlib import Path
 from typing import Literal
 
@@ -264,12 +265,22 @@ class ProspectiveAssessment(FrozenModel):
 
 
 def _daily_block_lower(values: tuple[Decimal, ...]) -> Decimal:
+    """Deterministic 2.5% lower mean from overlapping consecutive-day blocks.
+
+    The cube-root block length is a heuristic, not a calibrated probability
+    of profit under changing market regimes.
+    """
     if len(values) < 2:
         return D(0)
     rng = random.Random(20261006)
+    block_size = min(len(values), max(2, ceil(len(values) ** (1 / 3))))
     sampled = []
     for _ in range(2000):
-        sampled.append(sum(values[rng.randrange(len(values))] for _ in values) / len(values))
+        draw: list[Decimal] = []
+        while len(draw) < len(values):
+            start = rng.randrange(len(values) - block_size + 1)
+            draw.extend(values[start : start + block_size])
+        sampled.append(sum(draw[: len(values)], D(0)) / len(values))
     sampled.sort()
     return sampled[49]
 
@@ -279,7 +290,12 @@ def assess_prospective(protocol: IntradayRound, evidence: ProspectiveEvidence) -
     evidence = ProspectiveEvidence.model_validate(evidence.model_dump())
     if evidence.protocol_hash != protocol.identity_hash:
         raise ValueError("prospective protocol mismatch")
-    lower = _daily_block_lower(tuple(value for _, value in evidence.daily_net_pnl))
+    expected_days = (evidence.assessed_at.date() - evidence.started_at.date()).days
+    complete_daily_ledger = len(evidence.daily_net_pnl) == expected_days and all(
+        when.date() == (evidence.started_at + timedelta(days=index)).date()
+        for index, (when, _) in enumerate(evidence.daily_net_pnl)
+    )
+    lower = _daily_block_lower(tuple(value for _, value in evidence.daily_net_pnl)) if complete_daily_ledger else D(0)
     reasons = []
     if evidence.assessed_at - evidence.started_at < timedelta(days=protocol.minimum_forward_days):
         reasons.append("forward_window_short")
@@ -300,11 +316,7 @@ def assess_prospective(protocol: IntradayRound, evidence: ProspectiveEvidence) -
     for flag in ("execution_costs_verified", "currency_conversion_verified", "session_calendar_verified"):
         if not getattr(evidence, flag):
             reasons.append(flag)
-    expected_days = (evidence.assessed_at.date() - evidence.started_at.date()).days
-    if len(evidence.daily_net_pnl) < expected_days or any(
-        evidence.daily_net_pnl[n][0].date() != (evidence.started_at + timedelta(days=n)).date()
-        for n in range(min(expected_days, len(evidence.daily_net_pnl)))
-    ):
+    if not complete_daily_ledger:
         reasons.append("daily_ledger_incomplete")
     if lower <= 0:
         reasons.append("net_lower_bound_nonpositive")

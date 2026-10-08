@@ -335,7 +335,12 @@ def main(argv: list[str] | None = None) -> int:
         except RetainedAccountMismatch:
             print("Practice account differs from retained paper research; monitoring stopped.", file=sys.stderr)
             return 2
-        except (OSError, ValueError, RuntimeError, httpx.HTTPError):
+        except (OSError, ValueError, RuntimeError):
+            # Disk, ledger and protocol failures cannot be repaired by
+            # reconnecting the price stream. Keep every retained record.
+            print("Paper data integrity or configuration failed; monitoring stopped.", file=sys.stderr)
+            return 2
+        except httpx.HTTPError:
             # Never print an exception containing a URL, account ID or token.
             print("Practice data interrupted; waiting to reconnect.", file=sys.stderr)
         time.sleep(5)

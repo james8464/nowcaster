@@ -307,7 +307,14 @@ def test_aggregate_keeps_prior_day_loss_and_all_stand_aside_decisions(tmp_path):
 
 
 def _complete_five_minute_live_report(
-    root, opened_at, profits=("5",), *, after_close_gap=False, strategy_id="trend_pullback", selection_hash="b" * 64
+    root,
+    opened_at,
+    profits=("5",),
+    *,
+    after_close_gap=False,
+    strategy_id="trend_pullback",
+    selection_hash="b" * 64,
+    session_minutes=5,
 ):
     instrument = InstrumentSpec(
         provider="oanda_practice",
@@ -322,7 +329,9 @@ def _complete_five_minute_live_report(
         account_feed_hash="a" * 64,
         instruments=(instrument,),
         rules={"DE30_EUR": LiveRule(strategy_id=strategy_id, direction="long", selection_hash=selection_hash)},
-        sessions={"DE30_EUR": LiveSessionWindow(opened_at=opened_at, closed_at=opened_at + timedelta(minutes=5))},
+        sessions={
+            "DE30_EUR": LiveSessionWindow(opened_at=opened_at, closed_at=opened_at + timedelta(minutes=session_minutes))
+        },
     )
     session = SessionJournal(root / "session", manifest.model_dump(mode="json"))
     for second in (*range(0, 300, 30), 299):
@@ -456,4 +465,20 @@ def test_cumulative_lower_bound_abstains_for_diagnostic_unselected_rule(tmp_path
     ]
     combined = aggregate_reports(reports, as_of=T + timedelta(days=90, minutes=7))
     assert combined.closed_trades == 100
+    assert combined.daily_block_lower_95_gbp is None
+
+
+def test_cumulative_lower_bound_waits_for_completed_declared_session(tmp_path):
+    reports = [
+        _complete_five_minute_live_report(
+            tmp_path / str(day),
+            T + timedelta(days=day),
+            profits=("5", "5") if day < 9 else ("5",),
+            session_minutes=10 if day == 90 else 5,
+        )
+        for day in range(91)
+    ]
+    combined = aggregate_reports(reports, as_of=T + timedelta(days=90, minutes=7))
+    assert combined.closed_trades == 100
+    assert combined.account_quote_coverage == Decimal(1)
     assert combined.daily_block_lower_95_gbp is None
