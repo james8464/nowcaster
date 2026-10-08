@@ -66,6 +66,7 @@ def replay_session(
     session_close: datetime,
     costs: ReplayCosts,
     initial_equity: Decimal = DEFAULT_INITIAL_EQUITY,
+    direction_filter: str | None = None,
 ) -> ReplayResult:
     """Enter at following historical open; if both extrema touch, fill stop first.
 
@@ -74,6 +75,8 @@ def replay_session(
     """
     if initial_equity <= 0 or session_close <= session_open:
         raise ValueError("invalid session or paper equity")
+    if direction_filter not in (None, "long", "short"):
+        raise ValueError("direction filter must be long or short")
     if not bars:
         return ReplayResult(strategy_id, "historical_base_exploratory", (), 0, 0)
     instrument = bars[0].instrument
@@ -116,6 +119,9 @@ def replay_session(
             session_close=session_close,
         )
         if plan.status != "ready":
+            no_trade_count += 1
+            continue
+        if direction_filter is not None and plan.direction != direction_filter:
             no_trade_count += 1
             continue
         # Stress entry against the trader; never improve on the displayed side.

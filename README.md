@@ -35,6 +35,11 @@ Broker inventory alone cannot enable a paper entry: exact product identity,
 source-backed costs and margin, open trading hours, and a fresh GBP conversion
 must all agree. The demo account labels `DE30_EUR` “Germany 30”; Nowcaster
 retains that label rather than treating it as a different Germany 40 contract.
+Historical strategy selection now keeps every tested rule/direction and its
+zero-trade or loss result. It separates development, validation and sealed
+chronology, stresses execution costs and requires positive net evidence before
+returning a candidate; these historical candles remain exploratory, not
+account-specific live fills.
 The command follows one session at a time; later sessions can
 retain the same frozen paper study, but automatic reconnect and unattended
 multi-day collection are not complete. [OANDA's account stream](https://developer.oanda.com/rest-live-v20/pricing-ep/)
