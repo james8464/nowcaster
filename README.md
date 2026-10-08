@@ -60,6 +60,12 @@ products and watches account quotes, but does not auto-authorize a paper
 entry from an unverified cost schedule or an unselected rule. It never sends
 broker orders. **Pause Monitoring** requests a clean stop; quitting the app
 stops this diagnostic helper.
+The paper-results report is reconstructed from the append-only trade journal.
+It keeps losing trades, abstentions and unresolved positions, reconciles gross
+P&L with commissions and financing, and reports net expectancy, win rate,
+drawdown and a daily-block uncertainty bound only when the sample supports
+one. A high win rate can still have negative net P&L. The initial diagnostic
+run has no authorized paper entries, so its report correctly starts empty.
 The command follows one session at a time; later sessions can
 retain the same frozen paper study, but automatic reconnect and unattended
 multi-day collection are not complete. [OANDA's account stream](https://developer.oanda.com/rest-live-v20/pricing-ep/)

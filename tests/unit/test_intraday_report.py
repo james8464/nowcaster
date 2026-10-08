@@ -1,0 +1,76 @@
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+import pytest
+
+from src.intraday.journal import PaperJournal
+from src.intraday.report import build_report
+
+
+T = datetime(2026, 10, 8, 9, tzinfo=UTC)
+
+
+def append(journal, kind, at, payload):
+    with journal as writer:
+        writer.append(kind, at, payload)
+
+
+def test_report_keeps_losses_and_unresolved_positions(tmp_path):
+    journal = PaperJournal(tmp_path, "c" * 64)
+    append(journal, "opened", T, {"broker_symbol": "DE30_EUR", "strategy_id": "trend_pullback",
+                                  "direction": "long", "entry": "100", "stop": "95", "target": "110",
+                                  "units": "1", "notional_gbp": "100", "opened_at": T.isoformat()})
+    append(journal, "closed", T + timedelta(minutes=5), {"broker_symbol": "DE30_EUR", "direction": "long",
+                    "gross_pnl_gbp": "-5", "commission_gbp": "1", "financing_gbp": "1",
+                    "net_pnl_gbp": "-7", "exit_reason": "stop"})
+    append(journal, "opened", T + timedelta(days=1), {"broker_symbol": "SPX500_USD", "strategy_id": "range_reversion",
+                                  "direction": "short", "entry": "5000", "stop": "5010", "target": "4980",
+                                  "units": "1", "notional_gbp": "5000", "opened_at": (T + timedelta(days=1)).isoformat()})
+    append(journal, "no_trade", T + timedelta(days=1, minutes=1),
+           {"broker_symbol": "EUR_USD", "reason": "costs_unverified"})
+    report = build_report(journal, round_id="round-2", started_at=T, as_of=T + timedelta(days=2))
+    assert report.closed_trades == 1
+    assert report.open_positions == 1
+    assert report.no_trade_count == 1
+    assert report.net_pnl_gbp == Decimal("-7")
+    assert report.win_rate == Decimal(0)
+    assert report.daily_block_lower_95_gbp is None  # not enough independent days
+    assert report.evidence_status == "insufficient_evidence"
+    assert report.trades[0].close["net_pnl_gbp"] == "-7"
+
+
+def test_empty_journal_never_reports_zero_as_proven_expectancy(tmp_path):
+    journal = PaperJournal(tmp_path, "c" * 64)
+    report = build_report(journal, round_id="round-2", started_at=T, as_of=T)
+    assert report.closed_trades == 0
+    assert report.win_rate is None
+    assert report.net_expectancy_gbp is None
+    assert report.profit_factor is None
+    assert report.evidence_status == "insufficient_evidence"
+
+
+def test_high_win_rate_can_still_have_negative_net_result(tmp_path):
+    journal = PaperJournal(tmp_path, "c" * 64)
+    for index, net in enumerate(("1", "1", "1", "-10")):
+        opened = T + timedelta(days=index)
+        append(journal, "opened", opened, {"broker_symbol": "DE30_EUR", "strategy_id": "trend_pullback",
+                                           "direction": "long", "entry": "100", "opened_at": opened.isoformat()})
+        append(journal, "closed", opened + timedelta(minutes=5), {
+            "broker_symbol": "DE30_EUR", "direction": "long", "gross_pnl_gbp": str(Decimal(net) + 2),
+            "commission_gbp": "1", "financing_gbp": "1", "net_pnl_gbp": net,
+            "exit_reason": "target" if Decimal(net) > 0 else "stop",
+        })
+    report = build_report(journal, round_id="round-2", started_at=T, as_of=T + timedelta(days=4))
+    assert report.win_rate == Decimal("0.75")
+    assert report.net_pnl_gbp == Decimal("-7")
+    assert report.net_expectancy_gbp < 0
+    assert report.evidence_status == "insufficient_evidence"
+
+
+def test_missing_closed_trade_cost_component_is_an_error(tmp_path):
+    journal = PaperJournal(tmp_path, "c" * 64)
+    append(journal, "opened", T, {"broker_symbol": "DE30_EUR", "strategy_id": "trend_pullback",
+                                  "direction": "long", "entry": "100", "opened_at": T.isoformat()})
+    append(journal, "closed", T + timedelta(minutes=5), {"broker_symbol": "DE30_EUR", "gross_pnl_gbp": "5",
+                                                     "net_pnl_gbp": "5"})
+    with pytest.raises(ValueError, match="itemized costs"):
+        build_report(journal, round_id="round-2", started_at=T, as_of=T + timedelta(hours=1))

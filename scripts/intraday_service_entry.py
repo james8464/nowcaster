@@ -20,7 +20,9 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.intraday.contracts import InstrumentSpec  # noqa: E402
 from src.intraday.desk import DeskStatus, MarketStatus  # noqa: E402
 from src.intraday.live_service import LiveIndicatorSession, LiveRoundManifest, LiveRule, LiveSessionWindow  # noqa: E402
+from src.intraday.journal import PaperJournal  # noqa: E402
 from src.intraday.oanda_practice import OandaPracticeFeed, PRACTICE_API, PRACTICE_STREAM  # noqa: E402
+from src.intraday.report import build_report  # noqa: E402
 
 CATALOG = (
     ("DE30_EUR", "germany40", "cfd", "EUR"),
@@ -106,6 +108,11 @@ def run_paper_indicator(
         no_trade_reason="Awaiting fresh account bid/ask quotes. No paper entry is authorized.",
     )
     _atomic_json(directory / "summary.json", waiting.model_dump(mode="json"))
+    initial = now()
+    initial_manifest = _session(initial, instruments, account_id)
+    initial_paper = PaperJournal(directory / "PaperRounds" / initial.date().isoformat(), initial_manifest.identity_hash)
+    _atomic_json(directory / "report.json",
+                 build_report(initial_paper, initial_manifest, as_of=initial).model_dump(mode="json"))
     active_day = None
     session = None
     for line in feed.price_lines(instruments):
@@ -115,6 +122,9 @@ def run_paper_indicator(
             manifest = _session(received, instruments, account_id)
             day_directory = directory / active_day.isoformat()
             session = LiveIndicatorSession.restore(day_directory, manifest)
+            paper_journal = PaperJournal(directory / "PaperRounds" / active_day.isoformat(), manifest.identity_hash)
+            report = build_report(paper_journal, manifest, as_of=received)
+            _atomic_json(directory / "report.json", report.model_dump(mode="json"))
         assert session is not None
         status = session.on_event(line, received)
         _atomic_json(directory / "summary.json", status.model_dump(mode="json"))
