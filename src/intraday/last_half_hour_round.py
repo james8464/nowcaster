@@ -13,6 +13,7 @@ from decimal import Decimal
 from pathlib import Path
 from statistics import mean
 
+from src.intraday import last_half_hour
 from src.intraday.contracts import ConfirmedBar
 from src.intraday.last_half_hour import NY, _full_session, evaluate_last_half_hour
 
@@ -34,6 +35,9 @@ PROTOCOL = {
     "exit_new_york": "16:00",
     "windows": {key: [a.isoformat(), b.isoformat()] for key, (a, b) in WINDOWS.items()},
     "account_fill_claim": False,
+    "implementation_sha256": hashlib.sha256(
+        Path(__file__).read_bytes() + b"\0" + Path(last_half_hour.__file__).read_bytes()
+    ).hexdigest(),
 }
 
 

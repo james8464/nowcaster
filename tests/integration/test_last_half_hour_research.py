@@ -40,6 +40,7 @@ def test_stages_are_immutable_and_sealed_cannot_be_repeated(tmp_path):
         assert result["price_scope"] == "historical_base_exploratory"
         assert result["eligible_days"] == 1
         assert result["source_sha256"]
+        assert json.loads((directory / "protocol.json").read_text())["implementation_sha256"]
         assert result["baseline_points"] == "0"
         assert "always_long_net_points" in result
         assert "always_short_net_points" in result
