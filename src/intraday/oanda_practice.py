@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 import httpx
 
@@ -13,6 +14,17 @@ from src.intraday.contracts import ConfirmedBar, InstrumentSpec, MarketQuote
 
 PRACTICE_API = "https://api-fxpractice.oanda.com"
 PRACTICE_STREAM = "https://stream-fxpractice.oanda.com"
+
+
+@dataclass(frozen=True)
+class OandaHomeConversion:
+    """Account-specific factors; gain/loss already include the broker's conversion adjustment."""
+
+    currency: str
+    account_gain: Decimal
+    account_loss: Decimal
+    position_value: Decimal
+    observed_at: datetime
 
 
 def _timestamp(value: str) -> datetime:
@@ -57,6 +69,56 @@ class OandaPracticeFeed:
             if row.get("name") == instrument.broker_symbol and row.get("type") == required_type:
                 return row
         raise ValueError(f"broker {instrument.product} instrument not available: {instrument.broker_symbol}")
+
+    def home_conversions(
+        self, instruments: tuple[InstrumentSpec, ...], *, account_currency: str
+    ) -> tuple[OandaHomeConversion, ...]:
+        """Fetch read-only account conversion factors without treating them as a paper fill."""
+        if not instruments or not account_currency.strip():
+            raise ValueError("conversion request needs products and account currency")
+        wanted = {item.quote_currency for item in instruments if item.quote_currency != account_currency}
+        with self._client() as client:
+            summary = client.get(f"/v3/accounts/{self.account_id}/summary")
+            summary.raise_for_status()
+            if summary.json().get("account", {}).get("currency") != account_currency:
+                raise ValueError("account currency differs from expected paper currency")
+            pricing = client.get(
+                f"/v3/accounts/{self.account_id}/pricing",
+                params={
+                    "instruments": ",".join(item.broker_symbol for item in instruments),
+                    "includeHomeConversions": "true",
+                },
+            )
+            pricing.raise_for_status()
+            payload = pricing.json()
+        try:
+            stamp = payload["time"]
+            if not isinstance(stamp, str) or not stamp.endswith("Z"):
+                raise ValueError("conversion timestamp must be UTC")
+            observed = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+            entries = payload["homeConversions"]
+            if not isinstance(entries, list):
+                raise ValueError("conversion rows missing")
+            result: dict[str, OandaHomeConversion] = {}
+            for row in entries:
+                currency = row["currency"]
+                if currency not in wanted:
+                    continue
+                if currency in result:
+                    raise ValueError("duplicate conversion currency")
+                gain = Decimal(row["accountGain"])
+                loss = Decimal(row["accountLoss"])
+                value = Decimal(row["positionValue"])
+                if not all(number.is_finite() and number > 0 for number in (gain, loss, value)):
+                    raise ValueError("invalid conversion factor")
+                if not gain <= value <= loss:
+                    raise ValueError("conversion factor sides are inconsistent")
+                result[currency] = OandaHomeConversion(currency, gain, loss, value, observed)
+            if set(result) != wanted:
+                raise ValueError("conversion missing for quote currency")
+            return tuple(result[currency] for currency in sorted(result))
+        except (KeyError, TypeError, InvalidOperation) as exc:
+            raise ValueError("invalid account conversion response") from exc
 
     def fetch_candles(
         self, instrument: InstrumentSpec, start: datetime, end: datetime, *, received_at: datetime

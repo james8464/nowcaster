@@ -167,3 +167,71 @@ def test_broker_product_must_be_discovered_in_the_demo_account():
     assert feed.verify_instrument(INSTRUMENT)["displayName"] == "Germany 40"
     with pytest.raises(ValueError, match="not available"):
         feed.verify_instrument(INSTRUMENT.model_copy(update={"broker_symbol": "SPX500_USD"}))
+
+
+def test_account_home_conversion_snapshot_uses_practice_read_routes_and_exact_factors():
+    requests = []
+
+    def reply(request):
+        requests.append(request)
+        if request.url.path.endswith("/summary"):
+            return httpx.Response(200, json={"account": {"currency": "GBP"}})
+        assert request.url.path.endswith("/pricing")
+        assert request.url.params["includeHomeConversions"] == "true"
+        assert request.url.params["instruments"] == "DE30_EUR"
+        return httpx.Response(200, json={
+            "time": "2026-10-08T18:25:26.391201013Z",
+            "prices": [{"instrument": "DE30_EUR"}],
+            "homeConversions": [
+                {"currency": "DE30", "accountGain": "20934.936", "accountLoss": "21357.864",
+                 "positionValue": "21146.4"},
+                {"currency": "EUR", "accountGain": "0.8389656", "accountLoss": "0.8559144",
+                 "positionValue": "0.84744"},
+            ],
+        })
+
+    feed = OandaPracticeFeed("practice-account", "dummy-token", transport=httpx.MockTransport(reply))
+    rates = feed.home_conversions((INSTRUMENT,), account_currency="GBP")
+    assert len(rates) == 1
+    assert rates[0].currency == "EUR"
+    assert rates[0].position_value == Decimal("0.84744")
+    assert rates[0].account_gain == Decimal("0.8389656")
+    assert rates[0].account_loss == Decimal("0.8559144")
+    assert rates[0].observed_at == datetime(2026, 10, 8, 18, 25, 26, 391201, tzinfo=UTC)
+    assert all(request.url.host == "api-fxpractice.oanda.com" for request in requests)
+
+
+@pytest.mark.parametrize("bad_conversion", [
+    {"currency": "EUR", "accountGain": "0", "accountLoss": "0.85", "positionValue": "0.84"},
+    {"currency": "EUR", "accountGain": "0.86", "accountLoss": "0.83", "positionValue": "0.84"},
+    {"currency": "EUR", "accountGain": "NaN", "accountLoss": "0.85", "positionValue": "0.84"},
+])
+def test_account_home_conversion_snapshot_rejects_invalid_factors(bad_conversion):
+    def reply(request):
+        if request.url.path.endswith("/summary"):
+            return httpx.Response(200, json={"account": {"currency": "GBP"}})
+        return httpx.Response(200, json={"time": "2026-10-08T18:25:26Z", "homeConversions": [bad_conversion]})
+
+    feed = OandaPracticeFeed("practice-account", "dummy-token", transport=httpx.MockTransport(reply))
+    with pytest.raises(ValueError, match="conversion"):
+        feed.home_conversions((INSTRUMENT,), account_currency="GBP")
+
+
+def test_account_home_conversion_snapshot_rejects_wrong_account_currency_or_missing_quote_currency():
+    def reply(request):
+        if request.url.path.endswith("/summary"):
+            return httpx.Response(200, json={"account": {"currency": "USD"}})
+        return httpx.Response(200, json={"time": "2026-10-08T18:25:26Z", "homeConversions": []})
+
+    feed = OandaPracticeFeed("practice-account", "dummy-token", transport=httpx.MockTransport(reply))
+    with pytest.raises(ValueError, match="account currency"):
+        feed.home_conversions((INSTRUMENT,), account_currency="GBP")
+
+    def missing_quote(request):
+        if request.url.path.endswith("/summary"):
+            return httpx.Response(200, json={"account": {"currency": "GBP"}})
+        return httpx.Response(200, json={"time": "2026-10-08T18:25:26Z", "homeConversions": []})
+
+    no_rate = OandaPracticeFeed("practice-account", "dummy-token", transport=httpx.MockTransport(missing_quote))
+    with pytest.raises(ValueError, match="conversion missing"):
+        no_rate.home_conversions((INSTRUMENT,), account_currency="GBP")

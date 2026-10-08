@@ -50,6 +50,16 @@ exact-product cost file and a fresh GBP conversion are still needed before
 paper eligibility. Historical sizing includes estimated exit costs in its
 per-trade risk budget. Historical base prices still cannot prove an account
 quote or executable result.
+An [8 October exploratory comparison](docs/research/intraday-sensitivity-2026-10-08.md)
+retains all 32 product/rule/direction outcomes across three chronological
+periods. None was positive in every period even under favorable extra-cost
+assumptions, so none has been promoted to the live paper monitor.
+The practice data adapter can now fetch the account's separate GBP gain,
+loss and position-value conversion factors through read-only practice API
+routes and rejects missing or inconsistent factors. Those broker factors
+already reflect conversion adjustment; applying the separate 1% assumption
+again to the same gain/loss factor would double-count it. This check does
+not yet supply a selected live rule or authorize a paper entry.
 A wholly missing declared weekday between observed sessions blocks selection;
 without a verified holiday calendar, it is treated conservatively as a data
 gap. Selection inputs must declare a download window covering the sealed
