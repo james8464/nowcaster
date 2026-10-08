@@ -40,6 +40,8 @@ def manifest(costs=None):
         broker_symbol="DE30_EUR",
         product="cfd",
         margin_rate=Decimal("0.05"),
+        minimum_trade_size=Decimal("1"),
+        trade_units_precision=0,
         commission_per_unit=Decimal("0.1"),
         financing_per_unit=Decimal("0.1"),
         slippage_points=Decimal("0.5"),
@@ -72,8 +74,10 @@ def test_missing_costs_retains_every_development_attempt_and_selects_nothing():
 
 def test_missing_foreign_currency_conversion_charge_rejects_every_attempt():
     costs = ReplayCosts(
-        account_currency="GBP", quote_to_account=Decimal("0.86"),
-        slippage_points=Decimal("0.5"), commission_per_unit=Decimal("0.1"),
+        account_currency="GBP",
+        quote_to_account=Decimal("0.86"),
+        slippage_points=Decimal("0.5"),
+        commission_per_unit=Decimal("0.1"),
         financing_per_unit=Decimal("0.1"),
     )
     report = run_selection(manifest(costs), {"DE30_EUR": (bar(1), bar(2), bar(3))})
@@ -101,14 +105,22 @@ def test_lucky_three_day_replay_cannot_select_a_live_candidate(monkeypatch):
     from types import SimpleNamespace
 
     costs = ReplayCosts(
-        account_currency="GBP", quote_to_account=Decimal("0.86"),
-        slippage_points=Decimal("0.5"), commission_per_unit=Decimal("0.1"),
+        account_currency="GBP",
+        quote_to_account=Decimal("0.86"),
+        slippage_points=Decimal("0.5"),
+        commission_per_unit=Decimal("0.1"),
         financing_per_unit=Decimal("0.1"),
         conversion_fee_fraction=Decimal("0.01"),
     )
-    monkeypatch.setattr("src.intraday.selection.replay_session", lambda *args, **kwargs: SimpleNamespace(
-        total_net_pnl=Decimal(10), trades=(object(),), gaps=0, no_trade_count=0,
-    ))
+    monkeypatch.setattr(
+        "src.intraday.selection.replay_session",
+        lambda *args, **kwargs: SimpleNamespace(
+            total_net_pnl=Decimal(10),
+            trades=(object(),),
+            gaps=0,
+            no_trade_count=0,
+        ),
+    )
     monkeypatch.setattr("src.intraday.selection._daily_block_lower", lambda values: Decimal(10))
     report = run_selection(manifest(costs), {"DE30_EUR": (bar(1), bar(2), bar(3))})
     assert report.selected == ()
@@ -150,17 +162,26 @@ def test_stress_rejects_rule_when_commission_and_financing_double(monkeypatch):
     from types import SimpleNamespace
 
     costs = ReplayCosts(
-        account_currency="GBP", quote_to_account=Decimal("0.86"),
-        slippage_points=Decimal("0.5"), commission_per_unit=Decimal(3),
+        account_currency="GBP",
+        quote_to_account=Decimal("0.86"),
+        slippage_points=Decimal("0.5"),
+        commission_per_unit=Decimal(3),
         financing_per_unit=Decimal(3),
         conversion_fee_fraction=Decimal("0.01"),
     )
     source = manifest(costs)
-    source = source.model_copy(update={
-        "cost_evidence": {"DE30_EUR": source.cost_evidence["DE30_EUR"].model_copy(update={
-            "commission_per_unit": Decimal(3), "financing_per_unit": Decimal(3),
-        })},
-    })
+    source = source.model_copy(
+        update={
+            "cost_evidence": {
+                "DE30_EUR": source.cost_evidence["DE30_EUR"].model_copy(
+                    update={
+                        "commission_per_unit": Decimal(3),
+                        "financing_per_unit": Decimal(3),
+                    }
+                )
+            },
+        }
+    )
 
     def replay(_rule, _bars, *, costs, **_kwargs):
         net = Decimal(10) - costs.commission_per_unit - costs.financing_per_unit
@@ -179,21 +200,31 @@ def test_missing_whole_declared_session_blocks_historical_selection(monkeypatch)
     from types import SimpleNamespace
 
     costs = ReplayCosts(
-        account_currency="GBP", quote_to_account=Decimal("0.86"),
-        slippage_points=Decimal("0.5"), commission_per_unit=Decimal("0.1"),
+        account_currency="GBP",
+        quote_to_account=Decimal("0.86"),
+        slippage_points=Decimal("0.5"),
+        commission_per_unit=Decimal("0.1"),
         financing_per_unit=Decimal("0.1"),
         conversion_fee_fraction=Decimal("0.01"),
     )
-    source = manifest(costs).model_copy(update={
-        "development_end": datetime(2026, 1, 6, tzinfo=UTC),
-        "validation_end": datetime(2026, 1, 7, tzinfo=UTC),
-        "sealed_end": datetime(2026, 1, 8, tzinfo=UTC),
-        "minimum_stage_sessions": 2,
-        "minimum_stage_trades": 2,
-    })
-    monkeypatch.setattr("src.intraday.selection.replay_session", lambda *args, **kwargs: SimpleNamespace(
-        total_net_pnl=Decimal(10), trades=(object(),), gaps=0, no_trade_count=0,
-    ))
+    source = manifest(costs).model_copy(
+        update={
+            "development_end": datetime(2026, 1, 6, tzinfo=UTC),
+            "validation_end": datetime(2026, 1, 7, tzinfo=UTC),
+            "sealed_end": datetime(2026, 1, 8, tzinfo=UTC),
+            "minimum_stage_sessions": 2,
+            "minimum_stage_trades": 2,
+        }
+    )
+    monkeypatch.setattr(
+        "src.intraday.selection.replay_session",
+        lambda *args, **kwargs: SimpleNamespace(
+            total_net_pnl=Decimal(10),
+            trades=(object(),),
+            gaps=0,
+            no_trade_count=0,
+        ),
+    )
     monkeypatch.setattr("src.intraday.selection._daily_block_lower", lambda _values: Decimal(1))
     report = run_selection(source, {"DE30_EUR": (bar(1), bar(5), bar(6), bar(7))})
     development = [item for item in report.attempts if item.stage == "development"]

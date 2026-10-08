@@ -53,10 +53,16 @@ class LivePaperPortfolio:
             return writer.append(kind, at, payload)
 
     def _reject(self, quote: MarketQuote, reason: str, plan: SetupDecision) -> PaperEvent:
-        return self._append("no_trade", quote.received_at, {
-            "broker_symbol": quote.instrument.broker_symbol, "strategy_id": plan.strategy_id,
-            "reason": reason, "source_key": quote.source_key,
-        })
+        return self._append(
+            "no_trade",
+            quote.received_at,
+            {
+                "broker_symbol": quote.instrument.broker_symbol,
+                "strategy_id": plan.strategy_id,
+                "reason": reason,
+                "source_key": quote.source_key,
+            },
+        )
 
     @property
     def open_notional_gbp(self) -> Decimal:
@@ -73,12 +79,18 @@ class LivePaperPortfolio:
             raise ValueError("paper product identity mismatch")
         if plan.status != "ready":
             return self._reject(quote, "no_trade_plan", plan)
-        if (not eligibility.paper_eligible or eligibility.costs is None or eligibility.conversion_rate is None
-                or eligibility.conversion_gain_rate is None or eligibility.conversion_loss_rate is None):
-            return self._reject(quote, "product_not_paper_eligible", plan)
         if (
-            eligibility.evaluated_at > quote.received_at
-            or quote.received_at - eligibility.evaluated_at > timedelta(seconds=15)
+            not eligibility.paper_eligible
+            or eligibility.costs is None
+            or eligibility.conversion_rate is None
+            or eligibility.conversion_gain_rate is None
+            or eligibility.conversion_loss_rate is None
+            or eligibility.minimum_trade_size is None
+            or eligibility.trade_units_precision is None
+        ):
+            return self._reject(quote, "product_not_paper_eligible", plan)
+        if eligibility.evaluated_at > quote.received_at or quote.received_at - eligibility.evaluated_at > timedelta(
+            seconds=15
         ):
             return self._reject(quote, "product_eligibility_stale", plan)
         if (
@@ -91,8 +103,11 @@ class LivePaperPortfolio:
             return self._reject(quote, "account_quote_unavailable", plan)
         if quote.observed_at <= plan.decision_at:
             return self._reject(quote, "quote_precedes_confirmed_decision", plan)
-        if (quote.received_at < plan.entry_at or quote.received_at - plan.decision_at > timedelta(seconds=15)
-                or quote.received_at >= plan.exit_by):
+        if (
+            quote.received_at < plan.entry_at
+            or quote.received_at - plan.decision_at > timedelta(seconds=15)
+            or quote.received_at >= plan.exit_by
+        ):
             return self._reject(quote, "entry_quote_stale", plan)
         symbol = instrument.broker_symbol
         day = quote.received_at.date().isoformat()
@@ -114,44 +129,68 @@ class LivePaperPortfolio:
             return self._reject(quote, "invalid_stop_distance", plan)
         risk_per_unit = (
             (distance + costs.slippage_points) * instrument.point_value
-            + costs.commission_per_unit + costs.financing_per_unit
+            + costs.commission_per_unit
+            + costs.financing_per_unit
         ) * loss_rate
         notional_per_unit = entry * instrument.point_value * rate
         if risk_per_unit <= 0 or notional_per_unit <= 0:
             return self._reject(quote, "invalid_product_value", plan)
         remaining_notional = max(D(0), self.equity - self.open_notional_gbp)
-        units = min(self.equity * D("0.0025") / risk_per_unit,
-                    remaining_notional / notional_per_unit).to_integral_value(rounding=ROUND_DOWN)
-        if units <= 0:
+        unit_increment = D(1).scaleb(-eligibility.trade_units_precision)
+        units = min(self.equity * D("0.0025") / risk_per_unit, remaining_notional / notional_per_unit).quantize(
+            unit_increment, rounding=ROUND_DOWN
+        )
+        if units < eligibility.minimum_trade_size:
             return self._reject(quote, "below_minimum_paper_size_or_leverage_cap", plan)
         notional = units * notional_per_unit
         margin = eligibility.broker_margin_rate
         if margin is None or margin <= 0:
             return self._reject(quote, "broker_margin_unavailable", plan)
         estimated_cost = (
-            (quote.ask - quote.bid + costs.slippage_points * 2) * instrument.point_value
-            + costs.commission_per_unit + costs.financing_per_unit
-        ) * units * loss_rate
+            (
+                (quote.ask - quote.bid + costs.slippage_points * 2) * instrument.point_value
+                + costs.commission_per_unit
+                + costs.financing_per_unit
+            )
+            * units
+            * loss_rate
+        )
         payload = {
-            "broker_symbol": symbol, "product_label": eligibility.product_label,
-            "product": instrument.product, "market": instrument.market,
-            "strategy_id": plan.strategy_id, "direction": plan.direction,
-            "decided_at": plan.decision_at.isoformat(), "opened_at": quote.received_at.isoformat(),
-            "entry": str(entry), "entry_bid": str(quote.bid), "entry_ask": str(quote.ask),
-            "stop": str(plan.stop), "target": str(plan.target), "exit_by": plan.exit_by.isoformat(),
-            "units": str(units), "point_value": str(instrument.point_value),
-            "quote_currency": instrument.quote_currency, "conversion_rate": str(rate),
+            "broker_symbol": symbol,
+            "product_label": eligibility.product_label,
+            "product": instrument.product,
+            "market": instrument.market,
+            "strategy_id": plan.strategy_id,
+            "direction": plan.direction,
+            "decided_at": plan.decision_at.isoformat(),
+            "opened_at": quote.received_at.isoformat(),
+            "entry": str(entry),
+            "entry_bid": str(quote.bid),
+            "entry_ask": str(quote.ask),
+            "stop": str(plan.stop),
+            "target": str(plan.target),
+            "exit_by": plan.exit_by.isoformat(),
+            "units": str(units),
+            "point_value": str(instrument.point_value),
+            "minimum_trade_size": str(eligibility.minimum_trade_size),
+            "trade_units_precision": str(eligibility.trade_units_precision),
+            "quote_currency": instrument.quote_currency,
+            "conversion_rate": str(rate),
             "account_gain_rate": str(eligibility.conversion_gain_rate),
             "account_loss_rate": str(loss_rate),
-            "notional_gbp": str(notional), "effective_leverage": str((self.open_notional_gbp + notional) / self.equity),
-            "broker_margin_rate": str(margin), "margin_estimate_gbp": str(notional * margin),
+            "notional_gbp": str(notional),
+            "effective_leverage": str((self.open_notional_gbp + notional) / self.equity),
+            "broker_margin_rate": str(margin),
+            "margin_estimate_gbp": str(notional * margin),
             "estimated_roundtrip_cost_gbp": str(estimated_cost),
             "slippage_points": str(costs.slippage_points),
             "commission_per_unit": str(costs.commission_per_unit),
             "financing_per_unit": str(costs.financing_per_unit),
             "conversion_fee_fraction": str(conversion_fee_fraction),
-            "cost_source": costs.source, "cost_observed_at": costs.observed_at.isoformat(),
-            "account_feed_hash": quote.account_feed_hash, "evidence_hash": plan.evidence_hash,
+            "cost_source": costs.source,
+            "cost_observed_at": costs.observed_at.isoformat(),
+            "account_feed_hash": quote.account_feed_hash,
+            "evidence_hash": plan.evidence_hash,
             "source_key": quote.source_key,
         }
         event = self._append("opened", quote.received_at, payload)
@@ -170,9 +209,13 @@ class LivePaperPortfolio:
             return None
         if payload["quote_currency"] == "GBP":
             position_rate = gain_rate = loss_rate = D(1)
-        elif (conversion is None or conversion.from_currency != payload["quote_currency"]
-              or conversion.to_currency != "GBP" or conversion.observed_at > quote.received_at
-              or quote.received_at - conversion.observed_at > timedelta(seconds=15)):
+        elif (
+            conversion is None
+            or conversion.from_currency != payload["quote_currency"]
+            or conversion.to_currency != "GBP"
+            or conversion.observed_at > quote.received_at
+            or quote.received_at - conversion.observed_at > timedelta(seconds=15)
+        ):
             return None
         else:
             position_rate = conversion.position_value
@@ -205,14 +248,22 @@ class LivePaperPortfolio:
         conversion_fee = (gross - actual_gross) + (actual_expenses - commission - financing)
         net = gross - commission - financing - conversion_fee
         closed = {
-            "broker_symbol": quote.instrument.broker_symbol, "strategy_id": payload["strategy_id"],
-            "direction": direction, "exit_reason": reason, "exit_price": str(exit_price),
-            "exit_bid": str(quote.bid), "exit_ask": str(quote.ask),
-            "units": str(units), "gross_pnl_gbp": str(gross),
-            "commission_gbp": str(commission), "financing_gbp": str(financing),
+            "broker_symbol": quote.instrument.broker_symbol,
+            "strategy_id": payload["strategy_id"],
+            "direction": direction,
+            "exit_reason": reason,
+            "exit_price": str(exit_price),
+            "exit_bid": str(quote.bid),
+            "exit_ask": str(quote.ask),
+            "units": str(units),
+            "gross_pnl_gbp": str(gross),
+            "commission_gbp": str(commission),
+            "financing_gbp": str(financing),
             "conversion_fee_gbp": str(conversion_fee),
-            "net_pnl_gbp": str(net), "conversion_rate": str(position_rate),
-            "account_gain_rate": str(gain_rate), "account_loss_rate": str(loss_rate),
+            "net_pnl_gbp": str(net),
+            "conversion_rate": str(position_rate),
+            "account_gain_rate": str(gain_rate),
+            "account_loss_rate": str(loss_rate),
             "source_key": quote.source_key,
         }
         event = self._append("closed", quote.received_at, closed)

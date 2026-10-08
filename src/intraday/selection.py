@@ -175,7 +175,7 @@ def _assess(
                 }
             ),
         )
-    assert costs is not None
+    assert costs is not None and evidence is not None
     spread = max((bar.ask_close - bar.bid_close for bar in bars), default=D(0))
     stressed = costs.model_copy(
         update={
@@ -185,14 +185,21 @@ def _assess(
             "financing_per_unit": costs.financing_per_unit * manifest.stress_multiplier,
             "conversion_fee_fraction": (
                 costs.conversion_fee_fraction * manifest.stress_multiplier
-                if costs.conversion_fee_fraction is not None else None
+                if costs.conversion_fee_fraction is not None
+                else None
             ),
         }
     )
     base_results = []
     stressed_results = []
     for group in _sessions(bars):
-        kwargs = {"session_open": group[0].start, "session_close": group[-1].end, "direction_filter": direction}
+        kwargs = {
+            "session_open": group[0].start,
+            "session_close": group[-1].end,
+            "direction_filter": direction,
+            "minimum_trade_size": evidence.minimum_trade_size,
+            "trade_units_precision": evidence.trade_units_precision,
+        }
         base_results.append(replay_session(rule, group, costs=costs, **kwargs))
         stressed_results.append(replay_session(rule, group, costs=stressed, **kwargs))
     net = sum((item.total_net_pnl for item in base_results), D(0))
@@ -203,10 +210,13 @@ def _assess(
         gaps += _missing_declared_sessions(bars, evidence.session.weekdays)
     lower = _daily_block_lower(tuple(item.total_net_pnl for item in base_results))
     reason = (
-        "historical_gap" if gaps else
-        "insufficient_net_evidence" if count == 0 or net <= 0 or stressed_net <= 0 or lower <= 0 else
-        "insufficient_stage_sample" if len(base_results) < manifest.minimum_stage_sessions
-        or count < manifest.minimum_stage_trades else None
+        "historical_gap"
+        if gaps
+        else "insufficient_net_evidence"
+        if count == 0 or net <= 0 or stressed_net <= 0 or lower <= 0
+        else "insufficient_stage_sample"
+        if len(base_results) < manifest.minimum_stage_sessions or count < manifest.minimum_stage_trades
+        else None
     )
     return SelectionAttempt(
         stage,

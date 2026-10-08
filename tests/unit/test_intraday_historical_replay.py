@@ -124,17 +124,24 @@ def test_one_hour_historical_time_exit_does_not_consume_next_bar_extrema():
 
 def test_historical_foreign_currency_conversion_fee_reduces_net_return():
     bars = [
-        bar(0, "100", high="101"), bar(1, "100", high="102"),
-        bar(2, "101", high="102"), bar(3, "104", high="105"),
-        bar(4, "106", high="108"), bar(5, "118", high="130", low="117"),
+        bar(0, "100", high="101"),
+        bar(1, "100", high="102"),
+        bar(2, "101", high="102"),
+        bar(3, "104", high="105"),
+        bar(4, "106", high="108"),
+        bar(5, "118", high="130", low="117"),
     ]
-    base = costs().model_copy(update={"account_currency": "GBP", "quote_to_account": D("0.86"),
-                                      "conversion_fee_fraction": D(0)})
+    base = costs().model_copy(
+        update={"account_currency": "GBP", "quote_to_account": D("0.86"), "conversion_fee_fraction": D(0)}
+    )
     charged = base.model_copy(update={"conversion_fee_fraction": D("0.01")})
     without = replay_session("opening_range_15", bars, session_open=T, session_close=T + timedelta(hours=1), costs=base)
     with_fee = replay_session(
-        "opening_range_15", bars, session_open=T,
-        session_close=T + timedelta(hours=1), costs=charged,
+        "opening_range_15",
+        bars,
+        session_open=T,
+        session_close=T + timedelta(hours=1),
+        costs=charged,
     )
     assert len(without.trades) == len(with_fee.trades) == 1
     assert with_fee.trades[0].net_pnl < without.trades[0].net_pnl
@@ -142,34 +149,50 @@ def test_historical_foreign_currency_conversion_fee_reduces_net_return():
 
 def test_historical_fx_rates_use_entry_loss_and_exit_gain_sides_without_lookahead():
     bars = [
-        bar(0, "100", high="101"), bar(1, "100", high="102"),
-        bar(2, "101", high="102"), bar(3, "104", high="105"),
-        bar(4, "106", high="108"), bar(5, "118", high="130", low="117"),
+        bar(0, "100", high="101"),
+        bar(1, "100", high="102"),
+        bar(2, "101", high="102"),
+        bar(3, "104", high="105"),
+        bar(4, "106", high="108"),
+        bar(5, "118", high="130", low="117"),
     ]
-    base = costs().model_copy(update={"account_currency": "GBP", "quote_to_account": D("0.86"),
-                                      "conversion_fee_fraction": D(0), "commission_per_unit": D(0)})
-    rates = {
-        item.start: HistoricalFXRate(gain_factor=D("0.70"), loss_factor=D("0.90"))
-        for item in bars
-    }
+    base = costs().model_copy(
+        update={
+            "account_currency": "GBP",
+            "quote_to_account": D("0.86"),
+            "conversion_fee_fraction": D(0),
+            "commission_per_unit": D(0),
+        }
+    )
+    rates = {item.start: HistoricalFXRate(gain_factor=D("0.70"), loss_factor=D("0.90")) for item in bars}
     rates[bars[5].start] = HistoricalFXRate(gain_factor=D("0.75"), loss_factor=D("0.95"))
-    result = replay_session("opening_range_15", bars, session_open=T,
-                            session_close=T + timedelta(hours=1), costs=base,
-                            fx_at_open=rates)
+    result = replay_session(
+        "opening_range_15", bars, session_open=T, session_close=T + timedelta(hours=1), costs=base, fx_at_open=rates
+    )
     assert len(result.trades) == 1
     trade = result.trades[0]
     assert trade.net_pnl == (trade.exit - trade.entry) * trade.units * D("0.75")
     changed_future = dict(rates)
     changed_future[bars[5].start] = HistoricalFXRate(gain_factor=D("0.60"), loss_factor=D("0.80"))
-    future_result = replay_session("opening_range_15", bars, session_open=T,
-                                   session_close=T + timedelta(hours=1), costs=base,
-                                   fx_at_open=changed_future)
+    future_result = replay_session(
+        "opening_range_15",
+        bars,
+        session_open=T,
+        session_close=T + timedelta(hours=1),
+        costs=base,
+        fx_at_open=changed_future,
+    )
     assert future_result.trades[0].decision_hash == trade.decision_hash
     assert future_result.trades[0].units == trade.units
     assert future_result.trades[0].net_pnl < trade.net_pnl
-    missing = replay_session("opening_range_15", bars, session_open=T,
-                             session_close=T + timedelta(hours=1), costs=base,
-                             fx_at_open={key: value for key, value in rates.items() if key != bars[5].start})
+    missing = replay_session(
+        "opening_range_15",
+        bars,
+        session_open=T,
+        session_close=T + timedelta(hours=1),
+        costs=base,
+        fx_at_open={key: value for key, value in rates.items() if key != bars[5].start},
+    )
     assert missing.trades == ()
     assert missing.gaps == 1
 
@@ -180,15 +203,26 @@ def test_historical_fx_rate_rejects_profitable_side_better_than_loss_side():
 
 
 def test_historical_fx_loss_uses_more_expensive_side():
-    bars = [bar(0, "100"), bar(1, "100"), bar(2, "101"), bar(3, "104"),
-            bar(4, "106"), bar(5, "90", high="100", low="89")]
-    base = costs().model_copy(update={"account_currency": "GBP", "quote_to_account": D("0.86"),
-                                      "conversion_fee_fraction": D(0), "commission_per_unit": D(0)})
-    rates = {item.start: HistoricalFXRate(gain_factor=D("0.70"), loss_factor=D("0.90"))
-             for item in bars}
-    result = replay_session("opening_range_15", bars, session_open=T,
-                            session_close=T + timedelta(hours=1), costs=base,
-                            fx_at_open=rates)
+    bars = [
+        bar(0, "100"),
+        bar(1, "100"),
+        bar(2, "101"),
+        bar(3, "104"),
+        bar(4, "106"),
+        bar(5, "90", high="100", low="89"),
+    ]
+    base = costs().model_copy(
+        update={
+            "account_currency": "GBP",
+            "quote_to_account": D("0.86"),
+            "conversion_fee_fraction": D(0),
+            "commission_per_unit": D(0),
+        }
+    )
+    rates = {item.start: HistoricalFXRate(gain_factor=D("0.70"), loss_factor=D("0.90")) for item in bars}
+    result = replay_session(
+        "opening_range_15", bars, session_open=T, session_close=T + timedelta(hours=1), costs=base, fx_at_open=rates
+    )
     assert len(result.trades) == 1
     trade = result.trades[0]
     assert trade.net_pnl == (trade.exit - trade.entry) * trade.units * D("0.90")
@@ -196,19 +230,47 @@ def test_historical_fx_loss_uses_more_expensive_side():
 
 def test_historical_position_size_respects_cost_inclusive_risk_budget():
     bars = [
-        bar(0, "100", high="101"), bar(1, "100", high="102"),
-        bar(2, "101", high="102"), bar(3, "104", high="105"),
-        bar(4, "106", high="108"), bar(5, "118", high="130", low="117"),
+        bar(0, "100", high="101"),
+        bar(1, "100", high="102"),
+        bar(2, "101", high="102"),
+        bar(3, "104", high="105"),
+        bar(4, "106", high="108"),
+        bar(5, "118", high="130", low="117"),
     ]
     ordinary = costs()
     expensive = ordinary.model_copy(update={"commission_per_unit": D("50")})
     baseline = replay_session(
-        "opening_range_15", bars, session_open=T,
-        session_close=T + timedelta(hours=1), costs=ordinary,
+        "opening_range_15",
+        bars,
+        session_open=T,
+        session_close=T + timedelta(hours=1),
+        costs=ordinary,
     )
     charged = replay_session(
-        "opening_range_15", bars, session_open=T,
-        session_close=T + timedelta(hours=1), costs=expensive,
+        "opening_range_15",
+        bars,
+        session_open=T,
+        session_close=T + timedelta(hours=1),
+        costs=expensive,
     )
     assert len(baseline.trades) == len(charged.trades) == 1
     assert charged.trades[0].units < baseline.trades[0].units
+
+
+def test_historical_selection_rejects_below_broker_minimum_and_rounds_fractional_units():
+    bars = [
+        bar(0, "100", high="101"),
+        bar(1, "100", high="102"),
+        bar(2, "101", high="102"),
+        bar(3, "104", high="105"),
+        bar(4, "106", high="108"),
+        bar(5, "118", high="130", low="117"),
+    ]
+    args = {"session_open": T, "session_close": T + timedelta(hours=1), "costs": costs(), "initial_equity": D("100")}
+    allowed = replay_session("opening_range_15", bars, **args, minimum_trade_size=D("0.01"), trade_units_precision=2)
+    assert len(allowed.trades) == 1
+    assert allowed.trades[0].units >= D("0.01")
+    assert allowed.trades[0].units % D("0.01") == 0
+    blocked = replay_session("opening_range_15", bars, **args, minimum_trade_size=D("1"), trade_units_precision=0)
+    assert blocked.trades == ()
+    assert blocked.no_trade_count > 0

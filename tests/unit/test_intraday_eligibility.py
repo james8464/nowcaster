@@ -10,29 +10,53 @@ NOW = datetime(2026, 10, 8, 9, 0, tzinfo=UTC)
 
 def product(symbol="DE30_EUR", market="germany40", kind="cfd", currency="EUR"):
     return InstrumentSpec(
-        provider="oanda_practice", broker_symbol=symbol, market=market,
-        product=kind, quote_currency=currency, point_value=Decimal("1"),
+        provider="oanda_practice",
+        broker_symbol=symbol,
+        market=market,
+        product=kind,
+        quote_currency=currency,
+        point_value=Decimal("1"),
     )
 
 
 def row(name="DE30_EUR", kind="CFD", margin="0.05"):
-    return {"name": name, "type": kind, "displayName": "Germany 30", "marginRate": margin}
+    return {
+        "name": name,
+        "type": kind,
+        "displayName": "Germany 30",
+        "marginRate": margin,
+        "minimumTradeSize": "1",
+        "tradeUnitsPrecision": 0,
+    }
 
 
-def evidence(session_end=20, conversion_fee=Decimal("0.01")):
+def evidence(session_end=20, conversion_fee=Decimal("0.01"), minimum="1", precision=0):
     return CostEvidence(
-        broker_symbol="DE30_EUR", product="cfd", margin_rate=Decimal("0.05"),
-        commission_per_unit=Decimal("0"), financing_per_unit=Decimal("0.10"),
-        slippage_points=Decimal("0.5"), conversion_fee_fraction=conversion_fee,
+        broker_symbol="DE30_EUR",
+        product="cfd",
+        margin_rate=Decimal("0.05"),
+        commission_per_unit=Decimal("0"),
+        financing_per_unit=Decimal("0.10"),
+        slippage_points=Decimal("0.5"),
+        conversion_fee_fraction=conversion_fee,
+        minimum_trade_size=Decimal(minimum),
+        trade_units_precision=precision,
         observed_at=NOW - timedelta(days=1),
-        source="https://broker.example/terms/de30", source_kind="broker_terms",
+        source="https://broker.example/terms/de30",
+        source_kind="broker_terms",
         session=SessionEvidence(weekdays=(0, 1, 2, 3, 4), opens_utc="07:00", closes_utc=f"{session_end:02d}:00"),
     )
 
 
 def fx(at=NOW):
-    return FXConversion(from_currency="EUR", to_currency="GBP", position_value=Decimal("0.85"),
-                        account_gain=Decimal("0.84"), account_loss=Decimal("0.86"), observed_at=at)
+    return FXConversion(
+        from_currency="EUR",
+        to_currency="GBP",
+        position_value=Decimal("0.85"),
+        account_gain=Decimal("0.84"),
+        account_loss=Decimal("0.86"),
+        observed_at=at,
+    )
 
 
 def test_inventory_alone_cannot_enable_paper_entry():
@@ -80,11 +104,26 @@ def test_foreign_currency_product_cannot_enter_without_source_backed_conversion_
 
 def test_account_conversion_keeps_distinct_gain_loss_and_position_factors():
     conversion = FXConversion(
-        from_currency="EUR", to_currency="GBP", position_value=Decimal("0.85"),
-        account_gain=Decimal("0.84"), account_loss=Decimal("0.86"), observed_at=NOW,
+        from_currency="EUR",
+        to_currency="GBP",
+        position_value=Decimal("0.85"),
+        account_gain=Decimal("0.84"),
+        account_loss=Decimal("0.86"),
+        observed_at=NOW,
     )
     result = evaluate_product(product(), row(), evidence(), conversion, NOW)
     assert result.paper_eligible
     assert result.conversion_rate == Decimal("0.85")
     assert result.conversion_gain_rate == Decimal("0.84")
     assert result.conversion_loss_rate == Decimal("0.86")
+
+
+def test_fractional_account_minimum_and_precision_are_verified_against_terms():
+    broker = {**row(), "minimumTradeSize": "0.01", "tradeUnitsPrecision": 2}
+    verified = evaluate_product(product(), broker, evidence(minimum="0.01", precision=2), fx(), NOW)
+    assert verified.paper_eligible
+    assert verified.minimum_trade_size == Decimal("0.01")
+    assert verified.trade_units_precision == 2
+    mismatched = evaluate_product(product(), broker, evidence(minimum="1", precision=0), fx(), NOW)
+    assert not mismatched.paper_eligible
+    assert "broker_trade_size_changed" in mismatched.reasons

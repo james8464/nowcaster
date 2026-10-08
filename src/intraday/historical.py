@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from decimal import Decimal
+from decimal import ROUND_DOWN, Decimal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -88,6 +88,8 @@ def replay_session(
     initial_equity: Decimal = DEFAULT_INITIAL_EQUITY,
     direction_filter: str | None = None,
     fx_at_open: Mapping[datetime, HistoricalFXRate] | None = None,
+    minimum_trade_size: Decimal | None = None,
+    trade_units_precision: int | None = None,
 ) -> ReplayResult:
     """Enter at following historical open; if both extrema touch, fill stop first.
 
@@ -98,6 +100,16 @@ def replay_session(
         raise ValueError("invalid session or paper equity")
     if direction_filter not in (None, "long", "short"):
         raise ValueError("direction filter must be long or short")
+    if (minimum_trade_size is None) != (trade_units_precision is None):
+        raise ValueError("broker minimum and precision must be supplied together")
+    if minimum_trade_size is not None and (
+        not minimum_trade_size.is_finite()
+        or minimum_trade_size <= 0
+        or type(trade_units_precision) is not int
+        or not 0 <= trade_units_precision <= 9
+        or minimum_trade_size % D(1).scaleb(-trade_units_precision)
+    ):
+        raise ValueError("invalid broker trade size")
     if not bars:
         return ReplayResult(strategy_id, "historical_base_exploratory", (), 0, 0)
     instrument = bars[0].instrument
@@ -164,13 +176,20 @@ def replay_session(
             else costs.quote_to_account
         )
         risk_per_unit = (
-            (distance + costs.slippage_points) * instrument.point_value
-            + costs.commission_per_unit + costs.financing_per_unit
-        ) * entry_factor * (D(1) + (costs.conversion_fee_fraction or D(0)))
+            (
+                (distance + costs.slippage_points) * instrument.point_value
+                + costs.commission_per_unit
+                + costs.financing_per_unit
+            )
+            * entry_factor
+            * (D(1) + (costs.conversion_fee_fraction or D(0)))
+        )
         risk_units = initial_equity * D("0.0025") / risk_per_unit
         exposure_units = initial_equity * D("0.25") / (entry * instrument.point_value * entry_factor)
         units = min(risk_units, exposure_units)
-        if units <= 0:
+        if trade_units_precision is not None:
+            units = units.quantize(D(1).scaleb(-trade_units_precision), rounding=ROUND_DOWN)
+        if units <= 0 or (minimum_trade_size is not None and units < minimum_trade_size):
             no_trade_count += 1
             continue
         closed: ReplayTrade | None = None
@@ -211,10 +230,13 @@ def replay_session(
                 gross_quote = points * units * instrument.point_value
                 gross = gross_quote * (
                     (fx.gain_factor if gross_quote >= 0 else fx.loss_factor)
-                    if fx is not None else costs.quote_to_account
+                    if fx is not None
+                    else costs.quote_to_account
                 )
-                expenses = (costs.commission_per_unit + costs.financing_per_unit) * units * (
-                    fx.loss_factor if fx is not None else costs.quote_to_account
+                expenses = (
+                    (costs.commission_per_unit + costs.financing_per_unit)
+                    * units
+                    * (fx.loss_factor if fx is not None else costs.quote_to_account)
                 )
                 conversion_fee = (abs(gross) + expenses) * (costs.conversion_fee_fraction or D(0))
                 closed = ReplayTrade(

@@ -8,40 +8,86 @@ from src.intraday.portfolio import LivePaperPortfolio
 from src.intraday.strategies import SetupDecision
 
 T = datetime(2026, 10, 8, 9, 0, tzinfo=UTC)
-INSTRUMENT = InstrumentSpec(provider="oanda_practice", broker_symbol="DE30_EUR", market="germany40",
-                            product="cfd", quote_currency="EUR", point_value=Decimal(1))
+INSTRUMENT = InstrumentSpec(
+    provider="oanda_practice",
+    broker_symbol="DE30_EUR",
+    market="germany40",
+    product="cfd",
+    quote_currency="EUR",
+    point_value=Decimal(1),
+)
 
 
 def quote(at=T + timedelta(seconds=1), bid="100", ask="101"):
-    return MarketQuote(instrument=INSTRUMENT, account_feed_hash="a" * 64,
-                       observed_at=at, received_at=at, bid=Decimal(bid), ask=Decimal(ask),
-                       status="tradeable", source_key=f"quote:{at}:{bid}:{ask}")
+    return MarketQuote(
+        instrument=INSTRUMENT,
+        account_feed_hash="a" * 64,
+        observed_at=at,
+        received_at=at,
+        bid=Decimal(bid),
+        ask=Decimal(ask),
+        status="tradeable",
+        source_key=f"quote:{at}:{bid}:{ask}",
+    )
 
 
 def conversion(at):
-    return FXConversion(from_currency="EUR", to_currency="GBP", position_value=Decimal("0.85"),
-                        account_gain=Decimal("0.84"), account_loss=Decimal("0.86"), observed_at=at)
+    return FXConversion(
+        from_currency="EUR",
+        to_currency="GBP",
+        position_value=Decimal("0.85"),
+        account_gain=Decimal("0.84"),
+        account_loss=Decimal("0.86"),
+        observed_at=at,
+    )
 
 
 def eligibility(at=T):
     costs = CostEvidence(
-        broker_symbol="DE30_EUR", product="cfd", margin_rate=Decimal("0.05"),
-        commission_per_unit=Decimal("0.1"), financing_per_unit=Decimal("0.1"),
-        slippage_points=Decimal("0.5"), conversion_fee_fraction=Decimal("0.01"), observed_at=T,
-        source="https://broker.example/terms", source_kind="broker_terms",
+        broker_symbol="DE30_EUR",
+        product="cfd",
+        margin_rate=Decimal("0.05"),
+        commission_per_unit=Decimal("0.1"),
+        financing_per_unit=Decimal("0.1"),
+        slippage_points=Decimal("0.5"),
+        conversion_fee_fraction=Decimal("0.01"),
+        minimum_trade_size=Decimal("1"),
+        trade_units_precision=0,
+        observed_at=T,
+        source="https://broker.example/terms",
+        source_kind="broker_terms",
         session=SessionEvidence(weekdays=(0, 1, 2, 3, 4), opens_utc="07:00", closes_utc="20:00"),
     )
-    return evaluate_product(INSTRUMENT, {"name": "DE30_EUR", "type": "CFD", "displayName": "Germany 30",
-                                          "marginRate": "0.05"}, costs, conversion(at), at)
+    return evaluate_product(
+        INSTRUMENT,
+        {
+            "name": "DE30_EUR",
+            "type": "CFD",
+            "displayName": "Germany 30",
+            "marginRate": "0.05",
+            "minimumTradeSize": "1",
+            "tradeUnitsPrecision": 0,
+        },
+        costs,
+        conversion(at),
+        at,
+    )
 
 
 def plan(direction="long"):
     return SetupDecision(
-        status="ready", strategy_id="trend_pullback", direction=direction, reason="confirmed trend pullback",
-        decision_at=T, entry_at=T + timedelta(milliseconds=500), entry=Decimal("101" if direction == "long" else "100"),
+        status="ready",
+        strategy_id="trend_pullback",
+        direction=direction,
+        reason="confirmed trend pullback",
+        decision_at=T,
+        entry_at=T + timedelta(milliseconds=500),
+        entry=Decimal("101" if direction == "long" else "100"),
         stop=Decimal("96" if direction == "long" else "105"),
         target=Decimal("111" if direction == "long" else "90"),
-        exit_by=T + timedelta(hours=1), estimated_roundtrip_cost=Decimal(1), evidence_hash="b" * 64,
+        exit_by=T + timedelta(hours=1),
+        estimated_roundtrip_cost=Decimal(1),
+        evidence_hash="b" * 64,
     )
 
 
@@ -64,8 +110,7 @@ def test_complete_ticket_and_adverse_stop_retains_net_loss(tmp_path):
 
 def test_missing_conversion_or_costs_rejects_entry_without_a_position(tmp_path):
     portfolio = LivePaperPortfolio(tmp_path, "c" * 64, initial_cash=Decimal("10000"))
-    bad = eligibility(T).model_copy(update={"conversion_rate": None,
-                                             "reasons": ("currency_conversion_unavailable",)})
+    bad = eligibility(T).model_copy(update={"conversion_rate": None, "reasons": ("currency_conversion_unavailable",)})
     result = portfolio.on_decision(INSTRUMENT, plan(), quote(), bad)
     assert result.kind == "no_trade"
     assert portfolio.positions == {}
@@ -117,7 +162,14 @@ def test_entry_rejects_conversion_that_aged_out_after_eligibility_check(tmp_path
     portfolio = LivePaperPortfolio(tmp_path, "c" * 64, initial_cash=Decimal("10000"))
     checked = evaluate_product(
         INSTRUMENT,
-        {"name": "DE30_EUR", "type": "CFD", "displayName": "Germany 30", "marginRate": "0.05"},
+        {
+            "name": "DE30_EUR",
+            "type": "CFD",
+            "displayName": "Germany 30",
+            "marginRate": "0.05",
+            "minimumTradeSize": "1",
+            "tradeUnitsPrecision": 0,
+        },
         eligibility(T).costs,
         conversion(T - timedelta(seconds=14)),
         T,
@@ -128,3 +180,39 @@ def test_entry_rejects_conversion_that_aged_out_after_eligibility_check(tmp_path
     assert rejected.kind == "no_trade"
     assert rejected.payload["reason"] == "currency_conversion_stale"
     assert portfolio.positions == {}
+
+
+def test_fractional_de30_position_respects_account_precision_and_one_times_exposure(tmp_path):
+    portfolio = LivePaperPortfolio(tmp_path, "c" * 64, initial_cash=Decimal("10000"))
+    costs = eligibility(T).costs.model_copy(
+        update={
+            "minimum_trade_size": Decimal("0.01"),
+            "trade_units_precision": 2,
+        }
+    )
+    broker = {
+        "name": "DE30_EUR",
+        "type": "CFD",
+        "displayName": "Germany 30",
+        "marginRate": "0.05",
+        "minimumTradeSize": "0.01",
+        "tradeUnitsPrecision": 2,
+    }
+    checked = evaluate_product(INSTRUMENT, broker, costs, conversion(T), T)
+    paper_plan = plan().model_copy(
+        update={
+            "entry": Decimal("24940.2"),
+            "stop": Decimal("24690"),
+            "target": Decimal("25440"),
+            "estimated_roundtrip_cost": Decimal("2.9"),
+        }
+    )
+    paper_quote = quote(bid="24937.3", ask="24940.2")
+    opened = portfolio.on_decision(INSTRUMENT, paper_plan, paper_quote, checked)
+    assert opened.kind == "opened"
+    units = Decimal(opened.payload["units"])
+    assert Decimal("0.01") <= units < 1
+    assert units % Decimal("0.01") == 0
+    assert Decimal(opened.payload["notional_gbp"]) <= Decimal("10000")
+    assert opened.payload["minimum_trade_size"] == "0.01"
+    assert opened.payload["trade_units_precision"] == "2"

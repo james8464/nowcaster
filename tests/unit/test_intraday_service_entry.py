@@ -127,6 +127,23 @@ def test_practice_runner_publishes_retained_account_capture_quality(tmp_path):
     assert (tmp_path / "2026-10-08" / "capture_quality.json").exists()
 
 
+def test_practice_inventory_retains_exact_fractional_trade_size(tmp_path):
+    class FractionalFeed(FakeFeed):
+        def available_instruments(self):
+            return ({**super().available_instruments()[0], "minimumTradeSize": "0.01", "tradeUnitsPrecision": 2},)
+
+    run_paper_indicator(
+        tmp_path,
+        account_id="private-account",
+        token="private-token",
+        feed=FractionalFeed(),
+        now=lambda: datetime(2026, 10, 8, 9, tzinfo=UTC),
+    )
+    product = json.loads((tmp_path / "inventory.json").read_text())["products"][0]
+    assert product["minimumTradeSize"] == "0.01"
+    assert product["tradeUnitsPrecision"] == 2
+
+
 def test_practice_boundary_has_no_order_route_or_live_host():
     source = inspect.getsource(OandaPracticeFeed)
     assert PRACTICE_API == "https://api-fxpractice.oanda.com"

@@ -104,6 +104,10 @@ margin estimate, cost source and estimated costs. It respects a 0.25% risk
 budget per trade, 1% daily realized-loss stop, 5% drawdown halt and 1.0×
 aggregate notional cap. A missing quote or conversion leaves a paper position
 unresolved instead of inventing a profitable exit.
+Paper sizing uses the exact broker product's minimum trade size and unit
+precision (including fractional index-CFD units). If those terms are missing
+or differ from the frozen cost record, the product is ineligible; the app never
+rounds up past its risk or exposure cap to force a trade.
 The separate command-line practice paper runner refreshes the account's gain,
 loss and position-value conversion factors for foreign-currency products. It
 rechecks their age at entry and exit and marks conversion outages as unhealthy;

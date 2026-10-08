@@ -52,6 +52,8 @@ class CostEvidence(BaseModel):
     broker_symbol: str
     product: Literal["cfd", "margin_fx"]
     margin_rate: Decimal = Field(gt=0, le=1)
+    minimum_trade_size: Decimal = Field(gt=0)
+    trade_units_precision: int = Field(ge=0, le=9)
     commission_per_unit: Decimal = Field(ge=0)
     financing_per_unit: Decimal = Field(ge=0)
     slippage_points: Decimal = Field(ge=0)
@@ -69,6 +71,8 @@ class CostEvidence(BaseModel):
             raise ValueError("broker terms require an HTTPS source URL")
         if self.observed_at.tzinfo is None or self.observed_at.utcoffset() != timedelta(0):
             raise ValueError("source observation must use UTC")
+        if self.minimum_trade_size % Decimal(1).scaleb(-self.trade_units_precision):
+            raise ValueError("minimum trade size must fit broker unit precision")
         return self
 
 
@@ -78,6 +82,8 @@ class EligibilityResult(BaseModel):
     evaluated_at: datetime
     product_label: str
     broker_margin_rate: Decimal | None
+    minimum_trade_size: Decimal | None
+    trade_units_precision: int | None
     costs: CostEvidence | None
     session_open: bool
     conversion_rate: Decimal | None
@@ -114,6 +120,21 @@ def evaluate_product(
     except (KeyError, TypeError, ValueError, InvalidOperation):
         margin = None
         reasons.append("broker_margin_unavailable")
+    try:
+        minimum = Decimal(str(broker_row["minimumTradeSize"]))
+        precision = broker_row["tradeUnitsPrecision"]
+        if (
+            not minimum.is_finite()
+            or minimum <= 0
+            or type(precision) is not int
+            or not 0 <= precision <= 9
+            or minimum % Decimal(1).scaleb(-precision)
+        ):
+            raise ValueError("invalid trade size")
+    except (KeyError, TypeError, ValueError, InvalidOperation):
+        minimum = None
+        precision = None
+        reasons.append("broker_trade_size_unavailable")
     if costs is None:
         reasons.append("cost_evidence_missing")
         session_open = False
@@ -124,6 +145,8 @@ def evaluate_product(
             reasons.append("cost_evidence_stale")
         if margin is not None and margin != costs.margin_rate:
             reasons.append("margin_rate_changed")
+        if minimum is not None and (minimum != costs.minimum_trade_size or precision != costs.trade_units_precision):
+            reasons.append("broker_trade_size_changed")
         session_open = costs.session.is_open(at)
         if not session_open:
             reasons.append("session_closed")
@@ -149,15 +172,15 @@ def evaluate_product(
         conversion_gain_rate = conversion.account_gain
         conversion_loss_rate = conversion.account_loss
         conversion_observed_at = conversion.observed_at
-    if instrument.quote_currency != account_currency and (
-        costs is None or costs.conversion_fee_fraction is None
-    ):
+    if instrument.quote_currency != account_currency and (costs is None or costs.conversion_fee_fraction is None):
         reasons.append("currency_conversion_fee_unverified")
     return EligibilityResult(
         instrument=instrument,
         evaluated_at=at,
         product_label=label,
         broker_margin_rate=margin,
+        minimum_trade_size=minimum,
+        trade_units_precision=precision,
         costs=costs,
         session_open=session_open,
         conversion_rate=conversion_rate,

@@ -203,6 +203,8 @@ def run_paper_indicator(
                 "displayName": row.get("displayName", symbol),
                 "type": expected,
                 "marginRate": row.get("marginRate"),
+                "minimumTradeSize": row.get("minimumTradeSize"),
+                "tradeUnitsPrecision": row.get("tradeUnitsPrecision"),
             }
         )
     _atomic_json(
