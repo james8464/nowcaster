@@ -1,4 +1,5 @@
 import json
+from datetime import timedelta
 from decimal import Decimal
 
 import pytest
@@ -65,3 +66,20 @@ def test_cli_publishes_exploratory_stage_without_credentials(tmp_path, capsys):
                    "--directory", str(tmp_path / "round")])
     assert result == 0
     assert json.loads(capsys.readouterr().out)["account_fill_claim"] is False
+
+
+def test_overnight_cfd_bars_are_excluded_from_regular_session(tmp_path):
+    path = tmp_path / "development.jsonl"
+    capture(path, "2023-03-10", "2023-03-09")
+    extra = session("2023-03-10", start=Decimal("100"), first=Decimal("101"),
+                    penultimate=Decimal("102"), final=Decimal("103"))[0]
+    extra = extra.model_copy(update={
+        "start": extra.start - timedelta(hours=1),
+        "end": extra.end - timedelta(hours=1),
+        "available_at": extra.available_at - timedelta(hours=1),
+        "source_key": "overnight",
+    })
+    with path.open("a", encoding="utf-8") as stream:
+        stream.write(extra.model_dump_json() + "\n")
+    result = run_stage("development", [path], tmp_path / "new-attempt")
+    assert result["eligible_days"] == 1

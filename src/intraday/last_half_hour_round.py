@@ -8,7 +8,7 @@ import os
 import random
 from collections import defaultdict
 from collections.abc import Sequence
-from datetime import date, timedelta
+from datetime import date, time, timedelta
 from decimal import Decimal
 from pathlib import Path
 from statistics import mean
@@ -104,7 +104,14 @@ def run_stage(stage: str, captures: Sequence[Path], directory: Path) -> dict:
     grouped: dict[date, list[ConfirmedBar]] = defaultdict(list)
     # Group by exchange-local session date; UTC offsets change with DST.
     for bar in bars:
-        grouped[bar.start.astimezone(NY).date()].append(bar)
+        local_start = bar.start.astimezone(NY)
+        local_end = bar.end.astimezone(NY)
+        if (
+            local_start.date() == local_end.date()
+            and time(9, 30) <= local_start.time()
+            and local_end.time() <= time(16)
+        ):
+            grouped[local_start.date()].append(bar)
     if any(day < start - timedelta(days=7) or day >= end for day in grouped):
         raise ValueError("capture contains dates outside registered stage window")
     days = sorted(day for day in grouped if start <= day < end)
