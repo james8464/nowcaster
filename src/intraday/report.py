@@ -54,6 +54,7 @@ class PaperDecisionReport(BaseModel):
     gross_pnl_gbp: Decimal
     commission_gbp: Decimal
     financing_gbp: Decimal
+    conversion_fee_gbp: Decimal = D(0)
     net_pnl_gbp: Decimal
     win_rate: Decimal | None
     net_expectancy_gbp: Decimal | None
@@ -75,7 +76,7 @@ class PaperDecisionReport(BaseModel):
             raise ValueError("report chronology or trade count invalid")
         if self.open_positions != len(self.unresolved_positions):
             raise ValueError("unresolved position count invalid")
-        if self.net_pnl_gbp != self.gross_pnl_gbp - self.commission_gbp - self.financing_gbp:
+        if self.net_pnl_gbp != self.gross_pnl_gbp - self.commission_gbp - self.financing_gbp - self.conversion_fee_gbp:
             raise ValueError("paper P&L components do not reconcile")
         if (self.coverage_status == "measured") != (self.account_quote_coverage is not None):
             raise ValueError("coverage status and value disagree")
@@ -156,9 +157,12 @@ def build_report(
             opened = opens.pop(symbol)
             close = {**event.payload, "closed_at": event.occurred_at.isoformat()}
             required_cost_fields = {"net_pnl_gbp", "gross_pnl_gbp", "commission_gbp", "financing_gbp"}
+            if "conversion_fee_fraction" in opened:
+                required_cost_fields.add("conversion_fee_gbp")
             if not required_cost_fields <= close.keys():
                 raise ValueError("closed paper trade lacks itemized costs")
-            expected_net = D(close["gross_pnl_gbp"]) - D(close["commission_gbp"]) - D(close["financing_gbp"])
+            expected_net = (D(close["gross_pnl_gbp"]) - D(close["commission_gbp"])
+                            - D(close["financing_gbp"]) - D(close.get("conversion_fee_gbp", "0")))
             if D(close["net_pnl_gbp"]) != expected_net:
                 raise ValueError("paper trade costs do not reconcile")
             record = TradeRecord(open=opened, close=close)
@@ -171,6 +175,7 @@ def build_report(
     gross = sum((D(item.close["gross_pnl_gbp"]) for item in trades), D(0))
     commission = sum((D(item.close["commission_gbp"]) for item in trades), D(0))
     financing = sum((D(item.close["financing_gbp"]) for item in trades), D(0))
+    conversion_fee = sum((D(item.close.get("conversion_fee_gbp", "0")) for item in trades), D(0))
     net = sum((D(item.close["net_pnl_gbp"]) for item in trades), D(0))
     winners = [D(item.close["net_pnl_gbp"]) for item in trades if D(item.close["net_pnl_gbp"]) > 0]
     losers = [D(item.close["net_pnl_gbp"]) for item in trades if D(item.close["net_pnl_gbp"]) < 0]
@@ -254,6 +259,7 @@ def build_report(
         gross_pnl_gbp=gross,
         commission_gbp=commission,
         financing_gbp=financing,
+        conversion_fee_gbp=conversion_fee,
         net_pnl_gbp=net,
         win_rate=D(len(winners)) / len(trades) if trades else None,
         net_expectancy_gbp=net / len(trades) if trades else None,
@@ -285,7 +291,8 @@ def aggregate_reports(
     gross = sum((report.gross_pnl_gbp for report in ordered), D(0))
     commission = sum((report.commission_gbp for report in ordered), D(0))
     financing = sum((report.financing_gbp for report in ordered), D(0))
-    net = gross - commission - financing
+    conversion_fee = sum((report.conversion_fee_gbp for report in ordered), D(0))
+    net = gross - commission - financing - conversion_fee
     ordered_trades = sorted(trades, key=lambda item: datetime.fromisoformat(item.close["closed_at"]))
     running = peak = drawdown = D(0)
     for item in ordered_trades:
@@ -307,6 +314,7 @@ def aggregate_reports(
         gross_pnl_gbp=gross,
         commission_gbp=commission,
         financing_gbp=financing,
+        conversion_fee_gbp=conversion_fee,
         net_pnl_gbp=net,
         win_rate=D(len(winners)) / len(trades) if trades else None,
         net_expectancy_gbp=net / len(trades) if trades else None,

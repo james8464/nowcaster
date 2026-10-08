@@ -89,7 +89,7 @@ def summarize_capture(
             covered.add(slot)
     spreads.sort()
     times = sorted(set(received_times))
-    gaps = [Decimal(str((right - left).total_seconds())) for left, right in zip(times, times[1:])]
+    gaps = [Decimal(str((right - left).total_seconds())) for left, right in zip(times, times[1:], strict=False)]
     return CaptureQuality(
         broker_symbol=instrument.broker_symbol,
         observed_from=opened_at,

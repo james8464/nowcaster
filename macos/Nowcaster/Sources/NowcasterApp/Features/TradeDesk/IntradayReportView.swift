@@ -81,6 +81,7 @@ struct IntradayPaperReport: Sendable {
     let grossPnL: Decimal
     let commission: Decimal
     let financing: Decimal
+    let conversionFee: Decimal
     let netPnL: Decimal
     let winRate: Decimal?
     let netExpectancy: Decimal?
@@ -108,6 +109,7 @@ struct IntradayPaperReport: Sendable {
         let grossPnlGbp: String
         let commissionGbp: String
         let financingGbp: String
+        let conversionFeeGbp: String?
         let netPnlGbp: String
         let winRate: String?
         let netExpectancyGbp: String?
@@ -140,6 +142,7 @@ struct IntradayPaperReport: Sendable {
         let raw = try decoder.decode(Raw.self, from: data)
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let conversionFee = raw.conversionFeeGbp.flatMap { Decimal(string: $0) }
         guard raw.schemaVersion == 1, raw.paperOnly,
               raw.evidenceStatus == "insufficient_evidence",
               ["not_measured", "measured"].contains(raw.coverageStatus),
@@ -150,9 +153,10 @@ struct IntradayPaperReport: Sendable {
               let gross = Decimal(string: raw.grossPnlGbp),
               let commission = Decimal(string: raw.commissionGbp),
               let financing = Decimal(string: raw.financingGbp),
+              raw.conversionFeeGbp == nil || conversionFee != nil,
               let net = Decimal(string: raw.netPnlGbp),
               let drawdown = Decimal(string: raw.maximumDrawdownGbp), drawdown >= 0,
-              net == gross - commission - financing,
+              net == gross - commission - financing - (conversionFee ?? 0),
               raw.winRate == nil || Decimal(string: raw.winRate!) != nil,
               raw.netExpectancyGbp == nil || Decimal(string: raw.netExpectancyGbp!) != nil,
               raw.dailyBlockLower95Gbp == nil || Decimal(string: raw.dailyBlockLower95Gbp!) != nil,
@@ -190,7 +194,8 @@ struct IntradayPaperReport: Sendable {
                     openPositions: raw.openPositions, decisionsCount: raw.decisionsCount,
                     noTradeCount: raw.noTradeCount, blockedReasons: raw.blockedReasons,
                     feedGapCount: raw.feedGapCount,
-                    grossPnL: gross, commission: commission, financing: financing, netPnL: net,
+                    grossPnL: gross, commission: commission, financing: financing,
+                    conversionFee: conversionFee ?? 0, netPnL: net,
                     winRate: raw.winRate.flatMap { Decimal(string: $0) },
                     netExpectancy: raw.netExpectancyGbp.flatMap { Decimal(string: $0) },
                     profitFactor: raw.profitFactor.flatMap { Decimal(string: $0) },
@@ -227,7 +232,7 @@ struct IntradayReportView: View {
                     }
                     DisclosureGroup("Costs and evidence") {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("Gross £\(report.grossPnL.description) · Commission £\(report.commission.description) · Financing £\(report.financing.description)")
+                            Text("Gross £\(report.grossPnL.description) · Commission £\(report.commission.description) · Financing £\(report.financing.description) · Conversion £\(report.conversionFee.description)")
                             Text("Win rate: \(report.winRate.map { String(describing: $0 * 100) + "%" } ?? "undefined") · Net expectancy: \(report.netExpectancy.map { "£" + $0.description } ?? "undefined")")
                             Text("Profit factor: \(report.profitFactor.map(\.description) ?? "undefined") · Max drawdown £\(report.maximumDrawdown.description)")
                             Text("95% daily lower bound: \(report.dailyLowerBound.map { "£" + $0.description } ?? "insufficient sample")")

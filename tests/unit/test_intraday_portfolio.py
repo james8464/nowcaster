@@ -7,7 +7,6 @@ from src.intraday.paper import FXConversion
 from src.intraday.portfolio import LivePaperPortfolio
 from src.intraday.strategies import SetupDecision
 
-
 T = datetime(2026, 10, 8, 9, 0, tzinfo=UTC)
 INSTRUMENT = InstrumentSpec(provider="oanda_practice", broker_symbol="DE30_EUR", market="germany40",
                             product="cfd", quote_currency="EUR", point_value=Decimal(1))
@@ -27,7 +26,7 @@ def eligibility(at=T):
     costs = CostEvidence(
         broker_symbol="DE30_EUR", product="cfd", margin_rate=Decimal("0.05"),
         commission_per_unit=Decimal("0.1"), financing_per_unit=Decimal("0.1"),
-        slippage_points=Decimal("0.5"), observed_at=T,
+        slippage_points=Decimal("0.5"), conversion_fee_fraction=Decimal("0.01"), observed_at=T,
         source="https://broker.example/terms", source_kind="broker_terms",
         session=SessionEvidence(weekdays=(0, 1, 2, 3, 4), opens_utc="07:00", closes_utc="20:00"),
     )
@@ -78,3 +77,16 @@ def test_restart_retains_unresolved_position_and_does_not_make_a_fill(tmp_path):
     assert "DE30_EUR" in restarted.positions
     assert restarted.on_quote(quote(T + timedelta(minutes=2), "90", "91"), None) is None
     assert "DE30_EUR" in restarted.positions
+
+
+def test_foreign_currency_close_deducts_conversion_charge_from_net_result(tmp_path):
+    portfolio = LivePaperPortfolio(tmp_path, "c" * 64, initial_cash=Decimal("10000"))
+    opened = portfolio.on_decision(INSTRUMENT, plan(), quote(), eligibility(T))
+    assert opened.kind == "opened"
+    closed = portfolio.on_quote(quote(T + timedelta(minutes=1), "94", "95"), conversion(T + timedelta(minutes=1)))
+    assert closed is not None
+    assert Decimal(closed.payload["gross_pnl_gbp"]) == Decimal("-27.52")
+    assert Decimal(closed.payload["commission_gbp"]) == Decimal("0.344")
+    assert Decimal(closed.payload["financing_gbp"]) == Decimal("0.344")
+    assert Decimal(closed.payload["conversion_fee_gbp"]) == Decimal("0.28208")
+    assert Decimal(closed.payload["net_pnl_gbp"]) == Decimal("-28.49008")

@@ -75,7 +75,10 @@ class LivePaperPortfolio:
             return self._reject(quote, "no_trade_plan", plan)
         if not eligibility.paper_eligible or eligibility.costs is None or eligibility.conversion_rate is None:
             return self._reject(quote, "product_not_paper_eligible", plan)
-        if eligibility.evaluated_at > quote.received_at or quote.received_at - eligibility.evaluated_at > timedelta(seconds=15):
+        if (
+            eligibility.evaluated_at > quote.received_at
+            or quote.received_at - eligibility.evaluated_at > timedelta(seconds=15)
+        ):
             return self._reject(quote, "product_eligibility_stale", plan)
         if quote.status != "tradeable" or quote.received_at - quote.observed_at > timedelta(seconds=5):
             return self._reject(quote, "account_quote_unavailable", plan)
@@ -96,12 +99,15 @@ class LivePaperPortfolio:
             return self._reject(quote, "drawdown_halt", plan)
         costs = eligibility.costs
         rate = eligibility.conversion_rate
+        conversion_fee_fraction = costs.conversion_fee_fraction or D(0)
         entry = quote.ask + costs.slippage_points if plan.direction == "long" else quote.bid - costs.slippage_points
         distance = entry - plan.stop if plan.direction == "long" else plan.stop - entry
         if distance <= 0 or entry <= 0:
             return self._reject(quote, "invalid_stop_distance", plan)
-        risk_per_unit = ((distance + costs.slippage_points) * instrument.point_value
-                         + costs.commission_per_unit + costs.financing_per_unit) * rate
+        risk_per_unit = (
+            (distance + costs.slippage_points) * instrument.point_value
+            + costs.commission_per_unit + costs.financing_per_unit
+        ) * rate * (D(1) + conversion_fee_fraction)
         notional_per_unit = entry * instrument.point_value * rate
         if risk_per_unit <= 0 or notional_per_unit <= 0:
             return self._reject(quote, "invalid_product_value", plan)
@@ -114,8 +120,10 @@ class LivePaperPortfolio:
         margin = eligibility.broker_margin_rate
         if margin is None or margin <= 0:
             return self._reject(quote, "broker_margin_unavailable", plan)
-        estimated_cost = ((quote.ask - quote.bid + costs.slippage_points * 2) * instrument.point_value
-                          + costs.commission_per_unit + costs.financing_per_unit) * units * rate
+        estimated_cost = (
+            (quote.ask - quote.bid + costs.slippage_points * 2) * instrument.point_value
+            + costs.commission_per_unit + costs.financing_per_unit
+        ) * units * rate * (D(1) + conversion_fee_fraction)
         payload = {
             "broker_symbol": symbol, "product_label": eligibility.product_label,
             "product": instrument.product, "market": instrument.market,
@@ -131,6 +139,7 @@ class LivePaperPortfolio:
             "slippage_points": str(costs.slippage_points),
             "commission_per_unit": str(costs.commission_per_unit),
             "financing_per_unit": str(costs.financing_per_unit),
+            "conversion_fee_fraction": str(conversion_fee_fraction),
             "cost_source": costs.source, "cost_observed_at": costs.observed_at.isoformat(),
             "account_feed_hash": quote.account_feed_hash, "evidence_hash": plan.evidence_hash,
             "source_key": quote.source_key,
@@ -175,13 +184,15 @@ class LivePaperPortfolio:
         gross = signed * units * D(payload["point_value"]) * rate
         commission = D(payload["commission_per_unit"]) * units * rate
         financing = D(payload["financing_per_unit"]) * units * rate
-        net = gross - commission - financing
+        conversion_fee = (abs(gross) + commission + financing) * D(payload.get("conversion_fee_fraction", "0"))
+        net = gross - commission - financing - conversion_fee
         closed = {
             "broker_symbol": quote.instrument.broker_symbol, "strategy_id": payload["strategy_id"],
             "direction": direction, "exit_reason": reason, "exit_price": str(exit_price),
             "exit_bid": str(quote.bid), "exit_ask": str(quote.ask),
             "units": str(units), "gross_pnl_gbp": str(gross),
             "commission_gbp": str(commission), "financing_gbp": str(financing),
+            "conversion_fee_gbp": str(conversion_fee),
             "net_pnl_gbp": str(net), "conversion_rate": str(rate), "source_key": quote.source_key,
         }
         event = self._append("closed", quote.received_at, closed)

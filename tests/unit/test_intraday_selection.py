@@ -43,6 +43,7 @@ def manifest(costs=None):
         commission_per_unit=Decimal("0.1"),
         financing_per_unit=Decimal("0.1"),
         slippage_points=Decimal("0.5"),
+        conversion_fee_fraction=Decimal("0.01"),
         observed_at=datetime(2026, 1, 1, tzinfo=UTC),
         source="https://broker.example/terms",
         source_kind="broker_terms",
@@ -69,6 +70,17 @@ def test_missing_costs_retains_every_development_attempt_and_selects_nothing():
     assert report.price_scope == "historical_base_exploratory"
 
 
+def test_missing_foreign_currency_conversion_charge_rejects_every_attempt():
+    costs = ReplayCosts(
+        account_currency="GBP", quote_to_account=Decimal("0.86"),
+        slippage_points=Decimal("0.5"), commission_per_unit=Decimal("0.1"),
+        financing_per_unit=Decimal("0.1"),
+    )
+    report = run_selection(manifest(costs), {"DE30_EUR": (bar(1), bar(2), bar(3))})
+    assert report.selected == ()
+    assert all(item.rejection_reason == "costs_unverified" for item in report.attempts)
+
+
 def test_zero_trade_attempts_do_not_become_positive_selection():
     costs = ReplayCosts(
         account_currency="GBP",
@@ -76,6 +88,7 @@ def test_zero_trade_attempts_do_not_become_positive_selection():
         slippage_points=Decimal("0.5"),
         commission_per_unit=Decimal("0.1"),
         financing_per_unit=Decimal("0.1"),
+        conversion_fee_fraction=Decimal("0.01"),
     )
     report = run_selection(manifest(costs), {"DE30_EUR": (bar(1), bar(2), bar(3))})
     assert report.selected == ()
@@ -91,6 +104,7 @@ def test_lucky_three_day_replay_cannot_select_a_live_candidate(monkeypatch):
         account_currency="GBP", quote_to_account=Decimal("0.86"),
         slippage_points=Decimal("0.5"), commission_per_unit=Decimal("0.1"),
         financing_per_unit=Decimal("0.1"),
+        conversion_fee_fraction=Decimal("0.01"),
     )
     monkeypatch.setattr("src.intraday.selection.replay_session", lambda *args, **kwargs: SimpleNamespace(
         total_net_pnl=Decimal(10), trades=(object(),), gaps=0, no_trade_count=0,
@@ -108,6 +122,7 @@ def test_selection_ignores_off_session_bars_but_not_in_session_gaps():
         slippage_points=Decimal("0.5"),
         commission_per_unit=Decimal("0.1"),
         financing_per_unit=Decimal("0.1"),
+        conversion_fee_fraction=Decimal("0.01"),
     )
 
     def at(day: int, hour: int, minute: int = 0) -> ConfirmedBar:
@@ -138,6 +153,7 @@ def test_stress_rejects_rule_when_commission_and_financing_double(monkeypatch):
         account_currency="GBP", quote_to_account=Decimal("0.86"),
         slippage_points=Decimal("0.5"), commission_per_unit=Decimal(3),
         financing_per_unit=Decimal(3),
+        conversion_fee_fraction=Decimal("0.01"),
     )
     source = manifest(costs)
     source = source.model_copy(update={
@@ -166,6 +182,7 @@ def test_missing_whole_declared_session_blocks_historical_selection(monkeypatch)
         account_currency="GBP", quote_to_account=Decimal("0.86"),
         slippage_points=Decimal("0.5"), commission_per_unit=Decimal("0.1"),
         financing_per_unit=Decimal("0.1"),
+        conversion_fee_fraction=Decimal("0.01"),
     )
     source = manifest(costs).model_copy(update={
         "development_end": datetime(2026, 1, 6, tzinfo=UTC),

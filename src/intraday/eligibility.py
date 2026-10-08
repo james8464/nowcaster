@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from src.intraday.contracts import InstrumentSpec
 from src.intraday.paper import FXConversion
@@ -55,6 +55,7 @@ class CostEvidence(BaseModel):
     commission_per_unit: Decimal = Field(ge=0)
     financing_per_unit: Decimal = Field(ge=0)
     slippage_points: Decimal = Field(ge=0)
+    conversion_fee_fraction: Decimal | None = Field(default=None, ge=0, le=1)
     observed_at: datetime
     source: str
     source_kind: Literal["broker_terms", "user_attested"]
@@ -136,6 +137,10 @@ def evaluate_product(
         reasons.append("currency_conversion_unavailable")
     else:
         conversion_rate = conversion.rate
+    if instrument.quote_currency != account_currency and (
+        costs is None or costs.conversion_fee_fraction is None
+    ):
+        reasons.append("currency_conversion_fee_unverified")
     return EligibilityResult(
         instrument=instrument,
         evaluated_at=at,

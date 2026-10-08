@@ -141,6 +141,13 @@ def _assess(
         or evidence.slippage_points != costs.slippage_points
         or evidence.commission_per_unit != costs.commission_per_unit
         or evidence.financing_per_unit != costs.financing_per_unit
+        or (
+            instrument.quote_currency != costs.account_currency
+            and (
+                evidence.conversion_fee_fraction is None
+                or costs.conversion_fee_fraction != evidence.conversion_fee_fraction
+            )
+        )
     ):
         reason = "costs_unverified"
     elif not bars:
@@ -176,6 +183,10 @@ def _assess(
             + spread * (manifest.stress_multiplier - 1) / 2,
             "commission_per_unit": costs.commission_per_unit * manifest.stress_multiplier,
             "financing_per_unit": costs.financing_per_unit * manifest.stress_multiplier,
+            "conversion_fee_fraction": (
+                costs.conversion_fee_fraction * manifest.stress_multiplier
+                if costs.conversion_fee_fraction is not None else None
+            ),
         }
     )
     base_results = []

@@ -120,3 +120,41 @@ def test_one_hour_historical_time_exit_does_not_consume_next_bar_extrema():
     trade = result.trades[0]
     assert trade.exit_reason == "time_limit"
     assert trade.exited_at - trade.entered_at == timedelta(hours=1)
+
+
+def test_historical_foreign_currency_conversion_fee_reduces_net_return():
+    bars = [
+        bar(0, "100", high="101"), bar(1, "100", high="102"),
+        bar(2, "101", high="102"), bar(3, "104", high="105"),
+        bar(4, "106", high="108"), bar(5, "118", high="130", low="117"),
+    ]
+    base = costs().model_copy(update={"account_currency": "GBP", "quote_to_account": D("0.86"),
+                                      "conversion_fee_fraction": D(0)})
+    charged = base.model_copy(update={"conversion_fee_fraction": D("0.01")})
+    without = replay_session("opening_range_15", bars, session_open=T, session_close=T + timedelta(hours=1), costs=base)
+    with_fee = replay_session(
+        "opening_range_15", bars, session_open=T,
+        session_close=T + timedelta(hours=1), costs=charged,
+    )
+    assert len(without.trades) == len(with_fee.trades) == 1
+    assert with_fee.trades[0].net_pnl < without.trades[0].net_pnl
+
+
+def test_historical_position_size_respects_cost_inclusive_risk_budget():
+    bars = [
+        bar(0, "100", high="101"), bar(1, "100", high="102"),
+        bar(2, "101", high="102"), bar(3, "104", high="105"),
+        bar(4, "106", high="108"), bar(5, "118", high="130", low="117"),
+    ]
+    ordinary = costs()
+    expensive = ordinary.model_copy(update={"commission_per_unit": D("50")})
+    baseline = replay_session(
+        "opening_range_15", bars, session_open=T,
+        session_close=T + timedelta(hours=1), costs=ordinary,
+    )
+    charged = replay_session(
+        "opening_range_15", bars, session_open=T,
+        session_close=T + timedelta(hours=1), costs=expensive,
+    )
+    assert len(baseline.trades) == len(charged.trades) == 1
+    assert charged.trades[0].units < baseline.trades[0].units

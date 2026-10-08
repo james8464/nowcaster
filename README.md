@@ -40,7 +40,16 @@ zero-trade or loss result. It separates development, validation and sealed
 chronology, stresses execution costs and requires positive net evidence before
 returning a candidate; these historical candles remain exploratory, not
 account-specific live fills.
-The stressed screen now raises slippage, commission and financing together.
+The stressed screen now raises slippage, commission, financing and any
+foreign-currency conversion charge together. For a GBP practice account,
+all four current candidate products have a EUR or USD quote currency; omitting
+the conversion charge blocks selection instead of making its returns look
+better. OANDA UK [describes a 1% home-currency conversion
+markup/markdown](https://www.oanda.com/uk-en/trading/our-charges/), but an
+exact-product cost file and a fresh GBP conversion are still needed before
+paper eligibility. Historical sizing includes estimated exit costs in its
+per-trade risk budget. Historical base prices still cannot prove an account
+quote or executable result.
 A wholly missing declared weekday between observed sessions blocks selection;
 without a verified holiday calendar, it is treated conservatively as a data
 gap. Selection inputs must declare a download window covering the sealed
@@ -96,7 +105,7 @@ the setup. Completed days are cached after validation; the current day's
 report is rebuilt off the quote-processing path so reporting cannot hold up
 incoming prices. Results from a different practice account cannot be mixed
 into the same report. The report reconciles gross
-P&L with commissions and financing, and reports net expectancy, win rate,
+P&L with commissions, financing and conversion charges, and reports net expectancy, win rate,
 drawdown and a daily-block uncertainty bound only when the sample supports
 one. A high win rate can still have negative net P&L. The initial diagnostic
 run has no authorized paper entries, so its report correctly starts empty.

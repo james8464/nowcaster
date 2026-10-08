@@ -22,6 +22,7 @@ class ReplayCosts(BaseModel):
     slippage_points: Decimal = Field(ge=0)
     commission_per_unit: Decimal = Field(ge=0)
     financing_per_unit: Decimal = Field(ge=0)
+    conversion_fee_fraction: Decimal | None = Field(default=None, ge=0, le=1)
 
     @model_validator(mode="after")
     def validate_costs(self):
@@ -84,6 +85,8 @@ def replay_session(
         raise ValueError("mixed broker instrument")
     if any(bar.price_scope != "historical_base" for bar in bars):
         raise ValueError("historical replay requires historical-base candles")
+    if instrument.quote_currency != costs.account_currency and costs.conversion_fee_fraction is None:
+        raise ValueError("foreign-currency conversion fee must be explicit")
     if list(bars) != sorted(bars, key=lambda item: item.start) or len({bar.start for bar in bars}) != len(bars):
         raise ValueError("bars must be unique and chronological")
     gaps = sum(left.end != right.start for left, right in zip(bars, bars[1:], strict=False))
@@ -133,7 +136,11 @@ def replay_session(
         if distance <= 0:
             no_trade_count += 1
             continue
-        risk_units = initial_equity * D("0.0025") / (distance * instrument.point_value * costs.quote_to_account)
+        risk_per_unit = (
+            (distance + costs.slippage_points) * instrument.point_value
+            + costs.commission_per_unit + costs.financing_per_unit
+        ) * costs.quote_to_account * (D(1) + (costs.conversion_fee_fraction or D(0)))
+        risk_units = initial_equity * D("0.0025") / risk_per_unit
         exposure_units = initial_equity * D("0.25") / (entry * instrument.point_value * costs.quote_to_account)
         units = min(risk_units, exposure_units)
         if units <= 0:
@@ -171,6 +178,7 @@ def replay_session(
                 reason = "stop" if stop_hit else "target" if target_hit else "time_limit"
                 gross = points * units * instrument.point_value * costs.quote_to_account
                 expenses = (costs.commission_per_unit + costs.financing_per_unit) * units * costs.quote_to_account
+                conversion_fee = (abs(gross) + expenses) * (costs.conversion_fee_fraction or D(0))
                 closed = ReplayTrade(
                     strategy_id,
                     plan.direction,
@@ -181,7 +189,7 @@ def replay_session(
                     exit_price,
                     units,
                     reason,
-                    gross - expenses,
+                    gross - expenses - conversion_fee,
                     plan.evidence_hash,
                 )
                 break

@@ -90,6 +90,23 @@ def test_empty_journal_never_reports_zero_as_proven_expectancy(tmp_path):
     assert report.evidence_status == "insufficient_evidence"
 
 
+def test_report_reconciles_foreign_currency_conversion_charge(tmp_path):
+    journal = PaperJournal(tmp_path, "c" * 64)
+    append(journal, "opened", T, {
+        "broker_symbol": "DE30_EUR", "strategy_id": "trend_pullback", "direction": "long",
+        "entry": "100", "opened_at": T.isoformat(), "quote_currency": "EUR",
+        "conversion_fee_fraction": "0.01",
+    })
+    append(journal, "closed", T + timedelta(minutes=5), {
+        "broker_symbol": "DE30_EUR", "direction": "long", "gross_pnl_gbp": "10",
+        "commission_gbp": "1", "financing_gbp": "1", "conversion_fee_gbp": "0.12",
+        "net_pnl_gbp": "7.88", "exit_reason": "target",
+    })
+    report = build_report(journal, round_id="round-2", started_at=T, as_of=T + timedelta(minutes=5))
+    assert report.conversion_fee_gbp == Decimal("0.12")
+    assert report.net_pnl_gbp == Decimal("7.88")
+
+
 def test_high_win_rate_can_still_have_negative_net_result(tmp_path):
     journal = PaperJournal(tmp_path, "c" * 64)
     for index, net in enumerate(("1", "1", "1", "-10")):
