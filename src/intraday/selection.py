@@ -104,6 +104,24 @@ def _sessions(bars: tuple[ConfirmedBar, ...]) -> tuple[tuple[ConfirmedBar, ...],
     return tuple(tuple(group) for group in groups)
 
 
+def _missing_declared_sessions(bars: tuple[ConfirmedBar, ...], weekdays: tuple[int, ...]) -> int:
+    """Fail closed on a wholly absent declared weekday between observed sessions.
+
+    A broker holiday may explain a missing day, but without an explicit calendar
+    the historical screen cannot distinguish that from missing market data.
+    """
+    if len(bars) < 2:
+        return 0
+    present = {bar.start.date() for bar in bars}
+    day = min(present) + timedelta(days=1)
+    last = max(present)
+    missing = 0
+    while day < last:
+        missing += day.weekday() in weekdays and day not in present
+        day += timedelta(days=1)
+    return missing
+
+
 def _assess(
     manifest: SelectionManifest,
     instrument: InstrumentSpec,
@@ -153,7 +171,12 @@ def _assess(
     assert costs is not None
     spread = max((bar.ask_close - bar.bid_close for bar in bars), default=D(0))
     stressed = costs.model_copy(
-        update={"slippage_points": costs.slippage_points + spread * (manifest.stress_multiplier - 1) / 2}
+        update={
+            "slippage_points": costs.slippage_points * manifest.stress_multiplier
+            + spread * (manifest.stress_multiplier - 1) / 2,
+            "commission_per_unit": costs.commission_per_unit * manifest.stress_multiplier,
+            "financing_per_unit": costs.financing_per_unit * manifest.stress_multiplier,
+        }
     )
     base_results = []
     stressed_results = []
@@ -165,6 +188,8 @@ def _assess(
     stressed_net = sum((item.total_net_pnl for item in stressed_results), D(0))
     count = sum(len(item.trades) for item in base_results)
     gaps = sum(item.gaps for item in base_results)
+    if evidence is not None:
+        gaps += _missing_declared_sessions(bars, evidence.session.weekdays)
     lower = _daily_block_lower(tuple(item.total_net_pnl for item in base_results))
     reason = (
         "historical_gap" if gaps else

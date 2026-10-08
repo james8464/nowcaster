@@ -2,15 +2,19 @@ import json
 
 import pytest
 
-from src.intraday.selection_round import run_registered_selection
 from scripts.run_intraday_selection import main
+from src.intraday.selection_round import run_registered_selection
 from tests.unit.test_intraday_selection import INSTRUMENT, bar, manifest
 
 
 def test_registered_selection_retains_inputs_and_every_rejected_attempt(tmp_path):
     source = tmp_path / "DE30_EUR.jsonl"
     source.write_text(
-        json.dumps({"schema_version": 1, "price_scope": "historical_base", "instrument": INSTRUMENT.model_dump(mode="json")})
+        json.dumps({
+            "schema_version": 1, "price_scope": "historical_base",
+            "instrument": INSTRUMENT.model_dump(mode="json"),
+            "requested_start": "2026-01-01T00:00:00+00:00", "requested_end": "2026-01-04T00:00:00+00:00",
+        })
         + "\n" + "\n".join(bar(day).model_dump_json() for day in (1, 2, 3)) + "\n"
     )
     target = tmp_path / "round-2"
@@ -59,6 +63,7 @@ def test_selection_command_preserves_failed_round_without_enabling_live_rule(tmp
     source = tmp_path / "DE30_EUR.jsonl"
     source.write_text(json.dumps({
         "schema_version": 1, "price_scope": "historical_base", "instrument": INSTRUMENT.model_dump(mode="json"),
+        "requested_start": "2026-01-01T00:00:00+00:00", "requested_end": "2026-01-04T00:00:00+00:00",
     }) + "\n")
     config = tmp_path / "manifest.json"
     config.write_text(manifest().model_dump_json())
@@ -66,3 +71,19 @@ def test_selection_command_preserves_failed_round_without_enabling_live_rule(tmp
     assert main(["--manifest", str(config), "--input", f"DE30_EUR={source}", "--output-directory", str(target)]) == 0
     assert json.loads((target / "selection.json").read_text())["activates_live_rule"] is False
     assert "selected 0" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("requested_end", [None, "2026-01-03T00:00:00+00:00"])
+def test_selection_refuses_missing_or_truncated_declared_history(tmp_path, requested_end):
+    header = {
+        "schema_version": 1, "price_scope": "historical_base",
+        "instrument": INSTRUMENT.model_dump(mode="json"),
+        "requested_start": "2026-01-01T00:00:00+00:00",
+    }
+    if requested_end is not None:
+        header["requested_end"] = requested_end
+    source = tmp_path / "DE30_EUR.jsonl"
+    source.write_text(json.dumps(header) + "\n" + bar(1).model_dump_json() + "\n")
+    with pytest.raises(ValueError, match="declared history window"):
+        run_registered_selection(manifest(), {"DE30_EUR": source}, tmp_path / "round-2")
+    assert not (tmp_path / "round-2").exists()

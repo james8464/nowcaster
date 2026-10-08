@@ -129,3 +129,57 @@ def test_selection_ignores_off_session_bars_but_not_in_session_gaps():
     missing_inside = tuple(item for item in bars if item.start != datetime(2026, 1, 1, 7, 5, tzinfo=UTC))
     report_with_gap = run_selection(manifest(costs), {"DE30_EUR": missing_inside})
     assert any(item.rejection_reason == "historical_gap" for item in report_with_gap.attempts)
+
+
+def test_stress_rejects_rule_when_commission_and_financing_double(monkeypatch):
+    from types import SimpleNamespace
+
+    costs = ReplayCosts(
+        account_currency="GBP", quote_to_account=Decimal("0.86"),
+        slippage_points=Decimal("0.5"), commission_per_unit=Decimal(3),
+        financing_per_unit=Decimal(3),
+    )
+    source = manifest(costs)
+    source = source.model_copy(update={
+        "cost_evidence": {"DE30_EUR": source.cost_evidence["DE30_EUR"].model_copy(update={
+            "commission_per_unit": Decimal(3), "financing_per_unit": Decimal(3),
+        })},
+    })
+
+    def replay(_rule, _bars, *, costs, **_kwargs):
+        net = Decimal(10) - costs.commission_per_unit - costs.financing_per_unit
+        return SimpleNamespace(total_net_pnl=net, trades=(object(),), gaps=0, no_trade_count=0)
+
+    monkeypatch.setattr("src.intraday.selection.replay_session", replay)
+    monkeypatch.setattr("src.intraday.selection._daily_block_lower", lambda _values: Decimal(1))
+    report = run_selection(source, {"DE30_EUR": (bar(1), bar(2), bar(3))})
+    attempt = next(item for item in report.attempts if item.stage == "development")
+    assert attempt.net_pnl == Decimal(4)
+    assert attempt.stressed_net_pnl == Decimal(-2)
+    assert attempt.rejection_reason == "insufficient_net_evidence"
+
+
+def test_missing_whole_declared_session_blocks_historical_selection(monkeypatch):
+    from types import SimpleNamespace
+
+    costs = ReplayCosts(
+        account_currency="GBP", quote_to_account=Decimal("0.86"),
+        slippage_points=Decimal("0.5"), commission_per_unit=Decimal("0.1"),
+        financing_per_unit=Decimal("0.1"),
+    )
+    source = manifest(costs).model_copy(update={
+        "development_end": datetime(2026, 1, 6, tzinfo=UTC),
+        "validation_end": datetime(2026, 1, 7, tzinfo=UTC),
+        "sealed_end": datetime(2026, 1, 8, tzinfo=UTC),
+        "minimum_stage_sessions": 2,
+        "minimum_stage_trades": 2,
+    })
+    monkeypatch.setattr("src.intraday.selection.replay_session", lambda *args, **kwargs: SimpleNamespace(
+        total_net_pnl=Decimal(10), trades=(object(),), gaps=0, no_trade_count=0,
+    ))
+    monkeypatch.setattr("src.intraday.selection._daily_block_lower", lambda _values: Decimal(1))
+    report = run_selection(source, {"DE30_EUR": (bar(1), bar(5), bar(6), bar(7))})
+    development = [item for item in report.attempts if item.stage == "development"]
+    assert all(item.rejection_reason == "historical_gap" for item in development)
+    assert all(item.gap_count >= 1 for item in development)
+    assert report.selected == ()

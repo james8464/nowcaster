@@ -40,6 +40,11 @@ zero-trade or loss result. It separates development, validation and sealed
 chronology, stresses execution costs and requires positive net evidence before
 returning a candidate; these historical candles remain exploratory, not
 account-specific live fills.
+The stressed screen now raises slippage, commission and financing together.
+A wholly missing declared weekday between observed sessions blocks selection;
+without a verified holiday calendar, it is treated conservatively as a data
+gap. Selection inputs must declare a download window covering the sealed
+period, so a truncated download cannot masquerade as a complete test.
 By default, each historical stage needs at least 30 observed sessions and 30
 closed hypothetical trades. A lucky three-day result cannot pass that default
 gate. The pre-registered manifest can set a different minimum; no historical

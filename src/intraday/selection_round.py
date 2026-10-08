@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 from dataclasses import asdict
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from src.intraday.contracts import ConfirmedBar
@@ -52,7 +53,18 @@ def run_registered_selection(
             or header.get("instrument") != instruments[symbol].model_dump(mode="json")
         ):
             raise ValueError("historical header product or scope mismatch")
-        bars_by_product[symbol] = tuple(ConfirmedBar.model_validate_json(line) for line in lines[1:])
+        try:
+            start = datetime.fromisoformat(header["requested_start"].replace("Z", "+00:00"))
+            end = datetime.fromisoformat(header["requested_end"].replace("Z", "+00:00"))
+            if (start.utcoffset() != timedelta(0) or end.utcoffset() != timedelta(0)
+                    or start >= manifest.development_end or end < manifest.sealed_end or end <= start):
+                raise ValueError("declared history window does not cover the selection stages")
+        except (KeyError, TypeError, AttributeError) as exc:
+            raise ValueError("declared history window is missing or invalid") from exc
+        bars = tuple(ConfirmedBar.model_validate_json(line) for line in lines[1:])
+        if any(not start <= bar.start or bar.end > end for bar in bars):
+            raise ValueError("declared history window excludes a retained bar")
+        bars_by_product[symbol] = bars
         original_bytes[symbol] = contents
         input_hashes[symbol] = hashlib.sha256(contents).hexdigest()
     report = run_selection(manifest, bars_by_product)
