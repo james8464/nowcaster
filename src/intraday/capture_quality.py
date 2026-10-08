@@ -21,6 +21,7 @@ class CaptureQuality(BaseModel):
     quote_count: int = Field(ge=0)
     tradeable_quote_count: int = Field(ge=0)
     invalid_quote_count: int = Field(ge=0)
+    out_of_window_quote_count: int = Field(default=0, ge=0)
     coverage: Decimal = Field(ge=0, le=1)
     median_spread: Decimal | None = None
     p95_spread: Decimal | None = None
@@ -53,7 +54,7 @@ def summarize_capture(
     covered: set[int] = set()
     spreads: list[Decimal] = []
     received_times: list[datetime] = []
-    quote_count = tradeable_count = invalid_count = 0
+    quote_count = tradeable_count = invalid_count = out_of_window_count = 0
     for event in events:
         if event.get("kind") != "quote":
             continue
@@ -64,11 +65,14 @@ def summarize_capture(
         try:
             observed = datetime.fromisoformat(payload["observed_at"])
             received = datetime.fromisoformat(event["at"])
+            if observed.utcoffset() != timedelta(0) or received.utcoffset() != timedelta(0):
+                raise ValueError("non-UTC account quote")
+            if (observed >= as_of and received >= as_of) or (observed < opened_at and received < opened_at):
+                out_of_window_count += 1
+                continue
             bid, ask = Decimal(payload["bid"]), Decimal(payload["ask"])
             if (
-                observed.utcoffset() != timedelta(0)
-                or received.utcoffset() != timedelta(0)
-                or not opened_at <= observed <= received <= as_of
+                not opened_at <= observed <= received <= as_of
                 or received - observed > timedelta(seconds=5)
                 or not bid.is_finite()
                 or not ask.is_finite()
@@ -99,6 +103,7 @@ def summarize_capture(
         quote_count=quote_count,
         tradeable_quote_count=tradeable_count,
         invalid_quote_count=invalid_count,
+        out_of_window_quote_count=out_of_window_count,
         coverage=Decimal(len(covered)) / expected if expected else Decimal(0),
         median_spread=(spreads[(len(spreads) - 1) // 2] + spreads[len(spreads) // 2]) / 2 if spreads else None,
         p95_spread=spreads[ceil(len(spreads) * 0.95) - 1] if spreads else None,

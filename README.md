@@ -91,6 +91,10 @@ declared five-minute intervals contained an observed tradeable account quote,
 plus median and high-end spreads. These are feed observations, not proof that
 an order could have filled or permission to paper-trade. The declared session
 window is still provisional until exact broker hours are verified.
+In the capture report, `quote_count` includes all recorded account updates;
+`out_of_window_quote_count` separately identifies updates before or after the
+declared research window. Such updates do not inflate `invalid_quote_count`,
+the tradeable count, or the in-window spread statistics.
 At this stage its setups are diagnostic until the paper portfolio is wired
 into the Mac service.
 The separate paper-portfolio core can size a hypothetical position across
