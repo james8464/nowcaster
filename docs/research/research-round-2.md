@@ -41,3 +41,5 @@ The public Binance source is identified as public research data. It is not prese
 ## Practical limit
 
 Research Round 2 can help someone inspect whether an idea was tested causally and whether its evidence is complete enough to study further. It cannot remove market risk, predict the next move, or make day trading reliable. If quality is incomplete, the correct output is abstention.
+
+A distinct, later OANDA SPX500 CFD [last-half-hour historical hypothesis](spx500-last-half-hour-2026-10-08.md) is recorded separately; it failed its 2022–2023 development sample and was not promoted.
