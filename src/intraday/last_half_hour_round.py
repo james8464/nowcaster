@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import random
+import tempfile
 from collections import defaultdict
 from collections.abc import Sequence
 from datetime import UTC, date, datetime, time, timedelta
@@ -124,7 +125,7 @@ def _maximum_drawdown(values: Sequence[Decimal]) -> Decimal:
     return worst
 
 
-def _record_rejection(directory: Path, stage: str, reason: str) -> None:
+def _record_rejection(directory: Path, stage: str, reason: str, source_hash: str | None = None) -> None:
     """Retain failed selection requests without opening their sealed capture."""
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / "rejections.jsonl"
@@ -143,6 +144,7 @@ def _record_rejection(directory: Path, stage: str, reason: str) -> None:
         event = {
             "at": datetime.now(UTC).isoformat(), "stage": stage, "reason": reason,
             "protocol_sha256": hashlib.sha256(json.dumps(PROTOCOL, sort_keys=True).encode()).hexdigest(),
+            "source_sha256": source_hash,
             "previous_hash": previous,
         }
         event["event_hash"] = hashlib.sha256(json.dumps(event, sort_keys=True).encode()).hexdigest()
@@ -151,7 +153,162 @@ def _record_rejection(directory: Path, stage: str, reason: str) -> None:
         os.fsync(stream.fileno())
 
 
+def _source_digest(paths: Sequence[Path]) -> str:
+    digest = hashlib.sha256()
+    for path in paths:
+        content = Path(path).read_bytes()
+        digest.update(len(content).to_bytes(8, "big"))
+        digest.update(content)
+    return digest.hexdigest()
+
+
+def _parse_stage_commits(lines: Sequence[bytes]) -> list[dict]:
+    commits = []
+    previous = "0" * 64
+    for line in lines:
+        event = json.loads(line)
+        event_hash = event.pop("event_hash")
+        if event.get("previous_hash") != previous or hashlib.sha256(
+            json.dumps(event, sort_keys=True).encode()
+        ).hexdigest() != event_hash:
+            raise ValueError("prerequisite integrity: stage journal hash chain mismatch")
+        previous = event_hash
+        event["event_hash"] = event_hash
+        commits.append(event)
+    return commits
+
+
+def _stage_commits(directory: Path) -> list[dict]:
+    path = directory / "stages.jsonl"
+    if not path.exists():
+        return []
+    with path.open("a+b") as stream:
+        fcntl.flock(stream, fcntl.LOCK_EX)
+        return _read_locked_stage_commits(stream, directory)
+
+
+def _read_locked_stage_commits(stream, directory: Path) -> list[dict]:
+    stream.seek(0)
+    content = stream.read()
+    if not content:
+        return []
+    if content.endswith(b"\n"):
+        return _parse_stage_commits(content.splitlines())
+    prefix, separator, tail = content.rpartition(b"\n")
+    committed_prefix = prefix + separator
+    prior = _parse_stage_commits(committed_prefix.splitlines())
+    try:
+        json.loads(tail)
+    except (ValueError, UnicodeDecodeError):
+        recovery = directory / "recovery-artifacts"
+        recovery.mkdir(exist_ok=True)
+        saved = Path(tempfile.mkdtemp(prefix="journal-", dir=recovery)) / "partial.jsonl"
+        with saved.open("xb") as output:
+            output.write(tail)
+            output.flush()
+            os.fsync(output.fileno())
+        stream.seek(len(committed_prefix))
+        stream.truncate()
+        stream.flush()
+        os.fsync(stream.fileno())
+        return prior
+    commits = _parse_stage_commits(content.splitlines())
+    stream.seek(0, os.SEEK_END)
+    stream.write(b"\n")
+    stream.flush()
+    os.fsync(stream.fileno())
+    return commits
+
+
+def _result_bytes(result: dict) -> bytes:
+    return (json.dumps(result, sort_keys=True, indent=2) + "\n").encode()
+
+
+def _restore_committed_result(directory: Path, event: dict, protocol_hash: str) -> None:
+    result = event.get("result")
+    if not isinstance(result, dict):
+        raise ValueError("prerequisite integrity: committed result missing")
+    content = _result_bytes(result)
+    if (
+        event.get("result_sha256") != hashlib.sha256(content).hexdigest()
+        or event.get("protocol_sha256") != protocol_hash
+        or result.get("stage") != event.get("stage")
+        or result.get("protocol_sha256") != protocol_hash
+        or result.get("source_sha256") != event.get("source_sha256")
+    ):
+        raise ValueError("prerequisite integrity: committed result identity changed")
+    path = directory / f"{event['stage']}.json"
+    with (directory / ".recovery.lock").open("a+b") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if path.exists() and path.read_bytes() != content:
+            valid_json = True
+            try:
+                observed = json.loads(path.read_bytes())
+            except (ValueError, UnicodeDecodeError):
+                valid_json = False
+            if valid_json and observed != result:
+                raise ValueError("prerequisite integrity: result or identity changed")
+            recovery = directory / "recovery-artifacts"
+            recovery.mkdir(exist_ok=True)
+            saved = Path(tempfile.mkdtemp(prefix=f"{event['stage']}-", dir=recovery)) / "partial.json"
+            os.replace(path, saved)
+        if not path.exists():
+            with path.open("xb") as stream:
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
+        if path.read_bytes() != content:
+            raise ValueError("prerequisite integrity: result or identity changed")
+
+
+def _verify_prerequisites(directory: Path, stage: str, manifest_bytes: bytes) -> None:
+    expected = list(WINDOWS)[:list(WINDOWS).index(stage)]
+    commits = _stage_commits(directory)
+    if [event.get("stage") for event in commits] != expected:
+        raise ValueError("prerequisite integrity: stage commits missing or out of order")
+    protocol_hash = hashlib.sha256(manifest_bytes).hexdigest()
+    for name, event in zip(expected, commits, strict=True):
+        if event.get("stage") != name:
+            raise ValueError("prerequisite integrity: stage identity changed")
+        _restore_committed_result(directory, event, protocol_hash)
+
+
+def _commit_stage(directory: Path, stage: str, result: dict, manifest_bytes: bytes) -> None:
+    with (directory / "stages.jsonl").open("a+b") as stream:
+        fcntl.flock(stream, fcntl.LOCK_EX)
+        commits = _read_locked_stage_commits(stream, directory)
+        expected_prior = list(WINDOWS)[:list(WINDOWS).index(stage)]
+        if [event.get("stage") for event in commits] != expected_prior:
+            raise ValueError("prerequisite integrity: stage commit order changed")
+        event = {
+            "stage": stage,
+            "protocol_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+            "source_sha256": result["source_sha256"],
+            "result_sha256": hashlib.sha256(_result_bytes(result)).hexdigest(),
+            "result": result,
+            "previous_hash": commits[-1]["event_hash"] if commits else "0" * 64,
+        }
+        event["event_hash"] = hashlib.sha256(json.dumps(event, sort_keys=True).encode()).hexdigest()
+        stream.seek(0, os.SEEK_END)
+        stream.write((json.dumps(event, sort_keys=True) + "\n").encode())
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
 def run_stage(stage: str, captures: Sequence[Path], directory: Path) -> dict:
+    """Retain every post-capture failure with its attempted source identity."""
+    state: dict[str, str] = {}
+    try:
+        return _run_stage(stage, captures, directory, state)
+    except Exception:
+        if state.get("phase") == "evaluating":
+            _record_rejection(
+                Path(directory).expanduser().resolve(), stage, "stage_data_invalid", state.get("source_hash")
+            )
+        raise
+
+
+def _run_stage(stage: str, captures: Sequence[Path], directory: Path, state: dict[str, str]) -> dict:
     """Run once per fixed stage. Never overwrite or promote an exploratory result."""
     if stage not in WINDOWS or not captures:
         raise ValueError("registered stage and captures required")
@@ -160,18 +317,25 @@ def run_stage(stage: str, captures: Sequence[Path], directory: Path) -> dict:
         raise ValueError("protected prospective study path")
     manifest_bytes = (json.dumps(PROTOCOL, sort_keys=True, indent=2) + "\n").encode()
     manifest = directory / "protocol.json"
+    if stage != "development" and not manifest.exists():
+        _record_rejection(directory, stage, "missing_protocol")
+        raise ValueError("research protocol missing before later stage")
     if manifest.exists() and manifest.read_bytes() != manifest_bytes:
         _record_rejection(directory, stage, "protocol_mismatch")
         raise ValueError("research protocol changed")
     target = directory / f"{stage}.json"
+    commits = _stage_commits(directory)
+    committed = next((event for event in commits if event.get("stage") == stage), None)
+    if committed is not None:
+        _restore_committed_result(directory, committed, hashlib.sha256(manifest_bytes).hexdigest())
     if target.exists():
         _record_rejection(directory, stage, "stage_already_recorded")
         raise FileExistsError("research stage already recorded")
-    if stage != "development":
-        prerequisite = "development" if stage == "validation" else "validation"
-        if not (directory / f"{prerequisite}.json").exists():
-            _record_rejection(directory, stage, "missing_prerequisite")
-            raise ValueError("earlier research stage must precede this one")
+    try:
+        _verify_prerequisites(directory, stage, manifest_bytes)
+    except (ValueError, KeyError, json.JSONDecodeError):
+        _record_rejection(directory, stage, "prerequisite_integrity")
+        raise
     if stage == "sealed":
         for prerequisite in ("development", "validation"):
             prior_result = json.loads((directory / f"{prerequisite}.json").read_text(encoding="utf-8"))
@@ -184,10 +348,14 @@ def run_stage(stage: str, captures: Sequence[Path], directory: Path) -> dict:
                 raise ValueError("sealed data cannot be inspected after failed coverage or net return gates")
     # The sealed capture is not even opened until the earlier-stage gates pass.
     try:
+        source_digest = _source_digest(captures)
         bars, source_hash = _read_captures(captures, stage)
+        if source_hash != source_digest:
+            raise ValueError("capture changed during stage read")
     except (OSError, ValueError, json.JSONDecodeError):
-        _record_rejection(directory, stage, "capture_invalid")
+        _record_rejection(directory, stage, "capture_invalid", locals().get("source_digest"))
         raise
+    state.update(phase="evaluating", source_hash=source_hash)
     start, end = WINDOWS[stage]
     grouped: dict[date, list[ConfirmedBar]] = defaultdict(list)
     # Group by exchange-local session date; UTC offsets change with DST.
@@ -267,9 +435,10 @@ def run_stage(stage: str, captures: Sequence[Path], directory: Path) -> dict:
             stream.write(manifest_bytes)
             stream.flush()
             os.fsync(stream.fileno())
-    with target.open("x", encoding="utf-8") as stream:
-        json.dump(result, stream, sort_keys=True, indent=2)
-        stream.write("\n")
+    _commit_stage(directory, stage, result, manifest_bytes)
+    with target.open("xb") as stream:
+        stream.write(_result_bytes(result))
         stream.flush()
         os.fsync(stream.fileno())
+    state["phase"] = "complete"
     return result
