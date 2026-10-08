@@ -40,6 +40,11 @@ zero-trade or loss result. It separates development, validation and sealed
 chronology, stresses execution costs and requires positive net evidence before
 returning a candidate; these historical candles remain exploratory, not
 account-specific live fills.
+The new multi-product practice-stream core records sanitized quotes and
+decisions in a separate append-only journal. A restart, stale quote or broken
+five-minute bar forces a fresh warm-up instead of filling an imagined trade.
+At this stage its setups are diagnostic until the paper portfolio and Mac
+service are connected.
 The command follows one session at a time; later sessions can
 retain the same frozen paper study, but automatic reconnect and unattended
 multi-day collection are not complete. [OANDA's account stream](https://developer.oanda.com/rest-live-v20/pricing-ep/)
