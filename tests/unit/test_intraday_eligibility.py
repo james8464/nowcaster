@@ -31,7 +31,8 @@ def evidence(session_end=20, conversion_fee=Decimal("0.01")):
 
 
 def fx(at=NOW):
-    return FXConversion(from_currency="EUR", to_currency="GBP", rate=Decimal("0.86"), observed_at=at)
+    return FXConversion(from_currency="EUR", to_currency="GBP", position_value=Decimal("0.85"),
+                        account_gain=Decimal("0.84"), account_loss=Decimal("0.86"), observed_at=at)
 
 
 def test_inventory_alone_cannot_enable_paper_entry():
@@ -75,3 +76,15 @@ def test_foreign_currency_product_cannot_enter_without_source_backed_conversion_
     result = evaluate_product(product(), row(), evidence(conversion_fee=None), fx(), NOW)
     assert not result.paper_eligible
     assert "currency_conversion_fee_unverified" in result.reasons
+
+
+def test_account_conversion_keeps_distinct_gain_loss_and_position_factors():
+    conversion = FXConversion(
+        from_currency="EUR", to_currency="GBP", position_value=Decimal("0.85"),
+        account_gain=Decimal("0.84"), account_loss=Decimal("0.86"), observed_at=NOW,
+    )
+    result = evaluate_product(product(), row(), evidence(), conversion, NOW)
+    assert result.paper_eligible
+    assert result.conversion_rate == Decimal("0.85")
+    assert result.conversion_gain_rate == Decimal("0.84")
+    assert result.conversion_loss_rate == Decimal("0.86")

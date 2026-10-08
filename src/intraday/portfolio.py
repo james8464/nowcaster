@@ -73,7 +73,8 @@ class LivePaperPortfolio:
             raise ValueError("paper product identity mismatch")
         if plan.status != "ready":
             return self._reject(quote, "no_trade_plan", plan)
-        if not eligibility.paper_eligible or eligibility.costs is None or eligibility.conversion_rate is None:
+        if (not eligibility.paper_eligible or eligibility.costs is None or eligibility.conversion_rate is None
+                or eligibility.conversion_gain_rate is None or eligibility.conversion_loss_rate is None):
             return self._reject(quote, "product_not_paper_eligible", plan)
         if (
             eligibility.evaluated_at > quote.received_at
@@ -99,6 +100,7 @@ class LivePaperPortfolio:
             return self._reject(quote, "drawdown_halt", plan)
         costs = eligibility.costs
         rate = eligibility.conversion_rate
+        loss_rate = eligibility.conversion_loss_rate
         conversion_fee_fraction = costs.conversion_fee_fraction or D(0)
         entry = quote.ask + costs.slippage_points if plan.direction == "long" else quote.bid - costs.slippage_points
         distance = entry - plan.stop if plan.direction == "long" else plan.stop - entry
@@ -107,7 +109,7 @@ class LivePaperPortfolio:
         risk_per_unit = (
             (distance + costs.slippage_points) * instrument.point_value
             + costs.commission_per_unit + costs.financing_per_unit
-        ) * rate * (D(1) + conversion_fee_fraction)
+        ) * loss_rate
         notional_per_unit = entry * instrument.point_value * rate
         if risk_per_unit <= 0 or notional_per_unit <= 0:
             return self._reject(quote, "invalid_product_value", plan)
@@ -123,7 +125,7 @@ class LivePaperPortfolio:
         estimated_cost = (
             (quote.ask - quote.bid + costs.slippage_points * 2) * instrument.point_value
             + costs.commission_per_unit + costs.financing_per_unit
-        ) * units * rate * (D(1) + conversion_fee_fraction)
+        ) * units * loss_rate
         payload = {
             "broker_symbol": symbol, "product_label": eligibility.product_label,
             "product": instrument.product, "market": instrument.market,
@@ -133,6 +135,8 @@ class LivePaperPortfolio:
             "stop": str(plan.stop), "target": str(plan.target), "exit_by": plan.exit_by.isoformat(),
             "units": str(units), "point_value": str(instrument.point_value),
             "quote_currency": instrument.quote_currency, "conversion_rate": str(rate),
+            "account_gain_rate": str(eligibility.conversion_gain_rate),
+            "account_loss_rate": str(loss_rate),
             "notional_gbp": str(notional), "effective_leverage": str((self.open_notional_gbp + notional) / self.equity),
             "broker_margin_rate": str(margin), "margin_estimate_gbp": str(notional * margin),
             "estimated_roundtrip_cost_gbp": str(estimated_cost),
@@ -159,13 +163,15 @@ class LivePaperPortfolio:
         if quote.account_feed_hash != payload["account_feed_hash"] or quote.observed_at <= opened_at:
             return None
         if payload["quote_currency"] == "GBP":
-            rate = D(1)
+            position_rate = gain_rate = loss_rate = D(1)
         elif (conversion is None or conversion.from_currency != payload["quote_currency"]
               or conversion.to_currency != "GBP" or conversion.observed_at > quote.received_at
               or quote.received_at - conversion.observed_at > timedelta(seconds=15)):
             return None
         else:
-            rate = conversion.rate
+            position_rate = conversion.position_value
+            gain_rate = conversion.account_gain
+            loss_rate = conversion.account_loss
         direction = payload["direction"]
         executable = quote.bid if direction == "long" else quote.ask
         stop, target = D(payload["stop"]), D(payload["target"])
@@ -181,10 +187,16 @@ class LivePaperPortfolio:
         exit_price = executable - slippage if direction == "long" else executable + slippage
         signed = exit_price - D(payload["entry"]) if direction == "long" else D(payload["entry"]) - exit_price
         units = D(payload["units"])
-        gross = signed * units * D(payload["point_value"]) * rate
-        commission = D(payload["commission_per_unit"]) * units * rate
-        financing = D(payload["financing_per_unit"]) * units * rate
-        conversion_fee = (abs(gross) + commission + financing) * D(payload.get("conversion_fee_fraction", "0"))
+        gross_quote = signed * units * D(payload["point_value"])
+        gross = gross_quote * position_rate
+        actual_gross = gross_quote * (gain_rate if gross_quote >= 0 else loss_rate)
+        commission = D(payload["commission_per_unit"]) * units * position_rate
+        financing = D(payload["financing_per_unit"]) * units * position_rate
+        actual_expenses = (D(payload["commission_per_unit"]) + D(payload["financing_per_unit"])) * units * loss_rate
+        # Account gain/loss factors already include OANDA's conversion adjustment.
+        # Report its effect separately; charging the declared percentage again
+        # would double-count it.
+        conversion_fee = (gross - actual_gross) + (actual_expenses - commission - financing)
         net = gross - commission - financing - conversion_fee
         closed = {
             "broker_symbol": quote.instrument.broker_symbol, "strategy_id": payload["strategy_id"],
@@ -193,7 +205,9 @@ class LivePaperPortfolio:
             "units": str(units), "gross_pnl_gbp": str(gross),
             "commission_gbp": str(commission), "financing_gbp": str(financing),
             "conversion_fee_gbp": str(conversion_fee),
-            "net_pnl_gbp": str(net), "conversion_rate": str(rate), "source_key": quote.source_key,
+            "net_pnl_gbp": str(net), "conversion_rate": str(position_rate),
+            "account_gain_rate": str(gain_rate), "account_loss_rate": str(loss_rate),
+            "source_key": quote.source_key,
         }
         event = self._append("closed", quote.received_at, closed)
         del self.positions[quote.instrument.broker_symbol]

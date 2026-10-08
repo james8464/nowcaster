@@ -109,7 +109,8 @@ def test_cross_currency_and_unverified_costs_fail_closed():
     assert desk.open(plan(), INSTRUMENT, quote(24000), unit_step=Decimal("0.01")) is None
     assert desk.last_rejection == "currency_conversion_unavailable"
     conversion = FXConversion(
-        from_currency="EUR", to_currency="GBP", rate=Decimal("0.85"), observed_at=quote(24000).observed_at
+        from_currency="EUR", to_currency="GBP", position_value=Decimal("0.85"),
+        account_gain=Decimal("0.84"), account_loss=Decimal("0.86"), observed_at=quote(24000).observed_at,
     )
     opened = desk.open(plan(), INSTRUMENT, quote(24000), unit_step=Decimal("0.01"), conversion=conversion)
     assert opened is not None
@@ -120,6 +121,32 @@ def test_cross_currency_and_unverified_costs_fail_closed():
     closed = desk.update(quote(24050, 60), conversion=exit_conversion)
     assert closed is not None
     assert closed.net_pnl < (Decimal("24050") - opened.entry) * opened.units * Decimal("0.85")
+
+
+def test_paper_account_uses_broker_gain_for_win_and_loss_for_loss():
+    conversion = FXConversion(
+        from_currency="EUR", to_currency="GBP", position_value=Decimal("0.85"),
+        account_gain=Decimal("0.84"), account_loss=Decimal("0.86"), observed_at=quote(24000).observed_at,
+    )
+    win_desk = PaperAccount(PaperRiskPolicy(), Decimal("10000"), account_currency="GBP",
+                            costs=PaperExecutionCosts(verified=True))
+    win_opened = win_desk.open(plan(), INSTRUMENT, quote(24000), unit_step=Decimal("0.01"),
+                               conversion=conversion)
+    assert win_opened is not None
+    win_exit = win_desk.update(quote(24050, 60), conversion=conversion.model_copy(
+        update={"observed_at": quote(24050, 60).observed_at}))
+    assert win_exit is not None
+    assert win_exit.net_pnl == (Decimal("24050") - win_opened.entry) * win_opened.units * Decimal("0.84")
+
+    loss_desk = PaperAccount(PaperRiskPolicy(), Decimal("10000"), account_currency="GBP",
+                             costs=PaperExecutionCosts(verified=True))
+    loss_opened = loss_desk.open(plan(), INSTRUMENT, quote(24000), unit_step=Decimal("0.01"),
+                                 conversion=conversion)
+    assert loss_opened is not None
+    loss_exit = loss_desk.update(quote(23000, 60), conversion=conversion.model_copy(
+        update={"observed_at": quote(23000, 60).observed_at}))
+    assert loss_exit is not None
+    assert loss_exit.net_pnl == (Decimal("23000") - loss_opened.entry) * loss_opened.units * Decimal("0.86")
 
 
 def test_daily_entry_counter_resets_on_new_utc_day():

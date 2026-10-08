@@ -11,6 +11,7 @@ from decimal import Decimal, InvalidOperation
 import httpx
 
 from src.intraday.contracts import ConfirmedBar, InstrumentSpec, MarketQuote
+from src.intraday.paper import FXConversion
 
 PRACTICE_API = "https://api-fxpractice.oanda.com"
 PRACTICE_STREAM = "https://stream-fxpractice.oanda.com"
@@ -25,6 +26,16 @@ class OandaHomeConversion:
     account_loss: Decimal
     position_value: Decimal
     observed_at: datetime
+
+    def to_paper_conversion(self, *, account_currency: str) -> FXConversion:
+        return FXConversion(
+            from_currency=self.currency,
+            to_currency=account_currency,
+            position_value=self.position_value,
+            account_gain=self.account_gain,
+            account_loss=self.account_loss,
+            observed_at=self.observed_at,
+        )
 
 
 def _timestamp(value: str) -> datetime:

@@ -198,6 +198,12 @@ def test_account_home_conversion_snapshot_uses_practice_read_routes_and_exact_fa
     assert rates[0].account_gain == Decimal("0.8389656")
     assert rates[0].account_loss == Decimal("0.8559144")
     assert rates[0].observed_at == datetime(2026, 10, 8, 18, 25, 26, 391201, tzinfo=UTC)
+    paper = rates[0].to_paper_conversion(account_currency="GBP")
+    assert paper.from_currency == "EUR"
+    assert paper.to_currency == "GBP"
+    assert paper.position_value == Decimal("0.84744")
+    assert paper.account_gain == Decimal("0.8389656")
+    assert paper.account_loss == Decimal("0.8559144")
     assert all(request.url.host == "api-fxpractice.oanda.com" for request in requests)
 
 

@@ -36,7 +36,9 @@ class FXConversion(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
     from_currency: str
     to_currency: str
-    rate: Decimal = Field(gt=0)
+    position_value: Decimal = Field(gt=0)
+    account_gain: Decimal = Field(gt=0)
+    account_loss: Decimal = Field(gt=0)
     observed_at: datetime
 
     @model_validator(mode="after")
@@ -45,6 +47,8 @@ class FXConversion(BaseModel):
             raise ValueError("conversion currencies required")
         if self.observed_at.tzinfo is None or self.observed_at.utcoffset() != timedelta(0):
             raise ValueError("conversion must have UTC time")
+        if not self.account_gain <= self.position_value <= self.account_loss:
+            raise ValueError("account conversion gain/value/loss sides inconsistent")
         return self
 
 
@@ -106,11 +110,11 @@ class PaperAccount:
             self.daily_entries = 0
             self._day = at.date()
 
-    def _conversion_rate(
+    def _conversion_factors(
         self, instrument: InstrumentSpec, quote: MarketQuote, conversion: FXConversion | None
-    ) -> Decimal | None:
+    ) -> tuple[Decimal, Decimal, Decimal] | None:
         if instrument.quote_currency == self.account_currency:
-            return D(1)
+            return (D(1), D(1), D(1))
         if (
             conversion is None
             or conversion.from_currency != instrument.quote_currency
@@ -119,7 +123,7 @@ class PaperAccount:
             or quote.received_at - conversion.observed_at > timedelta(seconds=15)
         ):
             return None
-        return conversion.rate
+        return conversion.position_value, conversion.account_gain, conversion.account_loss
 
     def open(
         self,
@@ -135,10 +139,11 @@ class PaperAccount:
         if reason:
             self.last_rejection = reason
             return None
-        conversion_rate = self._conversion_rate(instrument, quote, conversion)
-        if conversion_rate is None:
+        factors = self._conversion_factors(instrument, quote, conversion)
+        if factors is None:
             self.last_rejection = "currency_conversion_unavailable"
             return None
+        position_rate, _, loss_rate = factors
         entry = (
             quote.ask + self.costs.slippage_points
             if plan.direction == "long"
@@ -148,7 +153,7 @@ class PaperAccount:
             (abs(entry - plan.stop) + self.costs.slippage_points) * instrument.point_value
             + self.costs.commission_per_unit
             + self.costs.financing_per_unit
-        ) * conversion_rate
+        ) * loss_rate
         if (
             risk_per_unit <= 0
             or (plan.direction == "long" and entry <= plan.stop)
@@ -158,7 +163,7 @@ class PaperAccount:
             return None
         risk_units = self.equity * self.policy.risk_fraction / risk_per_unit
         exposure_units = (
-            self.equity * self.policy.maximum_exposure_fraction / (entry * instrument.point_value * conversion_rate)
+            self.equity * self.policy.maximum_exposure_fraction / (entry * instrument.point_value * position_rate)
         )
         units = (min(risk_units, exposure_units) / unit_step).to_integral_value(rounding=ROUND_DOWN) * unit_step
         if units <= 0:
@@ -214,10 +219,11 @@ class PaperAccount:
         if quote.account_feed_hash != position.account_feed_hash or quote.observed_at <= position.opened_at:
             self.last_rejection = "exit_quote_identity_or_time_invalid"
             return None
-        conversion_rate = self._conversion_rate(position.instrument, quote, conversion)
-        if conversion_rate is None:
+        factors = self._conversion_factors(position.instrument, quote, conversion)
+        if factors is None:
             self.last_rejection = "currency_conversion_unavailable"
             return None
+        _, gain_rate, loss_rate = factors
         executable = quote.bid if position.direction == "long" else quote.ask
         if position.direction == "long":
             reason = "stop" if executable <= position.stop else "target" if executable >= position.target else None
@@ -233,15 +239,9 @@ class PaperAccount:
             else executable + self.costs.slippage_points
         )
         signed_points = executable - position.entry if position.direction == "long" else position.entry - executable
-        pnl = (
-            (
-                (signed_points * position.instrument.point_value)
-                - self.costs.commission_per_unit
-                - self.costs.financing_per_unit
-            )
-            * position.units
-            * conversion_rate
-        )
+        gross_quote = signed_points * position.instrument.point_value * position.units
+        expenses_quote = (self.costs.commission_per_unit + self.costs.financing_per_unit) * position.units
+        pnl = gross_quote * (gain_rate if gross_quote >= 0 else loss_rate) - expenses_quote * loss_rate
         closed = ClosedPaperTrade(position, quote.received_at, executable, reason, pnl)
         del self.positions[position.instrument.broker_symbol]
         self.equity += pnl

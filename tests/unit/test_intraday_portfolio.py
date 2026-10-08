@@ -19,7 +19,8 @@ def quote(at=T + timedelta(seconds=1), bid="100", ask="101"):
 
 
 def conversion(at):
-    return FXConversion(from_currency="EUR", to_currency="GBP", rate=Decimal("0.86"), observed_at=at)
+    return FXConversion(from_currency="EUR", to_currency="GBP", position_value=Decimal("0.85"),
+                        account_gain=Decimal("0.84"), account_loss=Decimal("0.86"), observed_at=at)
 
 
 def eligibility(at=T):
@@ -85,8 +86,28 @@ def test_foreign_currency_close_deducts_conversion_charge_from_net_result(tmp_pa
     assert opened.kind == "opened"
     closed = portfolio.on_quote(quote(T + timedelta(minutes=1), "94", "95"), conversion(T + timedelta(minutes=1)))
     assert closed is not None
-    assert Decimal(closed.payload["gross_pnl_gbp"]) == Decimal("-27.52")
-    assert Decimal(closed.payload["commission_gbp"]) == Decimal("0.344")
-    assert Decimal(closed.payload["financing_gbp"]) == Decimal("0.344")
-    assert Decimal(closed.payload["conversion_fee_gbp"]) == Decimal("0.28208")
-    assert Decimal(closed.payload["net_pnl_gbp"]) == Decimal("-28.49008")
+    assert Decimal(closed.payload["gross_pnl_gbp"]) == Decimal("-27.2")
+    assert Decimal(closed.payload["commission_gbp"]) == Decimal("0.34")
+    assert Decimal(closed.payload["financing_gbp"]) == Decimal("0.34")
+    assert Decimal(closed.payload["conversion_fee_gbp"]) == Decimal("0.328")
+    assert Decimal(closed.payload["net_pnl_gbp"]) == Decimal("-28.208")
+
+
+def test_foreign_currency_win_uses_broker_gain_factor_without_double_fee(tmp_path):
+    portfolio = LivePaperPortfolio(tmp_path, "c" * 64, initial_cash=Decimal("10000"))
+    opened = portfolio.on_decision(INSTRUMENT, plan(), quote(), eligibility(T))
+    assert opened.kind == "opened"
+    closed = portfolio.on_quote(quote(T + timedelta(minutes=1), "112", "113"), conversion(T + timedelta(minutes=1)))
+    assert closed is not None
+    assert Decimal(closed.payload["gross_pnl_gbp"]) == Decimal("34")
+    assert Decimal(closed.payload["conversion_fee_gbp"]) == Decimal("0.408")
+    assert Decimal(closed.payload["net_pnl_gbp"]) == Decimal("32.912")
+
+
+def test_paper_entry_uses_account_loss_factor_for_cost_risk_and_position_factor_for_notional(tmp_path):
+    portfolio = LivePaperPortfolio(tmp_path, "c" * 64, initial_cash=Decimal("10000"))
+    opened = portfolio.on_decision(INSTRUMENT, plan(), quote(), eligibility(T))
+    assert opened.kind == "opened"
+    assert opened.payload["units"] == "4"
+    assert Decimal(opened.payload["notional_gbp"]) == Decimal("345.100")
+    assert Decimal(opened.payload["estimated_roundtrip_cost_gbp"]) == Decimal("7.568")
