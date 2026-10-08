@@ -84,6 +84,23 @@ def test_zero_trade_attempts_do_not_become_positive_selection():
     assert all(item.rejection_reason == "insufficient_net_evidence" for item in report.attempts)
 
 
+def test_lucky_three_day_replay_cannot_select_a_live_candidate(monkeypatch):
+    from types import SimpleNamespace
+
+    costs = ReplayCosts(
+        account_currency="GBP", quote_to_account=Decimal("0.86"),
+        slippage_points=Decimal("0.5"), commission_per_unit=Decimal("0.1"),
+        financing_per_unit=Decimal("0.1"),
+    )
+    monkeypatch.setattr("src.intraday.selection.replay_session", lambda *args, **kwargs: SimpleNamespace(
+        total_net_pnl=Decimal(10), trades=(object(),), gaps=0, no_trade_count=0,
+    ))
+    monkeypatch.setattr("src.intraday.selection._daily_block_lower", lambda values: Decimal(10))
+    report = run_selection(manifest(costs), {"DE30_EUR": (bar(1), bar(2), bar(3))})
+    assert report.selected == ()
+    assert all(item.rejection_reason == "insufficient_stage_sample" for item in report.attempts)
+
+
 def test_selection_ignores_off_session_bars_but_not_in_session_gaps():
     costs = ReplayCosts(
         account_currency="GBP",

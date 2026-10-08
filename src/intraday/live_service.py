@@ -188,6 +188,9 @@ class LiveIndicatorSession:
             )
             if source_key == self.last_source_key.get(symbol):
                 return self.status
+            tradeable = event.get("tradeable")
+            if tradeable is None:
+                tradeable = event.get("status") == "tradeable"
             quote = MarketQuote(
                 instrument=self.by_symbol[symbol],
                 account_feed_hash=self.manifest.account_feed_hash,
@@ -195,7 +198,7 @@ class LiveIndicatorSession:
                 received_at=received_at,
                 bid=bid,
                 ask=ask,
-                status="tradeable" if event.get("tradeable") is True else "non_tradeable",
+                status="tradeable" if tradeable is True else "non_tradeable",
                 source_key=source_key,
             )
         except (KeyError, IndexError, TypeError, ValueError, InvalidOperation):

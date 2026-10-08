@@ -69,6 +69,23 @@ def test_four_products_are_routed_and_inventory_is_not_a_paper_signal(tmp_path):
     assert (tmp_path / "summary.json").exists()
 
 
+def test_real_oanda_status_field_makes_account_quote_tradeable(tmp_path):
+    session = LiveIndicatorSession.restore(tmp_path, manifest(), restart_at=NOW)
+    event = {
+        "type": "PRICE",
+        "instrument": "DE30_EUR",
+        "time": NOW.isoformat(),
+        "status": "tradeable",
+        "bids": [{"price": "100"}],
+        "asks": [{"price": "101"}],
+    }
+    status = session.on_event(json.dumps(event), NOW + timedelta(milliseconds=100))
+    assert status.feed_health == "healthy"
+    assert session.last_quote is not None
+    assert session.last_quote.status == "tradeable"
+    assert session.journal.events()[-1]["payload"]["tradeable"] == "True"
+
+
 def test_restart_is_stale_and_duplicate_quote_does_not_create_another_event(tmp_path):
     session = LiveIndicatorSession.restore(tmp_path, manifest())
     first = line("DE30_EUR")

@@ -43,6 +43,31 @@ def test_practice_runner_keeps_token_and_account_out_of_files(tmp_path):
     assert summary["markets"][0]["display_name"] == "Germany 30"
 
 
+def test_practice_runner_publishes_retained_account_capture_quality(tmp_path):
+    from datetime import timedelta
+
+    start = datetime(2026, 10, 8, 9, tzinfo=UTC)
+    clock = [start]
+
+    class QualityFeed(FakeFeed):
+        def price_lines(self, instruments):
+            for minute in (1, 6):
+                clock[0] = start + timedelta(minutes=minute)
+                yield json.dumps({
+                    "type": "PRICE", "instrument": "DE30_EUR", "time": clock[0].isoformat(),
+                    "tradeable": True, "bids": [{"price": "24000"}], "asks": [{"price": "24002"}],
+                })
+
+    run_paper_indicator(tmp_path, account_id="private-account", token="private-token", feed=QualityFeed(), now=lambda: clock[0])
+    quality = json.loads((tmp_path / "capture_quality.json").read_text())
+    assert quality["price_scope"] == "account_stream_observation"
+    assert quality["markets"][0]["broker_symbol"] == "DE30_EUR"
+    assert quality["markets"][0]["expected_intervals"] == 25
+    assert quality["markets"][0]["covered_intervals"] == 1
+    assert quality["markets"][0]["paper_eligible"] is False
+    assert (tmp_path / "2026-10-08" / "capture_quality.json").exists()
+
+
 def test_practice_boundary_has_no_order_route_or_live_host():
     source = inspect.getsource(OandaPracticeFeed)
     assert PRACTICE_API == "https://api-fxpractice.oanda.com"

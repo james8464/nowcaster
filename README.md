@@ -40,9 +40,25 @@ zero-trade or loss result. It separates development, validation and sealed
 chronology, stresses execution costs and requires positive net evidence before
 returning a candidate; these historical candles remain exploratory, not
 account-specific live fills.
+By default, each historical stage needs at least 30 observed sessions and 30
+closed hypothetical trades. A lucky three-day result cannot pass that default
+gate. The pre-registered manifest can set a different minimum; no historical
+sample check proves that a rule works live.
+The separate `scripts/run_intraday_selection.py` command accepts a frozen
+`SelectionManifest` JSON file, one downloaded historical bid/ask JSONL file
+per exact product (`--input DE30_EUR=path.jsonl`), and a new
+`--output-directory`. It creates an immutable copy of the inputs and a
+`selection.json` containing every attempt, including losses and rejections.
+It refuses to overwrite an earlier round and does not activate a live rule.
 The new multi-product practice-stream core records sanitized quotes and
 decisions in a separate append-only journal. A restart, stale quote or broken
 five-minute bar forces a fresh warm-up instead of filling an imagined trade.
+It also retains `capture_quality.json` for each monitored day and the latest
+day in `IntradayResearch`. The Trade Desk's Market checks show how many
+declared five-minute intervals contained an observed tradeable account quote,
+plus median and high-end spreads. These are feed observations, not proof that
+an order could have filled or permission to paper-trade. The declared session
+window is still provisional until exact broker hours are verified.
 At this stage its setups are diagnostic until the paper portfolio is wired
 into the Mac service.
 The separate paper-portfolio core can size a hypothetical position across

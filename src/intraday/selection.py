@@ -30,6 +30,8 @@ class SelectionManifest(BaseModel):
     costs: dict[str, ReplayCosts]
     cost_evidence: dict[str, CostEvidence]
     stress_multiplier: Decimal = Field(default=D(2), ge=2)
+    minimum_stage_sessions: int = Field(default=30, ge=2)
+    minimum_stage_trades: int = Field(default=30, ge=2)
 
     @model_validator(mode="after")
     def valid_round(self):
@@ -165,9 +167,10 @@ def _assess(
     gaps = sum(item.gaps for item in base_results)
     lower = _daily_block_lower(tuple(item.total_net_pnl for item in base_results))
     reason = (
-        "historical_gap"
-        if gaps
-        else ("insufficient_net_evidence" if count == 0 or net <= 0 or stressed_net <= 0 or lower <= 0 else None)
+        "historical_gap" if gaps else
+        "insufficient_net_evidence" if count == 0 or net <= 0 or stressed_net <= 0 or lower <= 0 else
+        "insufficient_stage_sample" if len(base_results) < manifest.minimum_stage_sessions
+        or count < manifest.minimum_stage_trades else None
     )
     return SelectionAttempt(
         stage,

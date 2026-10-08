@@ -19,6 +19,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.intraday.contracts import InstrumentSpec  # noqa: E402
+from src.intraday.capture_quality import summarize_capture  # noqa: E402
 from src.intraday.desk import DeskStatus, MarketStatus  # noqa: E402
 from src.intraday.journal import PaperJournal  # noqa: E402
 from src.intraday.live_service import LiveIndicatorSession, LiveRoundManifest, LiveRule, LiveSessionWindow  # noqa: E402
@@ -221,8 +222,36 @@ def run_paper_indicator(
     PaperJournal(directory / "PaperRounds" / active_day.isoformat(), manifest.identity_hash)
     _atomic_json(directory / "report.json", reports.snapshot(initial))
 
-    def publish_report(as_of: datetime, *, concurrent: bool = False) -> None:
+    def publish_quality(as_of: datetime, round_manifest: LiveRoundManifest, round_session: LiveIndicatorSession) -> None:
+        events = round_session.journal.events()
+        markets = []
+        for instrument in round_manifest.instruments:
+            window = round_manifest.sessions[instrument.broker_symbol]
+            end = max(window.opened_at, min(as_of, window.closed_at))
+            markets.append(
+                summarize_capture(instrument, window.opened_at, end, events).model_dump(mode="json")
+            )
+        result = {
+            "generated_at": as_of.isoformat(),
+            "round_id": round_manifest.round_id,
+            "price_scope": "account_stream_observation",
+            "paper_eligible": False,
+            "markets": markets,
+        }
+        _atomic_json(round_session.directory / "capture_quality.json", result)
+        _atomic_json(directory / "capture_quality.json", result)
+
+    publish_quality(initial, manifest, session)
+
+    def publish_report(
+        as_of: datetime,
+        round_manifest: LiveRoundManifest,
+        round_session: LiveIndicatorSession,
+        *,
+        concurrent: bool = False,
+    ) -> None:
         _atomic_json(directory / "report.json", reports.snapshot(as_of, ignore_after_as_of=concurrent))
+        publish_quality(as_of, round_manifest, round_session)
 
     last_report_at = initial
     last_received_at = initial
@@ -233,6 +262,10 @@ def run_paper_indicator(
                 received = now()
                 last_received_at = received
                 if active_day != received.date():
+                    if pending is not None:
+                        pending.result()
+                        pending = None
+                    publish_quality(received, manifest, session)
                     active_day = received.date()
                     manifest = _session(received, instruments, account_id)
                     day_directory = directory / active_day.isoformat()
@@ -256,14 +289,14 @@ def run_paper_indicator(
                 ):
                     if pending is not None:
                         pending.result()
-                    pending = executor.submit(publish_report, received, concurrent=True)
+                    pending = executor.submit(publish_report, received, manifest, session, concurrent=True)
                     last_report_at = received
                 if (directory / "pause.request").exists():
                     return
         finally:
             if pending is not None:
                 pending.result()
-            publish_report(last_received_at)
+            publish_report(last_received_at, manifest, session)
 
 
 def main(argv: list[str] | None = None) -> int:

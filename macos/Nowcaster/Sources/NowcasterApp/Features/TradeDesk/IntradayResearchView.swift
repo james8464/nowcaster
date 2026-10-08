@@ -97,14 +97,69 @@ struct IntradayDeskStatus: Decodable {
     }
 }
 
+struct IntradayCaptureQuality: Decodable {
+    struct Market: Decodable {
+        let brokerSymbol: String
+        let expectedIntervals: Int
+        let coveredIntervals: Int
+        let quoteCount: Int
+        let tradeableQuoteCount: Int
+        let invalidQuoteCount: Int
+        let coverage: String
+        let medianSpread: String?
+        let p95Spread: String?
+        let paperEligible: Bool
+
+        var coverageLabel: String {
+            let percent = NSDecimalNumber(decimal: (Decimal(string: coverage) ?? 0) * 100).intValue
+            return "\(coveredIntervals)/\(expectedIntervals) observed intervals (\(percent)%)"
+        }
+        var spreadLabel: String {
+            guard let medianSpread, let p95Spread else { return "Spread unavailable" }
+            return "Median spread \(medianSpread) · 95th percentile \(p95Spread)"
+        }
+    }
+    let generatedAt: String
+    let roundId: String
+    let priceScope: String
+    let paperEligible: Bool
+    let markets: [Market]
+
+    func isFresh(at now: Date) -> Bool {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        guard let date = formatter.date(from: generatedAt) ?? ISO8601DateFormatter().date(from: generatedAt) else {
+            return false
+        }
+        return now.timeIntervalSince(date) >= 0 && now.timeIntervalSince(date) < 120
+    }
+
+    static func decode(_ data: Data) throws -> Self {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let value = try decoder.decode(Self.self, from: data)
+        guard value.priceScope == "account_stream_observation", !value.paperEligible,
+              value.markets.allSatisfy({ market in
+                  guard let fraction = Decimal(string: market.coverage) else { return false }
+                  return market.expectedIntervals >= 0 && market.coveredIntervals >= 0 &&
+                      market.coveredIntervals <= market.expectedIntervals &&
+                      fraction >= 0 && fraction <= 1 && !market.paperEligible
+              }) else { throw CocoaError(.coderInvalidValue) }
+        return value
+    }
+}
+
 struct IntradayResearchView: View {
     let service: OandaPaperService
     private var directory: URL { AppStorageLocations.root.appending(path: "IntradayResearch", directoryHint: .isDirectory) }
     private var statusURL: URL { directory.appending(path: "summary.json") }
+    private var qualityURL: URL { directory.appending(path: "capture_quality.json") }
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 5)) { timeline in
             let status = (try? Data(contentsOf: statusURL, options: .mappedIfSafe)).flatMap { try? IntradayDeskStatus.decode($0) }
+            let quality = (try? Data(contentsOf: qualityURL, options: .mappedIfSafe)).flatMap { try? IntradayCaptureQuality.decode($0) }
+            let qualityFresh = quality?.isFresh(at: timeline.date) ?? false
             let fresh = status?.isFresh(at: timeline.date) ?? false
             GroupBox {
                 VStack(alignment: .leading, spacing: 12) {
@@ -173,6 +228,12 @@ struct IntradayResearchView: View {
                                 Text("\(market.displayName ?? market.brokerSymbol ?? market.market) · \(market.brokerSymbol ?? "unconfirmed") · \(market.eligibility.replacingOccurrences(of: "_", with: " ")) · \(market.quoteAgeLabel(at: timeline.date))")
                                     .font(.caption)
                                     .frame(maxWidth: .infinity, alignment: .leading)
+                                if qualityFresh, let symbol = market.brokerSymbol,
+                                   let capture = quality?.markets.first(where: { $0.brokerSymbol == symbol }) {
+                                    Text("Account feed: \(capture.coverageLabel) · \(capture.spreadLabel)")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
                                 if let reason = market.reason {
                                     Text(reason).font(.caption).foregroundStyle(.secondary)
                                         .frame(maxWidth: .infinity, alignment: .leading)

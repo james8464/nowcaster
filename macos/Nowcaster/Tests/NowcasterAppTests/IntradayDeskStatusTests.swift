@@ -48,3 +48,21 @@ import Testing
     #expect(status.markets[0].displayName == "Germany 30")
     #expect(status.markets[0].quoteAgeLabel(at: at).contains("stale"))
 }
+
+@Test func accountCaptureQualityDisplaysCoverageWithoutPaperEligibility() throws {
+    let data = Data("""
+    {"generated_at":"2026-10-08T09:06:00Z","round_id":"diagnostic-2026-10-08",
+     "price_scope":"account_stream_observation","paper_eligible":false,
+     "markets":[{"broker_symbol":"DE30_EUR","observed_from":"2026-10-08T07:00:00Z",
+       "observed_until":"2026-10-08T09:06:00Z","expected_intervals":25,
+       "covered_intervals":1,"quote_count":2,"tradeable_quote_count":2,
+       "invalid_quote_count":0,"coverage":"0.04","median_spread":"2",
+       "p95_spread":"2","max_quote_gap_seconds":"300",
+       "price_scope":"account_stream_observation","paper_eligible":false}]}
+    """.utf8)
+    let quality = try IntradayCaptureQuality.decode(data)
+    #expect(quality.markets[0].coverageLabel == "1/25 observed intervals (4%)")
+    #expect(quality.markets[0].spreadLabel == "Median spread 2 · 95th percentile 2")
+    #expect(!quality.paperEligible)
+    #expect(!quality.isFresh(at: Date(timeIntervalSince1970: 1_900_000_000)))
+}
