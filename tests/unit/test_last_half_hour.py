@@ -93,3 +93,11 @@ def test_same_bar_stop_and_target_uses_stop_first():
     outcome = evaluate_last_half_hour(prior, current, slippage_points=Decimal("0.5"))
     assert outcome.reason == "stop"
     assert outcome.exit < outcome.stop
+
+
+def test_full_cfd_bars_on_cash_market_holiday_still_abstain():
+    prior = session("2023-06-16", start=Decimal("99"), first=Decimal("99"),
+                    penultimate=Decimal("99"), final=Decimal("100"))
+    holiday = session("2023-06-19", start=Decimal("100"), first=Decimal("101"),
+                      penultimate=Decimal("102"), final=Decimal("103"))
+    assert evaluate_last_half_hour(prior, holiday, slippage_points=Decimal("0.5")).reason == "incomplete_session"

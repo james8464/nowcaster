@@ -13,6 +13,7 @@ from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from src.intraday.contracts import ConfirmedBar
+from src.intraday.us_regular_sessions import is_full_us_cash_session
 
 NY = ZoneInfo("America/New_York")
 D = Decimal
@@ -41,11 +42,12 @@ def _full_session(bars: Sequence[ConfirmedBar]) -> bool:
     if len(bars) != 78:
         return False
     first = bars[0].start.astimezone(NY)
-    if first.weekday() >= 5 or (first.hour, first.minute) != (9, 30):
+    if not is_full_us_cash_session(first.date()) or (first.hour, first.minute) != (9, 30):
         return False
     expected = first.astimezone(bars[0].start.tzinfo)
     return all(
-        bar.instrument.broker_symbol == "SPX500_USD"
+        bar.instrument == bars[0].instrument
+        and bar.instrument.broker_symbol == "SPX500_USD"
         and bar.price_scope == "historical_base"
         and bar.start == expected + timedelta(minutes=5 * index)
         and bar.end == bar.start + timedelta(minutes=5)
