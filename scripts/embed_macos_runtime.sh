@@ -47,3 +47,13 @@ cp -R "$PAPER_ROOT" "$CONTENTS_PATH/Helpers/nowcaster-paper-signals.app"
     "$CONTENTS_PATH/Helpers/nowcaster-paper-signals.app/Contents/Info.plist"
 codesign "${SIGN_OPTIONS[@]}" --entitlements "$PROJECT_ROOT/macos/Nowcaster/Resources/Engine.entitlements" \
   "$CONTENTS_PATH/Helpers/nowcaster-paper-signals.app"
+
+OANDA_ROOT=$(zsh "$SCRIPT_DIR/build_oanda_paper_bundle.sh")
+rm -rf "$CONTENTS_PATH/Helpers/nowcaster-oanda-paper.app"
+cp -R "$OANDA_ROOT" "$CONTENTS_PATH/Helpers/nowcaster-oanda-paper.app"
+/usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" \
+  "$CONTENTS_PATH/Helpers/nowcaster-oanda-paper.app/Contents/Info.plist" 2>/dev/null \
+  || /usr/libexec/PlistBuddy -c "Set :LSUIElement true" \
+    "$CONTENTS_PATH/Helpers/nowcaster-oanda-paper.app/Contents/Info.plist"
+codesign "${SIGN_OPTIONS[@]}" --entitlements "$PROJECT_ROOT/macos/Nowcaster/Resources/Engine.entitlements" \
+  "$CONTENTS_PATH/Helpers/nowcaster-oanda-paper.app"

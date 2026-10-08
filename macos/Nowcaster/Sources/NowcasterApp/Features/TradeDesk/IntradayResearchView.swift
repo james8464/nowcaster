@@ -81,6 +81,7 @@ struct IntradayDeskStatus: Decodable {
 }
 
 struct IntradayResearchView: View {
+    let service: OandaPaperService
     private var directory: URL { AppStorageLocations.root.appending(path: "IntradayResearch", directoryHint: .isDirectory) }
     private var statusURL: URL { directory.appending(path: "summary.json") }
 
@@ -91,14 +92,25 @@ struct IntradayResearchView: View {
             GroupBox {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
-                        Label("Intraday market research", systemImage: "chart.xyaxis.line")
+                        Label("Live practice indicator", systemImage: "chart.xyaxis.line")
                             .font(.headline)
                         Spacer()
                         Text("PAPER ONLY").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                     }
-                    Text("Germany 40 · US 500 · EUR/USD · West Texas oil")
+                    HStack {
+                        Button(service.isRunning ? "Pause Monitoring" : "Start Monitoring") {
+                            if service.isRunning { service.pause() } else { service.start() }
+                        }
+                        .accessibilityIdentifier("tradeDesk.oandaMonitoring")
+                        if service.isRunning {
+                            Label("Running with window closed", systemImage: "circle.fill")
+                                .font(.caption).foregroundStyle(.green)
+                        }
+                    }
+                    if let message = service.message { Text(message).font(.caption).foregroundStyle(.secondary) }
+                    Text("Germany 30 demo · US 500 · EUR/USD · West Texas oil")
                         .foregroundStyle(.secondary)
-                    Text("Candidates only; the exact demo products must be checked before paper monitoring.")
+                    Text("Exact practice products are checked on Start. Without verified costs and a selected rule, setups are diagnostic only and no paper trade is opened.")
                         .font(.caption).foregroundStyle(.secondary)
                     if let status {
                         Label(fresh ? status.feedHealth.replacingOccurrences(of: "_", with: " ").capitalized : "Status is stale — stand aside",

@@ -52,6 +52,14 @@ margin estimate, cost source and estimated costs. It respects a 0.25% risk
 budget per trade, 1% daily realized-loss stop, 5% drawdown halt and 1.0×
 aggregate notional cap. A missing quote or conversion leaves a paper position
 unresolved instead of inventing a profitable exit.
+The Mac Trade Desk has an opt-in **Start Monitoring** control for an OANDA
+practice-only helper. It retrieves the saved practice token from Keychain,
+passes it only to that helper's environment, and keeps monitoring when the
+window closes. Its initial live mode is diagnostic: it confirms exact demo
+products and watches account quotes, but does not auto-authorize a paper
+entry from an unverified cost schedule or an unselected rule. It never sends
+broker orders. **Pause Monitoring** requests a clean stop; quitting the app
+stops this diagnostic helper.
 The command follows one session at a time; later sessions can
 retain the same frozen paper study, but automatic reconnect and unattended
 multi-day collection are not complete. [OANDA's account stream](https://developer.oanda.com/rest-live-v20/pricing-ep/)

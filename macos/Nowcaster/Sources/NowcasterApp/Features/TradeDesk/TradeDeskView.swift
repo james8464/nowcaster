@@ -52,7 +52,7 @@ struct TradeDeskView: View {
     private var desk: some View {
         VStack(alignment: .leading, spacing: 20) {
             PaperSessionHeader(model: model, settings: settings)
-            IntradayResearchView()
+            IntradayResearchView(service: model.oandaPaper)
             DiagnosticWorkflowView(service: model.livePaperSignals,
                 transitioning: model.paperSession.state == .starting || model.paperSession.state == .pausing)
             HStack {

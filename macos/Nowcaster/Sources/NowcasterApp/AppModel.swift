@@ -35,6 +35,7 @@ enum EngineJobOutcome: Equatable, Sendable {
 @MainActor
 @Observable
 final class AppModel {
+    let oandaPaper: OandaPaperService
     let livePaperSignals: LivePaperSignalService
     let paperSession: PaperSessionCoordinator
     let backgroundResearch: BackgroundResearchService
@@ -86,6 +87,7 @@ final class AppModel {
     ) {
         let paperSignals = paperSignals ?? LivePaperSignalService()
         self.livePaperSignals = paperSignals
+        self.oandaPaper = OandaPaperService()
         let background = BackgroundResearchService(); self.backgroundResearch = background
         let preferenceStore = PaperSessionPreferenceStore.application
         let loadedPreferences = preferenceStore.load()
@@ -106,6 +108,7 @@ final class AppModel {
     func shutdownForApplicationTermination() async -> Bool {
         // Legacy work is drained only if it was explicitly started; these calls never launch it.
         terminating = true
+        oandaPaper.shutdown()
         try? activeDeepResearchControl?.request(.stopped)
         thermalMonitor?.cancel(); thermalMonitor = nil
         async let paperStopped = paperSession.shutdown()
