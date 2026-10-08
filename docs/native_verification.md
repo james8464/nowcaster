@@ -2,8 +2,8 @@
 
 ## OANDA practice indicator build — 8 October 2026
 
-The separate `feature/research-round-2` checkout passed 1,359 Python unit
-tests, 194 Swift tests plus four native XCTest resource/icon tests, a
+The separate `feature/research-round-2` checkout passed 1,361 Python unit
+tests, 197 Swift tests plus four native XCTest resource/icon tests, a
 tracked-file/reachable-history secret scan, a signed macOS app build,
 `codesign --verify --deep --strict`, and `plutil -lint`. The isolated
 `OandaPaperFlowUITests` window test passed after using the app's **Open
@@ -19,6 +19,14 @@ continuous live-feed coverage. The practice helper currently publishes
 diagnostic setups only: an authorized live paper round still requires exact
 source-backed costs, GBP conversion, and a selected rule. The existing frozen
 BTC/ETH prospective study was not altered.
+
+The Trade Desk now shows the exact practice product label and recalculates
+per-product quote age while open. Its session paper report retains blocked
+decisions, feed gaps, product/rule groups, and closed-trade outcomes. Close
+notifications require a fresh healthy feed and paper eligibility; an old
+report alone cannot trigger them. This is a session report, not a cumulative
+profitability claim. No OANDA paper trades were generated during this build
+verification because the cost/selection gate is still closed.
 
 This is the historical 22 August audit. See [contextual release verification](contextual-release-verification.md) for the newer contextual-allocation build and its remaining limitations.
 

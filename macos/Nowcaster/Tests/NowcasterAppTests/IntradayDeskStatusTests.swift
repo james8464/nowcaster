@@ -34,3 +34,17 @@ import Testing
     #expect(status.markets[0].eligibility == "diagnostic")
     #expect(status.evidenceStatus == "not_supported")
 }
+
+@Test func intradayMarketQuoteAgeAdvancesAndRetainsBrokerDisplayName() throws {
+    let data = Data("""
+    {"schema_version":1,"paper_only":true,"generated_at":"2026-10-08T09:00:02Z",
+     "feed_health":"healthy","evidence_status":"not_supported",
+     "markets":[{"market":"germany40","broker_symbol":"DE30_EUR","display_name":"Germany 30",
+       "product":"cfd","eligibility":"diagnostic","last_quote_at":"2026-10-08T09:00:00Z","feed_age_seconds":"2"}],
+     "opportunities":[],"paper_positions":[],"no_trade_reason":"No trade"}
+    """.utf8)
+    let status = try IntradayDeskStatus.decode(data)
+    let at = ISO8601DateFormatter().date(from: "2026-10-08T09:02:00Z")!
+    #expect(status.markets[0].displayName == "Germany 30")
+    #expect(status.markets[0].quoteAgeLabel(at: at).contains("stale"))
+}

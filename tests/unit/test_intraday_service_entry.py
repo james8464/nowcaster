@@ -37,6 +37,8 @@ def test_practice_runner_keeps_token_and_account_out_of_files(tmp_path):
     assert "private-account" not in text
     assert "Germany 30" in text
     assert "no_trade_reason" in text
+    summary = json.loads((tmp_path / "summary.json").read_text())
+    assert summary["markets"][0]["display_name"] == "Germany 30"
 
 
 def test_practice_boundary_has_no_order_route_or_live_host():

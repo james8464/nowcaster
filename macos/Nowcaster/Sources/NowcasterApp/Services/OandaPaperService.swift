@@ -42,6 +42,10 @@ enum OandaPaperServiceError: LocalizedError {
 }
 
 enum OandaPaperNotificationGate {
+    static func canNotifyClose(_ status: IntradayDeskStatus, brokerSymbol: String, at now: Date) -> Bool {
+        status.isFresh(at: now) && status.feedHealth == "healthy" &&
+            status.markets.contains { $0.brokerSymbol == brokerSymbol && $0.eligibility == "paper_eligible" }
+    }
     static func eligibleSetupIDs(_ status: IntradayDeskStatus, at now: Date) -> Set<String> {
         guard status.isFresh(at: now), status.feedHealth == "healthy" else { return [] }
         let eligible = Set(status.markets.filter { $0.eligibility == "paper_eligible" }.compactMap(\.brokerSymbol))
@@ -184,8 +188,8 @@ final class OandaPaperService {
         guard notificationsEnabled else { return }
         let now = Date()
         let statusURL = directory.appending(path: "summary.json")
-        if let data = try? Data(contentsOf: statusURL, options: .mappedIfSafe),
-           let status = try? IntradayDeskStatus.decode(data), status.isFresh(at: now),
+        let status = (try? Data(contentsOf: statusURL, options: .mappedIfSafe)).flatMap { try? IntradayDeskStatus.decode($0) }
+        if let status, status.isFresh(at: now),
            status.feedHealth == "healthy" {
             let eligible = Set(status.markets.filter { $0.eligibility == "paper_eligible" }.compactMap(\.brokerSymbol))
             for key in OandaPaperNotificationGate.eligibleSetupIDs(status, at: now) {
@@ -205,7 +209,9 @@ final class OandaPaperService {
         let reportURL = directory.appending(path: "report.json")
         if let data = try? Data(contentsOf: reportURL, options: .mappedIfSafe),
            let report = try? IntradayPaperReport.decode(data), report.isFresh(at: now) {
-            if let previous = observedClosedCount, report.closedTrades > previous {
+            if let previous = observedClosedCount, report.closedTrades > previous,
+               let last = report.closedRecords.last, let status,
+               OandaPaperNotificationGate.canNotifyClose(status, brokerSymbol: last.brokerSymbol, at: now) {
                 _ = await notifications.deliver(.init(id: "oanda-paper-close-" + String(report.closedTrades),
                                                       category: .close, title: "Paper position closed",
                                                       body: "Review the retained outcome and costs in Nowcaster."))

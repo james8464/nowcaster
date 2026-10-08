@@ -111,10 +111,20 @@ def build_report(
     maximum_drawdown = D(0)
     gaps = 0
     decisions = 0
+    if session_journal is not None:
+        for event in session_journal.events():
+            if datetime.fromisoformat(event["at"]) > as_of:
+                raise ValueError("session journal contains future event relative to report")
+            if event["kind"] == "gap":
+                gaps += 1
+            elif event["kind"] == "decision":
+                decisions += 1
+                if event["payload"].get("status") != "ready":
+                    reasons[event["payload"].get("reason") or "unspecified"] += 1
     for event in journal.events():
         if event.occurred_at > as_of:
             raise ValueError("journal contains future event relative to report")
-        if event.kind in {"no_trade", "opened", "managed", "closed"}:
+        if event.kind == "no_trade" or (session_journal is None and event.kind in {"opened", "managed", "closed"}):
             decisions += 1
         if event.kind == "feed_gap":
             gaps += 1

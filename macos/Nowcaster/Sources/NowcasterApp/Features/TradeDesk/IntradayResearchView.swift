@@ -6,12 +6,22 @@ struct IntradayDeskStatus: Decodable {
     struct Market: Decodable, Identifiable {
         let market: String
         let brokerSymbol: String?
+        let displayName: String?
         let product: String?
         let eligibility: String
         let reason: String?
         let lastQuoteAt: String?
         let feedAgeSeconds: String?
         var id: String { market }
+        func quoteAgeLabel(at now: Date) -> String {
+            guard let lastQuoteAt else { return "no quote" }
+            let fractional = ISO8601DateFormatter()
+            fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            guard let date = fractional.date(from: lastQuoteAt) ?? ISO8601DateFormatter().date(from: lastQuoteAt) else { return "quote time invalid" }
+            let age = now.timeIntervalSince(date)
+            guard age >= 0 else { return "quote time invalid" }
+            return age > 30 ? "quote stale (\(Int(age))s old)" : "\(Int(age))s old"
+        }
     }
     struct Opportunity: Decodable, Identifiable {
         let market: String
@@ -160,7 +170,7 @@ struct IntradayResearchView: View {
                             .font(.caption).foregroundStyle(.secondary)
                         DisclosureGroup("Market checks") {
                             ForEach(status.markets) { market in
-                                Text("\(market.market) · \(market.brokerSymbol ?? "unconfirmed") · \(market.eligibility.replacingOccurrences(of: "_", with: " ")) · \(market.feedAgeSeconds.map { $0 + "s old" } ?? "no quote")")
+                                Text("\(market.displayName ?? market.brokerSymbol ?? market.market) · \(market.brokerSymbol ?? "unconfirmed") · \(market.eligibility.replacingOccurrences(of: "_", with: " ")) · \(market.quoteAgeLabel(at: timeline.date))")
                                     .font(.caption)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                 if let reason = market.reason {

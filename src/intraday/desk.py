@@ -16,6 +16,7 @@ class DeskModel(BaseModel):
 class MarketStatus(DeskModel):
     market: Literal["germany40", "us500", "eurusd", "wti"]
     broker_symbol: str | None = None
+    display_name: str | None = Field(default=None, min_length=1)
     product: Literal["cfd", "margin_fx"] | None = None
     eligibility: Literal["unverified", "diagnostic", "paper_eligible", "rejected"]
     reason: str | None = None

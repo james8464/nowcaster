@@ -48,3 +48,18 @@ private struct OandaTestKeychain: KeychainClient {
     let now = ISO8601DateFormatter().date(from: "2026-10-08T09:00:10Z")!
     #expect(OandaPaperNotificationGate.eligibleSetupIDs(status, at: now).isEmpty)
 }
+
+@Test func paperCloseRequiresFreshEligibleMarket() throws {
+    let template = """
+    {"schema_version":1,"paper_only":true,"generated_at":"2026-10-08T09:00:00Z","feed_health":"%@",
+     "evidence_status":"not_supported","markets":[{"market":"germany40","broker_symbol":"DE30_EUR",
+     "product":"cfd","eligibility":"%@"}],"opportunities":[],"paper_positions":[],"no_trade_reason":"No trade"}
+    """
+    let now = ISO8601DateFormatter().date(from: "2026-10-08T09:00:10Z")!
+    let healthy = try IntradayDeskStatus.decode(Data(String(format: template, "healthy", "paper_eligible").utf8))
+    let diagnostic = try IntradayDeskStatus.decode(Data(String(format: template, "healthy", "diagnostic").utf8))
+    let stale = try IntradayDeskStatus.decode(Data(String(format: template, "stale", "paper_eligible").utf8))
+    #expect(OandaPaperNotificationGate.canNotifyClose(healthy, brokerSymbol: "DE30_EUR", at: now))
+    #expect(!OandaPaperNotificationGate.canNotifyClose(diagnostic, brokerSymbol: "DE30_EUR", at: now))
+    #expect(!OandaPaperNotificationGate.canNotifyClose(stale, brokerSymbol: "DE30_EUR", at: now))
+}

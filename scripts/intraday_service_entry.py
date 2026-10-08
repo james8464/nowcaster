@@ -116,6 +116,7 @@ def run_paper_indicator(
     if not specs:
         raise ValueError("no matching practice products")
     instruments = tuple(specs)
+    display_names = {row["name"]: str(row["displayName"] or row["name"]) for row in sanitized}
     waiting = DeskStatus(
         generated_at=now(),
         feed_health="inventory_verified",
@@ -124,6 +125,7 @@ def run_paper_indicator(
             MarketStatus(
                 market=item.market,
                 broker_symbol=item.broker_symbol,
+                display_name=display_names[item.broker_symbol],
                 product=item.product,
                 eligibility="diagnostic",
                 reason="Exact practice product found; cost and selected rule not verified.",
@@ -157,6 +159,13 @@ def run_paper_indicator(
             last_report_at = received
         assert session is not None
         status = session.on_event(line, received)
+        status = DeskStatus.model_validate({
+            **status.model_dump(),
+            "markets": [
+                {**market.model_dump(), "display_name": display_names[market.broker_symbol]}
+                for market in status.markets
+            ],
+        })
         _atomic_json(directory / "summary.json", status.model_dump(mode="json"))
         if received - last_report_at >= timedelta(seconds=60):
             report = build_report(paper_journal, manifest, as_of=received, session_journal=session.journal)
