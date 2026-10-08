@@ -145,6 +145,12 @@ P&L with commissions, financing and conversion charges, and reports net expectan
 drawdown and a daily-block uncertainty bound only when the sample supports
 one. A high win rate can still have negative net P&L. The initial diagnostic
 run has no authorized paper entries, so its report correctly starts empty.
+The cumulative report weights quote coverage by the number of declared-session
+intervals, retains every feed gap, and distinguishes gaps inside those sessions
+from after-hours gaps. A daily-block bound includes no-trade days and is withheld
+until the same selected rule has at least 90 calendar days, 100 closed trades,
+adequate session coverage and no in-session feed gap. It is still a paper-only
+uncertainty estimate, not a real-money profitability verdict.
 The app helper reconnects and retains multiple days while the app and Mac remain
 running; it does not collect while the Mac is asleep or offline. [OANDA's account stream](https://developer.oanda.com/rest-live-v20/pricing-ep/)
 samples prices rather than sending every price change, and its

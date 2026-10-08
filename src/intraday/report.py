@@ -7,12 +7,13 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from src.intraday.journal import PaperJournal
 from src.intraday.live_service import LiveRoundManifest
 from src.intraday.research import _daily_block_lower
 from src.intraday.session_journal import SessionJournal
+from src.strategies.types import canonical_hash
 
 D = Decimal
 
@@ -43,12 +44,16 @@ class PaperDecisionReport(BaseModel):
     generated_at: datetime
     price_scope: Literal["account_practice_paper"] = "account_practice_paper"
     evidence_status: Literal["insufficient_evidence"] = "insufficient_evidence"
+    rule_identity_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     coverage_status: Literal["not_measured", "measured"] = "not_measured"
     account_quote_coverage: Decimal | None = None
+    expected_quote_intervals: int | None = Field(default=None, ge=0)
+    covered_quote_intervals: int | None = Field(default=None, ge=0)
     decisions_count: int
     no_trade_count: int
     blocked_reasons: dict[str, int]
     feed_gap_count: int
+    eligible_session_gap_count: int | None = Field(default=None, ge=0)
     closed_trades: int
     open_positions: int
     gross_pnl_gbp: Decimal
@@ -80,6 +85,13 @@ class PaperDecisionReport(BaseModel):
             raise ValueError("paper P&L components do not reconcile")
         if (self.coverage_status == "measured") != (self.account_quote_coverage is not None):
             raise ValueError("coverage status and value disagree")
+        if (self.expected_quote_intervals is None) != (self.covered_quote_intervals is None):
+            raise ValueError("coverage interval counts must be paired")
+        if self.expected_quote_intervals is not None:
+            if self.expected_quote_intervals <= 0 or self.covered_quote_intervals > self.expected_quote_intervals:
+                raise ValueError("coverage interval counts invalid")
+            if self.account_quote_coverage != D(self.covered_quote_intervals) / D(self.expected_quote_intervals):
+                raise ValueError("coverage fraction disagrees with intervals")
         return self
 
 
@@ -112,6 +124,7 @@ def build_report(
     peak_delta = D(0)
     maximum_drawdown = D(0)
     gaps = 0
+    eligible_gaps: int | None = 0 if manifest is not None and session_journal is not None else None
     decisions = 0
     session_events = session_journal.events() if session_journal is not None else ()
     if session_journal is not None:
@@ -122,6 +135,14 @@ def build_report(
                 raise ValueError("session journal contains future event relative to report")
             if event["kind"] == "gap":
                 gaps += 1
+                if eligible_gaps is not None:
+                    symbol = event["payload"].get("broker_symbol")
+                    windows = (
+                        (manifest.sessions[symbol],) if symbol in manifest.sessions else manifest.sessions.values()
+                    )
+                    occurred = datetime.fromisoformat(event["at"])
+                    if any(window.opened_at <= occurred < window.closed_at for window in windows):
+                        eligible_gaps += 1
             elif event["kind"] == "decision":
                 decisions += 1
                 if event["payload"].get("status") != "ready":
@@ -143,6 +164,10 @@ def build_report(
             decisions += 1
         if event.kind == "feed_gap":
             gaps += 1
+            if eligible_gaps is not None and any(
+                window.opened_at <= event.occurred_at < window.closed_at for window in manifest.sessions.values()
+            ):
+                eligible_gaps += 1
         elif event.kind == "no_trade":
             reasons[event.payload.get("reason", "unspecified")] += 1
         elif event.kind == "opened":
@@ -161,8 +186,12 @@ def build_report(
                 required_cost_fields.add("conversion_fee_gbp")
             if not required_cost_fields <= close.keys():
                 raise ValueError("closed paper trade lacks itemized costs")
-            expected_net = (D(close["gross_pnl_gbp"]) - D(close["commission_gbp"])
-                            - D(close["financing_gbp"]) - D(close.get("conversion_fee_gbp", "0")))
+            expected_net = (
+                D(close["gross_pnl_gbp"])
+                - D(close["commission_gbp"])
+                - D(close["financing_gbp"])
+                - D(close.get("conversion_fee_gbp", "0"))
+            )
             if D(close["net_pnl_gbp"]) != expected_net:
                 raise ValueError("paper trade costs do not reconcile")
             record = TradeRecord(open=opened, close=close)
@@ -199,9 +228,8 @@ def build_report(
     dates = sorted(daily)
     coverage_status = "not_measured"
     account_quote_coverage = None
+    total_slots = covered_slots = 0
     if manifest is not None and session_journal is not None:
-        total_slots = 0
-        covered_slots = 0
         for symbol, window in manifest.sessions.items():
             slot_samples: dict[int, list[datetime]] = defaultdict(list)
             for event in session_events:
@@ -237,23 +265,33 @@ def build_report(
             account_quote_coverage = D(covered_slots) / D(total_slots)
     lower = (
         _daily_block_lower(tuple(daily[day] for day in dates))
-        if len(dates) >= 2
+        if len(dates) >= 90
+        and len(trades) >= 100
+        and as_of - started_at >= timedelta(days=90)
         and coverage_status == "measured"
         and account_quote_coverage is not None
         and account_quote_coverage >= D("0.99")
-        and gaps == 0
+        and eligible_gaps == 0
         else None
     )
     return PaperDecisionReport(
         round_id=round_id,
         started_at=started_at,
         generated_at=as_of,
+        rule_identity_hash=(
+            canonical_hash(manifest.model_dump(mode="json", exclude={"round_id", "sessions"}))
+            if manifest is not None and all(rule.selection_hash != "0" * 64 for rule in manifest.rules.values())
+            else None
+        ),
         coverage_status=coverage_status,
         account_quote_coverage=account_quote_coverage,
+        expected_quote_intervals=total_slots if coverage_status == "measured" else None,
+        covered_quote_intervals=covered_slots if coverage_status == "measured" else None,
         decisions_count=decisions,
         no_trade_count=sum(reasons.values()),
         blocked_reasons=dict(reasons),
         feed_gap_count=gaps,
+        eligible_session_gap_count=eligible_gaps,
         closed_trades=len(trades),
         open_positions=len(opens),
         gross_pnl_gbp=gross,
@@ -301,14 +339,60 @@ def aggregate_reports(
         drawdown = max(drawdown, peak - running)
     winners = [D(item.close["net_pnl_gbp"]) for item in trades if D(item.close["net_pnl_gbp"]) > 0]
     losers = [D(item.close["net_pnl_gbp"]) for item in trades if D(item.close["net_pnl_gbp"]) < 0]
+    expected_intervals = (
+        sum(item.expected_quote_intervals for item in ordered)
+        if all(item.expected_quote_intervals is not None for item in ordered)
+        else None
+    )
+    covered_intervals = (
+        sum(item.covered_quote_intervals for item in ordered)
+        if all(item.covered_quote_intervals is not None for item in ordered)
+        else None
+    )
+    coverage = D(covered_intervals) / D(expected_intervals) if expected_intervals else None
+    eligible_gaps = (
+        sum(item.eligible_session_gap_count for item in ordered)
+        if all(item.eligible_session_gap_count is not None for item in ordered)
+        else None
+    )
+    shared_rule = ordered[0].rule_identity_hash
+    if shared_rule is None or any(item.rule_identity_hash != shared_rule for item in ordered):
+        shared_rule = None
+    round_dates = [item.started_at.date() for item in ordered]
+    calendar_days = (as_of.date() - round_dates[0]).days + 1
+    complete_calendar = len(ordered) == calendar_days and len(set(round_dates)) == calendar_days
+    daily = {day: D(0) for day in round_dates}
+    for trade in trades:
+        day = datetime.fromisoformat(trade.close["closed_at"]).date()
+        if day not in daily:
+            complete_calendar = False
+        else:
+            daily[day] += D(trade.close["net_pnl_gbp"])
+    lower = (
+        _daily_block_lower(tuple(daily[day] for day in sorted(daily)))
+        if complete_calendar
+        and as_of - ordered[0].started_at >= timedelta(days=90)
+        and len(trades) >= 100
+        and coverage is not None
+        and coverage >= D("0.99")
+        and eligible_gaps == 0
+        and shared_rule is not None
+        else None
+    )
     return PaperDecisionReport(
         round_id="all-retained-practice-rounds",
         started_at=ordered[0].started_at,
         generated_at=as_of,
+        rule_identity_hash=shared_rule,
+        coverage_status="measured" if coverage is not None else "not_measured",
+        account_quote_coverage=coverage,
+        expected_quote_intervals=expected_intervals,
+        covered_quote_intervals=covered_intervals,
         decisions_count=sum(item.decisions_count for item in ordered),
         no_trade_count=sum(item.no_trade_count for item in ordered),
         blocked_reasons=dict(reasons),
         feed_gap_count=sum(item.feed_gap_count for item in ordered),
+        eligible_session_gap_count=eligible_gaps,
         closed_trades=len(trades),
         open_positions=len(unresolved),
         gross_pnl_gbp=gross,
@@ -320,12 +404,12 @@ def aggregate_reports(
         net_expectancy_gbp=net / len(trades) if trades else None,
         profit_factor=sum(winners, D(0)) / -sum(losers, D(0)) if losers else None,
         maximum_drawdown_gbp=drawdown,
-        daily_block_lower_95_gbp=None,
+        daily_block_lower_95_gbp=lower,
         groups=tuple(group for report in ordered for group in report.groups),
         trades=trades,
         unresolved_positions=unresolved,
         warning=(
-            "Cumulative hypothetical practice results. Cross-round quote coverage "
-            "and real-money execution are unverified."
+            "Cumulative hypothetical practice results. Declared session hours remain provisional; "
+            "account quotes do not prove broker fills or real-money performance."
         ),
     )

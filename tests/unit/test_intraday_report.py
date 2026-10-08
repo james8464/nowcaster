@@ -3,7 +3,9 @@ from decimal import Decimal
 
 import pytest
 
+from src.intraday.contracts import InstrumentSpec
 from src.intraday.journal import PaperJournal
+from src.intraday.live_service import LiveRoundManifest, LiveRule, LiveSessionWindow
 from src.intraday.report import aggregate_reports, build_report
 from src.intraday.session_journal import SessionJournal
 
@@ -92,16 +94,35 @@ def test_empty_journal_never_reports_zero_as_proven_expectancy(tmp_path):
 
 def test_report_reconciles_foreign_currency_conversion_charge(tmp_path):
     journal = PaperJournal(tmp_path, "c" * 64)
-    append(journal, "opened", T, {
-        "broker_symbol": "DE30_EUR", "strategy_id": "trend_pullback", "direction": "long",
-        "entry": "100", "opened_at": T.isoformat(), "quote_currency": "EUR",
-        "conversion_fee_fraction": "0.01",
-    })
-    append(journal, "closed", T + timedelta(minutes=5), {
-        "broker_symbol": "DE30_EUR", "direction": "long", "gross_pnl_gbp": "10",
-        "commission_gbp": "1", "financing_gbp": "1", "conversion_fee_gbp": "0.12",
-        "net_pnl_gbp": "7.88", "exit_reason": "target",
-    })
+    append(
+        journal,
+        "opened",
+        T,
+        {
+            "broker_symbol": "DE30_EUR",
+            "strategy_id": "trend_pullback",
+            "direction": "long",
+            "entry": "100",
+            "opened_at": T.isoformat(),
+            "quote_currency": "EUR",
+            "conversion_fee_fraction": "0.01",
+        },
+    )
+    append(
+        journal,
+        "closed",
+        T + timedelta(minutes=5),
+        {
+            "broker_symbol": "DE30_EUR",
+            "direction": "long",
+            "gross_pnl_gbp": "10",
+            "commission_gbp": "1",
+            "financing_gbp": "1",
+            "conversion_fee_gbp": "0.12",
+            "net_pnl_gbp": "7.88",
+            "exit_reason": "target",
+        },
+    )
     report = build_report(journal, round_id="round-2", started_at=T, as_of=T + timedelta(minutes=5))
     assert report.conversion_fee_gbp == Decimal("0.12")
     assert report.net_pnl_gbp == Decimal("7.88")
@@ -283,3 +304,156 @@ def test_aggregate_keeps_prior_day_loss_and_all_stand_aside_decisions(tmp_path):
     assert combined.evidence_status == "insufficient_evidence"
     with pytest.raises(ValueError, match="duplicate"):
         aggregate_reports([reports[0], reports[0]], as_of=T + timedelta(days=1))
+
+
+def _complete_five_minute_live_report(
+    root, opened_at, profits=("5",), *, after_close_gap=False, strategy_id="trend_pullback", selection_hash="b" * 64
+):
+    instrument = InstrumentSpec(
+        provider="oanda_practice",
+        broker_symbol="DE30_EUR",
+        market="germany40",
+        product="cfd",
+        quote_currency="EUR",
+        point_value=Decimal(1),
+    )
+    manifest = LiveRoundManifest(
+        round_id=f"diagnostic-{opened_at.date().isoformat()}",
+        account_feed_hash="a" * 64,
+        instruments=(instrument,),
+        rules={"DE30_EUR": LiveRule(strategy_id=strategy_id, direction="long", selection_hash=selection_hash)},
+        sessions={"DE30_EUR": LiveSessionWindow(opened_at=opened_at, closed_at=opened_at + timedelta(minutes=5))},
+    )
+    session = SessionJournal(root / "session", manifest.model_dump(mode="json"))
+    for second in (*range(0, 300, 30), 299):
+        at = opened_at + timedelta(seconds=second)
+        session.append(
+            "quote",
+            at,
+            {
+                "broker_symbol": "DE30_EUR",
+                "observed_at": at.isoformat(),
+                "bid": "100",
+                "ask": "101",
+                "tradeable": "True",
+                "source_key": f"quote-{second}",
+            },
+        )
+    if after_close_gap:
+        session.append(
+            "gap",
+            opened_at + timedelta(minutes=6),
+            {
+                "reason": "quote_gap_or_reorder",
+                "broker_symbol": "DE30_EUR",
+            },
+        )
+    paper = PaperJournal(root / "paper", manifest.identity_hash)
+    for index, net in enumerate(profits):
+        entry = opened_at + timedelta(minutes=1, seconds=2 * index)
+        append(
+            paper,
+            "opened",
+            entry,
+            {
+                "broker_symbol": "DE30_EUR",
+                "strategy_id": strategy_id,
+                "direction": "long",
+                "entry": "100",
+                "opened_at": entry.isoformat(),
+            },
+        )
+        append(
+            paper,
+            "closed",
+            entry + timedelta(seconds=1),
+            {
+                "broker_symbol": "DE30_EUR",
+                "gross_pnl_gbp": net,
+                "commission_gbp": "0",
+                "financing_gbp": "0",
+                "net_pnl_gbp": net,
+            },
+        )
+    return build_report(
+        paper,
+        manifest,
+        as_of=opened_at + timedelta(minutes=7),
+        session_journal=session,
+    )
+
+
+def test_after_session_gaps_stay_visible_without_disqualifying_session_coverage(tmp_path):
+    first = _complete_five_minute_live_report(tmp_path / "first", T, after_close_gap=True)
+    second = _complete_five_minute_live_report(tmp_path / "second", T + timedelta(days=1))
+    combined = aggregate_reports([first, second], as_of=T + timedelta(days=1, minutes=7))
+    assert first.feed_gap_count == 1
+    assert first.eligible_session_gap_count == 0
+    assert combined.feed_gap_count == 1
+    assert combined.eligible_session_gap_count == 0
+    assert combined.coverage_status == "measured"
+    assert combined.account_quote_coverage == Decimal(1)
+    assert combined.daily_block_lower_95_gbp is None  # Two days are far below the prospective gate.
+
+
+def test_cumulative_lower_bound_includes_retained_no_trade_days(tmp_path):
+    reports = [
+        _complete_five_minute_live_report(
+            tmp_path / str(day),
+            T + timedelta(days=day),
+            profits=("5",) * 100 if day == 0 else (),
+        )
+        for day in range(91)
+    ]
+    combined = aggregate_reports(reports, as_of=T + timedelta(days=90, minutes=7))
+    assert combined.closed_trades == 100
+    assert combined.account_quote_coverage == Decimal(1)
+    assert combined.daily_block_lower_95_gbp == Decimal(0)
+    assert combined.evidence_status == "insufficient_evidence"
+
+
+def test_cumulative_lower_bound_can_measure_full_positive_paper_sample_without_promotion(tmp_path):
+    reports = [
+        _complete_five_minute_live_report(
+            tmp_path / str(day),
+            T + timedelta(days=day),
+            profits=("5", "5") if day < 9 else ("5",),
+        )
+        for day in range(91)
+    ]
+    combined = aggregate_reports(reports, as_of=T + timedelta(days=90, minutes=7))
+    assert combined.closed_trades == 100
+    assert combined.account_quote_coverage == Decimal(1)
+    assert combined.daily_block_lower_95_gbp > 0
+    assert combined.evidence_status == "insufficient_evidence"
+
+
+def test_cumulative_lower_bound_abstains_when_frozen_rule_changes(tmp_path):
+    reports = [
+        _complete_five_minute_live_report(
+            tmp_path / str(day),
+            T + timedelta(days=day),
+            profits=("5", "5") if day < 9 else ("5",),
+            strategy_id="range_reversion" if day == 45 else "trend_pullback",
+        )
+        for day in range(91)
+    ]
+    combined = aggregate_reports(reports, as_of=T + timedelta(days=90, minutes=7))
+    assert combined.closed_trades == 100
+    assert combined.account_quote_coverage == Decimal(1)
+    assert combined.daily_block_lower_95_gbp is None
+
+
+def test_cumulative_lower_bound_abstains_for_diagnostic_unselected_rule(tmp_path):
+    reports = [
+        _complete_five_minute_live_report(
+            tmp_path / str(day),
+            T + timedelta(days=day),
+            profits=("5", "5") if day < 9 else ("5",),
+            selection_hash="0" * 64,
+        )
+        for day in range(91)
+    ]
+    combined = aggregate_reports(reports, as_of=T + timedelta(days=90, minutes=7))
+    assert combined.closed_trades == 100
+    assert combined.daily_block_lower_95_gbp is None

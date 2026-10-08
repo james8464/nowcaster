@@ -53,6 +53,7 @@ import Testing
     {"schema_version":1,"paper_only":true,"round_id":"round-2","generated_at":"2026-10-08T10:00:00Z",
      "evidence_status":"insufficient_evidence","coverage_status":"measured","account_quote_coverage":"0.99",
      "decisions_count":5,"blocked_reasons":{"session_closed":2},"feed_gap_count":1,
+     "eligible_session_gap_count":0,
      "closed_trades":1,"open_positions":0,"no_trade_count":2,
      "gross_pnl_gbp":"-4","commission_gbp":"1","financing_gbp":"1","net_pnl_gbp":"-6",
      "win_rate":"0","net_expectancy_gbp":"-6","daily_block_lower_95_gbp":null,
@@ -66,6 +67,7 @@ import Testing
     let report = try IntradayPaperReport.decode(data)
     #expect(report.decisionsCount == 5)
     #expect(report.feedGapCount == 1)
+    #expect(report.eligibleSessionGapCount == 0)
     #expect(report.blockedReasons["session_closed"] == 2)
     #expect(report.profitFactor == 0)
     #expect(report.maximumDrawdown == 6)

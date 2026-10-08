@@ -78,6 +78,7 @@ struct IntradayPaperReport: Sendable {
     let noTradeCount: Int
     let blockedReasons: [String: Int]
     let feedGapCount: Int
+    let eligibleSessionGapCount: Int?
     let grossPnL: Decimal
     let commission: Decimal
     let financing: Decimal
@@ -106,6 +107,7 @@ struct IntradayPaperReport: Sendable {
         let noTradeCount: Int
         let blockedReasons: [String: Int]
         let feedGapCount: Int
+        let eligibleSessionGapCount: Int?
         let grossPnlGbp: String
         let commissionGbp: String
         let financingGbp: String
@@ -148,6 +150,8 @@ struct IntradayPaperReport: Sendable {
               ["not_measured", "measured"].contains(raw.coverageStatus),
               raw.closedTrades >= 0, raw.openPositions >= 0,
               raw.decisionsCount >= 0, raw.noTradeCount >= 0, raw.feedGapCount >= 0,
+              raw.eligibleSessionGapCount == nil ||
+                (raw.eligibleSessionGapCount! >= 0 && raw.eligibleSessionGapCount! <= raw.feedGapCount),
               raw.blockedReasons.values.allSatisfy({ $0 >= 0 }),
               let generated = formatter.date(from: raw.generatedAt) ?? ISO8601DateFormatter().date(from: raw.generatedAt),
               let gross = Decimal(string: raw.grossPnlGbp),
@@ -194,6 +198,7 @@ struct IntradayPaperReport: Sendable {
                     openPositions: raw.openPositions, decisionsCount: raw.decisionsCount,
                     noTradeCount: raw.noTradeCount, blockedReasons: raw.blockedReasons,
                     feedGapCount: raw.feedGapCount,
+                    eligibleSessionGapCount: raw.eligibleSessionGapCount,
                     grossPnL: gross, commission: commission, financing: financing,
                     conversionFee: conversionFee ?? 0, netPnL: net,
                     winRate: raw.winRate.flatMap { Decimal(string: $0) },
@@ -236,7 +241,7 @@ struct IntradayReportView: View {
                             Text("Win rate: \(report.winRate.map { String(describing: $0 * 100) + "%" } ?? "undefined") · Net expectancy: \(report.netExpectancy.map { "£" + $0.description } ?? "undefined")")
                             Text("Profit factor: \(report.profitFactor.map(\.description) ?? "undefined") · Max drawdown £\(report.maximumDrawdown.description)")
                             Text("95% daily lower bound: \(report.dailyLowerBound.map { "£" + $0.description } ?? "insufficient sample")")
-                            Text("Evidence: insufficient · Coverage: \(report.accountQuoteCoverage.map { String(describing: $0 * 100) + "%" } ?? "not measured") · Feed gaps: \(report.feedGapCount)")
+                            Text("Evidence: insufficient · Coverage: \(report.accountQuoteCoverage.map { String(describing: $0 * 100) + "%" } ?? "not measured") · Feed gaps: \(report.feedGapCount) total, \(report.eligibleSessionGapCount.map(String.init) ?? "unknown") in declared sessions")
                             Text(report.warning)
                         }
                         .font(.caption).foregroundStyle(.secondary)
