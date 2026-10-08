@@ -89,9 +89,13 @@ class PaperJournal:
             self._lock = None
 
     def events(self) -> tuple[PaperEvent, ...]:
-        if not self.event_file.exists():
-            return ()
-        data = self.event_file.read_bytes()
+        if self._lock is not None:
+            data = self.event_file.read_bytes() if self.event_file.exists() else b""
+        else:
+            with self.lock_file.open("a+b") as lock:
+                fcntl.flock(lock, fcntl.LOCK_SH)
+                data = self.event_file.read_bytes() if self.event_file.exists() else b""
+                fcntl.flock(lock, fcntl.LOCK_UN)
         if data and not data.endswith(b"\n"):
             raise ValueError("journal has unterminated record")
         result = []
@@ -127,8 +131,9 @@ class PaperJournal:
         }
         data["record_hash"] = canonical_hash({**data, "occurred_at": occurred_at.isoformat().replace("+00:00", "Z")})
         event = PaperEvent.model_validate(data)
-        semantic = canonical_hash({"kind": event.kind, "occurred_at": event.occurred_at.isoformat(),
-                                   "payload": event.payload})
+        semantic = canonical_hash(
+            {"kind": event.kind, "occurred_at": event.occurred_at.isoformat(), "payload": event.payload}
+        )
         if semantic in self._semantic_ids:
             raise ValueError("duplicate paper event")
         encoded = (event.model_dump_json() + "\n").encode()

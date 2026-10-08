@@ -215,7 +215,7 @@ struct IntradayReportView: View {
                 try? IntradayPaperReport.decode($0)
             }
             VStack(alignment: .leading, spacing: 6) {
-                Text("Session paper performance").font(.headline)
+                Text("Cumulative paper performance").font(.headline)
                 if let report {
                     Text(report.closedTrades == 0 ? "No closed paper trades yet" : "Net £\(report.netPnL.description) across \(report.closedTrades) closed trades")
                         .fontWeight(.medium)

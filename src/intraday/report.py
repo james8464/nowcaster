@@ -90,6 +90,7 @@ def build_report(
     started_at: datetime | None = None,
     as_of: datetime,
     session_journal: SessionJournal | None = None,
+    ignore_after_as_of: bool = False,
 ) -> PaperDecisionReport:
     if manifest is not None:
         if journal.protocol_hash != manifest.identity_hash:
@@ -111,9 +112,12 @@ def build_report(
     maximum_drawdown = D(0)
     gaps = 0
     decisions = 0
+    session_events = session_journal.events() if session_journal is not None else ()
     if session_journal is not None:
-        for event in session_journal.events():
+        for event in session_events:
             if datetime.fromisoformat(event["at"]) > as_of:
+                if ignore_after_as_of:
+                    continue
                 raise ValueError("session journal contains future event relative to report")
             if event["kind"] == "gap":
                 gaps += 1
@@ -121,10 +125,20 @@ def build_report(
                 decisions += 1
                 if event["payload"].get("status") != "ready":
                     reasons[event["payload"].get("reason") or "unspecified"] += 1
+                elif (
+                    manifest is not None
+                    and event["payload"].get("broker_symbol") in manifest.rules
+                    and manifest.rules[event["payload"]["broker_symbol"]].selection_hash == "0" * 64
+                ):
+                    # Derived from the durable decision, so a crash cannot lose
+                    # the diagnostic paper-abstention explanation.
+                    reasons["selection_and_cost_evidence_missing"] += 1
     for event in journal.events():
         if event.occurred_at > as_of:
+            if ignore_after_as_of:
+                continue
             raise ValueError("journal contains future event relative to report")
-        if event.kind == "no_trade" or (session_journal is None and event.kind in {"opened", "managed", "closed"}):
+        if session_journal is None and event.kind in {"no_trade", "opened", "managed", "closed"}:
             decisions += 1
         if event.kind == "feed_gap":
             gaps += 1
@@ -140,7 +154,7 @@ def build_report(
             if symbol not in opens:
                 raise ValueError("paper close has no matching open")
             opened = opens.pop(symbol)
-            close = event.payload
+            close = {**event.payload, "closed_at": event.occurred_at.isoformat()}
             required_cost_fields = {"net_pnl_gbp", "gross_pnl_gbp", "commission_gbp", "financing_gbp"}
             if not required_cost_fields <= close.keys():
                 raise ValueError("closed paper trade lacks itemized costs")
@@ -181,21 +195,27 @@ def build_report(
     coverage_status = "not_measured"
     account_quote_coverage = None
     if manifest is not None and session_journal is not None:
-        events = session_journal.events()
         total_slots = 0
         covered_slots = 0
         for symbol, window in manifest.sessions.items():
-            quote_times = sorted(
-                datetime.fromisoformat(event["payload"]["observed_at"])
-                for event in events
-                if event["kind"] == "quote"
-                and event["payload"]["broker_symbol"] == symbol
-                and event["payload"]["tradeable"] == "True"
-            )
+            slot_samples: dict[int, list[datetime]] = defaultdict(list)
+            for event in session_events:
+                if (
+                    event["kind"] != "quote"
+                    or datetime.fromisoformat(event["at"]) > as_of
+                    or event["payload"]["broker_symbol"] != symbol
+                    or event["payload"]["tradeable"] != "True"
+                ):
+                    continue
+                observed = datetime.fromisoformat(event["payload"]["observed_at"])
+                if window.opened_at <= observed < min(window.closed_at, as_of):
+                    index = (observed - window.opened_at) // timedelta(minutes=5)
+                    slot_samples[index].append(observed)
             slot = window.opened_at
+            index = 0
             while slot + timedelta(minutes=5) <= min(window.closed_at, as_of):
                 total_slots += 1
-                sampled = [at for at in quote_times if slot <= at < slot + timedelta(minutes=5)]
+                sampled = sorted(slot_samples.get(index, ()))
                 if (
                     sampled
                     and sampled[0] - slot <= timedelta(seconds=15)
@@ -206,6 +226,7 @@ def build_report(
                 ):
                     covered_slots += 1
                 slot += timedelta(minutes=5)
+                index += 1
         if total_slots:
             coverage_status = "measured"
             account_quote_coverage = D(covered_slots) / D(total_slots)
@@ -242,4 +263,61 @@ def build_report(
         groups=groups,
         trades=tuple(trades),
         unresolved_positions=tuple(opens.values()),
+    )
+
+
+def aggregate_reports(
+    reports: list[PaperDecisionReport] | tuple[PaperDecisionReport, ...], *, as_of: datetime
+) -> PaperDecisionReport:
+    """Combine retained daily rounds without resetting losses or claiming measured coverage."""
+    if not reports:
+        raise ValueError("at least one retained round required")
+    ordered = sorted(reports, key=lambda item: item.started_at)
+    if len({item.round_id for item in ordered}) != len(ordered):
+        raise ValueError("duplicate retained round")
+    if any(item.generated_at > as_of for item in ordered):
+        raise ValueError("future retained report")
+    trades = tuple(item for report in ordered for item in report.trades)
+    unresolved = tuple(item for report in ordered for item in report.unresolved_positions)
+    reasons = Counter[str]()
+    for report in ordered:
+        reasons.update(report.blocked_reasons)
+    gross = sum((report.gross_pnl_gbp for report in ordered), D(0))
+    commission = sum((report.commission_gbp for report in ordered), D(0))
+    financing = sum((report.financing_gbp for report in ordered), D(0))
+    net = gross - commission - financing
+    ordered_trades = sorted(trades, key=lambda item: datetime.fromisoformat(item.close["closed_at"]))
+    running = peak = drawdown = D(0)
+    for item in ordered_trades:
+        running += D(item.close["net_pnl_gbp"])
+        peak = max(peak, running)
+        drawdown = max(drawdown, peak - running)
+    winners = [D(item.close["net_pnl_gbp"]) for item in trades if D(item.close["net_pnl_gbp"]) > 0]
+    losers = [D(item.close["net_pnl_gbp"]) for item in trades if D(item.close["net_pnl_gbp"]) < 0]
+    return PaperDecisionReport(
+        round_id="all-retained-practice-rounds",
+        started_at=ordered[0].started_at,
+        generated_at=as_of,
+        decisions_count=sum(item.decisions_count for item in ordered),
+        no_trade_count=sum(item.no_trade_count for item in ordered),
+        blocked_reasons=dict(reasons),
+        feed_gap_count=sum(item.feed_gap_count for item in ordered),
+        closed_trades=len(trades),
+        open_positions=len(unresolved),
+        gross_pnl_gbp=gross,
+        commission_gbp=commission,
+        financing_gbp=financing,
+        net_pnl_gbp=net,
+        win_rate=D(len(winners)) / len(trades) if trades else None,
+        net_expectancy_gbp=net / len(trades) if trades else None,
+        profit_factor=sum(winners, D(0)) / -sum(losers, D(0)) if losers else None,
+        maximum_drawdown_gbp=drawdown,
+        daily_block_lower_95_gbp=None,
+        groups=tuple(group for report in ordered for group in report.groups),
+        trades=trades,
+        unresolved_positions=unresolved,
+        warning=(
+            "Cumulative hypothetical practice results. Cross-round quote coverage "
+            "and real-money execution are unverified."
+        ),
     )

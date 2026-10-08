@@ -90,6 +90,36 @@ def test_practice_feed_parses_only_completed_bid_ask_candles():
     assert calls[0].headers["authorization"] == "Bearer dummy-token"
 
 
+def test_candle_fetch_skips_only_provider_overlap_before_unaligned_start():
+    def candle(at: str) -> dict:
+        return {
+            "time": at,
+            "complete": True,
+            "bid": {"o": "24000", "h": "24002", "l": "23999", "c": "24001"},
+            "ask": {"o": "24003", "h": "24005", "l": "24002", "c": "24004"},
+        }
+
+    def reply(request):
+        return httpx.Response(
+            200,
+            json={
+                "candles": [
+                    candle("2026-10-06T07:55:00Z"),
+                    candle("2026-10-06T08:00:00Z"),
+                ]
+            },
+        )
+
+    feed = OandaPracticeFeed("practice-account", "dummy-token", transport=httpx.MockTransport(reply))
+    bars = feed.fetch_candles(
+        INSTRUMENT,
+        T - timedelta(seconds=1),
+        T + timedelta(minutes=5),
+        received_at=T + timedelta(minutes=6),
+    )
+    assert [bar.start for bar in bars] == [T]
+
+
 def test_practice_feed_parses_account_quote_and_ignores_heartbeat():
     feed = OandaPracticeFeed(
         "practice-account", "dummy-token", transport=httpx.MockTransport(lambda _: httpx.Response(200))

@@ -37,8 +37,10 @@ class SelectionManifest(BaseModel):
             raise ValueError("selection needs round ID and instruments")
         if not self.development_end < self.validation_end < self.sealed_end:
             raise ValueError("chronological boundaries required")
-        if any(item.tzinfo is None or item.utcoffset() != timedelta(0)
-               for item in (self.development_end, self.validation_end, self.sealed_end)):
+        if any(
+            item.tzinfo is None or item.utcoffset() != timedelta(0)
+            for item in (self.development_end, self.validation_end, self.sealed_end)
+        ):
             raise ValueError("boundaries must be UTC")
         symbols = [item.broker_symbol for item in self.instruments]
         if len(set(symbols)) != len(symbols):
@@ -112,7 +114,8 @@ def _assess(
     costs = manifest.costs.get(instrument.broker_symbol)
     reason = None
     if (
-        evidence is None or costs is None
+        evidence is None
+        or costs is None
         or evidence.broker_symbol != instrument.broker_symbol
         or evidence.product != instrument.product
         or evidence.slippage_points != costs.slippage_points
@@ -123,20 +126,37 @@ def _assess(
     elif not bars:
         reason = "no_historical_data"
     if reason:
-        return SelectionAttempt(stage, instrument.broker_symbol, rule, direction, 0, D(0), D(0), D(0), 0, 0,
-                                reason, canonical_hash({"manifest": manifest.identity_hash, "stage": stage,
-                                                        "symbol": instrument.broker_symbol, "rule": rule,
-                                                        "direction": direction}))
+        return SelectionAttempt(
+            stage,
+            instrument.broker_symbol,
+            rule,
+            direction,
+            0,
+            D(0),
+            D(0),
+            D(0),
+            0,
+            0,
+            reason,
+            canonical_hash(
+                {
+                    "manifest": manifest.identity_hash,
+                    "stage": stage,
+                    "symbol": instrument.broker_symbol,
+                    "rule": rule,
+                    "direction": direction,
+                }
+            ),
+        )
     assert costs is not None
     spread = max((bar.ask_close - bar.bid_close for bar in bars), default=D(0))
-    stressed = costs.model_copy(update={
-        "slippage_points": costs.slippage_points + spread * (manifest.stress_multiplier - 1) / 2
-    })
+    stressed = costs.model_copy(
+        update={"slippage_points": costs.slippage_points + spread * (manifest.stress_multiplier - 1) / 2}
+    )
     base_results = []
     stressed_results = []
     for group in _sessions(bars):
-        kwargs = {"session_open": group[0].start, "session_close": group[-1].end,
-                  "direction_filter": direction}
+        kwargs = {"session_open": group[0].start, "session_close": group[-1].end, "direction_filter": direction}
         base_results.append(replay_session(rule, group, costs=costs, **kwargs))
         stressed_results.append(replay_session(rule, group, costs=stressed, **kwargs))
     net = sum((item.total_net_pnl for item in base_results), D(0))
@@ -144,20 +164,36 @@ def _assess(
     count = sum(len(item.trades) for item in base_results)
     gaps = sum(item.gaps for item in base_results)
     lower = _daily_block_lower(tuple(item.total_net_pnl for item in base_results))
-    reason = "historical_gap" if gaps else (
-        "insufficient_net_evidence" if count == 0 or net <= 0 or stressed_net <= 0 or lower <= 0 else None
+    reason = (
+        "historical_gap"
+        if gaps
+        else ("insufficient_net_evidence" if count == 0 or net <= 0 or stressed_net <= 0 or lower <= 0 else None)
     )
     return SelectionAttempt(
-        stage, instrument.broker_symbol, rule, direction, count, net, stressed_net, lower,
-        sum(item.no_trade_count for item in base_results), gaps, reason,
-        canonical_hash({"manifest": manifest.identity_hash, "bars": [item.model_dump(mode="json") for item in bars],
-                        "stage": stage, "rule": rule, "direction": direction}),
+        stage,
+        instrument.broker_symbol,
+        rule,
+        direction,
+        count,
+        net,
+        stressed_net,
+        lower,
+        sum(item.no_trade_count for item in base_results),
+        gaps,
+        reason,
+        canonical_hash(
+            {
+                "manifest": manifest.identity_hash,
+                "bars": [item.model_dump(mode="json") for item in bars],
+                "stage": stage,
+                "rule": rule,
+                "direction": direction,
+            }
+        ),
     )
 
 
-def run_selection(
-    manifest: SelectionManifest, bars_by_product: dict[str, tuple[ConfirmedBar, ...]]
-) -> SelectionReport:
+def run_selection(manifest: SelectionManifest, bars_by_product: dict[str, tuple[ConfirmedBar, ...]]) -> SelectionReport:
     """Select on chronological development/validation, then inspect sealed once.
 
     This does not adapt a running prospective rule; the returned identity is
@@ -174,16 +210,29 @@ def run_selection(
             raise ValueError("historical bars must be unique and chronological")
         if any(item.instrument != instrument or item.price_scope != "historical_base" for item in bars):
             raise ValueError("historical product or price scope mismatch")
-        stages = {
-            "development": tuple(item for item in bars if item.start < manifest.development_end),
-            "validation": tuple(item for item in bars if manifest.development_end <= item.start < manifest.validation_end),
-            "sealed": tuple(item for item in bars if manifest.validation_end <= item.start < manifest.sealed_end),
-        }
         if any(item.end > manifest.sealed_end for item in bars):
             raise ValueError("bar outside sealed period")
-        if any(item.start < boundary < item.end for item in bars
-               for boundary in (manifest.development_end, manifest.validation_end)):
+        if any(
+            item.start < boundary < item.end
+            for item in bars
+            for boundary in (manifest.development_end, manifest.validation_end)
+        ):
             raise ValueError("bar crosses a sealed stage boundary")
+        evidence = manifest.cost_evidence.get(instrument.broker_symbol)
+        if evidence is not None and evidence.broker_symbol == instrument.broker_symbol:
+            bars = tuple(
+                item
+                for item in bars
+                if evidence.session.is_open(item.start)
+                and evidence.session.is_open(item.end - timedelta(microseconds=1))
+            )
+        stages = {
+            "development": tuple(item for item in bars if item.start < manifest.development_end),
+            "validation": tuple(
+                item for item in bars if manifest.development_end <= item.start < manifest.validation_end
+            ),
+            "sealed": tuple(item for item in bars if manifest.validation_end <= item.start < manifest.sealed_end),
+        }
         candidates = []
         for rule in RULES:
             for direction in DIRECTIONS:
@@ -194,16 +243,38 @@ def run_selection(
                     candidates.append((validation.stressed_net_pnl, rule, direction))
         if candidates:
             _, rule, direction = max(candidates)
-            development = next(item for item in attempts if item.broker_symbol == instrument.broker_symbol
-                               and item.stage == "development" and item.rule == rule and item.direction == direction)
-            validation = next(item for item in attempts if item.broker_symbol == instrument.broker_symbol
-                              and item.stage == "validation" and item.rule == rule and item.direction == direction)
+            development = next(
+                item
+                for item in attempts
+                if item.broker_symbol == instrument.broker_symbol
+                and item.stage == "development"
+                and item.rule == rule
+                and item.direction == direction
+            )
+            validation = next(
+                item
+                for item in attempts
+                if item.broker_symbol == instrument.broker_symbol
+                and item.stage == "validation"
+                and item.rule == rule
+                and item.direction == direction
+            )
             sealed = _assess(manifest, instrument, stages["sealed"], "sealed", rule, direction)
             attempts.append(sealed)
             if sealed.rejection_reason is None:
-                chosen.append(SelectedRule(
-                    instrument.broker_symbol, rule, direction,
-                    canonical_hash({"manifest": manifest.identity_hash, "development": development.input_hash,
-                                    "validation": validation.input_hash, "sealed": sealed.input_hash}),
-                ))
+                chosen.append(
+                    SelectedRule(
+                        instrument.broker_symbol,
+                        rule,
+                        direction,
+                        canonical_hash(
+                            {
+                                "manifest": manifest.identity_hash,
+                                "development": development.input_hash,
+                                "validation": validation.input_hash,
+                                "sealed": sealed.input_hash,
+                            }
+                        ),
+                    )
+                )
     return SelectionReport(manifest.identity_hash, tuple(attempts), tuple(chosen))

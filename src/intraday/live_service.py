@@ -15,7 +15,7 @@ from src.intraday.contracts import InstrumentSpec, MarketQuote
 from src.intraday.desk import DeskStatus, MarketStatus, OpportunityStatus
 from src.intraday.live import LiveBarBuilder
 from src.intraday.session_journal import SessionJournal
-from src.intraday.strategies import evaluate_setup
+from src.intraday.strategies import SetupDecision, evaluate_setup
 from src.strategies.types import canonical_hash
 
 
@@ -69,7 +69,10 @@ class LiveRoundManifest(BaseModel):
 class LiveIndicatorSession:
     """One account stream; prospective decisions only from confirmed account bars."""
 
-    def __init__(self, directory: Path, manifest: LiveRoundManifest):
+    def __init__(self, directory: Path, manifest: LiveRoundManifest, *, restart_at: datetime | None = None):
+        restart_at = restart_at or datetime.now(UTC)
+        if restart_at.tzinfo is None or restart_at.utcoffset() != timedelta(0):
+            raise ValueError("restart time must be UTC")
         self.manifest = manifest
         self.directory = Path(directory)
         self.journal = SessionJournal(directory, manifest.model_dump(mode="json"))
@@ -78,6 +81,8 @@ class LiveIndicatorSession:
         self.bars = {symbol: [] for symbol in self.by_symbol}
         self.pending = {symbol: False for symbol in self.by_symbol}
         events = self.journal.events()
+        if events and restart_at < datetime.fromisoformat(events[-1]["at"]):
+            raise ValueError("restart precedes retained event")
         self.last_source_key: dict[str, str] = {}
         self.last_quote_at: dict[str, datetime] = {}
         for event in events:
@@ -87,14 +92,18 @@ class LiveIndicatorSession:
                 self.last_quote_at[payload["broker_symbol"]] = datetime.fromisoformat(payload["observed_at"])
         self.decision_bars = {event["payload"]["bar_key"] for event in events if event["kind"] == "decision"}
         self.latest_opportunity: OpportunityStatus | None = None
-        self.status = self._status(datetime.now(UTC), "stale", "Awaiting fresh account quotes after start or restart.")
+        self.new_plan: SetupDecision | None = None
+        self.last_quote: MarketQuote | None = None
+        self.status = self._status(restart_at, "stale", "Awaiting fresh account quotes after start or restart.")
         if events:
-            self.journal.append("gap", datetime.now(UTC), {"reason": "process_restart"})
+            self.journal.append("gap", restart_at, {"reason": "process_restart"})
             self._publish(self.status)
 
     @classmethod
-    def restore(cls, directory: Path, manifest: LiveRoundManifest) -> LiveIndicatorSession:
-        return cls(directory, manifest)
+    def restore(
+        cls, directory: Path, manifest: LiveRoundManifest, *, restart_at: datetime | None = None
+    ) -> LiveIndicatorSession:
+        return cls(directory, manifest, restart_at=restart_at)
 
     def _status(self, at: datetime, health: str, reason: str) -> DeskStatus:
         markets = []
@@ -147,6 +156,8 @@ class LiveIndicatorSession:
         return status
 
     def on_event(self, raw_line: str, received_at: datetime) -> DeskStatus:
+        self.new_plan = None
+        self.last_quote = None
         if received_at.tzinfo is None or received_at.utcoffset() != timedelta(0):
             raise ValueError("receive time must be UTC")
         try:
@@ -202,6 +213,7 @@ class LiveIndicatorSession:
             },
         )
         self.last_source_key[symbol] = source_key
+        self.last_quote = quote
         previous = self.last_quote_at.get(symbol)
         self.last_quote_at[symbol] = observed
         if previous is not None and (observed <= previous or observed - previous > timedelta(seconds=30)):
@@ -239,6 +251,7 @@ class LiveIndicatorSession:
                 }
                 self.journal.append("decision", received_at, decision)
                 self.decision_bars.add(bar_key)
+                self.new_plan = plan
                 if plan.status == "ready" and plan.direction == self.manifest.rules[symbol].direction:
                     self.latest_opportunity = OpportunityStatus(
                         market=quote.instrument.market,

@@ -5,13 +5,18 @@ from decimal import Decimal
 from src.intraday.contracts import InstrumentSpec
 from src.intraday.live_service import LiveIndicatorSession, LiveRoundManifest, LiveRule, LiveSessionWindow
 
-
 NOW = datetime(2026, 10, 8, 8, 0, tzinfo=UTC)
 
 
 def instrument(symbol, market, product="cfd", currency="EUR"):
-    return InstrumentSpec(provider="oanda_practice", broker_symbol=symbol, market=market,
-                          product=product, quote_currency=currency, point_value=Decimal(1))
+    return InstrumentSpec(
+        provider="oanda_practice",
+        broker_symbol=symbol,
+        market=market,
+        product=product,
+        quote_currency=currency,
+        point_value=Decimal(1),
+    )
 
 
 PRODUCTS = (
@@ -24,17 +29,33 @@ PRODUCTS = (
 
 def manifest():
     return LiveRoundManifest(
-        round_id="round-2", account_feed_hash="a" * 64, instruments=PRODUCTS,
-        rules={item.broker_symbol: LiveRule(strategy_id="trend_pullback", direction="long",
-                                             selection_hash="b" * 64) for item in PRODUCTS},
-        sessions={item.broker_symbol: LiveSessionWindow(opened_at=NOW - timedelta(minutes=5),
-                                                        closed_at=NOW + timedelta(hours=8)) for item in PRODUCTS},
+        round_id="round-2",
+        account_feed_hash="a" * 64,
+        instruments=PRODUCTS,
+        rules={
+            item.broker_symbol: LiveRule(strategy_id="trend_pullback", direction="long", selection_hash="b" * 64)
+            for item in PRODUCTS
+        },
+        sessions={
+            item.broker_symbol: LiveSessionWindow(
+                opened_at=NOW - timedelta(minutes=5), closed_at=NOW + timedelta(hours=8)
+            )
+            for item in PRODUCTS
+        },
     )
 
 
 def line(symbol, at=NOW, bid="100", ask="101"):
-    return json.dumps({"type": "PRICE", "instrument": symbol, "time": at.isoformat(),
-                       "tradeable": True, "bids": [{"price": bid}], "asks": [{"price": ask}]})
+    return json.dumps(
+        {
+            "type": "PRICE",
+            "instrument": symbol,
+            "time": at.isoformat(),
+            "tradeable": True,
+            "bids": [{"price": bid}],
+            "asks": [{"price": ask}],
+        }
+    )
 
 
 def test_four_products_are_routed_and_inventory_is_not_a_paper_signal(tmp_path):
@@ -79,6 +100,22 @@ def test_one_decision_per_complete_bar_after_a_later_quote(tmp_path):
     later = seal + timedelta(seconds=1)
     session.on_event(line("DE30_EUR", later), later + timedelta(milliseconds=100))
     assert len([event for event in session.journal.events() if event["kind"] == "decision"]) == 1
+
+
+def test_new_plan_is_exposed_once_for_downstream_paper_admission(tmp_path):
+    session = LiveIndicatorSession.restore(tmp_path, manifest())
+    for seconds in range(0, 300, 10):
+        at = NOW + timedelta(seconds=seconds)
+        session.on_event(line("DE30_EUR", at), at + timedelta(milliseconds=100))
+    seal = NOW + timedelta(minutes=5)
+    session.on_event(line("DE30_EUR", seal), seal + timedelta(milliseconds=100))
+    later = seal + timedelta(seconds=1)
+    session.on_event(line("DE30_EUR", later), later + timedelta(milliseconds=100))
+    assert session.new_plan is not None
+    assert session.new_plan.strategy_id == "trend_pullback"
+    assert session.last_quote is not None
+    session.on_event(line("DE30_EUR", later + timedelta(seconds=1)), later + timedelta(seconds=1, milliseconds=100))
+    assert session.new_plan is None
     next_quote = seal + timedelta(seconds=2)
     session.on_event(line("DE30_EUR", next_quote), next_quote + timedelta(milliseconds=100))
     assert len([event for event in session.journal.events() if event["kind"] == "decision"]) == 1

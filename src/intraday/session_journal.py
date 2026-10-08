@@ -36,9 +36,10 @@ class SessionJournal:
         self._last_size = self.path.stat().st_size if self.path.exists() else 0
 
     def events(self) -> tuple[dict, ...]:
-        if not self.path.exists():
-            return ()
-        data = self.path.read_bytes()
+        with self.lock.open("a+b") as lock:
+            fcntl.flock(lock, fcntl.LOCK_SH)
+            data = self.path.read_bytes() if self.path.exists() else b""
+            fcntl.flock(lock, fcntl.LOCK_UN)
         if data and not data.endswith(b"\n"):
             raise ValueError("unterminated quote journal")
         previous = ZERO_HASH
@@ -69,8 +70,7 @@ class SessionJournal:
             size = self.path.stat().st_size if self.path.exists() else 0
             if size != self._last_size:
                 raise ValueError("another quote writer changed the journal")
-            event = {"kind": kind, "at": at.isoformat(), "payload": payload,
-                     "previous_hash": self._last_hash}
+            event = {"kind": kind, "at": at.isoformat(), "payload": payload, "previous_hash": self._last_hash}
             event["record_hash"] = canonical_hash(event)
             encoded = (json.dumps(event, sort_keys=True) + "\n").encode()
             with self.path.open("ab") as stream:

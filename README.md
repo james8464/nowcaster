@@ -66,15 +66,21 @@ sample limits and coverage; an open paper ticket, if one exists in an
 authorized future round, lists its direction, units, entry, stop, target,
 time exit, effective leverage, margin estimate and cost source. **Paper
 alerts** are off by default; diagnostic setups never trigger them.
-The paper-results report is reconstructed from the append-only trade journal.
-It keeps losing trades, abstentions and unresolved positions, reconciles gross
+The paper-results report is reconstructed across all retained daily quote and
+paper journals, including after restarting the app. It keeps earlier losses,
+abstentions and unresolved positions instead of resetting at midnight. A
+confirmed diagnostic setup that cannot become a paper trade is recorded with
+the missing-selection-and-cost reason even if the app stops immediately after
+the setup. Completed days are cached after validation; the current day's
+report is rebuilt off the quote-processing path so reporting cannot hold up
+incoming prices. Results from a different practice account cannot be mixed
+into the same report. The report reconciles gross
 P&L with commissions and financing, and reports net expectancy, win rate,
 drawdown and a daily-block uncertainty bound only when the sample supports
 one. A high win rate can still have negative net P&L. The initial diagnostic
 run has no authorized paper entries, so its report correctly starts empty.
-The command follows one session at a time; later sessions can
-retain the same frozen paper study, but automatic reconnect and unattended
-multi-day collection are not complete. [OANDA's account stream](https://developer.oanda.com/rest-live-v20/pricing-ep/)
+The app helper reconnects and retains multiple days while the app and Mac remain
+running; it does not collect while the Mac is asleep or offline. [OANDA's account stream](https://developer.oanda.com/rest-live-v20/pricing-ep/)
 samples prices rather than sending every price change, and its
 [historical prices can differ from account pricing](https://help.oanda.com/us/en/faqs/rest-v20-api-troubleshooting-guide.htm?Highlight=api).
 The release gate remains at least 90 calendar

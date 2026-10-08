@@ -2,7 +2,9 @@ import inspect
 import json
 from datetime import UTC, datetime
 
-from scripts.intraday_service_entry import run_paper_indicator
+import pytest
+
+from scripts.intraday_service_entry import RetainedReportCache, run_paper_indicator
 from src.intraday.oanda_practice import PRACTICE_API, PRACTICE_STREAM, OandaPracticeFeed
 
 
@@ -101,3 +103,224 @@ def test_practice_monitor_can_start_before_declared_market_session(tmp_path):
         now=lambda: datetime(2026, 10, 8, 6, tzinfo=UTC),
     )
     assert json.loads((tmp_path / "report.json").read_text())["closed_trades"] == 0
+
+
+def test_practice_report_retains_prior_day_decisions_after_restart(tmp_path):
+    class DatedFeed(FakeFeed):
+        def __init__(self, timestamp):
+            self.timestamp = timestamp
+
+        def price_lines(self, instruments):
+            yield json.dumps(
+                {
+                    "type": "PRICE",
+                    "instrument": "DE30_EUR",
+                    "time": self.timestamp.isoformat().replace("+00:00", "Z"),
+                    "tradeable": True,
+                    "bids": [{"price": "24000"}],
+                    "asks": [{"price": "24002"}],
+                }
+            )
+
+    from src.intraday.journal import PaperJournal
+    from src.intraday.live_service import LiveRoundManifest
+
+    first = datetime(2026, 10, 8, 9, tzinfo=UTC)
+    second = datetime(2026, 10, 9, 9, tzinfo=UTC)
+    run_paper_indicator(
+        tmp_path, account_id="private-account", token="private-token", feed=DatedFeed(first), now=lambda: first
+    )
+    manifest = LiveRoundManifest.model_validate_json((tmp_path / "2026-10-08" / "live_round.json").read_text())
+    paper = PaperJournal(tmp_path / "PaperRounds" / "2026-10-08", manifest.identity_hash)
+    with paper as writer:
+        writer.append("no_trade", first, {"broker_symbol": "DE30_EUR", "reason": "costs_unverified"})
+    run_paper_indicator(
+        tmp_path, account_id="private-account", token="private-token", feed=DatedFeed(second), now=lambda: second
+    )
+    report = json.loads((tmp_path / "report.json").read_text())
+    assert report["round_id"] == "all-retained-practice-rounds"
+    assert report["no_trade_count"] >= 1
+    assert report["blocked_reasons"]["costs_unverified"] == 1
+
+
+def test_ready_diagnostic_setup_records_explicit_paper_rejection(tmp_path, monkeypatch):
+    from decimal import Decimal
+
+    from src.intraday.strategies import SetupDecision
+
+    clock = [datetime(2026, 10, 8, 9, tzinfo=UTC)]
+
+    class BarFeed(FakeFeed):
+        def price_lines(self, instruments):
+            from datetime import timedelta
+
+            for seconds in (*range(0, 300, 10), 300, 301):
+                clock[0] = datetime(2026, 10, 8, 9, tzinfo=UTC) + timedelta(seconds=seconds)
+                yield json.dumps(
+                    {
+                        "type": "PRICE",
+                        "instrument": "DE30_EUR",
+                        "time": clock[0].isoformat().replace("+00:00", "Z"),
+                        "tradeable": True,
+                        "bids": [{"price": "24000"}],
+                        "asks": [{"price": "24002"}],
+                    }
+                )
+
+    def ready(_rule, _bars, quote, **_kwargs):
+        from datetime import timedelta
+
+        return SetupDecision(
+            status="ready",
+            strategy_id="trend_pullback",
+            direction="long",
+            reason="test setup",
+            decision_at=quote.observed_at - timedelta(seconds=1),
+            entry_at=quote.received_at,
+            entry=Decimal("24002"),
+            stop=Decimal("23990"),
+            target=Decimal("24026"),
+            exit_by=quote.received_at + timedelta(minutes=10),
+            estimated_roundtrip_cost=Decimal("2"),
+            evidence_hash="a" * 64,
+        )
+
+    monkeypatch.setattr("src.intraday.live_service.evaluate_setup", ready)
+    run_paper_indicator(
+        tmp_path, account_id="private-account", token="private-token", feed=BarFeed(), now=lambda: clock[0]
+    )
+    report = json.loads((tmp_path / "report.json").read_text())
+    assert report["decisions_count"] == 1
+    assert report["no_trade_count"] == 1
+    assert report["blocked_reasons"] == {"selection_and_cost_evidence_missing": 1}
+    assert report["closed_trades"] == 0
+    assert not (tmp_path / "PaperRounds" / "2026-10-08" / "events.jsonl").exists()
+
+
+def test_same_day_restart_uses_report_clock_for_retained_gap(tmp_path):
+    at = datetime(2026, 10, 8, 6, tzinfo=UTC)
+
+    class MorningFeed(FakeFeed):
+        def price_lines(self, instruments):
+            yield json.dumps(
+                {
+                    "type": "PRICE",
+                    "instrument": "DE30_EUR",
+                    "time": at.isoformat().replace("+00:00", "Z"),
+                    "tradeable": True,
+                    "bids": [{"price": "24000"}],
+                    "asks": [{"price": "24002"}],
+                }
+            )
+
+    for _ in range(2):
+        run_paper_indicator(
+            tmp_path, account_id="private-account", token="private-token", feed=MorningFeed(), now=lambda: at
+        )
+    report = json.loads((tmp_path / "report.json").read_text())
+    assert report["feed_gap_count"] >= 1
+
+
+def test_retained_report_rejects_changed_account_and_caches_closed_day(tmp_path, monkeypatch):
+    import hashlib
+    from datetime import timedelta
+
+    first = datetime(2026, 10, 8, 9, tzinfo=UTC)
+    second = first + timedelta(days=1)
+
+    class TimedFeed(FakeFeed):
+        def __init__(self, at):
+            self.at = at
+
+        def price_lines(self, instruments):
+            yield json.dumps(
+                {
+                    "type": "PRICE",
+                    "instrument": "DE30_EUR",
+                    "time": self.at.isoformat().replace("+00:00", "Z"),
+                    "tradeable": True,
+                    "bids": [{"price": "24000"}],
+                    "asks": [{"price": "24002"}],
+                }
+            )
+
+    run_paper_indicator(
+        tmp_path, account_id="account-A", token="private-token", feed=TimedFeed(first), now=lambda: first
+    )
+    run_paper_indicator(
+        tmp_path, account_id="account-A", token="private-token", feed=TimedFeed(second), now=lambda: second
+    )
+    cache = RetainedReportCache(tmp_path, hashlib.sha256(b"account-A").hexdigest())
+    cache.snapshot(second)
+    original = cache._read_day
+    read_days = []
+
+    def tracked(day, as_of, **kwargs):
+        read_days.append(day)
+        return original(day, as_of, **kwargs)
+
+    monkeypatch.setattr(cache, "_read_day", tracked)
+    cache.snapshot(second + timedelta(minutes=1))
+    assert read_days == ["2026-10-09"]
+    with pytest.raises(ValueError, match="account changed"):
+        run_paper_indicator(
+            tmp_path,
+            account_id="account-B",
+            token="private-token",
+            feed=TimedFeed(second + timedelta(days=1)),
+            now=lambda: second + timedelta(days=1),
+        )
+
+
+def test_slow_report_does_not_block_next_account_quote(tmp_path, monkeypatch):
+    from datetime import timedelta
+    from threading import Event
+
+    first = datetime(2026, 10, 8, 9, tzinfo=UTC)
+    clock = [first]
+    started = Event()
+    release = Event()
+    advanced = Event()
+    original = RetainedReportCache.snapshot
+
+    def slow_snapshot(self, as_of, *, ignore_after_as_of=False):
+        if ignore_after_as_of:
+            started.set()
+            if not release.wait(2):
+                raise AssertionError("quote processing blocked on report")
+        return original(self, as_of, ignore_after_as_of=ignore_after_as_of)
+
+    monkeypatch.setattr(RetainedReportCache, "snapshot", slow_snapshot)
+
+    class TwoQuoteFeed(FakeFeed):
+        def price_lines(self, instruments):
+            clock[0] = first + timedelta(minutes=1)
+            yield json.dumps(
+                {
+                    "type": "PRICE",
+                    "instrument": "DE30_EUR",
+                    "time": clock[0].isoformat().replace("+00:00", "Z"),
+                    "tradeable": True,
+                    "bids": [{"price": "24000"}],
+                    "asks": [{"price": "24002"}],
+                }
+            )
+            assert started.wait(2)
+            advanced.set()
+            release.set()
+            clock[0] = first + timedelta(minutes=1, seconds=1)
+            yield json.dumps(
+                {
+                    "type": "PRICE",
+                    "instrument": "DE30_EUR",
+                    "time": clock[0].isoformat().replace("+00:00", "Z"),
+                    "tradeable": True,
+                    "bids": [{"price": "24000"}],
+                    "asks": [{"price": "24002"}],
+                }
+            )
+
+    run_paper_indicator(
+        tmp_path, account_id="private-account", token="private-token", feed=TwoQuoteFeed(), now=lambda: clock[0]
+    )
+    assert advanced.is_set()

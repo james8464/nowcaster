@@ -82,6 +82,10 @@ class OandaPracticeFeed:
                     if not candle.get("complete", False):
                         continue
                     began = _timestamp(candle["time"])
+                    # The provider may include the candle containing an unaligned
+                    # `from` timestamp; it predates the requested research window.
+                    if began < cursor and began + timedelta(minutes=5) > cursor:
+                        continue
                     if not cursor <= began < boundary:
                         raise ValueError("provider returned candle outside requested range")
                     values = {
