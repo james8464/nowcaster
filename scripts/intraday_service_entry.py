@@ -14,6 +14,8 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
+import httpx
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -315,7 +317,7 @@ def main(argv: list[str] | None = None) -> int:
         except RetainedAccountMismatch:
             print("Practice account differs from retained paper research; monitoring stopped.", file=sys.stderr)
             return 2
-        except (OSError, ValueError, RuntimeError):
+        except (OSError, ValueError, RuntimeError, httpx.HTTPError):
             # Never print an exception containing a URL, account ID or token.
             print("Practice data interrupted; waiting to reconnect.", file=sys.stderr)
         time.sleep(5)

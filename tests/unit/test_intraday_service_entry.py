@@ -2,8 +2,10 @@ import inspect
 import json
 from datetime import UTC, datetime
 
+import httpx
 import pytest
 
+import scripts.intraday_service_entry as entry
 from scripts.intraday_service_entry import RetainedReportCache, run_paper_indicator
 from src.intraday.oanda_practice import PRACTICE_API, PRACTICE_STREAM, OandaPracticeFeed
 
@@ -24,6 +26,28 @@ class FakeFeed:
                 "asks": [{"price": "24002"}],
             }
         )
+
+
+def test_practice_http_stream_failure_retries_without_exposing_account(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("OANDA_PRACTICE_ACCOUNT_ID", "private-account")
+    monkeypatch.setenv("OANDA_PRACTICE_TOKEN", "private-token")
+    attempts = []
+
+    def interrupted(directory, **_kwargs):
+        attempts.append(directory)
+        if len(attempts) == 1:
+            request = httpx.Request("GET", "https://stream-fxpractice.oanda.com/v3/accounts/private-account/pricing/stream")
+            httpx.Response(520, request=request).raise_for_status()
+        (directory / "pause.request").write_text("pause\n")
+
+    monkeypatch.setattr(entry, "run_paper_indicator", interrupted)
+    monkeypatch.setattr(entry.time, "sleep", lambda _seconds: None)
+    assert entry.main(["run", "--directory", str(tmp_path)]) == 0
+    assert attempts == [tmp_path, tmp_path]
+    stderr = capsys.readouterr().err
+    assert "Practice data interrupted" in stderr
+    assert "private-account" not in stderr
+    assert "private-token" not in stderr
 
 
 def test_practice_runner_keeps_token_and_account_out_of_files(tmp_path):
