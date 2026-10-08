@@ -47,3 +47,5 @@
 - [ ] Run focused tests and verify failure.
 - [ ] Implement only the fixed registered rule, three chronology windows and report.
 - [ ] Fetch eligible historical data into a new directory, run development then validation, freeze before sealed inspection, and report honestly. Run focused and broader tests; commit/push to the existing feature branch.
+
+Development was completed in four retained attempts and failed the predeclared coverage and after-cost gates. Validation and sealed outcome inspection are deliberately withheld; opening them to rescue a failed development rule would turn them into additional selection data. See [the retained outcome report](../../research/spx500-last-half-hour-2026-10-08.md).
