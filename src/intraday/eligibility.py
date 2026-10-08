@@ -83,6 +83,7 @@ class EligibilityResult(BaseModel):
     conversion_rate: Decimal | None
     conversion_gain_rate: Decimal | None
     conversion_loss_rate: Decimal | None
+    conversion_observed_at: datetime | None
     reasons: tuple[str, ...]
 
     @property
@@ -130,6 +131,7 @@ def evaluate_product(
         conversion_rate = Decimal(1)
         conversion_gain_rate = Decimal(1)
         conversion_loss_rate = Decimal(1)
+        conversion_observed_at = at
     elif (
         conversion is None
         or conversion.from_currency != instrument.quote_currency
@@ -140,11 +142,13 @@ def evaluate_product(
         conversion_rate = None
         conversion_gain_rate = None
         conversion_loss_rate = None
+        conversion_observed_at = None
         reasons.append("currency_conversion_unavailable")
     else:
         conversion_rate = conversion.position_value
         conversion_gain_rate = conversion.account_gain
         conversion_loss_rate = conversion.account_loss
+        conversion_observed_at = conversion.observed_at
     if instrument.quote_currency != account_currency and (
         costs is None or costs.conversion_fee_fraction is None
     ):
@@ -159,5 +163,6 @@ def evaluate_product(
         conversion_rate=conversion_rate,
         conversion_gain_rate=conversion_gain_rate,
         conversion_loss_rate=conversion_loss_rate,
+        conversion_observed_at=conversion_observed_at,
         reasons=tuple(reasons),
     )

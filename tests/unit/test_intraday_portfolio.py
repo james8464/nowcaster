@@ -111,3 +111,20 @@ def test_paper_entry_uses_account_loss_factor_for_cost_risk_and_position_factor_
     assert opened.payload["units"] == "4"
     assert Decimal(opened.payload["notional_gbp"]) == Decimal("345.100")
     assert Decimal(opened.payload["estimated_roundtrip_cost_gbp"]) == Decimal("7.568")
+
+
+def test_entry_rejects_conversion_that_aged_out_after_eligibility_check(tmp_path):
+    portfolio = LivePaperPortfolio(tmp_path, "c" * 64, initial_cash=Decimal("10000"))
+    checked = evaluate_product(
+        INSTRUMENT,
+        {"name": "DE30_EUR", "type": "CFD", "displayName": "Germany 30", "marginRate": "0.05"},
+        eligibility(T).costs,
+        conversion(T - timedelta(seconds=14)),
+        T,
+    )
+    assert checked.paper_eligible
+    entry_quote = quote(T + timedelta(seconds=2))
+    rejected = portfolio.on_decision(INSTRUMENT, plan(), entry_quote, checked)
+    assert rejected.kind == "no_trade"
+    assert rejected.payload["reason"] == "currency_conversion_stale"
+    assert portfolio.positions == {}

@@ -11,7 +11,7 @@ from pathlib import Path
 from src.intraday.contracts import InstrumentSpec, MarketQuote
 from src.intraday.journal import PaperEvent, PaperJournal
 from src.intraday.live import LiveBarBuilder
-from src.intraday.paper import PaperAccount, PaperExecutionCosts, PaperPosition, PaperRiskPolicy
+from src.intraday.paper import FXConversion, PaperAccount, PaperExecutionCosts, PaperPosition, PaperRiskPolicy
 from src.intraday.strategies import evaluate_setup
 
 D = Decimal
@@ -132,14 +132,14 @@ class LivePaperRuntime:
                 self.account.high_water = max(self.account.high_water, self.account.equity)
         self.account._day = self.session_open.date()
 
-    def on_quote(self, quote: MarketQuote) -> PaperEvent | None:
+    def on_quote(self, quote: MarketQuote, conversion: FXConversion | None = None) -> PaperEvent | None:
         if quote.instrument != self.instrument:
             raise ValueError("paper quote instrument mismatch")
         if quote.received_at - quote.observed_at > timedelta(seconds=5):
             return self._append(
                 "feed_gap", quote.received_at, {"reason": "stale_account_quote", "source_key": quote.source_key}
             )
-        closed = self.account.update(quote)
+        closed = self.account.update(quote, conversion=conversion)
         close_event = None
         if closed is not None:
             close_event = self._append(
@@ -190,7 +190,7 @@ class LivePaperRuntime:
                     "source_key": quote.source_key,
                 },
             )
-        position = self.account.open(plan, self.instrument, quote, unit_step=self.unit_step)
+        position = self.account.open(plan, self.instrument, quote, unit_step=self.unit_step, conversion=conversion)
         if position is None:
             return self._append(
                 "no_trade",

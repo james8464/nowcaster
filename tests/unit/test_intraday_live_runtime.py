@@ -3,7 +3,7 @@ from decimal import Decimal as D
 
 from scripts.run_intraday_research import _runtime_status
 from src.intraday.contracts import InstrumentSpec, MarketQuote
-from src.intraday.paper import PaperExecutionCosts
+from src.intraday.paper import FXConversion, PaperExecutionCosts
 from src.intraday.runtime import LivePaperRuntime
 
 T = datetime(2026, 10, 7, 8, 0, tzinfo=UTC)
@@ -31,13 +31,13 @@ def quote(seconds: int, bid: str) -> MarketQuote:
     )
 
 
-def runtime(directory, *, session_open=T):
+def runtime(directory, *, session_open=T, account_currency="EUR"):
     return LivePaperRuntime(
         directory=directory,
         protocol_hash="b" * 64,
         instrument=INSTRUMENT,
         strategy_id="opening_range_15",
-        account_currency="EUR",
+        account_currency=account_currency,
         costs=PaperExecutionCosts(verified=True),
         session_open=session_open,
         session_close=session_open + timedelta(hours=1),
@@ -45,6 +45,34 @@ def runtime(directory, *, session_open=T):
         unit_step=D("0.01"),
         maximum_quote_gap=timedelta(seconds=180),
     )
+
+
+def conversion(at):
+    return FXConversion(
+        from_currency="EUR",
+        to_currency="GBP",
+        position_value=D("0.85"),
+        account_gain=D("0.84"),
+        account_loss=D("0.86"),
+        observed_at=at,
+    )
+
+
+def test_foreign_currency_paper_lifecycle_uses_fresh_account_factors(tmp_path):
+    worker = runtime(tmp_path / "foreign-paper-study", account_currency="GBP")
+    for n, price in enumerate(("100", "100", "101", "104")):
+        for offset in (1, 120, 299):
+            worker.on_quote(quote(n * 300 + offset, price), conversion(quote(n * 300 + offset, price).received_at))
+    worker.on_quote(quote(1201, "104"), conversion(quote(1201, "104").received_at))
+    entry_quote = quote(1202, "104")
+    opened = worker.on_quote(entry_quote, conversion(entry_quote.received_at))
+    assert opened is not None and opened.kind == "opened"
+    exit_quote = quote(1260, "130")
+    assert worker.on_quote(exit_quote, conversion(entry_quote.received_at)) is None
+    assert INSTRUMENT.broker_symbol in worker.account.positions
+    closed = worker.on_quote(exit_quote, conversion(exit_quote.received_at))
+    assert closed is not None and closed.kind == "closed"
+    assert worker.account.equity > D("10000")
 
 
 def test_open_position_survives_restart_and_closes_from_next_account_quote(tmp_path):

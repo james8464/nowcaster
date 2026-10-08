@@ -81,6 +81,12 @@ class LivePaperPortfolio:
             or quote.received_at - eligibility.evaluated_at > timedelta(seconds=15)
         ):
             return self._reject(quote, "product_eligibility_stale", plan)
+        if (
+            eligibility.conversion_observed_at is None
+            or eligibility.conversion_observed_at > quote.received_at
+            or quote.received_at - eligibility.conversion_observed_at > timedelta(seconds=15)
+        ):
+            return self._reject(quote, "currency_conversion_stale", plan)
         if quote.status != "tradeable" or quote.received_at - quote.observed_at > timedelta(seconds=5):
             return self._reject(quote, "account_quote_unavailable", plan)
         if quote.observed_at <= plan.decision_at:

@@ -57,6 +57,9 @@ assumptions, so none has been promoted to the live paper monitor.
 The [time-varying GBP conversion check](docs/research/intraday-fx-sensitivity-2026-10-08.md)
 retested those same 32 combinations; it did not change that conclusion or
 create a new untouched test period.
+The [OANDA product feasibility checkpoint](docs/research/oanda-product-feasibility-2026-10-08.md)
+prioritizes verifying the exact US SPX 500 demo product and records the
+Germany 30/40 naming conflict, current public hours, and remaining cost gaps.
 The practice data adapter can now fetch the account's separate GBP gain,
 loss and position-value conversion factors through read-only practice API
 routes and rejects missing or inconsistent factors. Those broker factors
@@ -97,6 +100,10 @@ margin estimate, cost source and estimated costs. It respects a 0.25% risk
 budget per trade, 1% daily realized-loss stop, 5% drawdown halt and 1.0×
 aggregate notional cap. A missing quote or conversion leaves a paper position
 unresolved instead of inventing a profitable exit.
+The separate command-line practice paper runner refreshes the account's gain,
+loss and position-value conversion factors for foreign-currency products. It
+rechecks their age at entry and exit and marks conversion outages as unhealthy;
+this does **not** enable paper entries in the installed Mac monitor.
 The Mac Trade Desk has an opt-in **Start Monitoring** control for an OANDA
 practice-only helper. It retrieves the saved practice token from Keychain,
 passes it only to that helper's environment, and keeps monitoring when the

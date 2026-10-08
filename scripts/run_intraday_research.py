@@ -246,6 +246,9 @@ def main(argv: list[str] | None = None) -> int:
                 initial_cash=args.initial_cash,
                 unit_step=Decimal(10) ** -precision,
             )
+            conversion = None
+            last_conversion_attempt = None
+            conversion_gap_recorded = False
             try:
                 for line in feed.price_lines((args.candidate,)):
                     received = _now()
@@ -258,11 +261,69 @@ def main(argv: list[str] | None = None) -> int:
                         if received >= args.session_close and not runtime.account.positions:
                             break
                         continue
-                    event = runtime.on_quote(quote)
+                    # A conversion fetched after this quote arrived is future
+                    # information for this quote. Only the previously cached
+                    # snapshot may participate in its paper decision or exit.
+                    conversion_fresh = args.candidate.quote_currency == args.account_currency or (
+                        conversion is not None
+                        and conversion.observed_at <= received
+                        and received - conversion.observed_at <= timedelta(seconds=15)
+                    )
+                    if conversion_fresh:
+                        conversion_gap_recorded = False
+                    event = runtime.on_quote(quote, conversion=conversion)
+                    conversion_error = False
+                    if (
+                        args.candidate.quote_currency != args.account_currency
+                        and (conversion is None or received - conversion.observed_at >= timedelta(seconds=10))
+                        and (
+                            last_conversion_attempt is None
+                            or received - last_conversion_attempt >= timedelta(seconds=5)
+                        )
+                    ):
+                        last_conversion_attempt = received
+                        try:
+                            rates = feed.home_conversions((args.candidate,), account_currency=args.account_currency)
+                            conversion = rates[0].to_paper_conversion(account_currency=args.account_currency)
+                        except (httpx.HTTPError, ValueError):
+                            conversion = None
+                            conversion_error = True
+                            if not conversion_gap_recorded:
+                                runtime._append(
+                                    "feed_gap",
+                                    received,
+                                    {
+                                        "reason": "account_conversion_unavailable",
+                                        "source_key": quote.source_key,
+                                    },
+                                )
+                                conversion_gap_recorded = True
+                    if not conversion_fresh and not conversion_gap_recorded:
+                        runtime._append(
+                            "feed_gap",
+                            received,
+                            {
+                                "reason": "account_conversion_stale",
+                                "source_key": quote.source_key,
+                            },
+                        )
+                        conversion_gap_recorded = True
+                    published_at = _now() if args.candidate.quote_currency != args.account_currency else received
+                    if published_at - quote.observed_at > timedelta(seconds=5):
+                        runtime._append(
+                            "feed_gap",
+                            published_at,
+                            {
+                                "reason": "account_quote_delayed_by_conversion",
+                                "source_key": quote.source_key,
+                            },
+                        )
                     health = (
                         "healthy"
                         if quote.status == "tradeable"
-                        and received - quote.observed_at <= timedelta(seconds=5)
+                        and published_at - quote.observed_at <= timedelta(seconds=5)
+                        and conversion_fresh
+                        and not conversion_error
                         and (event is None or event.kind != "feed_gap")
                         and received < args.session_close
                         else "stale"
@@ -270,7 +331,7 @@ def main(argv: list[str] | None = None) -> int:
                     _publish(
                         directory,
                         _runtime_status(
-                            runtime, received, health=health, opened=event is not None and event.kind == "opened"
+                            runtime, published_at, health=health, opened=event is not None and event.kind == "opened"
                         ),
                     )
                     if received >= args.session_close and not runtime.account.positions:
