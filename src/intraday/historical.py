@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -28,6 +29,24 @@ class ReplayCosts(BaseModel):
     def validate_costs(self):
         if not self.account_currency.strip():
             raise ValueError("account currency required")
+        return self
+
+
+class HistoricalFXRate(BaseModel):
+    """Exploratory quote-to-account factors known at a historical bar open.
+
+    They are derived from historical FX bid/ask candles, not OANDA's
+    account-specific home-conversion factors or executable account quotes.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
+    gain_factor: Decimal = Field(gt=0)
+    loss_factor: Decimal = Field(gt=0)
+
+    @model_validator(mode="after")
+    def conservative_sides(self):
+        if self.gain_factor > self.loss_factor:
+            raise ValueError("historical FX gain factor exceeds loss factor")
         return self
 
 
@@ -68,6 +87,7 @@ def replay_session(
     costs: ReplayCosts,
     initial_equity: Decimal = DEFAULT_INITIAL_EQUITY,
     direction_filter: str | None = None,
+    fx_at_open: Mapping[datetime, HistoricalFXRate] | None = None,
 ) -> ReplayResult:
     """Enter at following historical open; if both extrema touch, fill stop first.
 
@@ -90,6 +110,8 @@ def replay_session(
     if list(bars) != sorted(bars, key=lambda item: item.start) or len({bar.start for bar in bars}) != len(bars):
         raise ValueError("bars must be unique and chronological")
     gaps = sum(left.end != right.start for left, right in zip(bars, bars[1:], strict=False))
+    if fx_at_open is not None and instrument.quote_currency != costs.account_currency:
+        gaps += sum(bar.start not in fx_at_open for bar in bars)
     if gaps:
         return ReplayResult(strategy_id, "historical_base_exploratory", (), 0, gaps)
     trades: list[ReplayTrade] = []
@@ -136,12 +158,17 @@ def replay_session(
         if distance <= 0:
             no_trade_count += 1
             continue
+        entry_factor = (
+            fx_at_open[following.start].loss_factor
+            if fx_at_open is not None and instrument.quote_currency != costs.account_currency
+            else costs.quote_to_account
+        )
         risk_per_unit = (
             (distance + costs.slippage_points) * instrument.point_value
             + costs.commission_per_unit + costs.financing_per_unit
-        ) * costs.quote_to_account * (D(1) + (costs.conversion_fee_fraction or D(0)))
+        ) * entry_factor * (D(1) + (costs.conversion_fee_fraction or D(0)))
         risk_units = initial_equity * D("0.0025") / risk_per_unit
-        exposure_units = initial_equity * D("0.25") / (entry * instrument.point_value * costs.quote_to_account)
+        exposure_units = initial_equity * D("0.25") / (entry * instrument.point_value * entry_factor)
         units = min(risk_units, exposure_units)
         if units <= 0:
             no_trade_count += 1
@@ -176,8 +203,19 @@ def replay_session(
             timed_out = future.end >= plan.exit_by - timedelta(microseconds=1) or future.end >= session_close
             if stop_hit or target_hit or timed_out:
                 reason = "stop" if stop_hit else "target" if target_hit else "time_limit"
-                gross = points * units * instrument.point_value * costs.quote_to_account
-                expenses = (costs.commission_per_unit + costs.financing_per_unit) * units * costs.quote_to_account
+                fx = (
+                    fx_at_open[future.start]
+                    if fx_at_open is not None and instrument.quote_currency != costs.account_currency
+                    else None
+                )
+                gross_quote = points * units * instrument.point_value
+                gross = gross_quote * (
+                    (fx.gain_factor if gross_quote >= 0 else fx.loss_factor)
+                    if fx is not None else costs.quote_to_account
+                )
+                expenses = (costs.commission_per_unit + costs.financing_per_unit) * units * (
+                    fx.loss_factor if fx is not None else costs.quote_to_account
+                )
                 conversion_fee = (abs(gross) + expenses) * (costs.conversion_fee_fraction or D(0))
                 closed = ReplayTrade(
                     strategy_id,
