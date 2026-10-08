@@ -9,6 +9,8 @@ struct IntradayDeskStatus: Decodable {
         let product: String?
         let eligibility: String
         let reason: String?
+        let lastQuoteAt: String?
+        let feedAgeSeconds: String?
         var id: String { market }
     }
     struct Opportunity: Decodable, Identifiable {
@@ -24,6 +26,7 @@ struct IntradayDeskStatus: Decodable {
         let exitBy: String
         let estimatedRoundtripCost: String
         let explanation: String
+        let evidenceHash: String?
         let paperOnly: Bool
         var id: String { "\(brokerSymbol):\(strategyId):\(exitBy)" }
     }
@@ -34,6 +37,7 @@ struct IntradayDeskStatus: Decodable {
         let entry: String
         let stop: String
         let target: String
+        let openedAt: String
         let exitBy: String
         let paperOnly: Bool
         var id: String { brokerSymbol }
@@ -59,6 +63,9 @@ struct IntradayDeskStatus: Decodable {
               (!value.opportunities.isEmpty || !value.noTradeReason.isEmpty),
               value.opportunities.allSatisfy(\.paperOnly),
               value.paperPositions.allSatisfy(\.paperOnly),
+              value.markets.allSatisfy({ market in
+                  market.feedAgeSeconds == nil || (Decimal(string: market.feedAgeSeconds!) ?? -1) >= 0
+              }),
               value.opportunities.allSatisfy({ idea in
                   guard let entry = Decimal(string: idea.entry), let stop = Decimal(string: idea.stop),
                         let target = Decimal(string: idea.target), entry > 0, stop > 0, target > 0,
@@ -86,7 +93,7 @@ struct IntradayResearchView: View {
     private var statusURL: URL { directory.appending(path: "summary.json") }
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 30)) { timeline in
+        TimelineView(.periodic(from: .now, by: 5)) { timeline in
             let status = (try? Data(contentsOf: statusURL, options: .mappedIfSafe)).flatMap { try? IntradayDeskStatus.decode($0) }
             let fresh = status?.isFresh(at: timeline.date) ?? false
             GroupBox {
@@ -96,6 +103,14 @@ struct IntradayResearchView: View {
                             .font(.headline)
                         Spacer()
                         Text("PAPER ONLY").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    }
+                    DisclosureGroup("Paper alerts") {
+                        Button(service.notificationsEnabled ? "Turn Off Paper Alerts" : "Enable Paper Alerts") {
+                            Task { await service.setNotificationsEnabled(!service.notificationsEnabled) }
+                        }
+                        .accessibilityIdentifier("tradeDesk.oandaAlerts")
+                        Text("Off by default. Only fresh, eligible paper events can notify; diagnostic setups cannot.")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
                     HStack {
                         Button(service.isRunning ? "Pause Monitoring" : "Start Monitoring") {
@@ -108,6 +123,7 @@ struct IntradayResearchView: View {
                         }
                     }
                     if let message = service.message { Text(message).font(.caption).foregroundStyle(.secondary) }
+                    IntradayReportView(directory: directory)
                     Text("Germany 30 demo · US 500 · EUR/USD · West Texas oil")
                         .foregroundStyle(.secondary)
                     Text("Exact practice products are checked on Start. Without verified costs and a selected rule, setups are diagnostic only and no paper trade is opened.")
@@ -144,7 +160,7 @@ struct IntradayResearchView: View {
                             .font(.caption).foregroundStyle(.secondary)
                         DisclosureGroup("Market checks") {
                             ForEach(status.markets) { market in
-                                Text("\(market.market) · \(market.brokerSymbol ?? "unconfirmed") · \(market.eligibility.replacingOccurrences(of: "_", with: " "))")
+                                Text("\(market.market) · \(market.brokerSymbol ?? "unconfirmed") · \(market.eligibility.replacingOccurrences(of: "_", with: " ")) · \(market.feedAgeSeconds.map { $0 + "s old" } ?? "no quote")")
                                     .font(.caption)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                 if let reason = market.reason {

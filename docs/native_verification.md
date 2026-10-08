@@ -1,5 +1,25 @@
 # Native release verification
 
+## OANDA practice indicator build — 8 October 2026
+
+The separate `feature/research-round-2` checkout passed 1,359 Python unit
+tests, 194 Swift tests plus four native XCTest resource/icon tests, a
+tracked-file/reachable-history secret scan, a signed macOS app build,
+`codesign --verify --deep --strict`, and `plutil -lint`. The isolated
+`OandaPaperFlowUITests` window test passed after using the app's **Open
+Nowcaster** menu item when macOS launched without restoring a window. It
+confirmed Start Monitoring, the paper report, no order button, and
+close/reopen behavior without using the real Keychain credential. The separate
+signed-app UI smoke check also passed. Xcode
+reported one nonspecific main-thread responsiveness warning; it requires
+separate profiling and is not counted as a passing performance check.
+
+These checks establish build and UI behavior, not profitable trading or
+continuous live-feed coverage. The practice helper currently publishes
+diagnostic setups only: an authorized live paper round still requires exact
+source-backed costs, GBP conversion, and a selected rule. The existing frozen
+BTC/ETH prospective study was not altered.
+
 This is the historical 22 August audit. See [contextual release verification](contextual-release-verification.md) for the newer contextual-allocation build and its remaining limitations.
 
 ## Audited artifact

@@ -41,21 +41,40 @@ enum OandaPaperServiceError: LocalizedError {
     }
 }
 
+enum OandaPaperNotificationGate {
+    static func eligibleSetupIDs(_ status: IntradayDeskStatus, at now: Date) -> Set<String> {
+        guard status.isFresh(at: now), status.feedHealth == "healthy" else { return [] }
+        let eligible = Set(status.markets.filter { $0.eligibility == "paper_eligible" }.compactMap(\.brokerSymbol))
+        return Set(status.opportunities.compactMap { idea in
+            guard eligible.contains(idea.brokerSymbol), let key = idea.evidenceHash,
+                  key.count == 64, key.allSatisfy({ "0123456789abcdef".contains($0) }) else { return nil }
+            return key
+        })
+    }
+}
+
 @MainActor @Observable
 final class OandaPaperService {
     private(set) var isRunning = false
+    private(set) var notificationsEnabled: Bool
     private(set) var message: String?
     private(set) var directory: URL
     @ObservationIgnored private let vault: OandaPracticeCredentialVault
     @ObservationIgnored private let configuration: OandaPaperServiceConfiguration
     @ObservationIgnored private var process: Process?
     @ObservationIgnored private var logHandle: FileHandle?
+    @ObservationIgnored private var notificationTask: Task<Void, Never>?
+    @ObservationIgnored private let notifications = NotificationService()
+    @ObservationIgnored private var observedOpportunityIDs: Set<String> = []
+    @ObservationIgnored private var observedPositionIDs: Set<String> = []
+    @ObservationIgnored private var observedClosedCount: Int?
 
     init(vault: OandaPracticeCredentialVault = .init(),
          configuration: OandaPaperServiceConfiguration = .application()) {
         self.vault = vault
         self.configuration = configuration
         directory = configuration.directory
+        notificationsEnabled = AppStorageLocations.defaults.bool(forKey: "oandaPaperNotifications")
     }
 
     func start() {
@@ -87,6 +106,8 @@ final class OandaPaperService {
             child.terminationHandler = { [weak self] _ in
                 Task { @MainActor [weak self] in
                     self?.isRunning = false
+                    self?.notificationTask?.cancel()
+                    self?.notificationTask = nil
                     self?.process = nil
                     try? self?.logHandle?.close()
                     self?.logHandle = nil
@@ -98,6 +119,8 @@ final class OandaPaperService {
             process = child
             isRunning = true
             message = "Practice feed running. Setups remain experimental; no broker orders are sent."
+            establishNotificationBaseline()
+            observeNotifications()
         } catch {
             message = error.localizedDescription
         }
@@ -113,8 +136,81 @@ final class OandaPaperService {
 
     func shutdown() {
         pause()
+        notificationTask?.cancel()
+        notificationTask = nil
         // This helper currently makes no paper entries. Future managed
         // positions must be drained before enabling forced shutdown here.
         process?.terminate()
+    }
+
+    func setNotificationsEnabled(_ enabled: Bool) async {
+        if enabled {
+            guard await notifications.requestAuthorization() else {
+                message = "macOS notifications were not authorized. Paper alerts remain off."
+                return
+            }
+        }
+        notificationsEnabled = enabled
+        AppStorageLocations.defaults.set(enabled, forKey: "oandaPaperNotifications")
+        observedOpportunityIDs.removeAll()
+        observedPositionIDs.removeAll()
+        observedClosedCount = nil
+        establishNotificationBaseline()
+    }
+
+    private func establishNotificationBaseline() {
+        if let data = try? Data(contentsOf: directory.appending(path: "summary.json"), options: .mappedIfSafe),
+           let status = try? IntradayDeskStatus.decode(data) {
+            observedOpportunityIDs.formUnion(status.opportunities.compactMap(\.evidenceHash))
+            observedPositionIDs.formUnion(status.paperPositions.map { $0.brokerSymbol + ":" + $0.openedAt })
+        }
+        if let data = try? Data(contentsOf: directory.appending(path: "report.json"), options: .mappedIfSafe),
+           let report = try? IntradayPaperReport.decode(data) {
+            observedClosedCount = report.closedTrades
+        }
+    }
+
+    private func observeNotifications() {
+        notificationTask?.cancel()
+        notificationTask = Task { [weak self] in
+            while let self, !Task.isCancelled, self.isRunning {
+                await self.checkFreshPaperEvents()
+                try? await Task.sleep(for: .seconds(5))
+            }
+        }
+    }
+
+    private func checkFreshPaperEvents() async {
+        guard notificationsEnabled else { return }
+        let now = Date()
+        let statusURL = directory.appending(path: "summary.json")
+        if let data = try? Data(contentsOf: statusURL, options: .mappedIfSafe),
+           let status = try? IntradayDeskStatus.decode(data), status.isFresh(at: now),
+           status.feedHealth == "healthy" {
+            let eligible = Set(status.markets.filter { $0.eligibility == "paper_eligible" }.compactMap(\.brokerSymbol))
+            for key in OandaPaperNotificationGate.eligibleSetupIDs(status, at: now) {
+                guard !observedOpportunityIDs.contains(key) else { continue }
+                observedOpportunityIDs.insert(key)
+                _ = await notifications.deliver(.init(id: "oanda-paper-setup-" + key, category: .entry,
+                                                      title: "Experimental paper setup", body: "Review the full ticket in Nowcaster."))
+            }
+            for position in status.paperPositions where eligible.contains(position.brokerSymbol) {
+                let key = position.brokerSymbol + ":" + position.openedAt
+                guard !observedPositionIDs.contains(key) else { continue }
+                observedPositionIDs.insert(key)
+                _ = await notifications.deliver(.init(id: "oanda-paper-open-" + key, category: .entry,
+                                                      title: "Paper position opened", body: "Review the simulated position in Nowcaster."))
+            }
+        }
+        let reportURL = directory.appending(path: "report.json")
+        if let data = try? Data(contentsOf: reportURL, options: .mappedIfSafe),
+           let report = try? IntradayPaperReport.decode(data), report.isFresh(at: now) {
+            if let previous = observedClosedCount, report.closedTrades > previous {
+                _ = await notifications.deliver(.init(id: "oanda-paper-close-" + String(report.closedTrades),
+                                                      category: .close, title: "Paper position closed",
+                                                      body: "Review the retained outcome and costs in Nowcaster."))
+            }
+            observedClosedCount = report.closedTrades
+        }
     }
 }

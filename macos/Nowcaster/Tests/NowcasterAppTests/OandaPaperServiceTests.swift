@@ -32,3 +32,19 @@ private struct OandaTestKeychain: KeychainClient {
     #expect(arguments == ["run", "--directory", "/tmp/OandaPaper"])
     #expect(!arguments.joined().contains("secret-token"))
 }
+
+@Test func diagnosticSetupCannotBecomeAPaperNotification() throws {
+    let text = """
+    {"schema_version":1,"paper_only":true,"generated_at":"2026-10-08T09:00:00Z","feed_health":"healthy",
+     "evidence_status":"not_supported","markets":[{"market":"germany40","broker_symbol":"DE30_EUR",
+     "product":"cfd","eligibility":"diagnostic","reason":"costs unverified"}],
+     "opportunities":[{"market":"germany40","broker_symbol":"DE30_EUR","strategy_id":"trend_pullback",
+     "direction":"long","decided_at":"2026-10-08T08:59:59Z","entry_at":"2026-10-08T09:00:00Z",
+     "entry":"101","stop":"96","target":"111","exit_by":"2026-10-08T10:00:00Z",
+     "estimated_roundtrip_cost":"1","explanation":"diagnostic only","evidence_hash":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","paper_only":true}],
+     "paper_positions":[],"no_trade_reason":""}
+    """
+    let status = try IntradayDeskStatus.decode(Data(text.utf8))
+    let now = ISO8601DateFormatter().date(from: "2026-10-08T09:00:10Z")!
+    #expect(OandaPaperNotificationGate.eligibleSetupIDs(status, at: now).isEmpty)
+}

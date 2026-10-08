@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from src.intraday.journal import PaperJournal
 from src.intraday.live_service import LiveRoundManifest
@@ -95,7 +95,9 @@ def build_report(
         if journal.protocol_hash != manifest.identity_hash:
             raise ValueError("paper journal does not match live round")
         round_id = manifest.round_id
-        started_at = min(window.opened_at for window in manifest.sessions.values())
+        # A monitor may start before the first declared session. Its empty
+        # pre-session report is still current, not a future-dated result.
+        started_at = min(as_of, min(window.opened_at for window in manifest.sessions.values()))
     if started_at is None or round_id is None:
         raise ValueError("report needs frozen round identity")
     if not round_id.strip() or as_of < started_at:
@@ -129,9 +131,11 @@ def build_report(
                 raise ValueError("paper close has no matching open")
             opened = opens.pop(symbol)
             close = event.payload
-            if "net_pnl_gbp" not in close or "gross_pnl_gbp" not in close or "commission_gbp" not in close or "financing_gbp" not in close:
+            required_cost_fields = {"net_pnl_gbp", "gross_pnl_gbp", "commission_gbp", "financing_gbp"}
+            if not required_cost_fields <= close.keys():
                 raise ValueError("closed paper trade lacks itemized costs")
-            if D(close["net_pnl_gbp"]) != D(close["gross_pnl_gbp"]) - D(close["commission_gbp"]) - D(close["financing_gbp"]):
+            expected_net = D(close["gross_pnl_gbp"]) - D(close["commission_gbp"]) - D(close["financing_gbp"])
+            if D(close["net_pnl_gbp"]) != expected_net:
                 raise ValueError("paper trade costs do not reconcile")
             record = TradeRecord(open=opened, close=close)
             trades.append(record)
@@ -153,10 +157,15 @@ def build_report(
         group_rows[key].append(D(item.close["net_pnl_gbp"]))
     groups = tuple(
         ReportGroup(
-            broker_symbol=symbol, strategy_id=rule, direction=direction, session_date=date,
-            closed_trades=len(values), net_pnl_gbp=sum(values, D(0)),
+            broker_symbol=symbol,
+            strategy_id=rule,
+            direction=direction,
+            session_date=date,
+            closed_trades=len(values),
+            net_pnl_gbp=sum(values, D(0)),
             win_rate=D(sum(value > 0 for value in values)) / len(values),
-        ) for (symbol, rule, direction, date), values in sorted(group_rows.items())
+        )
+        for (symbol, rule, direction, date), values in sorted(group_rows.items())
     )
     dates = sorted(daily)
     coverage_status = "not_measured"
@@ -169,17 +178,22 @@ def build_report(
             quote_times = sorted(
                 datetime.fromisoformat(event["payload"]["observed_at"])
                 for event in events
-                if event["kind"] == "quote" and event["payload"]["broker_symbol"] == symbol
+                if event["kind"] == "quote"
+                and event["payload"]["broker_symbol"] == symbol
                 and event["payload"]["tradeable"] == "True"
             )
             slot = window.opened_at
             while slot + timedelta(minutes=5) <= min(window.closed_at, as_of):
                 total_slots += 1
                 sampled = [at for at in quote_times if slot <= at < slot + timedelta(minutes=5)]
-                if (sampled and sampled[0] - slot <= timedelta(seconds=15)
-                        and slot + timedelta(minutes=5) - sampled[-1] <= timedelta(seconds=15)
-                        and all(right - left <= timedelta(seconds=30)
-                                for left, right in zip(sampled, sampled[1:]))):
+                if (
+                    sampled
+                    and sampled[0] - slot <= timedelta(seconds=15)
+                    and slot + timedelta(minutes=5) - sampled[-1] <= timedelta(seconds=15)
+                    and all(
+                        right - left <= timedelta(seconds=30) for left, right in zip(sampled, sampled[1:], strict=False)
+                    )
+                ):
                     covered_slots += 1
                 slot += timedelta(minutes=5)
         if total_slots:
@@ -187,19 +201,35 @@ def build_report(
             account_quote_coverage = D(covered_slots) / D(total_slots)
     lower = (
         _daily_block_lower(tuple(daily[day] for day in dates))
-        if len(dates) >= 2 and coverage_status == "measured"
-        and account_quote_coverage is not None and account_quote_coverage >= D("0.99") and gaps == 0
+        if len(dates) >= 2
+        and coverage_status == "measured"
+        and account_quote_coverage is not None
+        and account_quote_coverage >= D("0.99")
+        and gaps == 0
         else None
     )
     return PaperDecisionReport(
-        round_id=round_id, started_at=started_at, generated_at=as_of,
-        coverage_status=coverage_status, account_quote_coverage=account_quote_coverage,
-        decisions_count=decisions, no_trade_count=sum(reasons.values()), blocked_reasons=dict(reasons),
-        feed_gap_count=gaps, closed_trades=len(trades), open_positions=len(opens),
-        gross_pnl_gbp=gross, commission_gbp=commission, financing_gbp=financing, net_pnl_gbp=net,
+        round_id=round_id,
+        started_at=started_at,
+        generated_at=as_of,
+        coverage_status=coverage_status,
+        account_quote_coverage=account_quote_coverage,
+        decisions_count=decisions,
+        no_trade_count=sum(reasons.values()),
+        blocked_reasons=dict(reasons),
+        feed_gap_count=gaps,
+        closed_trades=len(trades),
+        open_positions=len(opens),
+        gross_pnl_gbp=gross,
+        commission_gbp=commission,
+        financing_gbp=financing,
+        net_pnl_gbp=net,
         win_rate=D(len(winners)) / len(trades) if trades else None,
         net_expectancy_gbp=net / len(trades) if trades else None,
         profit_factor=sum(winners, D(0)) / -sum(losers, D(0)) if losers else None,
-        maximum_drawdown_gbp=maximum_drawdown, daily_block_lower_95_gbp=lower,
-        groups=groups, trades=tuple(trades), unresolved_positions=tuple(opens.values()),
+        maximum_drawdown_gbp=maximum_drawdown,
+        daily_block_lower_95_gbp=lower,
+        groups=groups,
+        trades=tuple(trades),
+        unresolved_positions=tuple(opens.values()),
     )

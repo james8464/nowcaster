@@ -20,3 +20,17 @@ import Testing
     #expect(throws: Error.self) { try IntradayDeskStatus.decode(Data(String(format: template, "stale", "105").utf8)) }
     #expect(throws: Error.self) { try IntradayDeskStatus.decode(Data(String(format: template, "healthy", "95").utf8)) }
 }
+
+@Test func intradayStatusShowsPerProductFeedAgeWithoutUpgradingEvidence() throws {
+    let data = Data("""
+    {"schema_version":1,"paper_only":true,"generated_at":"2026-10-08T09:00:02Z","feed_health":"healthy",
+     "evidence_status":"not_supported","markets":[{"market":"germany40","broker_symbol":"DE30_EUR",
+     "product":"cfd","eligibility":"diagnostic","reason":"costs unverified",
+     "last_quote_at":"2026-10-08T09:00:00Z","feed_age_seconds":"2"}],
+     "opportunities":[],"paper_positions":[],"no_trade_reason":"No confirmed setup."}
+    """.utf8)
+    let status = try IntradayDeskStatus.decode(data)
+    #expect(Decimal(string: status.markets[0].feedAgeSeconds ?? "") == Decimal(2))
+    #expect(status.markets[0].eligibility == "diagnostic")
+    #expect(status.evidenceStatus == "not_supported")
+}

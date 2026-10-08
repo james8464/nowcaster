@@ -60,6 +60,12 @@ products and watches account quotes, but does not auto-authorize a paper
 entry from an unverified cost schedule or an unselected rule. It never sends
 broker orders. **Pause Monitoring** requests a clean stop; quitting the app
 stops this diagnostic helper.
+The Trade Desk refreshes product quote ages and shows a compact paper-results
+summary. Expand **Costs and evidence** for gross/net results, modeled charges,
+sample limits and coverage; an open paper ticket, if one exists in an
+authorized future round, lists its direction, units, entry, stop, target,
+time exit, effective leverage, margin estimate and cost source. **Paper
+alerts** are off by default; diagnostic setups never trigger them.
 The paper-results report is reconstructed from the append-only trade journal.
 It keeps losing trades, abstentions and unresolved positions, reconciles gross
 P&L with commissions and financing, and reports net expectancy, win rate,

@@ -19,6 +19,8 @@ class MarketStatus(DeskModel):
     product: Literal["cfd", "margin_fx"] | None = None
     eligibility: Literal["unverified", "diagnostic", "paper_eligible", "rejected"]
     reason: str | None = None
+    last_quote_at: datetime | None = None
+    feed_age_seconds: Decimal | None = Field(default=None, ge=0)
 
 
 class OpportunityStatus(DeskModel):
@@ -80,6 +82,16 @@ class DeskStatus(DeskModel):
     def fail_closed(self):
         if self.generated_at.tzinfo is None or self.generated_at.utcoffset().total_seconds() != 0:
             raise ValueError("status needs UTC time")
+        if any(
+            market.last_quote_at is not None
+            and (
+                market.last_quote_at.tzinfo is None
+                or market.last_quote_at.utcoffset().total_seconds() != 0
+                or market.last_quote_at > self.generated_at
+            )
+            for market in self.markets
+        ):
+            raise ValueError("market quote age must use a past UTC timestamp")
         if self.opportunities and self.feed_health != "healthy":
             raise ValueError("cannot publish paper opportunities from an unhealthy feed")
         if self.opportunities and not all(

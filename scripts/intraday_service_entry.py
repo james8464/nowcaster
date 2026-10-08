@@ -19,9 +19,9 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.intraday.contracts import InstrumentSpec  # noqa: E402
 from src.intraday.desk import DeskStatus, MarketStatus  # noqa: E402
-from src.intraday.live_service import LiveIndicatorSession, LiveRoundManifest, LiveRule, LiveSessionWindow  # noqa: E402
 from src.intraday.journal import PaperJournal  # noqa: E402
-from src.intraday.oanda_practice import OandaPracticeFeed, PRACTICE_API, PRACTICE_STREAM  # noqa: E402
+from src.intraday.live_service import LiveIndicatorSession, LiveRoundManifest, LiveRule, LiveSessionWindow  # noqa: E402
+from src.intraday.oanda_practice import PRACTICE_API, PRACTICE_STREAM, OandaPracticeFeed  # noqa: E402
 from src.intraday.report import build_report  # noqa: E402
 
 CATALOG = (
@@ -56,8 +56,10 @@ def _session(now: datetime, instruments: tuple[InstrumentSpec, ...], account_id:
         instruments=instruments,
         # Zero selection hash explicitly denotes diagnostic observation, not
         # an elected positive historical rule or paper-entry authorization.
-        rules={item.broker_symbol: LiveRule(strategy_id="trend_pullback", direction="long",
-                                             selection_hash="0" * 64) for item in instruments},
+        rules={
+            item.broker_symbol: LiveRule(strategy_id="trend_pullback", direction="long", selection_hash="0" * 64)
+            for item in instruments
+        },
         sessions=windows,
     )
 
@@ -89,32 +91,59 @@ def run_paper_indicator(
         expected = "CURRENCY" if product == "margin_fx" else "CFD"
         if row is None or row.get("type") != expected:
             continue
-        specs.append(InstrumentSpec(provider="oanda_practice", broker_symbol=symbol, market=market,
-                                    product=product, quote_currency=currency, point_value=Decimal(1)))
-        sanitized.append({"name": symbol, "displayName": row.get("displayName", symbol),
-                          "type": expected, "marginRate": row.get("marginRate")})
-    _atomic_json(directory / "inventory.json", {"paper_only": True, "products": sanitized,
-                                                 "eligibility": "inventory_only_not_paper_eligible"})
+        specs.append(
+            InstrumentSpec(
+                provider="oanda_practice",
+                broker_symbol=symbol,
+                market=market,
+                product=product,
+                quote_currency=currency,
+                point_value=Decimal(1),
+            )
+        )
+        sanitized.append(
+            {
+                "name": symbol,
+                "displayName": row.get("displayName", symbol),
+                "type": expected,
+                "marginRate": row.get("marginRate"),
+            }
+        )
+    _atomic_json(
+        directory / "inventory.json",
+        {"paper_only": True, "products": sanitized, "eligibility": "inventory_only_not_paper_eligible"},
+    )
     if not specs:
         raise ValueError("no matching practice products")
     instruments = tuple(specs)
     waiting = DeskStatus(
-        generated_at=now(), feed_health="inventory_verified", evidence_status="not_supported",
-        markets=tuple(MarketStatus(market=item.market, broker_symbol=item.broker_symbol,
-                                   product=item.product, eligibility="diagnostic",
-                                   reason="Exact practice product found; cost and selected rule not verified.")
-                      for item in instruments),
-        opportunities=(), paper_positions=(),
+        generated_at=now(),
+        feed_health="inventory_verified",
+        evidence_status="not_supported",
+        markets=tuple(
+            MarketStatus(
+                market=item.market,
+                broker_symbol=item.broker_symbol,
+                product=item.product,
+                eligibility="diagnostic",
+                reason="Exact practice product found; cost and selected rule not verified.",
+            )
+            for item in instruments
+        ),
+        opportunities=(),
+        paper_positions=(),
         no_trade_reason="Awaiting fresh account bid/ask quotes. No paper entry is authorized.",
     )
     _atomic_json(directory / "summary.json", waiting.model_dump(mode="json"))
     initial = now()
     initial_manifest = _session(initial, instruments, account_id)
     initial_paper = PaperJournal(directory / "PaperRounds" / initial.date().isoformat(), initial_manifest.identity_hash)
-    _atomic_json(directory / "report.json",
-                 build_report(initial_paper, initial_manifest, as_of=initial).model_dump(mode="json"))
+    _atomic_json(
+        directory / "report.json", build_report(initial_paper, initial_manifest, as_of=initial).model_dump(mode="json")
+    )
     active_day = None
     session = None
+    last_report_at = initial
     for line in feed.price_lines(instruments):
         received = now()
         if active_day != received.date():
@@ -125,9 +154,14 @@ def run_paper_indicator(
             paper_journal = PaperJournal(directory / "PaperRounds" / active_day.isoformat(), manifest.identity_hash)
             report = build_report(paper_journal, manifest, as_of=received)
             _atomic_json(directory / "report.json", report.model_dump(mode="json"))
+            last_report_at = received
         assert session is not None
         status = session.on_event(line, received)
         _atomic_json(directory / "summary.json", status.model_dump(mode="json"))
+        if received - last_report_at >= timedelta(seconds=60):
+            report = build_report(paper_journal, manifest, as_of=received, session_journal=session.journal)
+            _atomic_json(directory / "report.json", report.model_dump(mode="json"))
+            last_report_at = received
         if (directory / "pause.request").exists():
             return
 

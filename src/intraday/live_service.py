@@ -97,18 +97,31 @@ class LiveIndicatorSession:
         return cls(directory, manifest)
 
     def _status(self, at: datetime, health: str, reason: str) -> DeskStatus:
-        markets = tuple(
-            MarketStatus(
-                market=item.market, broker_symbol=item.broker_symbol, product=item.product,
-                eligibility="diagnostic", reason="Historical selection only; broker costs and live paper eligibility remain separate.",
-            ) for item in self.manifest.instruments
-        )
+        markets = []
+        for item in self.manifest.instruments:
+            last_quote = self.last_quote_at.get(item.broker_symbol)
+            valid_quote = last_quote if last_quote is not None and at >= last_quote else None
+            markets.append(
+                MarketStatus(
+                    market=item.market,
+                    broker_symbol=item.broker_symbol,
+                    product=item.product,
+                    eligibility="diagnostic",
+                    reason="Historical selection only; broker costs and paper eligibility remain separate.",
+                    last_quote_at=valid_quote,
+                    feed_age_seconds=(Decimal(str((at - valid_quote).total_seconds())) if valid_quote else None),
+                )
+            )
         opportunity = self.latest_opportunity
         if opportunity and (health != "healthy" or at - opportunity.entry_at > timedelta(seconds=120)):
             opportunity = None
         return DeskStatus(
-            generated_at=at, feed_health=health, evidence_status="not_supported", markets=markets,
-            opportunities=(opportunity,) if opportunity else (), paper_positions=(),
+            generated_at=at,
+            feed_health=health,
+            evidence_status="not_supported",
+            markets=tuple(markets),
+            opportunities=(opportunity,) if opportunity else (),
+            paper_positions=(),
             no_trade_reason="" if opportunity else reason,
         )
 
@@ -153,22 +166,41 @@ class LiveIndicatorSession:
                 return self._gap(received_at, "stale_or_future_quote", symbol=symbol)
             bid = Decimal(event["bids"][0]["price"])
             ask = Decimal(event["asks"][0]["price"])
-            source_key = canonical_hash({"round": self.manifest.identity_hash, "symbol": symbol,
-                                         "time": observed.isoformat(), "bid": str(bid), "ask": str(ask)})
+            source_key = canonical_hash(
+                {
+                    "round": self.manifest.identity_hash,
+                    "symbol": symbol,
+                    "time": observed.isoformat(),
+                    "bid": str(bid),
+                    "ask": str(ask),
+                }
+            )
             if source_key == self.last_source_key.get(symbol):
                 return self.status
             quote = MarketQuote(
-                instrument=self.by_symbol[symbol], account_feed_hash=self.manifest.account_feed_hash,
-                observed_at=observed, received_at=received_at, bid=bid, ask=ask,
+                instrument=self.by_symbol[symbol],
+                account_feed_hash=self.manifest.account_feed_hash,
+                observed_at=observed,
+                received_at=received_at,
+                bid=bid,
+                ask=ask,
                 status="tradeable" if event.get("tradeable") is True else "non_tradeable",
                 source_key=source_key,
             )
         except (KeyError, IndexError, TypeError, ValueError, InvalidOperation):
             return self._gap(received_at, "invalid_account_quote", symbol=symbol)
-        self.journal.append("quote", received_at, {
-            "broker_symbol": symbol, "observed_at": observed.isoformat(), "bid": str(bid),
-            "ask": str(ask), "tradeable": str(quote.status == "tradeable"), "source_key": source_key,
-        })
+        self.journal.append(
+            "quote",
+            received_at,
+            {
+                "broker_symbol": symbol,
+                "observed_at": observed.isoformat(),
+                "bid": str(bid),
+                "ask": str(ask),
+                "tradeable": str(quote.status == "tradeable"),
+                "source_key": source_key,
+            },
+        )
         self.last_source_key[symbol] = source_key
         previous = self.last_quote_at.get(symbol)
         self.last_quote_at[symbol] = observed
@@ -190,19 +222,37 @@ class LiveIndicatorSession:
             bar_key = latest.source_key
             if bar_key not in self.decision_bars:
                 window = self.manifest.sessions[symbol]
-                plan = evaluate_setup(self.manifest.rules[symbol].strategy_id, self.bars[symbol], quote,
-                                      session_open=window.opened_at, session_close=window.closed_at)
-                decision = {"broker_symbol": symbol, "bar_key": bar_key, "status": plan.status,
-                            "reason": plan.reason, "strategy_id": plan.strategy_id,
-                            "direction": plan.direction or ""}
+                plan = evaluate_setup(
+                    self.manifest.rules[symbol].strategy_id,
+                    self.bars[symbol],
+                    quote,
+                    session_open=window.opened_at,
+                    session_close=window.closed_at,
+                )
+                decision = {
+                    "broker_symbol": symbol,
+                    "bar_key": bar_key,
+                    "status": plan.status,
+                    "reason": plan.reason,
+                    "strategy_id": plan.strategy_id,
+                    "direction": plan.direction or "",
+                }
                 self.journal.append("decision", received_at, decision)
                 self.decision_bars.add(bar_key)
                 if plan.status == "ready" and plan.direction == self.manifest.rules[symbol].direction:
                     self.latest_opportunity = OpportunityStatus(
-                        market=quote.instrument.market, broker_symbol=symbol, strategy_id=plan.strategy_id,
-                        direction=plan.direction, decided_at=plan.decision_at, entry_at=plan.entry_at,
-                        entry=plan.entry, stop=plan.stop, target=plan.target, exit_by=plan.exit_by,
-                        estimated_roundtrip_cost=plan.estimated_roundtrip_cost, explanation=plan.reason,
+                        market=quote.instrument.market,
+                        broker_symbol=symbol,
+                        strategy_id=plan.strategy_id,
+                        direction=plan.direction,
+                        decided_at=plan.decision_at,
+                        entry_at=plan.entry_at,
+                        entry=plan.entry,
+                        stop=plan.stop,
+                        target=plan.target,
+                        exit_by=plan.exit_by,
+                        estimated_roundtrip_cost=plan.estimated_roundtrip_cost,
+                        explanation=plan.reason,
                         evidence_hash=plan.evidence_hash,
                     )
         status = self._status(received_at, "healthy", "No confirmed setup on the current account quotes.")
