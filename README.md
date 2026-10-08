@@ -28,9 +28,14 @@ credential as an argument and has no order-submission operation. The optional
 approximate confirmed-bar setups on a chart; chart prices are **not** the
 account-specific bid/ask prices used for paper fills.
 
-This track is **not yet ready to copy with real money**: no UK demo account,
-product terms, actual costs or sustained forward quotes have been verified in
-this checkout. The command follows one session at a time; later sessions can
+This track is **not yet ready to copy with real money**: a practice account and
+its exact available instruments have been checked, but product terms, actual
+costs and sustained forward quotes have not been verified in this checkout.
+Broker inventory alone cannot enable a paper entry: exact product identity,
+source-backed costs and margin, open trading hours, and a fresh GBP conversion
+must all agree. The demo account labels `DE30_EUR` “Germany 30”; Nowcaster
+retains that label rather than treating it as a different Germany 40 contract.
+The command follows one session at a time; later sessions can
 retain the same frozen paper study, but automatic reconnect and unattended
 multi-day collection are not complete. [OANDA's account stream](https://developer.oanda.com/rest-live-v20/pricing-ep/)
 samples prices rather than sending every price change, and its
