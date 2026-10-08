@@ -63,12 +63,23 @@ class PaperJournal:
         if json.loads(self.manifest.read_text(encoding="utf-8")) != identity:
             raise ValueError("journal protocol mismatch")
         self._lock = None
-        self.events()
+        retained = self.events()
+        self._last_hash = retained[-1].record_hash if retained else ZERO_HASH
+        self._last_size = self.event_file.stat().st_size if self.event_file.exists() else 0
+        self._semantic_ids = {
+            canonical_hash({"kind": event.kind, "occurred_at": event.occurred_at.isoformat(), "payload": event.payload})
+            for event in retained
+        }
 
     def __enter__(self):
         self._lock = self.lock_file.open("a+b")
         fcntl.flock(self._lock, fcntl.LOCK_EX)
-        self.events()
+        size = self.event_file.stat().st_size if self.event_file.exists() else 0
+        if size != self._last_size:
+            fcntl.flock(self._lock, fcntl.LOCK_UN)
+            self._lock.close()
+            self._lock = None
+            raise ValueError("another paper writer changed the journal")
         return self
 
     def __exit__(self, *_):
@@ -105,8 +116,7 @@ class PaperJournal:
     def append(self, kind: str, occurred_at: datetime, payload: dict[str, str]) -> PaperEvent:
         if self._lock is None:
             raise ValueError("journal writes require writer lock")
-        existing = self.events()
-        previous = existing[-1].record_hash if existing else ZERO_HASH
+        previous = self._last_hash
         data = {
             "schema_version": 1,
             "protocol_hash": self.protocol_hash,
@@ -117,13 +127,16 @@ class PaperJournal:
         }
         data["record_hash"] = canonical_hash({**data, "occurred_at": occurred_at.isoformat().replace("+00:00", "Z")})
         event = PaperEvent.model_validate(data)
-        if any(
-            old.kind == event.kind and old.occurred_at == event.occurred_at and old.payload == event.payload
-            for old in existing
-        ):
+        semantic = canonical_hash({"kind": event.kind, "occurred_at": event.occurred_at.isoformat(),
+                                   "payload": event.payload})
+        if semantic in self._semantic_ids:
             raise ValueError("duplicate paper event")
+        encoded = (event.model_dump_json() + "\n").encode()
         with self.event_file.open("ab") as stream:
-            stream.write((event.model_dump_json() + "\n").encode())
+            stream.write(encoded)
             stream.flush()
             os.fsync(stream.fileno())
+        self._last_hash = event.record_hash
+        self._last_size += len(encoded)
+        self._semantic_ids.add(semantic)
         return event

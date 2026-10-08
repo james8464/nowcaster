@@ -43,8 +43,15 @@ account-specific live fills.
 The new multi-product practice-stream core records sanitized quotes and
 decisions in a separate append-only journal. A restart, stale quote or broken
 five-minute bar forces a fresh warm-up instead of filling an imagined trade.
-At this stage its setups are diagnostic until the paper portfolio and Mac
-service are connected.
+At this stage its setups are diagnostic until the paper portfolio is wired
+into the Mac service.
+The separate paper-portfolio core can size a hypothetical position across
+products using one GBP equity balance. A ticket records the actual bid/ask
+side, units, stop, target, time exit, notional, effective leverage, broker
+margin estimate, cost source and estimated costs. It respects a 0.25% risk
+budget per trade, 1% daily realized-loss stop, 5% drawdown halt and 1.0×
+aggregate notional cap. A missing quote or conversion leaves a paper position
+unresolved instead of inventing a profitable exit.
 The command follows one session at a time; later sessions can
 retain the same frozen paper study, but automatic reconnect and unattended
 multi-day collection are not complete. [OANDA's account stream](https://developer.oanda.com/rest-live-v20/pricing-ep/)

@@ -74,6 +74,7 @@ class CostEvidence(BaseModel):
 class EligibilityResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
     instrument: InstrumentSpec
+    evaluated_at: datetime
     product_label: str
     broker_margin_rate: Decimal | None
     costs: CostEvidence | None
@@ -137,6 +138,7 @@ def evaluate_product(
         conversion_rate = conversion.rate
     return EligibilityResult(
         instrument=instrument,
+        evaluated_at=at,
         product_label=label,
         broker_margin_rate=margin,
         costs=costs,
