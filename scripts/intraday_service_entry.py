@@ -23,6 +23,8 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.intraday.capture_quality import summarize_capture  # noqa: E402
 from src.intraday.contracts import InstrumentSpec  # noqa: E402
 from src.intraday.desk import DeskStatus, MarketStatus  # noqa: E402
+from src.intraday.experimental_round import ExperimentalRoundManifest, load_experimental_round  # noqa: E402
+from src.intraday.experimental_service import ExperimentalPaperService  # noqa: E402
 from src.intraday.journal import PaperJournal  # noqa: E402
 from src.intraday.live_service import LiveIndicatorSession, LiveRoundManifest, LiveRule, LiveSessionWindow  # noqa: E402
 from src.intraday.oanda_practice import PRACTICE_API, PRACTICE_STREAM, OandaPracticeFeed  # noqa: E402
@@ -35,6 +37,44 @@ CATALOG = (
     ("EUR_USD", "eurusd", "margin_fx", "USD"),
     ("WTICO_USD", "wti", "cfd", "USD"),
 )
+
+
+def _helper_code_hash() -> str | None:
+    """Installed helper identity; source-tree Python is never a production fallback."""
+    if not getattr(sys, "frozen", False):
+        return None
+    digest = hashlib.sha256()
+    with Path(sys.executable).open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _experimental_for_day(
+    directory: Path, *, at: datetime, account_feed_hash: str, code_hash: str | None,
+    instruments: tuple[InstrumentSpec, ...],
+) -> dict[str, ExperimentalPaperService]:
+    registered = directory / "ExperimentalRounds"
+    if not registered.exists():
+        return {}
+    result: dict[str, ExperimentalPaperService] = {}
+    for path in sorted(registered.glob("*/manifest.json")):
+        candidate = ExperimentalRoundManifest.model_validate_json(path.read_bytes())
+        if candidate.session_open.date() != at.date():
+            continue
+        if code_hash is None:
+            # Source checkouts may test the service directly but may not
+            # silently activate a production round under an interpreter hash.
+            continue
+        manifest = load_experimental_round(path, account_feed_hash=account_feed_hash,
+                                           code_hash=code_hash, at=at)
+        if manifest.instrument not in instruments:
+            raise ValueError("registered experimental product is absent from practice inventory")
+        symbol = manifest.instrument.broker_symbol
+        if symbol in result:
+            raise ValueError("more than one active experimental round per product")
+        result[symbol] = ExperimentalPaperService(manifest, path.parent)
+    return result
 
 
 class RetainedAccountMismatch(ValueError):
@@ -240,6 +280,11 @@ def run_paper_indicator(
     active_day = initial.date()
     manifest = initial_manifest
     session = LiveIndicatorSession.restore(directory / active_day.isoformat(), manifest, restart_at=initial)
+    helper_hash = _helper_code_hash()
+    experimental = _experimental_for_day(directory, at=initial, account_feed_hash=manifest.account_feed_hash,
+                                         code_hash=helper_hash, instruments=instruments)
+    for service in experimental.values():
+        _atomic_json(directory / "experimental-summary.json", service.status(initial).model_dump(mode="json"))
     reports = RetainedReportCache(directory, manifest.account_feed_hash)
     PaperJournal(directory / "PaperRounds" / active_day.isoformat(), manifest.identity_hash)
     _atomic_json(directory / "report.json", reports.snapshot(initial))
@@ -277,8 +322,12 @@ def run_paper_indicator(
 
     last_report_at = initial
     last_received_at = initial
-    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="nowcaster-paper-report") as executor:
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="nowcaster-paper-report") as executor, \
+            ThreadPoolExecutor(max_workers=1, thread_name_prefix="nowcaster-practice-conversion") as conversion_executor:
         pending: Future[None] | None = None
+        conversion_pending: Future | None = None
+        conversion_cache: dict[str, object] = {}
+        conversion_requested_at: datetime | None = None
         try:
             for line in feed.price_lines(instruments):
                 received = now()
@@ -292,10 +341,38 @@ def run_paper_indicator(
                     manifest = _session_for_day(directory, received, instruments, account_id)
                     day_directory = directory / active_day.isoformat()
                     session = LiveIndicatorSession.restore(day_directory, manifest, restart_at=received)
+                    experimental = _experimental_for_day(
+                        directory, at=received, account_feed_hash=manifest.account_feed_hash,
+                        code_hash=helper_hash, instruments=instruments,
+                    )
                     PaperJournal(directory / "PaperRounds" / active_day.isoformat(), manifest.identity_hash)
                     last_report_at = received - timedelta(seconds=60)
                 status = session.on_event(line, received)
                 plan = session.new_plan
+                fresh_quote = session.last_quote
+                if conversion_pending is not None and conversion_pending.done():
+                    for factor in conversion_pending.result():
+                        conversion_cache[factor.currency] = factor
+                    conversion_pending = None
+                if experimental and hasattr(feed, "home_conversions") and (
+                    conversion_pending is None
+                    and (conversion_requested_at is None or received - conversion_requested_at >= timedelta(seconds=5))
+                ):
+                    products = tuple(service.manifest.instrument for service in experimental.values())
+                    needed = tuple(item for item in products if item.quote_currency != next(iter(experimental.values())).manifest.account_currency)
+                    if needed:
+                        currency = next(iter(experimental.values())).manifest.account_currency
+                        conversion_pending = conversion_executor.submit(feed.home_conversions, needed,
+                                                                        account_currency=currency)
+                        conversion_requested_at = received
+                if fresh_quote is not None and fresh_quote.instrument.broker_symbol in experimental:
+                    service = experimental[fresh_quote.instrument.broker_symbol]
+                    factor = conversion_cache.get(fresh_quote.instrument.quote_currency)
+                    conversion = None if factor is None else factor.to_paper_conversion(
+                        account_currency=service.manifest.account_currency)
+                    service.on_quote(fresh_quote, conversion=conversion)
+                    _atomic_json(directory / "experimental-summary.json",
+                                 service.status(received).model_dump(mode="json"))
                 status = DeskStatus.model_validate(
                     {
                         **status.model_dump(),
@@ -313,8 +390,15 @@ def run_paper_indicator(
                         pending.result()
                     pending = executor.submit(publish_report, received, manifest, session, concurrent=True)
                     last_report_at = received
-                if (directory / "pause.request").exists():
+                if (directory / "shutdown.request").exists():
+                    for service in experimental.values():
+                        service.record_shutdown(received)
                     return
+                if (directory / "pause.request").exists():
+                    for service in experimental.values():
+                        service.disarm_new_entries()
+                    if not any(service.runtime.account.positions for service in experimental.values()):
+                        return
         finally:
             if pending is not None:
                 pending.result()

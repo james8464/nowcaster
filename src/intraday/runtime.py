@@ -7,6 +7,7 @@ import os
 from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from typing import Literal
 
 from src.intraday.contracts import InstrumentSpec, MarketQuote
 from src.intraday.journal import PaperEvent, PaperJournal
@@ -38,24 +39,29 @@ class LivePaperRuntime:
         session_close: datetime,
         initial_cash: Decimal,
         unit_step: Decimal,
+        allowed_direction: Literal["long", "short", "both"] = "both",
         maximum_quote_gap: timedelta = timedelta(seconds=30),
     ):
         if session_close <= session_open or unit_step <= 0:
             raise ValueError("invalid paper session")
         self.instrument = instrument
         self.strategy_id = strategy_id
+        self.allowed_direction = allowed_direction
         self.costs = costs
         self.session_open = session_open
         self.session_close = session_close
         self.unit_step = unit_step
+        self.maximum_quote_gap = maximum_quote_gap
         self.builder = LiveBarBuilder(instrument, maximum_quote_gap=maximum_quote_gap)
         self.bars = []
         self._pending_decision = False
         self._pending_plan: tuple[SetupDecision, str, str] | None = None
         self._last_quote_received: datetime | None = None
+        self._last_quote_observed: datetime | None = None
         self._seen_trade_quote_keys: set[str] = set()
         self._trade_quote_fingerprints: dict[str, str] = {}
         self._conflicted_keys: set[str] = set()
+        self._entries_disarmed = False
         self.account = PaperAccount(PaperRiskPolicy(), initial_cash, account_currency=account_currency, costs=costs)
         self.journal = PaperJournal(directory, protocol_hash)
         identity = {
@@ -64,6 +70,7 @@ class LivePaperRuntime:
             "protocol_hash": protocol_hash,
             "instrument": instrument.model_dump(mode="json"),
             "strategy_id": strategy_id,
+            "allowed_direction": allowed_direction,
             "account_currency": account_currency,
             "costs": costs.model_dump(mode="json"),
             "initial_cash": str(initial_cash),
@@ -163,6 +170,15 @@ class LivePaperRuntime:
                 self._pending_plan = None
         self.account._day = self.session_open.date()
 
+    def disarm_new_entries(self) -> None:
+        self._entries_disarmed = True
+
+    def record_unresolved_shutdown(self, at: datetime) -> PaperEvent | None:
+        if not self.account.positions:
+            return None
+        return self._append("managed", at,
+                            {"reason": "unresolved_at_shutdown", "broker_symbol": self.instrument.broker_symbol})
+
     def on_quote(self, quote: MarketQuote, conversion: FXConversion | None = None) -> PaperEvent | None:
         if quote.instrument != self.instrument:
             raise ValueError("paper quote instrument mismatch")
@@ -180,6 +196,11 @@ class LivePaperRuntime:
             return self._append(
                 "feed_gap", quote.received_at, {"reason": "stale_account_quote", "source_key": quote.source_key}
             )
+        timing_gap = self._last_quote_observed is not None and (
+            quote.observed_at <= self._last_quote_observed
+            or quote.observed_at - self._last_quote_observed > self.maximum_quote_gap
+        )
+        self._last_quote_observed = quote.observed_at
         self._last_quote_received = quote.received_at
         closed = self.account.update(quote, conversion=conversion)
         close_event = None
@@ -203,6 +224,15 @@ class LivePaperRuntime:
             )
             self._seen_trade_quote_keys.add(quote.source_key)
             self._trade_quote_fingerprints[quote.source_key] = canonical_hash(quote.model_dump(mode="json"))
+        if timing_gap:
+            self.builder = LiveBarBuilder(self.instrument, maximum_quote_gap=self.maximum_quote_gap)
+            self.builder.accept(quote)
+            self.bars.clear()
+            self._pending_decision = False
+            self._pending_plan = None
+            gap = self._append("feed_gap", quote.received_at,
+                               {"reason": "quote_gap_or_reorder", "source_key": quote.source_key})
+            return close_event or gap
         before = self.builder.gaps
         completed = self.builder.accept(quote)
         if self.builder.gaps > before:
@@ -220,7 +250,10 @@ class LivePaperRuntime:
         if self._pending_plan is not None:
             plan, decision_source_key, feed_hash = self._pending_plan
             self._pending_plan = None
-            if (
+            if self._entries_disarmed:
+                reason = "entries_disarmed"
+                position = None
+            elif (
                 quote.source_key == decision_source_key
                 or quote.account_feed_hash != feed_hash
                 or quote.received_at <= plan.entry_at
@@ -273,8 +306,17 @@ class LivePaperRuntime:
                     "reason": plan.reason,
                     "strategy_id": self.strategy_id,
                     "source_key": quote.source_key,
+                    "bar_key": self.bars[-1].source_key,
                 },
             )
+        if self._entries_disarmed:
+            return self._append("no_trade", quote.received_at,
+                                {"reason": "entries_disarmed", "strategy_id": self.strategy_id,
+                                 "source_key": quote.source_key, "bar_key": self.bars[-1].source_key})
+        if self.allowed_direction != "both" and plan.direction != self.allowed_direction:
+            return self._append("no_trade", quote.received_at,
+                                {"reason": "declared_direction_mismatch", "strategy_id": self.strategy_id,
+                                 "source_key": quote.source_key, "bar_key": self.bars[-1].source_key})
         self._pending_plan = (plan, quote.source_key, quote.account_feed_hash)
         self._seen_trade_quote_keys.add(quote.source_key)
         self._trade_quote_fingerprints[quote.source_key] = canonical_hash(quote.model_dump(mode="json"))
@@ -286,6 +328,7 @@ class LivePaperRuntime:
                 "account_feed_hash": quote.account_feed_hash,
                 "plan_json": plan.model_dump_json(),
                 "source_key": quote.source_key,
+                "bar_key": self.bars[-1].source_key,
                 "quote_fingerprint": canonical_hash(quote.model_dump(mode="json")),
             },
         )

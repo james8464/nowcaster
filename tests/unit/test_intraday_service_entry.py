@@ -94,6 +94,48 @@ def test_practice_runner_keeps_token_and_account_out_of_files(tmp_path):
     assert summary["markets"][0]["display_name"] == "Germany 30"
 
 
+def test_registered_experiment_receives_same_price_without_changing_diagnostic_schema(tmp_path, monkeypatch):
+    import hashlib
+    from decimal import Decimal
+
+    from src.intraday.contracts import InstrumentSpec
+    from src.intraday.experimental_round import ExperimentalRoundManifest, register_experimental_round
+    from src.intraday.paper import PaperExecutionCosts
+
+    current = datetime(2026, 10, 8, 9, tzinfo=UTC)
+    product = InstrumentSpec(provider="oanda_practice", broker_symbol="DE30_EUR", market="germany40",
+                             product="cfd", quote_currency="EUR", point_value=Decimal(1))
+    round_manifest = ExperimentalRoundManifest(
+        round_id="de30-2026-10-08-a", cohort_id="de30-or15-long-v1",
+        account_feed_hash=hashlib.sha256(b"private-account").hexdigest(), instrument=product,
+        strategy_id="opening_range_15", direction="long", session_open=current - timedelta(hours=2),
+        session_close=current + timedelta(hours=11), calendar_hash="c" * 64,
+        costs=PaperExecutionCosts(verified=True), cost_source="official-demo-cost-record",
+        cost_source_hash="d" * 64, verified_at=current - timedelta(days=1),
+        account_currency="EUR", margin_rate=Decimal("0.05"), unit_step=Decimal("0.01"),
+        initial_paper_cash=Decimal("10000"), code_hash="b" * 64,
+    )
+    register_experimental_round(tmp_path, round_manifest, at=current - timedelta(hours=3))
+    monkeypatch.setattr(entry, "_helper_code_hash", lambda: "b" * 64)
+    run_paper_indicator(tmp_path, account_id="private-account", token="private-token",
+                        feed=FakeFeed(), now=lambda: current)
+    diagnostic = json.loads((tmp_path / "summary.json").read_text())
+    experimental = json.loads((tmp_path / "experimental-summary.json").read_text())
+    assert diagnostic["markets"][0]["eligibility"] == "diagnostic"
+    assert "qualification" not in diagnostic
+    assert experimental["qualification"] == "unqualified"
+    assert experimental["broker_symbol"] == "DE30_EUR"
+    captured = (tmp_path / "ExperimentalRounds" / round_manifest.round_id / "capture" / "quotes.jsonl").read_text()
+    assert '"kind": "quote"' in captured
+
+
+def test_no_registered_round_keeps_old_files_unchanged(tmp_path):
+    run_paper_indicator(tmp_path, account_id="private-account", token="private-token",
+                        feed=FakeFeed(), now=lambda: datetime(2026, 10, 8, 9, tzinfo=UTC))
+    assert not (tmp_path / "experimental-summary.json").exists()
+    assert json.loads((tmp_path / "summary.json").read_text())["schema_version"] == 1
+
+
 def test_practice_runner_publishes_retained_account_capture_quality(tmp_path):
     from datetime import timedelta
 
