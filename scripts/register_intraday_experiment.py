@@ -18,9 +18,15 @@ def main() -> int:
     register = command.add_parser("register")
     register.add_argument("--manifest", type=Path, required=True)
     register.add_argument("--directory", type=Path, required=True)
+    register.add_argument(
+        "--cost-evidence",
+        type=Path,
+        required=True,
+        help="Sanitized exact-product cost record; SHA-256 must match manifest",
+    )
     args = parser.parse_args()
     manifest = ExperimentalRoundManifest.model_validate_json(args.manifest.read_bytes())
-    print(register_experimental_round(args.directory, manifest))
+    print(register_experimental_round(args.directory, manifest, cost_evidence=args.cost_evidence.read_bytes()))
     return 0
 
 

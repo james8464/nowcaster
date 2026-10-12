@@ -2,6 +2,14 @@
 
 ## Intraday rebuild: experimental paper research
 
+The current Mac build can display a separate **unqualified experimental paper**
+ticket and a net-results report when a future OANDA practice round has been
+pre-registered. It does not register or start one automatically: exact
+account-product costs and session terms remain unverified. The existing OANDA
+monitor stays diagnostic, with no paper entries, until that gate is met. See
+the [operating guide](docs/research/live-paper-signals.md#experimental-oanda-practice-paper-lane)
+for the registration boundary and retained evidence requirements.
+
 Nowcaster now has a separate, **paper-only** intraday research track for
 Germany 40 and US 500 index CFDs, EUR/USD, and conditionally West Texas oil.
 It studies three understandable ideas: an opening-range breakout, a pullback

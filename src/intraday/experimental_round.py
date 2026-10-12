@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 from datetime import UTC, datetime
@@ -13,7 +14,6 @@ from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from src.intraday.contracts import FrozenModel, InstrumentSpec
 from src.intraday.paper import PaperExecutionCosts, PaperRiskPolicy
-
 
 _INVENTORY = {
     "DE30_EUR": ("germany40", "cfd", "EUR"),
@@ -67,7 +67,9 @@ class ExperimentalRoundManifest(FrozenModel):
     @model_validator(mode="after")
     def complete_evidence(self):
         if self.instrument.provider != "oanda_practice" or _INVENTORY.get(self.instrument.broker_symbol) != (
-            self.instrument.market, self.instrument.product, self.instrument.quote_currency
+            self.instrument.market,
+            self.instrument.product,
+            self.instrument.quote_currency,
         ):
             raise ValueError("instrument is not an exact supported practice product")
         if self.strategy_id not in _STRATEGIES:
@@ -78,10 +80,8 @@ class ExperimentalRoundManifest(FrozenModel):
             raise ValueError("cost verification must precede session")
         if not self.costs.verified or not self.cost_source.strip():
             raise ValueError("source-backed verified execution costs required")
-        if not self.account_currency.strip():
-            raise ValueError("paper currency required")
-        if self.instrument.quote_currency != self.account_currency and self.account_currency != "GBP":
-            raise ValueError("experimental conversion policy currently supports GBP paper cash only")
+        if self.account_currency != "GBP":
+            raise ValueError("experimental paper equity and reporting require a GBP account")
         return self
 
 
@@ -90,14 +90,36 @@ def _bytes(manifest: ExperimentalRoundManifest) -> bytes:
 
 
 def register_experimental_round(
-    root: Path, manifest: ExperimentalRoundManifest, *, at: datetime | None = None
+    root: Path,
+    manifest: ExperimentalRoundManifest,
+    *,
+    cost_evidence: bytes,
+    at: datetime | None = None,
 ) -> Path:
     """Create once, or prove that an existing manifest is byte-for-byte identical."""
     now = at or datetime.now(UTC)
+    root = Path(root).expanduser().resolve()
+    if {"ProspectiveStudies", "live-paper-study"} & set(root.parts):
+        raise ValueError("protected prospective study path")
     if now.tzinfo is None or now.utcoffset().total_seconds() != 0 or now >= manifest.session_open:
         raise ValueError("experiment must be registered before its UTC session opens")
+    if (
+        not cost_evidence
+        or len(cost_evidence) > 5 * 1024 * 1024
+        or hashlib.sha256(cost_evidence).hexdigest() != manifest.cost_source_hash
+    ):
+        raise ValueError("cost evidence is absent or differs from its frozen hash")
     directory = root / "ExperimentalRounds" / manifest.round_id
     directory.mkdir(parents=True, exist_ok=True)
+    evidence_path = directory / "cost-evidence.bin"
+    try:
+        with evidence_path.open("xb") as handle:
+            handle.write(cost_evidence)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except FileExistsError:
+        if evidence_path.read_bytes() != cost_evidence:
+            raise ValueError("retained cost evidence differs; use a new round ID") from None
     path = directory / "manifest.json"
     content = _bytes(manifest)
     try:
@@ -115,6 +137,9 @@ def load_experimental_round(
     path: Path, *, account_feed_hash: str, code_hash: str, at: datetime
 ) -> ExperimentalRoundManifest:
     manifest = ExperimentalRoundManifest.model_validate_json(path.read_bytes())
+    evidence = path.parent / "cost-evidence.bin"
+    if not evidence.is_file() or hashlib.sha256(evidence.read_bytes()).hexdigest() != manifest.cost_source_hash:
+        raise ValueError("retained cost evidence is missing or changed")
     if manifest.account_feed_hash != account_feed_hash or manifest.code_hash != code_hash:
         raise ValueError("experimental account or bundled helper identity mismatch")
     if at.tzinfo is None or at.utcoffset().total_seconds() != 0:

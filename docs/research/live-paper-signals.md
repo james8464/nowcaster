@@ -1,5 +1,57 @@
 # Live paper signals
 
+## Experimental OANDA practice paper lane
+
+The native **Trade Desk** now has a separate experimental lane alongside its
+existing diagnostic OANDA quote monitor. A registered round can observe one
+exact practice product and one frozen long or short rule. Its five-minute bars
+must be sealed by later account quotes; a plan can open only on a still later
+bid/ask quote. Every open ticket is labelled **Unqualified experimental paper
+trade** and shows asset, side, units, leverage, entry, stop, target, time exit,
+estimated costs and the source of the frozen cost terms. A later account quote
+can close it; missing data leaves it unresolved, never filled at an imagined
+price. The separate experimental report retains closed gains and losses, costs,
+gaps, abstentions and undefined expectancy when no trades have closed. Paper
+alerts are opt-in, distinct from the qualified research path, and off by
+default. No broker orders are sent.
+
+**No round is registered by this release.** A positive or negative paper return
+cannot qualify a rule. The previous 32 product/rule/direction historical screen
+failed, and the suggested opening-range-15 long sentinel is only an execution
+diagnostic, not a profitable strategy. Do not activate it during the running
+diagnostic day or the frozen BTC/ETH study. The installed app's diagnostic feed
+continues without experimental entries until a future UTC session is explicitly
+registered and its exact account, product, executable identity and terms pass
+the gate. The first registration requires a sanitized exact-product cost record
+whose bytes match the manifest SHA-256; the CLI stores those bytes next to the
+immutable manifest. Never put a token, account ID, or personal portal document
+in that record. Registering a round does not start collection or enable alerts.
+
+For a future round, an operator must verify the exact OANDA UK practice product
+and account inventory, margin, minimum/step size, session hours, commission,
+slippage assumption, financing policy, account-currency conversion and
+effective spread. Set GBP paper equity and predeclare the rule, side, session,
+risk, source URL, source bytes/hash and bundled helper SHA before the first
+quote. Run `scripts/register_intraday_experiment.py register --manifest
+<manifest.json> --cost-evidence <sanitized-cost-record> --directory
+<IntradayResearch>` only after these checks, at a declared session boundary.
+The source checkout cannot activate a production round under its Python
+interpreter hash; the signed/bundled helper identity is required. A different
+cost or rule needs a new round ID and retains the old result.
+
+[OANDA UK's advertised Germany 40 spread starts at 1.2 points](https://www.oanda.com/uk-en/trading/our-pricing/),
+but that minimum is not the exact spread at a proposed entry or a complete
+per-product cost record. [OANDA's financing rates vary by instrument and day](https://www.oanda.com/uk-en/trading/financing-costs/).
+Its [retail margin table](https://www.oanda.com/uk-en/legal/margin-rates-retail/)
+lists Germany 30 at 20:1; the practice API currently uses `DE30_EUR`, so the
+operator must confirm that the account-specific product and terms match rather
+than inferring them from the Germany 40 marketing label. OANDA's [account
+pricing stream](https://developer.oanda.com/rest-live-v20/pricing-ep/) samples
+quotes; historical candles are not interchangeable with a later account fill.
+These public pages do **not** presently close the exact-cost evidence gap, so
+the sentinel remains unregistered. CFDs are leveraged and high-risk; the
+paper ledger is not a recommendation to copy with real money.
+
 Live paper signals is a user-started, paper-only trend research service in the
 native Mac app. It watches public Bitcoin and Ether prices on Binance spot
 (`BTCUSDT` and `ETHUSDT`). It checks completed one-minute observations and shows
