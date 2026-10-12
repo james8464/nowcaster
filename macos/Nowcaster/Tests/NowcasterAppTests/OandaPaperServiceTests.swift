@@ -63,3 +63,42 @@ private struct OandaTestKeychain: KeychainClient {
     #expect(!OandaPaperNotificationGate.canNotifyClose(diagnostic, brokerSymbol: "DE30_EUR", at: now))
     #expect(!OandaPaperNotificationGate.canNotifyClose(stale, brokerSymbol: "DE30_EUR", at: now))
 }
+
+@Test func staleExperimentalStatusCannotNotify() throws {
+    let text = """
+    {"schema_version":1,"paper_only":true,"qualification":"unqualified","round_id":"round-a",
+     "cohort_id":"cohort-a","generated_at":"2026-10-20T07:20:03Z","broker_symbol":"DE30_EUR",
+     "feed_health":"healthy","quote_age_seconds":"0","contiguous_bars":4,"gap_count":0,
+     "no_trade_reason":"paper_position_open","paper_ticket":null}
+    """
+    let status = try ExperimentalPaperStatus.decode(Data(text.utf8))
+    let later = ISO8601DateFormatter().date(from: "2026-10-20T07:25:03Z")!
+    #expect(!OandaPaperNotificationGate.canNotifyExperimental(status, at: later))
+}
+
+@Test @MainActor func pauseWithOpenPositionDoesNotForceClose() async throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let shell = root.appending(path: "python")
+    try FileManager.default.createSymbolicLink(at: shell, withDestinationURL: URL(fileURLWithPath: "/bin/sh"))
+    let script = root.appending(path: "intraday_service_entry.py")
+    try Data("sleep 2\n".utf8).write(to: script)
+    let directory = root.appending(path: "research")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    try Data("""
+    {"schema_version":1,"paper_only":true,"qualification":"unqualified","round_id":"round-a",
+     "cohort_id":"cohort-a","generated_at":"2026-10-20T07:20:03Z","broker_symbol":"DE30_EUR",
+     "feed_health":"healthy","quote_age_seconds":"0","contiguous_bars":4,"gap_count":0,
+     "no_trade_reason":"paper_position_open","paper_ticket":{"qualification":"unqualified"}}
+    """.utf8).write(to: directory.appending(path: "experimental-summary.json"))
+    let vault = OandaPracticeCredentialVault(client: OandaTestKeychain(account: "practice-id", token: "test-only-token"))
+    let service = OandaPaperService(vault: vault, configuration: .init(executable: shell, script: script, directory: directory))
+    service.start()
+    #expect(service.isRunning)
+    service.shutdown()
+    try await Task.sleep(for: .milliseconds(200))
+    #expect(service.isRunning)
+    #expect(FileManager.default.fileExists(atPath: directory.appending(path: "shutdown.request").path))
+    try await Task.sleep(for: .seconds(2))
+}

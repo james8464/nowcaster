@@ -52,6 +52,23 @@ def test_practice_http_stream_failure_retries_without_exposing_account(tmp_path,
     assert "private-token" not in stderr
 
 
+def test_shutdown_request_ends_runner_without_restarting(tmp_path, monkeypatch):
+    monkeypatch.setenv("OANDA_PRACTICE_ACCOUNT_ID", "private-account")
+    monkeypatch.setenv("OANDA_PRACTICE_TOKEN", "private-token")
+    attempts = []
+
+    def stopped(directory, **_kwargs):
+        attempts.append(directory)
+        if len(attempts) > 1:
+            raise AssertionError("shutdown restarted the collector")
+        (directory / "shutdown.request").write_text("shutdown\n")
+
+    monkeypatch.setattr(entry, "run_paper_indicator", stopped)
+    monkeypatch.setattr(entry.time, "sleep", lambda _seconds: None)
+    assert entry.main(["run", "--directory", str(tmp_path)]) == 0
+    assert attempts == [tmp_path]
+
+
 @pytest.mark.parametrize(
     "failure",
     [ValueError("quote journal chain mismatch"), RuntimeError("retained report changed"), OSError("disk full")],

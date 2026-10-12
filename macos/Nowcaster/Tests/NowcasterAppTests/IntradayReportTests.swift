@@ -93,3 +93,24 @@ import Testing
     #expect(report.conversionFee == Decimal(string: "0.12"))
     #expect(report.netPnL == Decimal(string: "7.88"))
 }
+
+@Test func experimentalReportDecodesWithoutQualifyingZeroTrades() throws {
+    let text = """
+    {"schema_version":1,"paper_only":true,"qualification":"unqualified","round_id":"round-a",
+     "cohort_id":"cohort-a","cohort_identity_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "attempted_entries":0,"rejected_entries":0,"expected_eligible_intervals":12,
+     "covered_eligible_intervals":0,"sampled_intervals":0,"missing_eligible_days":0,
+     "performance":{"schema_version":1,"paper_only":true,"round_id":"round-a",
+       "generated_at":"2026-10-20T08:00:00Z","evidence_status":"insufficient_evidence",
+       "coverage_status":"measured","account_quote_coverage":"0","closed_trades":0,"open_positions":0,
+       "decisions_count":0,"no_trade_count":0,"blocked_reasons":{},"feed_gap_count":0,
+       "gross_pnl_gbp":"0","commission_gbp":"0","financing_gbp":"0","conversion_fee_gbp":"0",
+       "net_pnl_gbp":"0","win_rate":null,"net_expectancy_gbp":null,"profit_factor":null,
+       "maximum_drawdown_gbp":"0","daily_block_lower_95_gbp":null,
+       "groups":[],"trades":[],"unresolved_positions":[],"warning":"Unqualified paper."}}
+    """
+    let report = try IntradayPaperReport.decodeExperimental(Data(text.utf8))
+    #expect(report.closedTrades == 0)
+    #expect(report.netExpectancy == nil)
+    #expect(report.evidenceStatus == "insufficient_evidence")
+}

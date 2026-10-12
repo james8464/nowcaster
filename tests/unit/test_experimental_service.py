@@ -93,7 +93,12 @@ def test_pause_manages_open_position_until_flat(tmp_path):
     item = quote(1203, "104")
     assert service.on_quote(item, conversion=conversion(item.received_at)).kind == "opened"
     service.disarm_new_entries()
-    assert service.status(item.received_at).paper_ticket is not None
+    ticket = service.status(item.received_at).paper_ticket
+    assert ticket is not None
+    assert D(ticket["effective_leverage"]) <= D(1)
+    assert D(ticket["margin_estimate_gbp"]) > 0
+    assert D(ticket["estimated_roundtrip_cost_gbp"]) >= 0
+    assert ticket["cost_source"] == manifest().cost_source
     exit_quote = quote(1260, "130")
     assert service.on_quote(exit_quote, conversion=conversion(exit_quote.received_at)).kind == "closed"
     assert service.status(exit_quote.received_at).paper_ticket is None

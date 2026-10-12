@@ -40,13 +40,17 @@ class LivePaperRuntime:
         initial_cash: Decimal,
         unit_step: Decimal,
         allowed_direction: Literal["long", "short", "both"] = "both",
+        margin_rate: Decimal = D(1),
+        cost_source: str = "verified paper cost policy",
         maximum_quote_gap: timedelta = timedelta(seconds=30),
     ):
-        if session_close <= session_open or unit_step <= 0:
+        if session_close <= session_open or unit_step <= 0 or not 0 < margin_rate <= 1 or not cost_source.strip():
             raise ValueError("invalid paper session")
         self.instrument = instrument
         self.strategy_id = strategy_id
         self.allowed_direction = allowed_direction
+        self.margin_rate = margin_rate
+        self.cost_source = cost_source
         self.costs = costs
         self.session_open = session_open
         self.session_close = session_close
@@ -71,6 +75,8 @@ class LivePaperRuntime:
             "instrument": instrument.model_dump(mode="json"),
             "strategy_id": strategy_id,
             "allowed_direction": allowed_direction,
+            "margin_rate": str(margin_rate),
+            "cost_source": cost_source,
             "account_currency": account_currency,
             "costs": costs.model_dump(mode="json"),
             "initial_cash": str(initial_cash),
@@ -273,6 +279,11 @@ class LivePaperRuntime:
                                      "source_key": quote.source_key, "decision_source_key": decision_source_key})
             self._seen_trade_quote_keys.add(quote.source_key)
             self._trade_quote_fingerprints[quote.source_key] = canonical_hash(quote.model_dump(mode="json"))
+            value_rate = D(1) if self.instrument.quote_currency == self.account.account_currency else conversion.position_value
+            loss_rate = D(1) if self.instrument.quote_currency == self.account.account_currency else conversion.account_loss
+            notional = position.entry * self.instrument.point_value * position.units * value_rate
+            expected_cost = ((quote.spread + 2 * self.costs.slippage_points) * self.instrument.point_value
+                             + self.costs.commission_per_unit + self.costs.financing_per_unit) * position.units * loss_rate
             return self._append(
                 "opened", quote.received_at,
                 {"broker_symbol": self.instrument.broker_symbol, "strategy_id": position.strategy_id,
@@ -280,6 +291,11 @@ class LivePaperRuntime:
                  "opened_at": position.opened_at.isoformat(), "account_feed_hash": position.account_feed_hash,
                  "entry": str(position.entry), "stop": str(position.stop), "target": str(position.target),
                  "exit_by": position.exit_by.isoformat(), "units": str(position.units),
+                 "product": self.instrument.product, "quote_currency": self.instrument.quote_currency,
+                 "notional_gbp": str(notional), "effective_leverage": str(notional / self.account.equity),
+                 "margin_estimate_gbp": str(notional * self.margin_rate),
+                 "estimated_roundtrip_cost_gbp": str(expected_cost), "cost_source": self.cost_source,
+                 "qualification": "unqualified",
                  "evidence_hash": position.evidence_hash, "source_key": quote.source_key,
                  "quote_fingerprint": canonical_hash(quote.model_dump(mode="json")),
                  "decision_source_key": decision_source_key},

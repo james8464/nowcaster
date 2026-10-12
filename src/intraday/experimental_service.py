@@ -46,7 +46,14 @@ class ExperimentalPaperService:
             account_currency=manifest.account_currency, costs=manifest.costs,
             session_open=manifest.session_open, session_close=manifest.session_close,
             initial_cash=manifest.initial_paper_cash, unit_step=manifest.unit_step,
+            margin_rate=manifest.margin_rate, cost_source=manifest.cost_source,
         )
+        self._ticket_payload: dict[str, str] | None = None
+        for event in self.runtime.journal.events():
+            if event.kind == "opened":
+                self._ticket_payload = event.payload
+            elif event.kind == "closed":
+                self._ticket_payload = None
         retained = self.session.events()
         self.gap_count = sum(event["kind"] == "gap" for event in retained)
         self.last_quote: MarketQuote | None = None
@@ -101,8 +108,10 @@ class ExperimentalPaperService:
                                      "status": "ready" if event.kind == "planned" else "no_trade",
                                      "reason": self.no_trade_reason, "source_key": quote.source_key})
         elif event is not None and event.kind == "opened":
+            self._ticket_payload = event.payload
             self.no_trade_reason = "paper_position_open"
         elif event is not None and event.kind == "closed":
+            self._ticket_payload = None
             self.no_trade_reason = "paper_position_closed"
         elif not self.runtime.bars:
             self.no_trade_reason = "waiting_for_confirmed_bars"
@@ -125,15 +134,7 @@ class ExperimentalPaperService:
             health, reason = "healthy", self.no_trade_reason
         ticket = None
         if position is not None:
-            ticket = {
-                "qualification": "unqualified", "broker_symbol": position.instrument.broker_symbol,
-                "product": position.instrument.product, "direction": position.direction,
-                "units": str(position.units), "entry": str(position.entry),
-                "stop": str(position.stop), "target": str(position.target),
-                "opened_at": position.opened_at.isoformat(), "exit_by": position.exit_by.isoformat(),
-                "evidence_hash": position.evidence_hash,
-                "cost_source": self.manifest.cost_source,
-            }
+            ticket = self._ticket_payload
         return ExperimentalDeskStatus(
             round_id=self.manifest.round_id, cohort_id=self.manifest.cohort_id,
             generated_at=at, broker_symbol=self.manifest.instrument.broker_symbol,

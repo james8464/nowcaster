@@ -161,20 +161,24 @@ struct IntradayResearchView: View {
     private var directory: URL { AppStorageLocations.root.appending(path: "IntradayResearch", directoryHint: .isDirectory) }
     private var statusURL: URL { directory.appending(path: "summary.json") }
     private var qualityURL: URL { directory.appending(path: "capture_quality.json") }
+    private var experimentalURL: URL { directory.appending(path: "experimental-summary.json") }
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 5)) { timeline in
             let status = (try? Data(contentsOf: statusURL, options: .mappedIfSafe)).flatMap { try? IntradayDeskStatus.decode($0) }
             let quality = (try? Data(contentsOf: qualityURL, options: .mappedIfSafe)).flatMap { try? IntradayCaptureQuality.decode($0) }
+            let experimental = (try? Data(contentsOf: experimentalURL, options: .mappedIfSafe)).flatMap {
+                try? ExperimentalPaperStatus.decode($0)
+            }
             let qualityFresh = quality?.isFresh(at: timeline.date) ?? false
             let fresh = status?.isFresh(at: timeline.date) ?? false
             GroupBox {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
-                        Label("Live practice indicator", systemImage: "chart.xyaxis.line")
+                        Label("OANDA practice Trade Desk", systemImage: "chart.xyaxis.line")
                             .font(.headline)
                         Spacer()
-                        Text("PAPER ONLY").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                        Text("PAPER RESEARCH").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                     }
                     DisclosureGroup("Paper alerts") {
                         Button(service.notificationsEnabled ? "Turn Off Paper Alerts" : "Enable Paper Alerts") {
@@ -195,10 +199,10 @@ struct IntradayResearchView: View {
                         }
                     }
                     if let message = service.message { Text(message).font(.caption).foregroundStyle(.secondary) }
-                    IntradayReportView(directory: directory)
-                    Text("Germany 30 demo · US 500 · EUR/USD · West Texas oil")
+                    Text("Feed").font(.headline)
+                    Text("Germany 40 demo · US 500 · EUR/USD · West Texas oil")
                         .foregroundStyle(.secondary)
-                    Text("Exact practice products are checked on Start. Without verified costs and a selected rule, setups are diagnostic only and no paper trade is opened.")
+                    Text("Exact practice products are checked on Start. Diagnostic setups are not paper entries.")
                         .font(.caption).foregroundStyle(.secondary)
                     if let status {
                         Label(fresh ? status.feedHealth.replacingOccurrences(of: "_", with: " ").capitalized : "Status is stale — stand aside",
@@ -255,6 +259,37 @@ struct IntradayResearchView: View {
                         Text("No OANDA practice demo feed is configured. No trade.")
                             .foregroundStyle(.secondary)
                     }
+                    Divider()
+                    Text("Experimental paper activity").font(.headline)
+                    if let experimental {
+                        Text("\(experimental.brokerSymbol) · \(experimental.feedHealth.capitalized) · \(experimental.contiguousBars) contiguous bars · \(experimental.gapCount) gaps")
+                            .font(.caption).foregroundStyle(.secondary)
+                        if !experimental.isFresh(at: timeline.date) {
+                            Text("Experimental feed status is stale. Any open paper position is unresolved until a fresh quote confirms its outcome.")
+                                .foregroundStyle(.orange)
+                        }
+                        if let ticket = experimental.paperTicket {
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text(experimental.ticketLabel).fontWeight(.semibold)
+                                Text("\(ticket.brokerSymbol) · \(ticket.direction.capitalized) · \(ticket.units.description) units")
+                                Text("Entry \(ticket.entry.description) · Stop \(ticket.stop.description) · Target \(ticket.target.description) · Exit by \(ticket.exitBy)")
+                                Text("Notional £\(ticket.notionalGBP.description) · Leverage \(ticket.effectiveLeverage.description)× · Margin estimate £\(ticket.marginEstimateGBP.description)")
+                                Text("Estimated cost £\(ticket.estimatedCostGBP.description) · Terms: \(ticket.costSource)")
+                                    .foregroundStyle(.secondary)
+                            }
+                            .font(.caption.monospacedDigit())
+                            .accessibilityIdentifier("tradeDesk.experimentalTicket")
+                        } else if experimental.isFresh(at: timeline.date) {
+                            Text("No experimental paper trade: \(experimental.noTradeReason.replacingOccurrences(of: "_", with: " ")).")
+                                .foregroundStyle(.secondary)
+                        }
+                    } else {
+                        Text("No registered experimental paper round. The diagnostic feed does not open trades.")
+                            .foregroundStyle(.secondary)
+                    }
+                    Divider()
+                    Text("Evidence").font(.headline)
+                    IntradayReportView(directory: directory)
                     Text("Historical candle simulations are exploratory. Paper results are not a real-money recommendation.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }

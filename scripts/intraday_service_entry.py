@@ -425,7 +425,7 @@ def main(argv: list[str] | None = None) -> int:
     if not account or not token:
         print("Practice credentials are missing from the app session.", file=sys.stderr)
         return 2
-    while not (args.directory / "pause.request").exists():
+    while not any((args.directory / name).exists() for name in ("pause.request", "shutdown.request")):
         try:
             run_paper_indicator(args.directory, account_id=account, token=token)
         except RetainedAccountMismatch:

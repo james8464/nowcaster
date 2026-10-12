@@ -210,6 +210,19 @@ struct IntradayPaperReport: Sendable {
                     groups: groups, closedRecords: records)
     }
 
+    static func decodeExperimental(_ data: Data) throws -> Self {
+        guard let envelope = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              envelope["qualification"] as? String == "unqualified",
+              envelope["paper_only"] as? Bool == true,
+              let roundID = envelope["round_id"] as? String,
+              let performance = envelope["performance"] as? [String: Any],
+              performance["round_id"] as? String == roundID,
+              let attempts = envelope["attempted_entries"] as? Int, attempts >= 0,
+              let rejections = envelope["rejected_entries"] as? Int, rejections >= 0,
+              rejections <= attempts else { throw CocoaError(.coderInvalidValue) }
+        return try decode(JSONSerialization.data(withJSONObject: performance))
+    }
+
     func isFresh(at now: Date) -> Bool {
         now.timeIntervalSince(generatedAt) >= 0 && now.timeIntervalSince(generatedAt) < 120
     }
@@ -218,14 +231,20 @@ struct IntradayPaperReport: Sendable {
 struct IntradayReportView: View {
     let directory: URL
     private var reportURL: URL { directory.appending(path: "report.json") }
+    private var experimentalReportURL: URL { directory.appending(path: "experimental-report.json") }
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 30)) { timeline in
-            let report = (try? Data(contentsOf: reportURL, options: .mappedIfSafe)).flatMap {
+            let experimental = (try? Data(contentsOf: experimentalReportURL, options: .mappedIfSafe)).flatMap {
+                try? IntradayPaperReport.decodeExperimental($0)
+            }
+            let diagnostic = (try? Data(contentsOf: reportURL, options: .mappedIfSafe)).flatMap {
                 try? IntradayPaperReport.decode($0)
             }
+            let report = experimental ?? diagnostic
             VStack(alignment: .leading, spacing: 6) {
-                Text("Cumulative paper performance").font(.headline)
+                Text(experimental == nil ? "Diagnostic paper evidence" : "Unqualified experimental paper evidence")
+                    .font(.subheadline.weight(.semibold))
                 if let report {
                     Text(report.closedTrades == 0 ? "No closed paper trades yet" : "Net £\(report.netPnL.description) across \(report.closedTrades) closed trades")
                         .fontWeight(.medium)
@@ -271,7 +290,7 @@ struct IntradayReportView: View {
                         }
                     }
                     ForEach(report.tickets) { ticket in
-                        DisclosureGroup("Open paper ticket · \(ticket.brokerSymbol)") {
+                        DisclosureGroup("Unqualified experimental paper ticket · \(ticket.brokerSymbol)") {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("\(ticket.direction.capitalized) · \(ticket.units.description) units · Entry \(ticket.entry.description)")
                                 Text("Stop \(ticket.stop.description) · Target \(ticket.target.description) · Exit by \(ticket.exitBy)")
@@ -280,6 +299,10 @@ struct IntradayReportView: View {
                             }
                             .font(.caption).foregroundStyle(.secondary)
                         }
+                    }
+                    if experimental != nil, let diagnostic {
+                        Text("Separate diagnostic study: \(diagnostic.decisionsCount) assessments, \(diagnostic.closedTrades) closed paper trades. It is not merged into this experiment.")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
                 } else {
                     Text("No validated paper report is available.").foregroundStyle(.secondary)

@@ -42,6 +42,12 @@ enum OandaPaperServiceError: LocalizedError {
 }
 
 enum OandaPaperNotificationGate {
+    static func canNotifyExperimental(_ status: ExperimentalPaperStatus, at now: Date) -> Bool {
+        status.feedHealth == "healthy" && status.paperTicket != nil && status.isFresh(at: now)
+    }
+    static func canNotifyExperimentalClose(_ status: ExperimentalPaperStatus, at now: Date) -> Bool {
+        status.feedHealth == "healthy" && status.isFresh(at: now)
+    }
     static func canNotifyClose(_ status: IntradayDeskStatus, brokerSymbol: String, at now: Date) -> Bool {
         status.isFresh(at: now) && status.feedHealth == "healthy" &&
             status.markets.contains { $0.brokerSymbol == brokerSymbol && $0.eligibility == "paper_eligible" }
@@ -72,6 +78,8 @@ final class OandaPaperService {
     @ObservationIgnored private var observedOpportunityIDs: Set<String> = []
     @ObservationIgnored private var observedPositionIDs: Set<String> = []
     @ObservationIgnored private var observedClosedCount: Int?
+    @ObservationIgnored private var observedExperimentalTicketIDs: Set<String> = []
+    @ObservationIgnored private var observedExperimentalClosedCount: Int?
 
     init(vault: OandaPracticeCredentialVault = .init(),
          configuration: OandaPaperServiceConfiguration = .application()) {
@@ -89,6 +97,8 @@ final class OandaPaperService {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let pause = directory.appending(path: "pause.request")
             if FileManager.default.fileExists(atPath: pause.path) { try FileManager.default.removeItem(at: pause) }
+            let shutdown = directory.appending(path: "shutdown.request")
+            if FileManager.default.fileExists(atPath: shutdown.path) { try FileManager.default.removeItem(at: shutdown) }
             let logURL = directory.appending(path: "collector.log")
             if !FileManager.default.fileExists(atPath: logURL.path) {
                 FileManager.default.createFile(atPath: logURL.path, contents: Data())
@@ -139,12 +149,15 @@ final class OandaPaperService {
     }
 
     func shutdown() {
-        pause()
         notificationTask?.cancel()
         notificationTask = nil
-        // This helper currently makes no paper entries. Future managed
-        // positions must be drained before enabling forced shutdown here.
-        process?.terminate()
+        guard let process, process.isRunning else { return }
+        do {
+            try Data("shutdown\n".utf8).write(to: directory.appending(path: "shutdown.request"), options: .atomic)
+            message = "Stopping paper monitoring; any unpriced position remains unresolved in the ledger."
+        } catch {
+            message = "Shutdown request could not be saved. The paper helper may still be running."
+        }
     }
 
     func setNotificationsEnabled(_ enabled: Bool) async {
@@ -159,6 +172,8 @@ final class OandaPaperService {
         observedOpportunityIDs.removeAll()
         observedPositionIDs.removeAll()
         observedClosedCount = nil
+        observedExperimentalTicketIDs.removeAll()
+        observedExperimentalClosedCount = nil
         establishNotificationBaseline()
     }
 
@@ -171,6 +186,14 @@ final class OandaPaperService {
         if let data = try? Data(contentsOf: directory.appending(path: "report.json"), options: .mappedIfSafe),
            let report = try? IntradayPaperReport.decode(data) {
             observedClosedCount = report.closedTrades
+        }
+        if let data = try? Data(contentsOf: directory.appending(path: "experimental-summary.json"), options: .mappedIfSafe),
+           let status = try? ExperimentalPaperStatus.decode(data), let ticket = status.paperTicket {
+            observedExperimentalTicketIDs.insert(status.roundID + ":" + ticket.brokerSymbol + ":" + ticket.entry.description)
+        }
+        if let data = try? Data(contentsOf: directory.appending(path: "experimental-report.json"), options: .mappedIfSafe),
+           let report = try? IntradayPaperReport.decodeExperimental(data) {
+            observedExperimentalClosedCount = report.closedTrades
         }
     }
 
@@ -217,6 +240,28 @@ final class OandaPaperService {
                                                       body: "Review the retained outcome and costs in Nowcaster."))
             }
             observedClosedCount = report.closedTrades
+        }
+        let experimentalStatus = (try? Data(contentsOf: directory.appending(path: "experimental-summary.json"), options: .mappedIfSafe))
+            .flatMap { try? ExperimentalPaperStatus.decode($0) }
+        if let experimentalStatus, OandaPaperNotificationGate.canNotifyExperimental(experimentalStatus, at: now),
+           let ticket = experimentalStatus.paperTicket {
+            let key = experimentalStatus.roundID + ":" + ticket.brokerSymbol + ":" + ticket.entry.description
+            if observedExperimentalTicketIDs.insert(key).inserted {
+                _ = await notifications.deliver(.init(id: "oanda-experimental-open-" + key, category: .experimentalPaper,
+                    title: "Unqualified experimental paper trade",
+                    body: "\(ticket.brokerSymbol) \(ticket.direction) paper only · entry \(ticket.entry) · stop \(ticket.stop) · target \(ticket.target). No broker order."))
+            }
+        }
+        if let data = try? Data(contentsOf: directory.appending(path: "experimental-report.json"), options: .mappedIfSafe),
+           let report = try? IntradayPaperReport.decodeExperimental(data), report.isFresh(at: now) {
+            if let prior = observedExperimentalClosedCount, report.closedTrades > prior,
+               let last = report.closedRecords.last, let experimentalStatus,
+               OandaPaperNotificationGate.canNotifyExperimentalClose(experimentalStatus, at: now) {
+                _ = await notifications.deliver(.init(id: "oanda-experimental-close-" + experimentalStatus.roundID + "-" + String(report.closedTrades),
+                    category: .experimentalPaper, title: "Experimental paper position closed",
+                    body: "\(last.brokerSymbol) \(last.direction) paper exit · net £\(last.netPnL). Hypothetical, not a broker fill."))
+            }
+            observedExperimentalClosedCount = report.closedTrades
         }
     }
 }

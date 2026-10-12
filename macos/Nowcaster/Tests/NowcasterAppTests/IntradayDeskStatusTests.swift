@@ -90,3 +90,42 @@ import Testing
     #expect(!quality.paperEligible)
     #expect(!quality.isFresh(at: Date(timeIntervalSince1970: 1_900_000_000)))
 }
+
+@Test func experimentalStatusCannotDecodeAsQualified() throws {
+    let text = """
+    {"schema_version":1,"paper_only":true,"qualification":"paper_eligible","round_id":"round-a",
+     "cohort_id":"cohort-a","generated_at":"2026-10-20T07:20:03Z","broker_symbol":"DE30_EUR",
+     "feed_health":"healthy","quote_age_seconds":"0","contiguous_bars":4,"gap_count":0,
+     "no_trade_reason":"planned_next_quote","paper_ticket":null}
+    """
+    #expect(throws: Error.self) { try ExperimentalPaperStatus.decode(Data(text.utf8)) }
+}
+
+@Test func oldDiagnosticFixtureStillDecodes() throws {
+    let text = """
+    {"schema_version":1,"paper_only":true,"generated_at":"2026-10-20T07:20:03Z",
+     "feed_health":"healthy","evidence_status":"not_supported","markets":[],
+     "opportunities":[],"paper_positions":[],"no_trade_reason":"No selected rule"}
+    """
+    #expect(try IntradayDeskStatus.decode(Data(text.utf8)).evidenceStatus == "not_supported")
+}
+
+@Test func paperTicketShowsUnqualifiedCostsAndLeverage() throws {
+    let text = """
+    {"schema_version":1,"paper_only":true,"qualification":"unqualified","round_id":"round-a",
+     "cohort_id":"cohort-a","generated_at":"2026-10-20T07:20:03Z","broker_symbol":"DE30_EUR",
+     "feed_health":"healthy","quote_age_seconds":"0","contiguous_bars":4,"gap_count":0,
+     "no_trade_reason":"paper_position_open","paper_ticket":{
+       "qualification":"unqualified","broker_symbol":"DE30_EUR","direction":"long",
+       "entry":"24001","stop":"23950","target":"24103","units":"1",
+       "notional_gbp":"20000","effective_leverage":"0.5","margin_estimate_gbp":"1000",
+       "estimated_roundtrip_cost_gbp":"5","exit_by":"2026-10-20T08:00:00Z",
+       "cost_source":"official practice cost record"}}
+    """
+    let status = try ExperimentalPaperStatus.decode(Data(text.utf8))
+    let ticket = try #require(status.paperTicket)
+    #expect(status.ticketLabel == "Unqualified experimental paper trade")
+    #expect(ticket.effectiveLeverage == Decimal(string: "0.5"))
+    #expect(ticket.estimatedCostGBP == 5)
+    #expect(ticket.costSource == "official practice cost record")
+}

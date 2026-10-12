@@ -16,7 +16,7 @@ enum NotificationForegroundPolicy {
 }
 
 enum LiveNotificationCategory: String, CaseIterable, Sendable {
-    case entry, target, stop, close, health
+    case entry, target, stop, close, health, experimentalPaper = "experimental_paper"
 }
 
 struct LiveNotificationCandidate: Equatable, Sendable {
@@ -78,6 +78,7 @@ final class NotificationService: PaperResearchNotifying {
             .stop,
             .close,
             .health,
+            .experimentalPaper,
         ].map {
             UNNotificationCategory(identifier: $0.rawValue, actions: [], intentIdentifiers: [], options: [])
         }
@@ -111,7 +112,7 @@ final class NotificationService: PaperResearchNotifying {
         guard isAuthorized else { return false }
         let content = UNMutableNotificationContent()
         content.title = candidate.title
-        content.body = "Open Nowcaster to review the setup and risk levels."
+        content.body = candidate.body
         content.sound = .default
         content.categoryIdentifier = candidate.category.rawValue
         content.userInfo = ["event_id": candidate.id]
