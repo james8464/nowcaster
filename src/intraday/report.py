@@ -111,6 +111,7 @@ def build_report(
     as_of: datetime,
     session_journal: SessionJournal | None = None,
     ignore_after_as_of: bool = False,
+    dedup_session_no_trades: bool = False,
 ) -> PaperDecisionReport:
     if manifest is not None:
         if journal.protocol_hash != manifest.identity_hash:
@@ -134,6 +135,7 @@ def build_report(
     eligible_gaps: int | None = 0 if manifest is not None and session_journal is not None else None
     decisions = 0
     session_events = session_journal.events() if session_journal is not None else ()
+    session_no_trade_keys: set[tuple[str, str]] = set()
     if session_journal is not None:
         for event in session_events:
             if datetime.fromisoformat(event["at"]) > as_of:
@@ -153,7 +155,10 @@ def build_report(
             elif event["kind"] == "decision":
                 decisions += 1
                 if event["payload"].get("status") != "ready":
-                    reasons[event["payload"].get("reason") or "unspecified"] += 1
+                    reason = event["payload"].get("reason") or "unspecified"
+                    reasons[reason] += 1
+                    if event["payload"].get("source_key"):
+                        session_no_trade_keys.add((event["payload"]["source_key"], reason))
                 elif (
                     manifest is not None
                     and event["payload"].get("broker_symbol") in manifest.rules
@@ -176,7 +181,9 @@ def build_report(
             ):
                 eligible_gaps += 1
         elif event.kind == "no_trade":
-            reasons[event.payload.get("reason", "unspecified")] += 1
+            reason = event.payload.get("reason", "unspecified")
+            if not dedup_session_no_trades or (event.payload.get("source_key", ""), reason) not in session_no_trade_keys:
+                reasons[reason] += 1
         elif event.kind == "opened":
             symbol = event.payload["broker_symbol"]
             if symbol in opens:

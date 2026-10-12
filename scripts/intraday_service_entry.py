@@ -25,6 +25,7 @@ from src.intraday.contracts import InstrumentSpec  # noqa: E402
 from src.intraday.desk import DeskStatus, MarketStatus  # noqa: E402
 from src.intraday.experimental_round import ExperimentalRoundManifest, load_experimental_round  # noqa: E402
 from src.intraday.experimental_service import ExperimentalPaperService  # noqa: E402
+from src.intraday.experimental_report import build_experimental_report  # noqa: E402
 from src.intraday.journal import PaperJournal  # noqa: E402
 from src.intraday.live_service import LiveIndicatorSession, LiveRoundManifest, LiveRule, LiveSessionWindow  # noqa: E402
 from src.intraday.oanda_practice import PRACTICE_API, PRACTICE_STREAM, OandaPracticeFeed  # noqa: E402
@@ -285,6 +286,9 @@ def run_paper_indicator(
                                          code_hash=helper_hash, instruments=instruments)
     for service in experimental.values():
         _atomic_json(directory / "experimental-summary.json", service.status(initial).model_dump(mode="json"))
+        _atomic_json(directory / "experimental-report.json", build_experimental_report(
+            service.manifest, service.runtime.journal, service.session, as_of=initial,
+        ).model_dump(mode="json"))
     reports = RetainedReportCache(directory, manifest.account_feed_hash)
     PaperJournal(directory / "PaperRounds" / active_day.isoformat(), manifest.identity_hash)
     _atomic_json(directory / "report.json", reports.snapshot(initial))
@@ -319,6 +323,11 @@ def run_paper_indicator(
     ) -> None:
         _atomic_json(directory / "report.json", reports.snapshot(as_of, ignore_after_as_of=concurrent))
         publish_quality(as_of, round_manifest, round_session)
+        for service in experimental.values():
+            _atomic_json(directory / "experimental-report.json", build_experimental_report(
+                service.manifest, service.runtime.journal, service.session, as_of=as_of,
+                ignore_after_as_of=concurrent,
+            ).model_dump(mode="json"))
 
     last_report_at = initial
     last_received_at = initial
@@ -365,12 +374,13 @@ def run_paper_indicator(
                         conversion_pending = conversion_executor.submit(feed.home_conversions, needed,
                                                                         account_currency=currency)
                         conversion_requested_at = received
+                experimental_event = None
                 if fresh_quote is not None and fresh_quote.instrument.broker_symbol in experimental:
                     service = experimental[fresh_quote.instrument.broker_symbol]
                     factor = conversion_cache.get(fresh_quote.instrument.quote_currency)
                     conversion = None if factor is None else factor.to_paper_conversion(
                         account_currency=service.manifest.account_currency)
-                    service.on_quote(fresh_quote, conversion=conversion)
+                    experimental_event = service.on_quote(fresh_quote, conversion=conversion)
                     _atomic_json(directory / "experimental-summary.json",
                                  service.status(received).model_dump(mode="json"))
                 status = DeskStatus.model_validate(
@@ -383,7 +393,7 @@ def run_paper_indicator(
                     }
                 )
                 _atomic_json(directory / "summary.json", status.model_dump(mode="json"))
-                if (plan is not None or received - last_report_at >= timedelta(seconds=60)) and (
+                if (plan is not None or experimental_event is not None or received - last_report_at >= timedelta(seconds=60)) and (
                     pending is None or pending.done()
                 ):
                     if pending is not None:

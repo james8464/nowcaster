@@ -121,10 +121,14 @@ def test_registered_experiment_receives_same_price_without_changing_diagnostic_s
                         feed=FakeFeed(), now=lambda: current)
     diagnostic = json.loads((tmp_path / "summary.json").read_text())
     experimental = json.loads((tmp_path / "experimental-summary.json").read_text())
+    experimental_report = json.loads((tmp_path / "experimental-report.json").read_text())
     assert diagnostic["markets"][0]["eligibility"] == "diagnostic"
     assert "qualification" not in diagnostic
     assert experimental["qualification"] == "unqualified"
     assert experimental["broker_symbol"] == "DE30_EUR"
+    assert experimental_report["qualification"] == "unqualified"
+    assert experimental_report["performance"]["closed_trades"] == 0
+    assert experimental_report["performance"]["net_expectancy_gbp"] is None
     captured = (tmp_path / "ExperimentalRounds" / round_manifest.round_id / "capture" / "quotes.jsonl").read_text()
     assert '"kind": "quote"' in captured
 
