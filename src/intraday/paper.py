@@ -75,6 +75,10 @@ class ClosedPaperTrade:
     exit_price: Decimal
     exit_reason: Literal["stop", "target", "time_limit"]
     net_pnl: Decimal
+    gross_pnl_gbp: Decimal
+    commission_gbp: Decimal
+    financing_gbp: Decimal
+    conversion_fee_gbp: Decimal
 
 
 class PaperAccount:
@@ -223,7 +227,7 @@ class PaperAccount:
         if factors is None:
             self.last_rejection = "currency_conversion_unavailable"
             return None
-        _, gain_rate, loss_rate = factors
+        position_rate, gain_rate, loss_rate = factors
         executable = quote.bid if position.direction == "long" else quote.ask
         if position.direction == "long":
             reason = "stop" if executable <= position.stop else "target" if executable >= position.target else None
@@ -240,9 +244,14 @@ class PaperAccount:
         )
         signed_points = executable - position.entry if position.direction == "long" else position.entry - executable
         gross_quote = signed_points * position.instrument.point_value * position.units
-        expenses_quote = (self.costs.commission_per_unit + self.costs.financing_per_unit) * position.units
-        pnl = gross_quote * (gain_rate if gross_quote >= 0 else loss_rate) - expenses_quote * loss_rate
-        closed = ClosedPaperTrade(position, quote.received_at, executable, reason, pnl)
+        gross = gross_quote * position_rate
+        converted = gross_quote * (gain_rate if gross_quote >= 0 else loss_rate)
+        conversion_fee = gross - converted
+        commission = self.costs.commission_per_unit * position.units * loss_rate
+        financing = self.costs.financing_per_unit * position.units * loss_rate
+        pnl = gross - conversion_fee - commission - financing
+        closed = ClosedPaperTrade(position, quote.received_at, executable, reason, pnl,
+                                  gross, commission, financing, conversion_fee)
         del self.positions[position.instrument.broker_symbol]
         self.equity += pnl
         self.daily_realized_pnl += pnl

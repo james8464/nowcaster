@@ -183,3 +183,17 @@ def test_cost_budget_is_quote_currency_not_point_value_scaled():
     assert opened is not None
     assert opened.units == Decimal("0.245")
     assert opened.units * ((opened.entry - opened.stop) * Decimal("10") + Decimal("2")) <= Decimal("25")
+
+
+def test_closed_cost_components_reconcile():
+    desk = PaperAccount(PaperRiskPolicy(), Decimal("10000"), account_currency="EUR",
+                        costs=PaperExecutionCosts(verified=True, slippage_points=Decimal("0.5"),
+                                                  commission_per_unit=Decimal("0.2"), financing_per_unit=Decimal("0.1")))
+    opened = desk.open(plan(), INSTRUMENT, quote(24000), unit_step=Decimal("0.01"))
+    closed = desk.update(quote(24050, 60))
+    assert closed is not None
+    assert closed.gross_pnl_gbp == (closed.exit_price - opened.entry) * opened.units
+    assert closed.commission_gbp == Decimal("0.2") * opened.units
+    assert closed.financing_gbp == Decimal("0.1") * opened.units
+    assert closed.conversion_fee_gbp == 0
+    assert closed.net_pnl == closed.gross_pnl_gbp - closed.commission_gbp - closed.financing_gbp - closed.conversion_fee_gbp

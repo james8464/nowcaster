@@ -20,7 +20,7 @@ class PaperEvent(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     schema_version: Literal[1] = 1
     protocol_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
-    kind: Literal["session_window", "no_trade", "opened", "managed", "closed", "feed_gap", "provider_error"]
+    kind: Literal["session_window", "planned", "no_trade", "opened", "managed", "closed", "feed_gap", "provider_error"]
     occurred_at: datetime
     payload: dict[str, str]
     previous_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
