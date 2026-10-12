@@ -108,14 +108,16 @@ final class AppModel {
     func shutdownForApplicationTermination() async -> Bool {
         // Legacy work is drained only if it was explicitly started; these calls never launch it.
         terminating = true
-        oandaPaper.shutdown()
         try? activeDeepResearchControl?.request(.stopped)
         thermalMonitor?.cancel(); thermalMonitor = nil
         async let paperStopped = paperSession.shutdown()
         async let legacyStopped: Void = liveMonitor.shutdownForApplicationTermination()
         async let legacyJobsStopped: Void = runner.shutdown(timeout: NativeShutdownBudget.ownedDrain)
-        let result = await (paperStopped, legacyStopped, legacyJobsStopped)
-        return result.0
+        async let oandaStopped = oandaPaper.shutdownAndWait(timeout: NativeShutdownBudget.ownedDrain)
+        let result = await (paperStopped, legacyStopped, legacyJobsStopped, oandaStopped)
+        let stopped = result.0 && result.3
+        if !stopped { terminating = false }
+        return stopped
     }
 
     var searchResults: [InstrumentSnapshot] {

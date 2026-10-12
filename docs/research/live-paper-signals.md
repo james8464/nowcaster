@@ -22,10 +22,21 @@ diagnostic, not a profitable strategy. Do not activate it during the running
 diagnostic day or the frozen BTC/ETH study. The installed app's diagnostic feed
 continues without experimental entries until a future UTC session is explicitly
 registered and its exact account, product, executable identity and terms pass
-the gate. The first registration requires a sanitized exact-product cost record
-whose bytes match the manifest SHA-256; the CLI stores those bytes next to the
-immutable manifest. Never put a token, account ID, or personal portal document
-in that record. Registering a round does not start collection or enable alerts.
+the gate. Only **one experimental round per UTC day** is permitted across all
+products, so the native desk's ticket and report cannot refer to different
+markets. Compare other products in separately recorded sessions. The first
+registration requires a sanitized JSON cost record whose bytes match the
+manifest SHA-256; the CLI stores those bytes next to the immutable manifest.
+It must specify the exact account-feed hash, broker symbol, product, quote and
+paper currencies, margin rate, unit step, slippage, commission, financing,
+verification time, OANDA HTTPS source URL, and a source excerpt naming the
+exact broker symbol. All numeric terms must match the manifest, and the paper
+slippage assumption must be positive. This is a
+consistency gate, **not** automatic proof that the source or assumptions are
+correct; an operator must verify them. Never put a token, account ID, or
+personal portal document in that record. Registering a round does not start
+collection or enable alerts. Each round retains its own summary and report;
+the root desk files mirror the sole current round.
 
 For a future round, an operator must verify the exact OANDA UK practice product
 and account inventory, margin, minimum/step size, session hours, commission,
@@ -38,6 +49,15 @@ quote. Run `scripts/register_intraday_experiment.py register --manifest
 The source checkout cannot activate a production round under its Python
 interpreter hash; the signed/bundled helper identity is required. A different
 cost or rule needs a new round ID and retains the old result.
+The append-only open and close events also retain the account conversion
+factors, conversion timestamp, quote timestamp, bid and ask used in the paper
+calculation, so GBP P&L can be reconstructed without trusting a chart.
+Pause disarms new paper entries but continues observing an open paper position
+until it closes; Quit records any unresolved position and waits for the helper
+to acknowledge shutdown. An open position crossing UTC midnight remains tied
+to its original frozen round, including after a helper restart. Once it closes,
+the next separately registered round for that day can start on later quotes;
+the closing quote is never reused as a new entry.
 
 [OANDA UK's advertised Germany 40 spread starts at 1.2 points](https://www.oanda.com/uk-en/trading/our-pricing/),
 but that minimum is not the exact spread at a proposed entry or a complete

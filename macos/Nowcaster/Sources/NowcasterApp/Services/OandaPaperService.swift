@@ -160,6 +160,20 @@ final class OandaPaperService {
         }
     }
 
+    func shutdownAndWait(timeout: Duration) async -> Bool {
+        shutdown()
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while process?.isRunning == true && clock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        if process?.isRunning == true {
+            message = "The practice helper is still running. Quit was cancelled; check its status before trying again."
+            return false
+        }
+        return true
+    }
+
     func setNotificationsEnabled(_ enabled: Bool) async {
         if enabled {
             guard await notifications.requestAuthorization() else {

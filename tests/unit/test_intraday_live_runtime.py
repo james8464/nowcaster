@@ -88,7 +88,7 @@ def test_later_bid_ask_quote_opens_once(tmp_path):
 def test_duplicate_and_reordered_quote_cannot_double_trade(tmp_path):
     worker = _ready_worker(tmp_path)
     worker.on_quote(quote(1202, "104"))
-    opened = worker.on_quote(quote(1203, "104"))
+    worker.on_quote(quote(1203, "104"))
     worker.on_quote(quote(1203, "104"))
     worker.on_quote(quote(1202, "80").model_copy(update={"source_key": "late-conflicting-quote"}))
     assert [item.kind for item in worker.journal.events()].count("opened") == 1
@@ -138,6 +138,11 @@ def test_foreign_currency_paper_lifecycle_uses_fresh_account_factors(tmp_path):
     later = quote(1203, "104")
     opened = worker.on_quote(later, conversion(later.received_at))
     assert opened is not None and opened.kind == "opened"
+    assert opened.payload["conversion_position_value"] == "0.85"
+    assert opened.payload["conversion_account_loss"] == "0.86"
+    assert opened.payload["conversion_observed_at"] == later.received_at.isoformat()
+    assert opened.payload["execution_quote_observed_at"] == later.observed_at.isoformat()
+    assert opened.payload["execution_ask"] == str(later.ask)
     exit_quote = quote(1260, "130")
     assert worker.on_quote(exit_quote, conversion(entry_quote.received_at)) is None
     assert INSTRUMENT.broker_symbol in worker.account.positions
@@ -145,6 +150,11 @@ def test_foreign_currency_paper_lifecycle_uses_fresh_account_factors(tmp_path):
     later_exit = quote(1261, "130")
     closed = worker.on_quote(later_exit, conversion(later_exit.received_at))
     assert closed is not None and closed.kind == "closed"
+    assert closed.payload["conversion_account_gain"] == "0.84"
+    assert closed.payload["conversion_observed_at"] == later_exit.received_at.isoformat()
+    assert closed.payload["execution_bid"] == str(later_exit.bid)
+    gross_quote = (D(closed.payload["exit_price"]) - D(opened.payload["entry"])) * D(opened.payload["units"])
+    assert D(closed.payload["gross_pnl_gbp"]) == gross_quote * D(closed.payload["conversion_position_value"])
     assert worker.account.equity > D("10000")
 
 
@@ -213,6 +223,21 @@ def test_pre_entry_or_other_account_quote_cannot_close_open_paper_position(tmp_p
     worker.on_quote(other_account)
     assert INSTRUMENT.broker_symbol in worker.account.positions
     assert all(event.kind != "closed" for event in worker.journal.events())
+
+
+def test_later_received_but_reordered_provider_quote_cannot_close_position(tmp_path):
+    worker = _ready_worker(tmp_path)
+    worker.on_quote(quote(1202, "104"))
+    assert worker.on_quote(quote(1203, "104")).kind == "opened"
+    assert worker.on_quote(quote(1205, "104")) is None
+    reordered = quote(1204, "80").model_copy(
+        update={"received_at": quote(1206, "80").received_at, "source_key": "delayed-stop-quote"}
+    )
+    result = worker.on_quote(reordered)
+    assert result is not None and result.kind == "feed_gap"
+    assert result.payload["reason"] == "reordered_account_quote"
+    assert INSTRUMENT.broker_symbol in worker.account.positions
+    assert not any(event.kind == "closed" for event in worker.journal.events())
 
 
 def test_next_session_keeps_frozen_study_equity_and_records_session_identity(tmp_path):

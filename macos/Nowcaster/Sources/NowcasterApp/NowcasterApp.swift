@@ -74,9 +74,11 @@ final class NowcasterApplicationDelegate: NSObject, NSApplicationDelegate, UNUse
         terminationPending = true
         Task { @MainActor in
             restoreTask?.cancel()
-            if let model { _ = await model.shutdownForApplicationTermination() }
-            else { await liveMonitor?.shutdownForApplicationTermination() }
-            sender.reply(toApplicationShouldTerminate: true)
+            let stopped: Bool
+            if let model { stopped = await model.shutdownForApplicationTermination() }
+            else { await liveMonitor?.shutdownForApplicationTermination(); stopped = true }
+            if !stopped { terminationPending = false }
+            sender.reply(toApplicationShouldTerminate: stopped)
         }
         return .terminateLater
     }

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Literal
@@ -35,7 +35,7 @@ class ExperimentalDeskStatus(FrozenModel):
 
 
 class ExperimentalPaperService:
-    def __init__(self, manifest: ExperimentalRoundManifest, directory: Path):
+    def __init__(self, manifest: ExperimentalRoundManifest, directory: Path, *, restart_at: datetime | None = None):
         self.manifest = manifest
         self.directory = Path(directory)
         self.session = SessionJournal(self.directory / "capture", manifest.model_dump(mode="json"))
@@ -44,6 +44,7 @@ class ExperimentalPaperService:
             instrument=manifest.instrument, strategy_id=manifest.strategy_id,
             allowed_direction=manifest.direction,
             account_currency=manifest.account_currency, costs=manifest.costs,
+            risk_policy=manifest.risk_policy,
             session_open=manifest.session_open, session_close=manifest.session_close,
             initial_cash=manifest.initial_paper_cash, unit_step=manifest.unit_step,
             margin_rate=manifest.margin_rate, cost_source=manifest.cost_source,
@@ -59,11 +60,18 @@ class ExperimentalPaperService:
         self.last_quote: MarketQuote | None = None
         self.no_trade_reason = "waiting_for_confirmed_bars"
         self._disarmed = False
+        retained_quotes = [event for event in retained if event["kind"] == "quote"]
+        if retained_quotes:
+            self.runtime.restore_observation_watermark(
+                max(datetime.fromisoformat(event["payload"]["observed_at"]) for event in retained_quotes),
+                max(datetime.fromisoformat(event["at"]) for event in retained_quotes),
+            )
         self._last_source_key = next(
             (event["payload"]["source_key"] for event in reversed(retained) if event["kind"] == "quote"), None
         )
         if retained:
-            self.session.append("gap", datetime.now(manifest.session_open.tzinfo), {"reason": "process_restart"})
+            self.session.append("gap", restart_at or datetime.now(manifest.session_open.tzinfo),
+                                {"reason": "process_restart"})
             self.gap_count += 1
 
     def disarm_new_entries(self) -> None:
@@ -79,7 +87,8 @@ class ExperimentalPaperService:
             raise ValueError("experimental quote does not match frozen account/product")
         if quote.source_key == self._last_source_key:
             return None
-        if not self.manifest.session_open <= quote.received_at <= self.manifest.session_close and not self.runtime.account.positions:
+        if (not self.manifest.session_open <= quote.received_at <= self.manifest.session_close
+                and not self.runtime.account.positions):
             self.no_trade_reason = "session_closed"
             return None
         if quote.received_at > self.manifest.session_close:
@@ -121,7 +130,9 @@ class ExperimentalPaperService:
 
     def status(self, at: datetime) -> ExperimentalDeskStatus:
         position = self.runtime.account.positions.get(self.manifest.instrument.broker_symbol)
-        age = None if self.last_quote is None else max(Decimal(0), Decimal(str((at - self.last_quote.received_at).total_seconds())))
+        age = None if self.last_quote is None else max(
+            Decimal(0), Decimal(str((at - self.last_quote.received_at).total_seconds()))
+        )
         if at >= self.manifest.session_close:
             health, reason = "closed", "session_closed"
         elif self._disarmed:

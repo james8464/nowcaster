@@ -6,8 +6,7 @@ from decimal import Decimal as D
 from src.intraday.contracts import InstrumentSpec, MarketQuote
 from src.intraday.experimental_round import ExperimentalRoundManifest
 from src.intraday.experimental_service import ExperimentalPaperService
-from src.intraday.paper import FXConversion, PaperExecutionCosts
-
+from src.intraday.paper import FXConversion, PaperExecutionCosts, PaperRiskPolicy
 
 T = datetime(2026, 10, 20, 7, tzinfo=UTC)
 INSTRUMENT = InstrumentSpec(provider="oanda_practice", broker_symbol="DE30_EUR", market="germany40",
@@ -116,6 +115,32 @@ def test_shutdown_retains_unresolved_position(tmp_path):
     assert not any(event.kind == "closed" for event in restored.runtime.journal.events())
 
 
+def test_restart_rejects_provider_quote_older_than_retained_capture(tmp_path):
+    item = manifest()
+    service = ExperimentalPaperService(item, tmp_path)
+    prime(service)
+    for seconds in (1202, 1203, 1205):
+        tick = quote(seconds, "104")
+        service.on_quote(tick, conversion=conversion(tick.received_at))
+    restarted = ExperimentalPaperService(item, tmp_path)
+    delayed = quote(1204, "80").model_copy(
+        update={"received_at": quote(1206, "80").received_at, "source_key": "delayed-stop-after-restart"}
+    )
+    result = restarted.on_quote(delayed, conversion=conversion(delayed.received_at))
+    assert result is not None and result.kind == "feed_gap"
+    assert item.instrument.broker_symbol in restarted.runtime.account.positions
+    assert not any(event.kind == "closed" for event in restarted.runtime.journal.events())
+    restarted_again = ExperimentalPaperService(item, tmp_path)
+    another_delayed = quote(1204, "80").model_copy(update={
+        "observed_at": T + timedelta(seconds=1204, milliseconds=500),
+        "received_at": quote(1207, "80").received_at,
+        "source_key": "second-delayed-stop-after-restart",
+    })
+    second = restarted_again.on_quote(another_delayed, conversion=conversion(another_delayed.received_at))
+    assert second is not None and second.kind == "feed_gap"
+    assert item.instrument.broker_symbol in restarted_again.runtime.account.positions
+
+
 def test_error_or_closed_session_shows_specific_no_trade(tmp_path):
     service = ExperimentalPaperService(manifest(), tmp_path)
     assert service.status(T).no_trade_reason == "waiting_for_confirmed_bars"
@@ -128,6 +153,19 @@ def test_one_price_line_feeds_both_isolated_rounds(tmp_path):
     service.on_quote(item, conversion=conversion(item.received_at))
     assert len(service.session.events()) == 1
     assert service.session.events()[0]["kind"] == "quote"
+
+
+def test_frozen_stricter_risk_policy_controls_paper_sizing(tmp_path):
+    policy = PaperRiskPolicy(maximum_exposure_fraction=D("0.05"), maximum_daily_entries=1)
+    service = ExperimentalPaperService(manifest().model_copy(update={"risk_policy": policy}), tmp_path)
+    assert service.runtime.account.policy == policy
+    prime(service)
+    planned = quote(1202, "104")
+    service.on_quote(planned, conversion=conversion(planned.received_at))
+    entry = quote(1203, "104")
+    opened = service.on_quote(entry, conversion=conversion(entry.received_at))
+    assert opened is not None and opened.kind == "opened"
+    assert D(opened.payload["notional_gbp"]) <= D("500")
 
 
 def test_no_registered_round_keeps_old_files_unchanged(tmp_path):

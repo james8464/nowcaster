@@ -102,3 +102,40 @@ private struct OandaTestKeychain: KeychainClient {
     #expect(FileManager.default.fileExists(atPath: directory.appending(path: "shutdown.request").path))
     try await Task.sleep(for: .seconds(2))
 }
+
+@Test @MainActor func shutdownWaitReportsUnacknowledgedHelper() async throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let shell = root.appending(path: "python")
+    try FileManager.default.createSymbolicLink(at: shell, withDestinationURL: URL(fileURLWithPath: "/bin/sh"))
+    let script = root.appending(path: "intraday_service_entry.py")
+    try Data("while test ! -f \"$3/release.flag\"; do sleep 0.1; done\n".utf8).write(to: script)
+    let directory = root.appending(path: "research")
+    let vault = OandaPracticeCredentialVault(client: OandaTestKeychain(account: "practice-id", token: "test-only-token"))
+    let service = OandaPaperService(vault: vault, configuration: .init(executable: shell, script: script, directory: directory))
+    service.start()
+    #expect(service.isRunning)
+    let acknowledged = await service.shutdownAndWait(timeout: .milliseconds(100))
+    #expect(!acknowledged)
+    #expect(service.message?.contains("still running") == true)
+    try Data().write(to: directory.appending(path: "release.flag"))
+    try await Task.sleep(for: .milliseconds(200))
+}
+
+@Test @MainActor func shutdownWaitAcceptsHelperExitAcknowledgment() async throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let shell = root.appending(path: "python")
+    try FileManager.default.createSymbolicLink(at: shell, withDestinationURL: URL(fileURLWithPath: "/bin/sh"))
+    let script = root.appending(path: "intraday_service_entry.py")
+    try Data("while test ! -f \"$3/shutdown.request\"; do sleep 0.1; done\n".utf8).write(to: script)
+    let directory = root.appending(path: "research")
+    let vault = OandaPracticeCredentialVault(client: OandaTestKeychain(account: "practice-id", token: "test-only-token"))
+    let service = OandaPaperService(vault: vault, configuration: .init(executable: shell, script: script, directory: directory))
+    service.start()
+    #expect(service.isRunning)
+    #expect(await service.shutdownAndWait(timeout: .seconds(3)))
+    #expect(FileManager.default.fileExists(atPath: directory.appending(path: "shutdown.request").path))
+}

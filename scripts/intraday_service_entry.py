@@ -23,14 +23,15 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.intraday.capture_quality import summarize_capture  # noqa: E402
 from src.intraday.contracts import InstrumentSpec  # noqa: E402
 from src.intraday.desk import DeskStatus, MarketStatus  # noqa: E402
+from src.intraday.experimental_report import build_experimental_report  # noqa: E402
 from src.intraday.experimental_round import ExperimentalRoundManifest, load_experimental_round  # noqa: E402
 from src.intraday.experimental_service import ExperimentalPaperService  # noqa: E402
-from src.intraday.experimental_report import build_experimental_report  # noqa: E402
 from src.intraday.journal import PaperJournal  # noqa: E402
 from src.intraday.live_service import LiveIndicatorSession, LiveRoundManifest, LiveRule, LiveSessionWindow  # noqa: E402
 from src.intraday.oanda_practice import PRACTICE_API, PRACTICE_STREAM, OandaPracticeFeed  # noqa: E402
 from src.intraday.report import aggregate_reports, build_report  # noqa: E402
 from src.intraday.session_journal import SessionJournal  # noqa: E402
+from src.strategies.types import canonical_hash  # noqa: E402
 
 CATALOG = (
     ("DE30_EUR", "germany40", "cfd", "EUR"),
@@ -58,11 +59,30 @@ def _experimental_for_day(
     registered = directory / "ExperimentalRounds"
     if not registered.exists():
         return {}
-    result: dict[str, ExperimentalPaperService] = {}
+    current: list[Path] = []
+    unresolved: list[Path] = []
     for path in sorted(registered.glob("*/manifest.json")):
         candidate = ExperimentalRoundManifest.model_validate_json(path.read_bytes())
-        if candidate.session_open.date() != at.date():
-            continue
+        if candidate.session_open.date() == at.date():
+            current.append(path)
+        elif candidate.session_open.date() < at.date():
+            paper_dir = path.parent / "paper"
+            if not (paper_dir / "manifest.json").exists():
+                continue
+            journal = PaperJournal(paper_dir, canonical_hash(candidate.model_dump(mode="json")))
+            position_open = False
+            for event in journal.events():
+                if event.kind == "opened":
+                    position_open = True
+                elif event.kind == "closed":
+                    position_open = False
+            if position_open:
+                unresolved.append(path)
+    if len(unresolved) > 1 or (not unresolved and len(current) > 1):
+        raise ValueError("more than one active experimental round; one desk round at a time")
+    selected = unresolved or current
+    result: dict[str, ExperimentalPaperService] = {}
+    for path in selected:
         if code_hash is None:
             # Source checkouts may test the service directly but may not
             # silently activate a production round under an interpreter hash.
@@ -72,9 +92,10 @@ def _experimental_for_day(
         if manifest.instrument not in instruments:
             raise ValueError("registered experimental product is absent from practice inventory")
         symbol = manifest.instrument.broker_symbol
-        if symbol in result:
-            raise ValueError("more than one active experimental round per product")
-        result[symbol] = ExperimentalPaperService(manifest, path.parent)
+        service = ExperimentalPaperService(manifest, path.parent, restart_at=at)
+        if unresolved:
+            service.disarm_new_entries()
+        result[symbol] = service
     return result
 
 
@@ -285,10 +306,14 @@ def run_paper_indicator(
     experimental = _experimental_for_day(directory, at=initial, account_feed_hash=manifest.account_feed_hash,
                                          code_hash=helper_hash, instruments=instruments)
     for service in experimental.values():
-        _atomic_json(directory / "experimental-summary.json", service.status(initial).model_dump(mode="json"))
-        _atomic_json(directory / "experimental-report.json", build_experimental_report(
+        status_payload = service.status(initial).model_dump(mode="json")
+        report_payload = build_experimental_report(
             service.manifest, service.runtime.journal, service.session, as_of=initial,
-        ).model_dump(mode="json"))
+        ).model_dump(mode="json")
+        _atomic_json(service.directory / "summary.json", status_payload)
+        _atomic_json(service.directory / "report.json", report_payload)
+        _atomic_json(directory / "experimental-summary.json", status_payload)
+        _atomic_json(directory / "experimental-report.json", report_payload)
     reports = RetainedReportCache(directory, manifest.account_feed_hash)
     PaperJournal(directory / "PaperRounds" / active_day.isoformat(), manifest.identity_hash)
     _atomic_json(directory / "report.json", reports.snapshot(initial))
@@ -324,15 +349,19 @@ def run_paper_indicator(
         _atomic_json(directory / "report.json", reports.snapshot(as_of, ignore_after_as_of=concurrent))
         publish_quality(as_of, round_manifest, round_session)
         for service in experimental.values():
-            _atomic_json(directory / "experimental-report.json", build_experimental_report(
+            report_payload = build_experimental_report(
                 service.manifest, service.runtime.journal, service.session, as_of=as_of,
                 ignore_after_as_of=concurrent,
-            ).model_dump(mode="json"))
+            ).model_dump(mode="json")
+            _atomic_json(service.directory / "report.json", report_payload)
+            _atomic_json(directory / "experimental-report.json", report_payload)
 
     last_report_at = initial
     last_received_at = initial
-    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="nowcaster-paper-report") as executor, \
-            ThreadPoolExecutor(max_workers=1, thread_name_prefix="nowcaster-practice-conversion") as conversion_executor:
+    with (
+        ThreadPoolExecutor(max_workers=1, thread_name_prefix="nowcaster-paper-report") as executor,
+        ThreadPoolExecutor(max_workers=1, thread_name_prefix="nowcaster-practice-conversion") as conversion_executor,
+    ):
         pending: Future[None] | None = None
         conversion_pending: Future | None = None
         conversion_cache: dict[str, object] = {}
@@ -341,6 +370,15 @@ def run_paper_indicator(
             for line in feed.price_lines(instruments):
                 received = now()
                 last_received_at = received
+                if (directory / "shutdown.request").exists():
+                    for service in experimental.values():
+                        service.disarm_new_entries()
+                    return
+                if (directory / "pause.request").exists():
+                    for service in experimental.values():
+                        service.disarm_new_entries()
+                    if not any(service.runtime.account.positions for service in experimental.values()):
+                        return
                 if active_day != received.date():
                     if pending is not None:
                         pending.result()
@@ -350,10 +388,14 @@ def run_paper_indicator(
                     manifest = _session_for_day(directory, received, instruments, account_id)
                     day_directory = directory / active_day.isoformat()
                     session = LiveIndicatorSession.restore(day_directory, manifest, restart_at=received)
-                    experimental = _experimental_for_day(
-                        directory, at=received, account_feed_hash=manifest.account_feed_hash,
-                        code_hash=helper_hash, instruments=instruments,
-                    )
+                    if any(service.runtime.account.positions for service in experimental.values()):
+                        for service in experimental.values():
+                            service.disarm_new_entries()
+                    else:
+                        experimental = _experimental_for_day(
+                            directory, at=received, account_feed_hash=manifest.account_feed_hash,
+                            code_hash=helper_hash, instruments=instruments,
+                        )
                     PaperJournal(directory / "PaperRounds" / active_day.isoformat(), manifest.identity_hash)
                     last_report_at = received - timedelta(seconds=60)
                 status = session.on_event(line, received)
@@ -368,7 +410,10 @@ def run_paper_indicator(
                     and (conversion_requested_at is None or received - conversion_requested_at >= timedelta(seconds=5))
                 ):
                     products = tuple(service.manifest.instrument for service in experimental.values())
-                    needed = tuple(item for item in products if item.quote_currency != next(iter(experimental.values())).manifest.account_currency)
+                    needed = tuple(
+                        item for item in products
+                        if item.quote_currency != next(iter(experimental.values())).manifest.account_currency
+                    )
                     if needed:
                         currency = next(iter(experimental.values())).manifest.account_currency
                         conversion_pending = conversion_executor.submit(feed.home_conversions, needed,
@@ -376,13 +421,23 @@ def run_paper_indicator(
                         conversion_requested_at = received
                 experimental_event = None
                 if fresh_quote is not None and fresh_quote.instrument.broker_symbol in experimental:
+                    if (directory / "shutdown.request").exists():
+                        for service in experimental.values():
+                            service.disarm_new_entries()
+                        return
+                    if (directory / "pause.request").exists():
+                        for service in experimental.values():
+                            service.disarm_new_entries()
+                        if not any(service.runtime.account.positions for service in experimental.values()):
+                            return
                     service = experimental[fresh_quote.instrument.broker_symbol]
                     factor = conversion_cache.get(fresh_quote.instrument.quote_currency)
                     conversion = None if factor is None else factor.to_paper_conversion(
                         account_currency=service.manifest.account_currency)
                     experimental_event = service.on_quote(fresh_quote, conversion=conversion)
-                    _atomic_json(directory / "experimental-summary.json",
-                                 service.status(received).model_dump(mode="json"))
+                    status_payload = service.status(received).model_dump(mode="json")
+                    _atomic_json(service.directory / "summary.json", status_payload)
+                    _atomic_json(directory / "experimental-summary.json", status_payload)
                 status = DeskStatus.model_validate(
                     {
                         **status.model_dump(),
@@ -393,25 +448,50 @@ def run_paper_indicator(
                     }
                 )
                 _atomic_json(directory / "summary.json", status.model_dump(mode="json"))
-                if (plan is not None or experimental_event is not None or received - last_report_at >= timedelta(seconds=60)) and (
-                    pending is None or pending.done()
-                ):
+                report_due = (plan is not None or experimental_event is not None
+                              or received - last_report_at >= timedelta(seconds=60))
+                if report_due and (pending is None or pending.done()):
                     if pending is not None:
                         pending.result()
                     pending = executor.submit(publish_report, received, manifest, session, concurrent=True)
                     last_report_at = received
-                if (directory / "shutdown.request").exists():
-                    for service in experimental.values():
-                        service.record_shutdown(received)
+                if (directory / "pause.request").exists() and not any(
+                    service.runtime.account.positions for service in experimental.values()
+                ):
                     return
-                if (directory / "pause.request").exists():
-                    for service in experimental.values():
-                        service.disarm_new_entries()
-                    if not any(service.runtime.account.positions for service in experimental.values()):
-                        return
+                if experimental and all(
+                    service.manifest.session_open.date() < received.date()
+                    and not service.runtime.account.positions for service in experimental.values()
+                ):
+                    # A carried position has now closed. Commit the old
+                    # round's report before selecting a separately frozen
+                    # current-day round; the closing quote is not replayed
+                    # as an entry quote for the new rule.
+                    if pending is not None:
+                        pending.result()
+                        pending = None
+                    publish_report(received, manifest, session)
+                    experimental = _experimental_for_day(
+                        directory, at=received, account_feed_hash=manifest.account_feed_hash,
+                        code_hash=helper_hash, instruments=instruments,
+                    )
+                    for next_service in experimental.values():
+                        status_payload = next_service.status(received).model_dump(mode="json")
+                        report_payload = build_experimental_report(
+                            next_service.manifest, next_service.runtime.journal, next_service.session, as_of=received,
+                        ).model_dump(mode="json")
+                        _atomic_json(next_service.directory / "summary.json", status_payload)
+                        _atomic_json(next_service.directory / "report.json", report_payload)
+                        _atomic_json(directory / "experimental-summary.json", status_payload)
+                        _atomic_json(directory / "experimental-report.json", report_payload)
         finally:
             if pending is not None:
                 pending.result()
+            if (directory / "shutdown.request").exists():
+                last_received_at = max(last_received_at, now())
+                for service in experimental.values():
+                    service.disarm_new_entries()
+                    service.record_shutdown(last_received_at)
             publish_report(last_received_at, manifest, session)
 
 

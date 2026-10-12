@@ -7,6 +7,7 @@ import pytest
 
 import scripts.intraday_service_entry as entry
 from scripts.intraday_service_entry import RetainedReportCache, run_paper_indicator
+from src.intraday.live_service import LiveIndicatorSession
 from src.intraday.oanda_practice import PRACTICE_API, PRACTICE_STREAM, OandaPracticeFeed
 
 
@@ -69,6 +70,29 @@ def test_shutdown_request_ends_runner_without_restarting(tmp_path, monkeypatch):
     assert attempts == [tmp_path]
 
 
+@pytest.mark.parametrize("control", ["pause", "shutdown"])
+def test_control_request_precedes_next_quote_dispatch(tmp_path, monkeypatch, control):
+    dispatched = []
+    original = LiveIndicatorSession.on_event
+
+    def observed_event(self, line, received):
+        dispatched.append(line)
+        return original(self, line, received)
+
+    monkeypatch.setattr(LiveIndicatorSession, "on_event", observed_event)
+
+    class RequestedFeed(FakeFeed):
+        def price_lines(self, instruments):
+            (tmp_path / f"{control}.request").write_text(control)
+            yield from super().price_lines(instruments)
+
+    run_paper_indicator(
+        tmp_path, account_id="private-account", token="private-token", feed=RequestedFeed(),
+        now=lambda: datetime(2026, 10, 8, 9, tzinfo=UTC),
+    )
+    assert dispatched == []
+
+
 @pytest.mark.parametrize(
     "failure",
     [ValueError("quote journal chain mismatch"), RuntimeError("retained report changed"), OSError("disk full")],
@@ -111,7 +135,7 @@ def test_practice_runner_keeps_token_and_account_out_of_files(tmp_path):
     assert summary["markets"][0]["display_name"] == "Germany 30"
 
 
-def test_registered_experiment_receives_same_price_without_changing_diagnostic_schema(tmp_path, monkeypatch):
+def _register_fixture_experiment(tmp_path, monkeypatch):
     import hashlib
     from decimal import Decimal
 
@@ -120,7 +144,16 @@ def test_registered_experiment_receives_same_price_without_changing_diagnostic_s
     from src.intraday.paper import PaperExecutionCosts
 
     current = datetime(2026, 10, 8, 9, tzinfo=UTC)
-    cost_evidence = b"fixture-only product costs"
+    cost_source = "https://www.oanda.com/uk-en/trading/fees/"
+    cost_evidence = json.dumps({
+        "account_feed_hash": hashlib.sha256(b"private-account").hexdigest(),
+        "broker_symbol": "DE30_EUR", "product": "cfd", "quote_currency": "EUR",
+        "account_currency": "GBP", "margin_rate": "0.05", "unit_step": "0.01",
+        "slippage_points": "0.5", "commission_per_unit": "0", "financing_per_unit": "0",
+        "verified_at": (current - timedelta(days=1)).isoformat(),
+        "source_url": cost_source,
+        "source_excerpt": "DE30_EUR CFD account-specific fee record for this test fixture.",
+    }, sort_keys=True).encode()
     product = InstrumentSpec(
         provider="oanda_practice",
         broker_symbol="DE30_EUR",
@@ -139,8 +172,8 @@ def test_registered_experiment_receives_same_price_without_changing_diagnostic_s
         session_open=current - timedelta(hours=2),
         session_close=current + timedelta(hours=11),
         calendar_hash="c" * 64,
-        costs=PaperExecutionCosts(verified=True),
-        cost_source="official-demo-cost-record",
+        costs=PaperExecutionCosts(verified=True, slippage_points=Decimal("0.5")),
+        cost_source=cost_source,
         cost_source_hash=hashlib.sha256(cost_evidence).hexdigest(),
         verified_at=current - timedelta(days=1),
         account_currency="GBP",
@@ -151,6 +184,11 @@ def test_registered_experiment_receives_same_price_without_changing_diagnostic_s
     )
     register_experimental_round(tmp_path, round_manifest, cost_evidence=cost_evidence, at=current - timedelta(hours=3))
     monkeypatch.setattr(entry, "_helper_code_hash", lambda: "b" * 64)
+    return current, round_manifest
+
+
+def test_registered_experiment_receives_same_price_without_changing_diagnostic_schema(tmp_path, monkeypatch):
+    current, round_manifest = _register_fixture_experiment(tmp_path, monkeypatch)
     run_paper_indicator(
         tmp_path, account_id="private-account", token="private-token", feed=FakeFeed(), now=lambda: current
     )
@@ -164,8 +202,145 @@ def test_registered_experiment_receives_same_price_without_changing_diagnostic_s
     assert experimental_report["qualification"] == "unqualified"
     assert experimental_report["performance"]["closed_trades"] == 0
     assert experimental_report["performance"]["net_expectancy_gbp"] is None
+    retained_round = tmp_path / "ExperimentalRounds" / round_manifest.round_id
+    assert json.loads((retained_round / "summary.json").read_text())["round_id"] == round_manifest.round_id
+    assert json.loads((retained_round / "report.json").read_text())["round_id"] == round_manifest.round_id
     captured = (tmp_path / "ExperimentalRounds" / round_manifest.round_id / "capture" / "quotes.jsonl").read_text()
     assert '"kind": "quote"' in captured
+
+
+@pytest.mark.parametrize("control", ["pause", "shutdown"])
+def test_control_arriving_during_diagnostic_processing_blocks_experimental_entry(tmp_path, monkeypatch, control):
+    current, round_manifest = _register_fixture_experiment(tmp_path, monkeypatch)
+    original = LiveIndicatorSession.on_event
+
+    def request_after_diagnostic(self, line, received):
+        result = original(self, line, received)
+        (tmp_path / f"{control}.request").write_text(control)
+        return result
+
+    monkeypatch.setattr(LiveIndicatorSession, "on_event", request_after_diagnostic)
+    run_paper_indicator(
+        tmp_path, account_id="private-account", token="private-token", feed=FakeFeed(), now=lambda: current,
+    )
+    captured = tmp_path / "ExperimentalRounds" / round_manifest.round_id / "capture" / "quotes.jsonl"
+    assert not captured.exists() or '"kind": "quote"' not in captured.read_text()
+
+
+def test_open_paper_position_survives_utc_day_rollover(tmp_path, monkeypatch):
+    import hashlib
+    from decimal import Decimal
+
+    from src.intraday.contracts import MarketQuote
+    from src.intraday.experimental_service import ExperimentalPaperService
+    from src.intraday.paper import FXConversion
+
+    current, round_manifest = _register_fixture_experiment(tmp_path, monkeypatch)
+    round_dir = tmp_path / "ExperimentalRounds" / round_manifest.round_id
+    service = ExperimentalPaperService(round_manifest, round_dir)
+    for n, price in enumerate(("100", "100", "101", "104")):
+        for seconds in range(n * 300 + 1, (n + 1) * 300, 10):
+            at = round_manifest.session_open + timedelta(seconds=seconds)
+            item = MarketQuote(
+                instrument=round_manifest.instrument,
+                account_feed_hash=hashlib.sha256(b"private-account").hexdigest(),
+                observed_at=at, received_at=at + timedelta(milliseconds=100),
+                bid=Decimal(price), ask=Decimal(price) + 2, status="tradeable",
+                source_key=f"prime-{seconds}",
+            )
+            conversion = FXConversion(
+                from_currency="EUR", to_currency="GBP", position_value=Decimal("0.85"),
+                account_gain=Decimal("0.84"), account_loss=Decimal("0.86"), observed_at=item.received_at,
+            )
+            service.on_quote(item, conversion=conversion)
+    for seconds in (1201, 1202, 1203):
+        at = round_manifest.session_open + timedelta(seconds=seconds)
+        item = MarketQuote(
+            instrument=round_manifest.instrument, account_feed_hash=round_manifest.account_feed_hash,
+            observed_at=at, received_at=at + timedelta(milliseconds=100),
+            bid=Decimal("104"), ask=Decimal("106"), status="tradeable", source_key=f"entry-{seconds}",
+        )
+        conversion = FXConversion(
+            from_currency="EUR", to_currency="GBP", position_value=Decimal("0.85"),
+            account_gain=Decimal("0.84"), account_loss=Decimal("0.86"), observed_at=item.received_at,
+        )
+        service.on_quote(item, conversion=conversion)
+    assert service.runtime.account.positions
+    next_day = current + timedelta(days=1)
+    clock = [current]
+
+    class NextDayFeed(FakeFeed):
+        def price_lines(self, instruments):
+            clock[0] = next_day
+            yield json.dumps({
+                "type": "PRICE", "instrument": "DE30_EUR", "time": next_day.isoformat(),
+                "tradeable": True, "bids": [{"price": "105"}], "asks": [{"price": "107"}],
+            })
+
+    run_paper_indicator(
+        tmp_path, account_id="private-account", token="private-token", feed=NextDayFeed(), now=lambda: clock[0],
+    )
+    captured = (round_dir / "capture" / "quotes.jsonl").read_text()
+    assert next_day.isoformat() in captured
+    assert json.loads((tmp_path / "experimental-summary.json").read_text())["round_id"] == round_manifest.round_id
+    later = next_day + timedelta(minutes=1)
+    clock[0] = later
+
+    class RestartFeed(FakeFeed):
+        def price_lines(self, instruments):
+            yield json.dumps({
+                "type": "PRICE", "instrument": "DE30_EUR", "time": later.isoformat(),
+                "tradeable": True, "bids": [{"price": "106"}], "asks": [{"price": "108"}],
+            })
+
+    run_paper_indicator(
+        tmp_path, account_id="private-account", token="private-token", feed=RestartFeed(), now=lambda: clock[0],
+    )
+    assert later.isoformat() in (round_dir / "capture" / "quotes.jsonl").read_text()
+    from src.intraday.experimental_round import register_experimental_round
+
+    next_round = round_manifest.model_copy(update={
+        "round_id": "de30-2026-10-09-a",
+        "session_open": round_manifest.session_open + timedelta(days=1),
+        "session_close": round_manifest.session_close + timedelta(days=1),
+    })
+    register_experimental_round(
+        tmp_path, next_round, cost_evidence=(round_dir / "cost-evidence.bin").read_bytes(),
+        at=current - timedelta(hours=1),
+    )
+    original_on_quote = ExperimentalPaperService.on_quote
+
+    def close_prior_round(self, item, *, conversion):
+        if self.manifest.round_id == round_manifest.round_id and item.received_at > later:
+            conversion = FXConversion(
+                from_currency="EUR", to_currency="GBP", position_value=Decimal("0.85"),
+                account_gain=Decimal("0.84"), account_loss=Decimal("0.86"), observed_at=item.received_at,
+            )
+        return original_on_quote(self, item, conversion=conversion)
+
+    monkeypatch.setattr(ExperimentalPaperService, "on_quote", close_prior_round)
+    close_at = later + timedelta(minutes=1)
+    new_round_quote_at = close_at + timedelta(minutes=1)
+    clock[0] = close_at
+
+    class CloseThenContinueFeed(FakeFeed):
+        def price_lines(self, instruments):
+            for at in (close_at, new_round_quote_at):
+                clock[0] = at
+                yield json.dumps({
+                    "type": "PRICE", "instrument": "DE30_EUR", "time": at.isoformat(),
+                    "tradeable": True, "bids": [{"price": "106"}], "asks": [{"price": "108"}],
+                })
+
+    run_paper_indicator(
+        tmp_path, account_id="private-account", token="private-token", feed=CloseThenContinueFeed(),
+        now=lambda: clock[0],
+    )
+    retained_events = (round_dir / "paper" / "events.jsonl").read_text().splitlines()
+    assert any(json.loads(line)["kind"] == "closed" for line in retained_events)
+    next_capture = tmp_path / "ExperimentalRounds" / next_round.round_id / "capture" / "quotes.jsonl"
+    assert new_round_quote_at.isoformat() in next_capture.read_text()
+    assert json.loads((tmp_path / "experimental-summary.json").read_text())["round_id"] == next_round.round_id
 
 
 def test_no_registered_round_keeps_old_files_unchanged(tmp_path):

@@ -6,13 +6,12 @@ from decimal import Decimal as D
 import pytest
 
 from src.intraday.contracts import InstrumentSpec
-from src.intraday.experimental_report import build_experimental_report, aggregate_experimental_cohort
+from src.intraday.experimental_report import aggregate_experimental_cohort, build_experimental_report
 from src.intraday.experimental_round import ExperimentalRoundManifest
 from src.intraday.journal import PaperJournal
 from src.intraday.paper import PaperExecutionCosts
 from src.intraday.session_journal import SessionJournal
 from src.strategies.types import canonical_hash
-
 
 T = datetime(2026, 10, 20, 7, tzinfo=UTC)
 
@@ -26,7 +25,7 @@ def manifest(day=0):
                                   product="cfd", quote_currency="EUR", point_value=D(1)),
         strategy_id="opening_range_15", direction="long", session_open=start,
         session_close=start + timedelta(hours=1), calendar_hash="c" * 64,
-        costs=PaperExecutionCosts(verified=True), cost_source="official-product-record",
+        costs=PaperExecutionCosts(verified=True, slippage_points=D("0.5")), cost_source="official-product-record",
         cost_source_hash="d" * 64, verified_at=T - timedelta(days=1),
         account_currency="GBP", margin_rate=D("0.05"), unit_step=D("0.1"),
         initial_paper_cash=D("10000"), code_hash="b" * 64,

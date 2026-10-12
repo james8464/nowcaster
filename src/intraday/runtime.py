@@ -17,6 +17,7 @@ from src.intraday.strategies import SetupDecision, evaluate_setup
 from src.strategies.types import canonical_hash
 
 D = Decimal
+DEFAULT_MARGIN_RATE = D(1)
 
 
 def _time(value: str) -> datetime:
@@ -35,12 +36,13 @@ class LivePaperRuntime:
         strategy_id: str,
         account_currency: str,
         costs: PaperExecutionCosts,
+        risk_policy: PaperRiskPolicy | None = None,
         session_open: datetime,
         session_close: datetime,
         initial_cash: Decimal,
         unit_step: Decimal,
         allowed_direction: Literal["long", "short", "both"] = "both",
-        margin_rate: Decimal = D(1),
+        margin_rate: Decimal = DEFAULT_MARGIN_RATE,
         cost_source: str = "verified paper cost policy",
         maximum_quote_gap: timedelta = timedelta(seconds=30),
     ):
@@ -66,7 +68,8 @@ class LivePaperRuntime:
         self._trade_quote_fingerprints: dict[str, str] = {}
         self._conflicted_keys: set[str] = set()
         self._entries_disarmed = False
-        self.account = PaperAccount(PaperRiskPolicy(), initial_cash, account_currency=account_currency, costs=costs)
+        self.account = PaperAccount(risk_policy or PaperRiskPolicy(), initial_cash,
+                                    account_currency=account_currency, costs=costs)
         self.journal = PaperJournal(directory, protocol_hash)
         identity = {
             "schema_version": 2,
@@ -79,6 +82,7 @@ class LivePaperRuntime:
             "cost_source": cost_source,
             "account_currency": account_currency,
             "costs": costs.model_dump(mode="json"),
+            "risk_policy": self.account.policy.model_dump(mode="json"),
             "initial_cash": str(initial_cash),
             "unit_step": str(unit_step),
             "maximum_quote_gap_seconds": maximum_quote_gap.total_seconds(),
@@ -172,12 +176,20 @@ class LivePaperRuntime:
                 self._last_quote_received = max(self._last_quote_received or event.occurred_at, event.occurred_at)
                 if payload.get("reason") == "conflicting_account_quote":
                     self._conflicted_keys.add(payload["source_key"])
-            elif event.kind == "no_trade" and self._pending_plan is not None and payload.get("decision_source_key") == self._pending_plan[1]:
+            elif (event.kind == "no_trade" and self._pending_plan is not None
+                  and payload.get("decision_source_key") == self._pending_plan[1]):
                 self._pending_plan = None
         self.account._day = self.session_open.date()
 
     def disarm_new_entries(self) -> None:
         self._entries_disarmed = True
+
+    def restore_observation_watermark(self, observed_at: datetime, received_at: datetime) -> None:
+        """Bind restart chronology to the separate append-only account capture."""
+        if observed_at > received_at:
+            raise ValueError("retained quote observation follows receipt")
+        self._last_quote_observed = max(self._last_quote_observed or observed_at, observed_at)
+        self._last_quote_received = max(self._last_quote_received or received_at, received_at)
 
     def record_unresolved_shutdown(self, at: datetime) -> PaperEvent | None:
         if not self.account.positions:
@@ -185,12 +197,40 @@ class LivePaperRuntime:
         return self._append("managed", at,
                             {"reason": "unresolved_at_shutdown", "broker_symbol": self.instrument.broker_symbol})
 
+    def _execution_provenance(self, quote: MarketQuote, conversion: FXConversion | None) -> dict[str, str]:
+        if self.instrument.quote_currency == self.account.account_currency:
+            rates = (D(1), D(1), D(1))
+            observed_at = quote.observed_at
+            basis = "account_currency_identity"
+        else:
+            if conversion is None:
+                raise ValueError("executed paper event lacks conversion snapshot")
+            rates = (conversion.position_value, conversion.account_gain, conversion.account_loss)
+            observed_at = conversion.observed_at
+            basis = "account_conversion_snapshot"
+        return {
+            "conversion_basis": basis,
+            "conversion_from_currency": self.instrument.quote_currency,
+            "conversion_to_currency": self.account.account_currency,
+            "conversion_position_value": str(rates[0]),
+            "conversion_account_gain": str(rates[1]),
+            "conversion_account_loss": str(rates[2]),
+            "conversion_observed_at": observed_at.isoformat(),
+            "conversion_age_seconds": str((quote.received_at - observed_at).total_seconds()),
+            "execution_quote_observed_at": quote.observed_at.isoformat(),
+            "execution_quote_received_at": quote.received_at.isoformat(),
+            "execution_bid": str(quote.bid),
+            "execution_ask": str(quote.ask),
+            "execution_account_feed_hash": quote.account_feed_hash,
+        }
+
     def on_quote(self, quote: MarketQuote, conversion: FXConversion | None = None) -> PaperEvent | None:
         if quote.instrument != self.instrument:
             raise ValueError("paper quote instrument mismatch")
         if quote.source_key in self._seen_trade_quote_keys:
             fingerprint = self._trade_quote_fingerprints.get(quote.source_key)
-            if fingerprint is not None and fingerprint != canonical_hash(quote.model_dump(mode="json")) and quote.source_key not in self._conflicted_keys:
+            if (fingerprint is not None and fingerprint != canonical_hash(quote.model_dump(mode="json"))
+                    and quote.source_key not in self._conflicted_keys):
                 self._conflicted_keys.add(quote.source_key)
                 return self._append("feed_gap", quote.received_at,
                                     {"reason": "conflicting_account_quote", "source_key": quote.source_key})
@@ -202,9 +242,16 @@ class LivePaperRuntime:
             return self._append(
                 "feed_gap", quote.received_at, {"reason": "stale_account_quote", "source_key": quote.source_key}
             )
+        if self._last_quote_observed is not None and quote.observed_at <= self._last_quote_observed:
+            self._last_quote_received = quote.received_at
+            self.builder = LiveBarBuilder(self.instrument, maximum_quote_gap=self.maximum_quote_gap)
+            self.bars.clear()
+            self._pending_decision = False
+            self._pending_plan = None
+            return self._append("feed_gap", quote.received_at,
+                                {"reason": "reordered_account_quote", "source_key": quote.source_key})
         timing_gap = self._last_quote_observed is not None and (
-            quote.observed_at <= self._last_quote_observed
-            or quote.observed_at - self._last_quote_observed > self.maximum_quote_gap
+            quote.observed_at - self._last_quote_observed > self.maximum_quote_gap
         )
         self._last_quote_observed = quote.observed_at
         self._last_quote_received = quote.received_at
@@ -226,6 +273,7 @@ class LivePaperRuntime:
                     "conversion_fee_gbp": str(closed.conversion_fee_gbp),
                     "source_key": quote.source_key,
                     "quote_fingerprint": canonical_hash(quote.model_dump(mode="json")),
+                    **self._execution_provenance(quote, conversion),
                 },
             )
             self._seen_trade_quote_keys.add(quote.source_key)
@@ -271,7 +319,9 @@ class LivePaperRuntime:
                 reason = "entry_window_expired"
                 position = None
             else:
-                position = self.account.open(plan, self.instrument, quote, unit_step=self.unit_step, conversion=conversion)
+                position = self.account.open(
+                    plan, self.instrument, quote, unit_step=self.unit_step, conversion=conversion
+                )
                 reason = self.account.last_rejection or "paper_open_rejected"
             if position is None:
                 return self._append("no_trade", quote.received_at,
@@ -279,11 +329,15 @@ class LivePaperRuntime:
                                      "source_key": quote.source_key, "decision_source_key": decision_source_key})
             self._seen_trade_quote_keys.add(quote.source_key)
             self._trade_quote_fingerprints[quote.source_key] = canonical_hash(quote.model_dump(mode="json"))
-            value_rate = D(1) if self.instrument.quote_currency == self.account.account_currency else conversion.position_value
-            loss_rate = D(1) if self.instrument.quote_currency == self.account.account_currency else conversion.account_loss
+            value_rate = (D(1) if self.instrument.quote_currency == self.account.account_currency
+                          else conversion.position_value)
+            loss_rate = (D(1) if self.instrument.quote_currency == self.account.account_currency
+                         else conversion.account_loss)
             notional = position.entry * self.instrument.point_value * position.units * value_rate
-            expected_cost = ((quote.spread + 2 * self.costs.slippage_points) * self.instrument.point_value
-                             + self.costs.commission_per_unit + self.costs.financing_per_unit) * position.units * loss_rate
+            expected_cost = (
+                (quote.spread + 2 * self.costs.slippage_points) * self.instrument.point_value
+                + self.costs.commission_per_unit + self.costs.financing_per_unit
+            ) * position.units * loss_rate
             return self._append(
                 "opened", quote.received_at,
                 {"broker_symbol": self.instrument.broker_symbol, "strategy_id": position.strategy_id,
@@ -298,7 +352,8 @@ class LivePaperRuntime:
                  "qualification": "unqualified",
                  "evidence_hash": position.evidence_hash, "source_key": quote.source_key,
                  "quote_fingerprint": canonical_hash(quote.model_dump(mode="json")),
-                 "decision_source_key": decision_source_key},
+                 "decision_source_key": decision_source_key,
+                 **self._execution_provenance(quote, conversion)},
             )
         if completed is not None:
             if self.bars and self.bars[-1].end != completed.start:
