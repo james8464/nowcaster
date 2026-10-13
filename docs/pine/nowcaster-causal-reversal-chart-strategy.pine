@@ -1,5 +1,5 @@
 //@version=6
-strategy("Nowcaster causal reversal — UNQUALIFIED chart research", overlay = true, pyramiding = 0, initial_capital = 10000, currency = currency.EUR, default_qty_type = strategy.fixed, default_qty_value = 1, commission_type = strategy.commission.cash_per_contract, commission_value = 0.5, slippage = 10, calc_on_every_tick = false, calc_on_order_fills = false, process_orders_on_close = false)
+strategy("Nowcaster causal reversal — UNQUALIFIED chart research", overlay = true, pyramiding = 0, initial_capital = 100000, currency = currency.EUR, default_qty_type = strategy.fixed, default_qty_value = 1, commission_type = strategy.commission.cash_per_contract, commission_value = 0.5, slippage = 10, calc_on_every_tick = false, calc_on_order_fills = false, process_orders_on_close = false)
 
 // Original chart-only ATR reversal hypothesis, not a copy of Reversal Pro.
 // The marker is drawn on the CONFIRMATION bar, never on the earlier extreme.
@@ -40,9 +40,11 @@ else if not na(previousBarAt)
         lastDecision := "No trade — chart bar gap"
 
 bool canDecide = correctChart and inSession and continuous and not firstBar and leg != 0 and barstate.isconfirmed and time_close < sessionEnd and not na(threshold) and threshold > 0
-bool shortConfirmed = canDecide and leg == 1 and math.max(swingHigh, high) - close >= threshold
-bool longConfirmed = canDecide and leg == -1 and close - math.min(swingLow, low) >= threshold
-float pivotAtConfirmation = shortConfirmed ? math.max(swingHigh, high) : longConfirmed ? math.min(swingLow, low) : na
+// Require the pivot to predate this confirmation bar; a same-bar wick is not
+// evidence of an established swing, even though its OHLC is known at close.
+bool shortConfirmed = canDecide and leg == 1 and swingHigh - close >= threshold
+bool longConfirmed = canDecide and leg == -1 and close - swingLow >= threshold
+float pivotAtConfirmation = shortConfirmed ? swingHigh : longConfirmed ? swingLow : na
 
 if canDecide
     if shortConfirmed
