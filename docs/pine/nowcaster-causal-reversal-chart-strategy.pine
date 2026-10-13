@@ -1,0 +1,95 @@
+//@version=6
+strategy("Nowcaster causal reversal — UNQUALIFIED chart research", overlay = true, pyramiding = 0, initial_capital = 10000, currency = currency.EUR, default_qty_type = strategy.fixed, default_qty_value = 1, commission_type = strategy.commission.cash_per_contract, commission_value = 0.5, slippage = 10, calc_on_every_tick = false, calc_on_order_fills = false, process_orders_on_close = false)
+
+// Original chart-only ATR reversal hypothesis, not a copy of Reversal Pro.
+// The marker is drawn on the CONFIRMATION bar, never on the earlier extreme.
+// Chart OHLC and illustrative costs are not OANDA account bid/ask fills.
+bool correctChart = syminfo.prefix == "OANDA" and syminfo.ticker == "DE30EUR" and timeframe.isminutes and timeframe.multiplier == 5 and chart.is_standard
+bool inSession = not na(time(timeframe.period, "0700-2000:23456", "Etc/UTC"))
+bool firstBar = inSession and hour(time, "Etc/UTC") == 7 and minute(time, "Etc/UTC") == 0
+float atr = ta.atr(14)
+float threshold = 2.0 * atr
+int sessionEnd = timestamp("Etc/UTC", year(time, "Etc/UTC"), month(time, "Etc/UTC"), dayofmonth(time, "Etc/UTC"), 20, 0)
+
+var int leg = 0
+var float swingHigh = na
+var float swingLow = na
+var int previousBarAt = na
+var bool continuous = false
+var float planStop = na
+var float planTarget = na
+var int planExitAt = na
+var string lastDecision = "Waiting for confirmed bars"
+
+if firstBar
+    leg := close >= open ? 1 : -1
+    swingHigh := high
+    swingLow := low
+    previousBarAt := time
+    continuous := true
+    lastDecision := "Waiting for an ATR-sized reversal"
+else if not inSession
+    leg := 0
+    previousBarAt := na
+else if not na(previousBarAt)
+    continuous := continuous and time - previousBarAt == 5 * 60 * 1000
+    previousBarAt := time
+    if not continuous
+        lastDecision := "No trade — chart bar gap"
+
+bool canDecide = correctChart and inSession and continuous and not firstBar and leg != 0 and barstate.isconfirmed and time_close < sessionEnd and not na(threshold) and threshold > 0
+bool shortConfirmed = canDecide and leg == 1 and math.max(swingHigh, high) - close >= threshold
+bool longConfirmed = canDecide and leg == -1 and close - math.min(swingLow, low) >= threshold
+float pivotAtConfirmation = shortConfirmed ? math.max(swingHigh, high) : longConfirmed ? math.min(swingLow, low) : na
+
+if canDecide
+    if shortConfirmed
+        leg := -1
+        swingHigh := high
+        swingLow := low
+    else if longConfirmed
+        leg := 1
+        swingHigh := high
+        swingLow := low
+    else
+        swingHigh := math.max(swingHigh, high)
+        swingLow := math.min(swingLow, low)
+
+bool flat = strategy.position_size == 0
+bool shortPlan = shortConfirmed and flat and pivotAtConfirmation > close
+bool longPlan = longConfirmed and flat and pivotAtConfirmation < close
+if shortConfirmed or longConfirmed
+    lastDecision := shortConfirmed ? "Short reversal confirmed now" : "Long reversal confirmed now"
+    if shortPlan or longPlan
+        float indicativeEntry = close
+        float risk = math.abs(indicativeEntry - pivotAtConfirmation)
+        float target = shortPlan ? indicativeEntry - 2 * risk : indicativeEntry + 2 * risk
+        planStop := pivotAtConfirmation
+        planTarget := target
+        planExitAt := math.min(time_close + 60 * 60 * 1000, sessionEnd)
+        if shortPlan
+            strategy.entry("Causal short", strategy.short)
+            strategy.exit("Causal short bracket", "Causal short", stop = planStop, limit = planTarget)
+        else
+            strategy.entry("Causal long", strategy.long)
+            strategy.exit("Causal long bracket", "Causal long", stop = planStop, limit = planTarget)
+        label.new(bar_index, close, "UNQUALIFIED " + (shortPlan ? "SHORT" : "LONG") + " confirmed NOW\nIndicative entry: " + str.tostring(indicativeEntry, format.mintick) + "\nStop: " + str.tostring(planStop, format.mintick) + "  Target: " + str.tostring(planTarget, format.mintick), style = label.style_label_left, color = color.new(color.blue, 15), textcolor = color.white, size = size.small)
+        alert("Unqualified chart reversal confirmed at " + str.tostring(time_close) + " UTC ms; no broker order", alert.freq_once_per_bar_close)
+
+if strategy.position_size != 0 and not na(planExitAt) and barstate.isconfirmed and time_close >= planExitAt
+    strategy.close_all(comment = "One-hour or session exit", immediately = true)
+if strategy.position_size == 0 and strategy.position_size[1] != 0
+    planStop := na
+    planTarget := na
+    planExitAt := na
+
+plot(strategy.position_size != 0 ? planStop : na, "Indicative stop (chart)", color.red, style = plot.style_linebr)
+plot(strategy.position_size != 0 ? planTarget : na, "Indicative target (chart)", color.green, style = plot.style_linebr)
+plotshape(shortConfirmed, "Short confirmation (not pivot)", shape.triangledown, location.abovebar, color.red, size = size.tiny)
+plotshape(longConfirmed, "Long confirmation (not pivot)", shape.triangleup, location.belowbar, color.green, size = size.tiny)
+bgcolor(not correctChart ? color.new(color.red, 88) : na, title = "Use standard OANDA:DE30EUR five-minute chart")
+
+var table statusTable = table.new(position.top_right, 1, 2)
+if barstate.islast
+    table.cell(statusTable, 0, 0, correctChart ? "UNQUALIFIED · confirmation-bar research" : "Wrong symbol, interval or chart type", text_color = color.white, bgcolor = correctChart ? color.new(color.blue, 25) : color.new(color.red, 15))
+    table.cell(statusTable, 0, 1, correctChart ? lastDecision + " · chart fills only" : "No trades permitted", text_color = color.white, bgcolor = color.new(color.black, 20))

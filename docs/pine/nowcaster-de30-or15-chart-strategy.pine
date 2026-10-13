@@ -1,0 +1,88 @@
+//@version=6
+strategy("Nowcaster DE30 OR15 — UNQUALIFIED chart research", overlay = true, pyramiding = 0, initial_capital = 10000, currency = currency.EUR, default_qty_type = strategy.fixed, default_qty_value = 1, commission_type = strategy.commission.cash_per_contract, commission_value = 0.5, slippage = 10, calc_on_every_tick = false, calc_on_order_fills = false, process_orders_on_close = false)
+
+// Research companion, NOT a Nowcaster/OANDA fill model or a copy-trade alert.
+// These chart OHLC values are not the practice account's executable bid/ask.
+// The 0.5 EUR/contract commission and 10-tick slippage are illustrative only.
+// Inspect Strategy Properties and OANDA account costs before interpreting P&L.
+bool correctChart = syminfo.prefix == "OANDA" and syminfo.ticker == "DE30EUR" and timeframe.isminutes and timeframe.multiplier == 5 and chart.is_standard
+bool inSession = not na(time(timeframe.period, "0700-2000:23456", "Etc/UTC"))
+bool firstBar = inSession and hour(time, "Etc/UTC") == 7 and minute(time, "Etc/UTC") == 0
+
+var int sessionBar = na
+var bool continuous = false
+var float openingHigh = na
+var float openingLow = na
+var float planStop = na
+var float planTarget = na
+var int planExitAt = na
+var string lastDecision = "Waiting for 07:00 UTC opening bars"
+
+if firstBar
+    sessionBar := 0
+    continuous := true
+    openingHigh := na
+    openingLow := na
+    lastDecision := "Waiting for confirmed 07:20 UTC decision"
+else if not inSession
+    sessionBar := na
+else if not na(sessionBar)
+    continuous := continuous and time - time[1] == 5 * 60 * 1000
+    if not continuous
+        lastDecision := "No trade — chart bar gap"
+    sessionBar += 1
+
+if correctChart and inSession and continuous and barstate.isconfirmed and not na(sessionBar) and sessionBar < 3
+    openingHigh := na(openingHigh) ? high : math.max(openingHigh, high)
+    openingLow := na(openingLow) ? low : math.min(openingLow, low)
+
+bool decisionBar = correctChart and inSession and continuous and barstate.isconfirmed and sessionBar == 3 and not na(openingHigh) and not na(openingLow)
+bool longHypothesis = decisionBar and close > openingHigh and close > openingLow
+bool shortHypothesis = decisionBar and close < openingLow and close < openingHigh
+string decision = longHypothesis ? "long" : shortHypothesis ? "short" : "no_trade"
+
+if decisionBar
+    float indicativeEntry = close
+    float proposedStop = longHypothesis ? openingLow : shortHypothesis ? openingHigh : na
+    float risk = longHypothesis ? indicativeEntry - proposedStop : shortHypothesis ? proposedStop - indicativeEntry : na
+    bool validPlan = not na(risk) and risk > 0
+    float proposedTarget = longHypothesis ? indicativeEntry + 2 * risk : shortHypothesis ? indicativeEntry - 2 * risk : na
+    int sessionEnd = timestamp("Etc/UTC", year(time, "Etc/UTC"), month(time, "Etc/UTC"), dayofmonth(time, "Etc/UTC"), 20, 0)
+    int exitAt = math.min(time_close + 60 * 60 * 1000, sessionEnd)
+    lastDecision := validPlan ? (decision == "long" ? "Chart long hypothesis" : "Chart short hypothesis") : "No trade"
+    if validPlan and strategy.position_size == 0
+        planStop := proposedStop
+        planTarget := proposedTarget
+        planExitAt := exitAt
+        if longHypothesis
+            strategy.entry("OR15 long", strategy.long)
+            strategy.exit("OR15 long bracket", "OR15 long", stop = proposedStop, limit = proposedTarget)
+        else
+            strategy.entry("OR15 short", strategy.short)
+            strategy.exit("OR15 short bracket", "OR15 short", stop = proposedStop, limit = proposedTarget)
+        label.new(bar_index, close, "UNQUALIFIED " + decision + " chart plan\nIndicative entry: " + str.tostring(indicativeEntry, format.mintick) + "\nStop: " + str.tostring(proposedStop, format.mintick) + "  Target: " + str.tostring(proposedTarget, format.mintick) + "\nNext chart bar ≠ broker quote", style = label.style_label_left, color = color.new(color.blue, 15), textcolor = color.white, size = size.small)
+    // One paper-only chart decision per session. The optional TradingView alert
+    // carries no order instruction, account ID, leverage or profitability claim.
+    string alertDecision = validPlan ? decision : "no_trade"
+    string message = '{"schema_version":1,"source":"tradingview_chart","broker_symbol":"DE30_EUR","strategy_id":"opening_range_15","bar_close_utc_ms":' + str.tostring(time_close) + ',"direction":"' + alertDecision + '"}'
+    alert(message, alert.freq_once_per_bar_close)
+
+if strategy.position_size != 0 and not na(planExitAt) and barstate.isconfirmed and time_close >= planExitAt
+    strategy.close_all(comment = "Time or session exit")
+
+if strategy.position_size == 0 and strategy.position_size[1] != 0
+    planStop := na
+    planTarget := na
+    planExitAt := na
+
+plot(correctChart and inSession ? openingHigh : na, "Opening 15-minute high (chart)", color.new(color.teal, 15), style = plot.style_linebr)
+plot(correctChart and inSession ? openingLow : na, "Opening 15-minute low (chart)", color.new(color.orange, 15), style = plot.style_linebr)
+plot(strategy.position_size != 0 ? planStop : na, "Indicative stop (chart)", color.new(color.red, 0), style = plot.style_linebr)
+plot(strategy.position_size != 0 ? planTarget : na, "Indicative target (chart)", color.new(color.green, 0), style = plot.style_linebr)
+plotshape(decisionBar and not longHypothesis and not shortHypothesis, "No opening-range breakout", shape.circle, location.abovebar, color.new(color.gray, 10), size = size.tiny)
+bgcolor(not correctChart ? color.new(color.red, 88) : na, title = "Use standard OANDA:DE30EUR five-minute chart")
+
+var table statusTable = table.new(position.top_right, 1, 2)
+if barstate.islast
+    table.cell(statusTable, 0, 0, correctChart ? "UNQUALIFIED · chart research" : "Wrong symbol, interval or chart type", text_color = color.white, bgcolor = correctChart ? color.new(color.blue, 25) : color.new(color.red, 15))
+    table.cell(statusTable, 0, 1, correctChart ? lastDecision + " · account fills differ" : "No trades permitted", text_color = color.white, bgcolor = color.new(color.black, 20))
