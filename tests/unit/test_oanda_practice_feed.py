@@ -90,6 +90,74 @@ def test_practice_feed_parses_only_completed_bid_ask_candles():
     assert calls[0].headers["authorization"] == "Bearer dummy-token"
 
 
+def test_latest_account_candle_is_confirmed_and_bound_to_practice_account():
+    received = T + timedelta(minutes=5, seconds=4)
+
+    def reply(request):
+        assert request.url.path == "/v3/accounts/practice-account/candles/latest"
+        assert request.url.params["candleSpecifications"] == "DE30_EUR:M5:BA"
+        assert request.url.params["smooth"] == "false"
+        return httpx.Response(200, json={"latestCandles": [{
+            "instrument": "DE30_EUR", "granularity": "M5", "candles": [
+                {"time": "2026-10-06T08:00:00.000000000Z", "complete": True,
+                 "bid": {"o": "24000", "h": "24006", "l": "23999", "c": "24004"},
+                 "ask": {"o": "24002", "h": "24008", "l": "24001", "c": "24006"}},
+                {"time": "2026-10-06T08:05:00Z", "complete": False,
+                 "bid": {"o": "24004", "h": "24005", "l": "24002", "c": "24003"},
+                 "ask": {"o": "24006", "h": "24007", "l": "24004", "c": "24005"}},
+            ],
+        }]})
+
+    feed = OandaPracticeFeed("practice-account", "dummy-token", transport=httpx.MockTransport(reply))
+    observation = feed.latest_account_candle(INSTRUMENT, received_at=received)
+    assert observation is not None
+    assert observation.account_feed_hash == hashlib.sha256(b"practice-account").hexdigest()
+    assert observation.bar.start == T
+    assert observation.bar.available_at == received
+    assert observation.bar.price_scope == "account_latest"
+    assert observation.bar.bid_open == Decimal("24000")
+    assert observation.bar.ask_close == Decimal("24006")
+    assert "dummy-token" not in observation.bar.source_key
+    assert "practice-account" not in observation.bar.source_key
+
+
+@pytest.mark.parametrize("row", [
+    {"instrument": "SPX500_USD", "granularity": "M5", "candles": []},
+    {"instrument": "DE30_EUR", "granularity": "M1", "candles": []},
+    {"instrument": "DE30_EUR", "granularity": "M5", "candles": [
+        {"time": "2026-10-06T08:05:00Z", "complete": True,
+         "bid": {"o": "24000", "h": "24006", "l": "23999", "c": "24004"},
+         "ask": {"o": "24002", "h": "24008", "l": "24001", "c": "24006"}},
+    ]},
+    {"instrument": "DE30_EUR", "granularity": "M5", "candles": [
+        {"time": 123, "complete": True,
+         "bid": {"o": "24000", "h": "24006", "l": "23999", "c": "24004"},
+         "ask": {"o": "24002", "h": "24008", "l": "24001", "c": "24006"}},
+    ]},
+])
+def test_latest_account_candle_rejects_wrong_identity_or_future_close(row):
+    feed = OandaPracticeFeed(
+        "practice-account", "dummy-token",
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, json={"latestCandles": [row]})),
+    )
+    with pytest.raises(ValueError, match="account candle"):
+        feed.latest_account_candle(INSTRUMENT, received_at=T + timedelta(minutes=5, seconds=4))
+
+
+def test_latest_account_candle_never_uses_incomplete_bar():
+    feed = OandaPracticeFeed(
+        "practice-account", "dummy-token",
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, json={"latestCandles": [{
+            "instrument": "DE30_EUR", "granularity": "M5", "candles": [
+                {"time": "2026-10-06T08:00:00Z", "complete": False,
+                 "bid": {"o": "24000", "h": "24006", "l": "23999", "c": "24004"},
+                 "ask": {"o": "24002", "h": "24008", "l": "24001", "c": "24006"}},
+            ],
+        }]})),
+    )
+    assert feed.latest_account_candle(INSTRUMENT, received_at=T + timedelta(minutes=5, seconds=4)) is None
+
+
 def test_candle_fetch_skips_only_provider_overlap_before_unaligned_start():
     def candle(at: str) -> dict:
         return {

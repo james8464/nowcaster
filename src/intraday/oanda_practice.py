@@ -38,6 +38,14 @@ class OandaHomeConversion:
         )
 
 
+@dataclass(frozen=True)
+class AccountCandleObservation:
+    """Completed account-route candle; its price segment is not assumed executable."""
+
+    account_feed_hash: str
+    bar: ConfirmedBar
+
+
 def _timestamp(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC)
 
@@ -178,6 +186,60 @@ class OandaPracticeFeed:
                     )
                 cursor = boundary
         return tuple(sorted(rows, key=lambda row: row.start))
+
+    def latest_account_candle(
+        self, instrument: InstrumentSpec, *, received_at: datetime
+    ) -> AccountCandleObservation | None:
+        """Read the latest completed account candle, never an historical-base fill."""
+        _iso(received_at)
+        with self._client() as client:
+            response = client.get(
+                f"/v3/accounts/{self.account_id}/candles/latest",
+                params={"candleSpecifications": f"{instrument.broker_symbol}:M5:BA", "smooth": "false"},
+            )
+            response.raise_for_status()
+            payload = response.json()
+        try:
+            groups = payload["latestCandles"]
+            if not isinstance(groups, list) or len(groups) != 1:
+                raise ValueError("wrong account candle group count")
+            group = groups[0]
+            if group["instrument"] != instrument.broker_symbol or group["granularity"] != "M5":
+                raise ValueError("account candle product or granularity mismatch")
+            candles = group["candles"]
+            if not isinstance(candles, list):
+                raise ValueError("account candle rows missing")
+            complete = [row for row in candles if row["complete"] is True]
+            if not complete:
+                return None
+            if any(not isinstance(row["time"], str) or not row["time"].endswith("Z") for row in complete):
+                raise ValueError("account candle timestamp invalid")
+            starts = [_timestamp(row["time"]) for row in complete]
+            if len(set(starts)) != len(starts):
+                raise ValueError("account candle timestamp duplicated")
+            row = complete[starts.index(max(starts))]
+            began = max(starts)
+            values = {
+                f"{side}_{name}": Decimal(row[side][letter])
+                for side in ("bid", "ask")
+                for name, letter in (("open", "o"), ("high", "h"), ("low", "l"), ("close", "c"))
+            }
+            fingerprint = hashlib.sha256(
+                json.dumps(row, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            ).hexdigest()
+            feed_hash = hashlib.sha256(self.account_id.encode()).hexdigest()
+            bar = ConfirmedBar(
+                instrument=instrument,
+                start=began,
+                end=began + timedelta(minutes=5),
+                available_at=received_at,
+                price_scope="account_latest",
+                source_key=f"oanda-account-candle:{feed_hash}:{instrument.broker_symbol}:{_iso(began)}:{fingerprint}",
+                **values,
+            )
+            return AccountCandleObservation(feed_hash, bar)
+        except (KeyError, TypeError, ValueError, InvalidOperation) as exc:
+            raise ValueError("invalid account candle response") from exc
 
     def parse_price_event(self, instrument: InstrumentSpec, line: str, *, received_at: datetime) -> MarketQuote | None:
         event = json.loads(line)

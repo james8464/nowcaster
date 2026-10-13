@@ -54,7 +54,7 @@ class ConfirmedBar(FrozenModel):
     ask_low: Decimal = Field(gt=0)
     ask_close: Decimal = Field(gt=0)
     source_key: str
-    price_scope: Literal["historical_base", "account_stream"] = "historical_base"
+    price_scope: Literal["historical_base", "account_stream", "account_latest"] = "historical_base"
 
     @model_validator(mode="after")
     def completed_five_minute_bar(self):
