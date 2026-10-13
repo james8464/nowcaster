@@ -256,7 +256,7 @@ struct IntradayReportView: View {
                     }
                     DisclosureGroup("Costs and evidence") {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("Gross £\(report.grossPnL.description) · Commission £\(report.commission.description) · Financing £\(report.financing.description) · Conversion £\(report.conversionFee.description)")
+                            Text("Gross £\(report.grossPnL.description) · \(experimental == nil ? "Commission" : "Modeled charge") £\(report.commission.description) · Financing £\(report.financing.description) · Conversion £\(report.conversionFee.description)")
                             Text("Win rate: \(report.winRate.map { String(describing: $0 * 100) + "%" } ?? "undefined") · Net expectancy: \(report.netExpectancy.map { "£" + $0.description } ?? "undefined")")
                             Text("Profit factor: \(report.profitFactor.map(\.description) ?? "undefined") · Max drawdown £\(report.maximumDrawdown.description)")
                             Text("95% daily lower bound: \(report.dailyLowerBound.map { "£" + $0.description } ?? "insufficient sample")")
@@ -295,7 +295,7 @@ struct IntradayReportView: View {
                                 Text("\(ticket.direction.capitalized) · \(ticket.units.description) units · Entry \(ticket.entry.description)")
                                 Text("Stop \(ticket.stop.description) · Target \(ticket.target.description) · Exit by \(ticket.exitBy)")
                                 Text("Notional £\(ticket.notionalGBP.description) · Effective leverage \(ticket.effectiveLeverage.description)× · Margin estimate £\(ticket.marginEstimateGBP.description)")
-                                Text("Estimated round-trip cost £\(ticket.estimatedCostGBP.description) · Terms: \(ticket.costSource)")
+                                Text("Estimated modeled round-trip cost £\(ticket.estimatedCostGBP.description) · Source: \(ticket.costSource)")
                             }
                             .font(.caption).foregroundStyle(.secondary)
                         }

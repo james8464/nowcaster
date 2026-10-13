@@ -55,6 +55,17 @@ def test_zero_trades_is_not_zero_expectancy(tmp_path):
     assert report.covered_eligible_intervals == 0
 
 
+def test_modeled_cost_report_discloses_non_broker_fee(tmp_path):
+    item = manifest().model_copy(update={
+        "cost_basis": "conservative_model",
+        "costs": PaperExecutionCosts(verified=False, slippage_points=D("1"), commission_per_unit=D("0.5")),
+    })
+    paper, session = ledgers(tmp_path, item)
+    report = build_experimental_report(item, paper, session, as_of=T + timedelta(hours=1))
+    assert "modeled" in report.performance.warning.lower()
+    assert "not a verified broker commission" in report.performance.warning.lower()
+
+
 def test_wins_losses_fees_and_gaps_all_retained(tmp_path):
     item = manifest()
     paper, session = ledgers(tmp_path, item)

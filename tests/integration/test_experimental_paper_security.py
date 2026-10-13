@@ -135,7 +135,7 @@ def test_future_quote_mutation_keeps_prior_decision_hashes(tmp_path):
 def test_unknown_cost_or_missing_conversion_never_opens(tmp_path):
     import pytest
 
-    with pytest.raises(ValueError, match="verified execution costs"):
+    with pytest.raises(ValueError, match="cost basis"):
         ExperimentalRoundManifest.model_validate(
             _manifest().model_dump() | {"costs": PaperExecutionCosts(verified=False)}
         )
@@ -169,8 +169,10 @@ def test_helper_has_no_order_or_live_account_routes():
     assert "create_order" not in helper + feed
 
 
-def test_operations_docs_keep_activation_off_without_exact_cost_evidence():
+def test_operations_docs_disclose_model_and_registration_boundary():
     root = Path(__file__).resolve().parents[2]
     guide = (root / "docs/research/live-paper-signals.md").read_text()
     assert "Experimental OANDA practice paper lane" in guide
-    assert "No round is registered by this release" in guide
+    assert "explicitly registered for a future session" in guide
+    assert "actual broker commission" in guide
+    assert "conservative_model" in guide

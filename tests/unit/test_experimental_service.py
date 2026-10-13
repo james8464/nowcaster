@@ -58,6 +58,24 @@ def test_future_conversion_cannot_enter(tmp_path):
     assert service.runtime.account.positions == {}
 
 
+def test_explicit_conservative_cost_policy_can_open_unqualified_paper_trade(tmp_path):
+    ordinary = manifest()
+    modeled = ExperimentalRoundManifest.model_validate(ordinary.model_dump() | {
+        "cost_basis": "conservative_model",
+        "costs": PaperExecutionCosts(
+            verified=False, slippage_points=D("1"), commission_per_unit=D("0.5")
+        ),
+    })
+    service = ExperimentalPaperService(modeled, tmp_path)
+    prime(service)
+    planned = quote(1202, "104")
+    assert service.on_quote(planned, conversion=conversion(planned.received_at)).kind == "planned"
+    entry = quote(1203, "104")
+    event = service.on_quote(entry, conversion=conversion(entry.received_at))
+    assert event.kind == "opened"
+    assert event.payload["qualification"] == "unqualified"
+
+
 def test_declared_direction_blocks_opposite_setup(tmp_path):
     service = ExperimentalPaperService(manifest(), tmp_path)
     for n, price in enumerate(("100", "100", "99", "96")):

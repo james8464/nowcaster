@@ -48,6 +48,7 @@ class ExperimentalPaperService:
             session_open=manifest.session_open, session_close=manifest.session_close,
             initial_cash=manifest.initial_paper_cash, unit_step=manifest.unit_step,
             margin_rate=manifest.margin_rate, cost_source=manifest.cost_source,
+            allow_modeled_costs=manifest.cost_basis == "conservative_model",
         )
         self._ticket_payload: dict[str, str] | None = None
         for event in self.runtime.journal.events():

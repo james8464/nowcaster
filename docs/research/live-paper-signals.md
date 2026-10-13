@@ -15,7 +15,8 @@ gaps, abstentions and undefined expectancy when no trades have closed. Paper
 alerts are opt-in, distinct from the qualified research path, and off by
 default. No broker orders are sent.
 
-**No round is registered by this release.** A positive or negative paper return
+An experimental round must be explicitly registered for a future session; code
+deployment alone does not start paper entries. A positive or negative paper return
 cannot qualify a rule. The previous 32 product/rule/direction historical screen
 failed, and the suggested opening-range-15 long sentinel is only an execution
 diagnostic, not a profitable strategy. Do not activate it during the running
@@ -29,9 +30,14 @@ registration requires a sanitized JSON cost record whose bytes match the
 manifest SHA-256; the CLI stores those bytes next to the immutable manifest.
 It must specify the exact account-feed hash, broker symbol, product, quote and
 paper currencies, margin rate, unit step, slippage, commission, financing,
-verification time, OANDA HTTPS source URL, and a source excerpt naming the
+verification time, OANDA HTTPS source URL, cost basis (`broker_terms` or
+`conservative_model`), and a source excerpt naming the
 exact broker symbol. All numeric terms must match the manifest, and the paper
-slippage assumption must be positive. This is a
+slippage assumption must be positive. A `conservative_model` is accepted only
+in this unqualified paper lane, with `verified=false`, positive adverse
+slippage and a positive extra-charge allowance. That allowance is deducted
+from paper returns but is **not** described as an actual broker commission.
+It cannot qualify a strategy. This is a
 consistency gate, **not** automatic proof that the source or assumptions are
 correct; an operator must verify them. Never put a token, account ID, or
 personal portal document in that record. Registering a round does not start
@@ -39,8 +45,9 @@ collection or enable alerts. Each round retains its own summary and report;
 the root desk files mirror the sole current round.
 
 For a future round, an operator must verify the exact OANDA UK practice product
-and account inventory, margin, minimum/step size, session hours, commission,
-slippage assumption, financing policy, account-currency conversion and
+and account inventory, margin, minimum/step size, session hours, known broker
+charges or an explicitly conservative paper allowance, slippage assumption,
+financing policy, account-currency conversion and
 effective spread. Set GBP paper equity and predeclare the rule, side, session,
 risk, source URL, source bytes/hash and bundled helper SHA before the first
 quote. Run `scripts/register_intraday_experiment.py register --manifest
@@ -68,8 +75,10 @@ operator must confirm that the account-specific product and terms match rather
 than inferring them from the Germany 40 marketing label. OANDA's [account
 pricing stream](https://developer.oanda.com/rest-live-v20/pricing-ep/) samples
 quotes; historical candles are not interchangeable with a later account fill.
-These public pages do **not** presently close the exact-cost evidence gap, so
-the sentinel remains unregistered. CFDs are leveraged and high-risk; the
+These public pages do **not** presently establish an exact executable
+DE30_EUR commission. A conservative-cost execution sentinel can be observed
+without claiming broker-verified costs, but it cannot pass the historical or
+prospective qualification gates on that basis alone. CFDs are leveraged and high-risk; the
 paper ledger is not a recommendation to copy with real money.
 
 Live paper signals is a user-started, paper-only trend research service in the

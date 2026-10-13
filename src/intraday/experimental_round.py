@@ -40,6 +40,7 @@ class ExperimentalRoundManifest(FrozenModel):
     session_close: datetime
     calendar_hash: str
     costs: PaperExecutionCosts
+    cost_basis: Literal["broker_terms", "conservative_model"] = "broker_terms"
     cost_source: str
     cost_source_hash: str
     verified_at: datetime
@@ -79,8 +80,12 @@ class ExperimentalRoundManifest(FrozenModel):
             raise ValueError("session window must fit one UTC day")
         if self.verified_at > self.session_open:
             raise ValueError("cost verification must precede session")
-        if not self.costs.verified or not self.cost_source.strip():
-            raise ValueError("source-backed verified execution costs required")
+        if not self.cost_source.strip():
+            raise ValueError("source-backed execution cost policy required")
+        if self.costs.verified != (self.cost_basis == "broker_terms"):
+            raise ValueError("cost basis and broker verification flag disagree")
+        if self.cost_basis == "conservative_model" and self.costs.commission_per_unit <= 0:
+            raise ValueError("conservative cost basis needs a positive extra-charge allowance")
         if self.costs.slippage_points <= 0:
             raise ValueError("positive adverse slippage assumption required for paper execution")
         if self.account_currency != "GBP":
@@ -89,13 +94,14 @@ class ExperimentalRoundManifest(FrozenModel):
 
 
 class ExactProductCostRecord(FrozenModel):
-    """Sanitized, manually verified account-product terms; not a broker attestation."""
+    """Sanitized account-product terms and an explicitly identified cost policy."""
 
     account_feed_hash: str
     broker_symbol: str
     product: str
     quote_currency: str
     account_currency: str
+    cost_basis: Literal["broker_terms", "conservative_model"] = "broker_terms"
     margin_rate: Decimal
     unit_step: Decimal
     slippage_points: Decimal
@@ -111,6 +117,8 @@ class ExactProductCostRecord(FrozenModel):
         if (url.scheme != "https" or url.hostname not in {"oanda.com", "www.oanda.com"}
                 or self.broker_symbol not in self.source_excerpt or len(self.source_excerpt) < 30):
             raise ValueError("cost evidence needs an exact-product OANDA source record")
+        if self.cost_basis == "conservative_model" and "conservative" not in self.source_excerpt.lower():
+            raise ValueError("cost evidence must disclose the conservative modeled allowance")
         return self
 
 
@@ -125,6 +133,7 @@ def _validate_cost_evidence(manifest: ExperimentalRoundManifest, raw: bytes) -> 
         "product": manifest.instrument.product,
         "quote_currency": manifest.instrument.quote_currency,
         "account_currency": manifest.account_currency,
+        "cost_basis": manifest.cost_basis,
         "margin_rate": manifest.margin_rate,
         "unit_step": manifest.unit_step,
         "slippage_points": manifest.costs.slippage_points,

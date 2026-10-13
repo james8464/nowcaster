@@ -44,10 +44,13 @@ class LivePaperRuntime:
         allowed_direction: Literal["long", "short", "both"] = "both",
         margin_rate: Decimal = DEFAULT_MARGIN_RATE,
         cost_source: str = "verified paper cost policy",
+        allow_modeled_costs: bool = False,
         maximum_quote_gap: timedelta = timedelta(seconds=30),
     ):
         if session_close <= session_open or unit_step <= 0 or not 0 < margin_rate <= 1 or not cost_source.strip():
             raise ValueError("invalid paper session")
+        if allow_modeled_costs and (costs.verified or costs.slippage_points <= 0 or costs.commission_per_unit <= 0):
+            raise ValueError("modeled paper costs require unverified positive adverse allowances")
         self.instrument = instrument
         self.strategy_id = strategy_id
         self.allowed_direction = allowed_direction
@@ -69,7 +72,8 @@ class LivePaperRuntime:
         self._conflicted_keys: set[str] = set()
         self._entries_disarmed = False
         self.account = PaperAccount(risk_policy or PaperRiskPolicy(), initial_cash,
-                                    account_currency=account_currency, costs=costs)
+                                    account_currency=account_currency, costs=costs,
+                                    allow_modeled_costs=allow_modeled_costs)
         self.journal = PaperJournal(directory, protocol_hash)
         identity = {
             "schema_version": 2,
@@ -82,6 +86,7 @@ class LivePaperRuntime:
             "cost_source": cost_source,
             "account_currency": account_currency,
             "costs": costs.model_dump(mode="json"),
+            "allow_modeled_costs": allow_modeled_costs,
             "risk_policy": self.account.policy.model_dump(mode="json"),
             "initial_cash": str(initial_cash),
             "unit_step": str(unit_step),

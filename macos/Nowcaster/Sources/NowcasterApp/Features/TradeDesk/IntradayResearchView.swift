@@ -275,7 +275,7 @@ struct IntradayResearchView: View {
                                 Text("\(ticket.brokerSymbol) · \(ticket.direction.capitalized) · \(ticket.units.description) units")
                                 Text("Entry \(ticket.entry.description) · Stop \(ticket.stop.description) · Target \(ticket.target.description) · Exit by \(ticket.exitBy)")
                                 Text("Notional £\(ticket.notionalGBP.description) · Leverage \(ticket.effectiveLeverage.description)× · Margin estimate £\(ticket.marginEstimateGBP.description)")
-                                Text("Estimated cost £\(ticket.estimatedCostGBP.description) · Terms: \(ticket.costSource)")
+                                Text("Estimated modeled cost £\(ticket.estimatedCostGBP.description) · Source: \(ticket.costSource)")
                                     .foregroundStyle(.secondary)
                             }
                             .font(.caption.monospacedDigit())

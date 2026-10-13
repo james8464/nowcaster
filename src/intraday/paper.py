@@ -91,6 +91,7 @@ class PaperAccount:
         *,
         account_currency: str,
         costs: PaperExecutionCosts | None = None,
+        allow_modeled_costs: bool = False,
     ):
         if initial_cash <= 0:
             raise ValueError("paper cash must be positive")
@@ -99,6 +100,7 @@ class PaperAccount:
         self.policy = policy
         self.account_currency = account_currency
         self.costs = costs or PaperExecutionCosts()
+        self.allow_modeled_costs = allow_modeled_costs
         self.initial_cash = initial_cash
         self.equity = initial_cash
         self.high_water = initial_cash
@@ -197,7 +199,7 @@ class PaperAccount:
     ) -> str | None:
         if plan.status != "ready":
             return "no_trade_plan"
-        if not self.costs.verified:
+        if not self.costs.verified and not self.allow_modeled_costs:
             return "execution_costs_unverified"
         if unit_step <= 0 or quote.instrument != instrument or quote.status != "tradeable":
             return "instrument_or_quote_unavailable"

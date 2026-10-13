@@ -130,6 +130,28 @@ def test_zero_slippage_assumption_cannot_be_labelled_verified():
         manifest(costs=PaperExecutionCosts(verified=True))
 
 
+def test_conservative_cost_model_must_not_claim_broker_verified_terms(tmp_path):
+    record = json.loads(COST_EVIDENCE)
+    record["cost_basis"] = "conservative_model"
+    record["source_excerpt"] = "DE30_EUR account product and conservative paper surcharge, not an OANDA commission."
+    raw = json.dumps(record, sort_keys=True).encode()
+    modeled = manifest(
+        cost_basis="conservative_model",
+        costs=PaperExecutionCosts(
+            verified=False, slippage_points=Decimal("0.5"),
+            commission_per_unit=Decimal("0.1"), financing_per_unit=Decimal("0.01"),
+        ),
+        cost_source_hash=sha256(raw).hexdigest(),
+    )
+    path = register_experimental_round(tmp_path, modeled, cost_evidence=raw, at=OPEN - timedelta(hours=1))
+    loaded = load_experimental_round(path, account_feed_hash=ACCOUNT_HASH, code_hash=CODE_HASH, at=OPEN)
+    assert loaded.cost_basis == "conservative_model"
+    with pytest.raises(ValueError, match="cost basis"):
+        manifest(cost_basis="conservative_model")
+    with pytest.raises(ValueError, match="cost basis"):
+        manifest(costs=modeled.costs)
+
+
 def test_cost_evidence_bytes_are_required_and_rechecked_on_load(tmp_path):
     with pytest.raises(ValueError, match="cost evidence"):
         register_experimental_round(tmp_path, manifest(), cost_evidence=b"wrong document", at=OPEN - timedelta(hours=1))

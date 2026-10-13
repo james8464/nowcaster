@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
 from decimal import Decimal
-import json
 from typing import Literal
 
 from pydantic import Field, model_validator
@@ -117,10 +117,16 @@ def build_experimental_report(
         "expected_quote_intervals": slots if slots else None,
         "covered_quote_intervals": covered if slots else None,
         "eligible_session_gap_count": sum(
-            event["kind"] == "gap" and manifest.session_open <= datetime.fromisoformat(event["at"]) < min(as_of, manifest.session_close)
+            event["kind"] == "gap"
+            and manifest.session_open <= datetime.fromisoformat(event["at"]) < min(as_of, manifest.session_close)
             for event in events
         ),
-        "warning": "Unqualified experimental paper trades use hypothetical fills; no real-money profitability is established.",
+        "warning": (
+            "Unqualified experimental paper trades use hypothetical fills; no real-money profitability is established. "
+            "Costs include modeled adverse slippage and an extra charge allowance, not a verified broker commission."
+            if manifest.cost_basis == "conservative_model" else
+            "Unqualified experimental paper trades use hypothetical fills; no real-money profitability is established."
+        ),
     })
     paper_events = paper.events()
     attempts = sum(event.kind == "planned" and event.occurred_at <= as_of for event in paper_events)
@@ -165,7 +171,12 @@ def aggregate_experimental_cohort(
         "account_quote_coverage": Decimal(covered) / expected if expected else None,
         "coverage_status": "measured" if expected else "not_measured",
         "daily_block_lower_95_gbp": None if missing_days else performance.daily_block_lower_95_gbp,
-        "warning": "Unqualified experimental cohort; missing days and every retained loss remain visible.",
+        "warning": (
+            "Unqualified experimental cohort; missing days and every retained loss remain visible. "
+            "Costs include modeled extra charges, not a verified broker commission."
+            if "modeled" in first.performance.warning.lower() else
+            "Unqualified experimental cohort; missing days and every retained loss remain visible."
+        ),
     })
     return ExperimentalPaperReport(
         round_id=round_id, cohort_id=first.cohort_id,

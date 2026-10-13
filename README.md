@@ -4,9 +4,11 @@
 
 The current Mac build can display a separate **unqualified experimental paper**
 ticket and a net-results report when a future OANDA practice round has been
-pre-registered. It does not register or start one automatically: exact
-account-product costs and session terms remain unverified. The existing OANDA
-monitor stays diagnostic, with no paper entries, until that gate is met. See
+pre-registered. It does not register or start one automatically. The first
+round may use a clearly labelled conservative *modeled* cost allowance for
+unqualified paper observation; exact executable broker costs remain unverified.
+The existing OANDA monitor stays diagnostic, with no paper entries, until a
+separate round is registered and the installed app's helper identity matches. See
 the [operating guide](docs/research/live-paper-signals.md#experimental-oanda-practice-paper-lane)
 for the registration boundary and retained evidence requirements.
 
