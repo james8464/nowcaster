@@ -87,8 +87,6 @@ plot(strategy.position_size != 0 ? planStop : na, "Indicative stop (chart)", col
 plot(strategy.position_size != 0 ? planTarget : na, "Indicative target (chart)", color.green, style = plot.style_linebr)
 plotshape(shortConfirmed, "Short confirmation (not pivot)", shape.triangledown, location.abovebar, color.red, size = size.tiny)
 plotshape(longConfirmed, "Long confirmation (not pivot)", shape.triangleup, location.belowbar, color.green, size = size.tiny)
-bgcolor(not correctChart ? color.new(color.red, 88) : na, title = "Use standard OANDA:DE30EUR five-minute chart")
-
 var table statusTable = table.new(position.top_right, 1, 2)
 if barstate.islast
     table.cell(statusTable, 0, 0, correctChart ? "UNQUALIFIED · confirmation-bar research" : "Wrong symbol, interval or chart type", text_color = color.white, bgcolor = correctChart ? color.new(color.blue, 25) : color.new(color.red, 15))
