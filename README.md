@@ -38,7 +38,8 @@ credential as an argument and has no order-submission operation. The optional
 approximate confirmed-bar setups on a chart; chart prices are **not** the
 account-specific bid/ask prices used for paper fills.
 The separate [TradingView strategy and parity guide](docs/pine/README.md)
-adds opening-range and causal-reversal chart experiments for OANDA:DE30EUR,
+adds opening-range experiments for OANDA:DE30EUR and a separate causal-reversal
+chart experiment for OANDA:DE30EUR 5m or FXCM FX:GER30 15m,
 plus a read-only opening-range decision comparison against retained Nowcaster
 data. Simulated chart orders are **not** broker orders or proof of profitable
 account execution.

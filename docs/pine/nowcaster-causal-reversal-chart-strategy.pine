@@ -3,8 +3,10 @@ strategy("Nowcaster causal reversal — UNQUALIFIED chart research", overlay = t
 
 // Original chart-only ATR reversal hypothesis, not a copy of Reversal Pro.
 // The marker is drawn on the CONFIRMATION bar, never on the earlier extreme.
-// Chart OHLC and illustrative costs are not OANDA account bid/ask fills.
-bool correctChart = syminfo.prefix == "OANDA" and syminfo.ticker == "DE30EUR" and timeframe.isminutes and timeframe.multiplier == 5 and chart.is_standard
+// Chart OHLC and illustrative costs are not account bid/ask fills.
+bool oandaChart = syminfo.tickerid == "OANDA:DE30EUR" and timeframe.isminutes and timeframe.multiplier == 5
+bool fxcmChart = syminfo.tickerid == "FX:GER30" and timeframe.isminutes and timeframe.multiplier == 15
+bool correctChart = chart.is_standard and (oandaChart or fxcmChart)
 bool inSession = not na(time(timeframe.period, "0700-2000:23456", "Etc/UTC"))
 bool firstBar = inSession and hour(time, "Etc/UTC") == 7 and minute(time, "Etc/UTC") == 0
 float atr = ta.atr(14)
@@ -32,7 +34,7 @@ else if not inSession
     leg := 0
     previousBarAt := na
 else if not na(previousBarAt)
-    continuous := continuous and time - previousBarAt == 5 * 60 * 1000
+    continuous := continuous and time - previousBarAt == timeframe.multiplier * 60 * 1000
     previousBarAt := time
     if not continuous
         lastDecision := "No trade — chart bar gap"
@@ -89,5 +91,5 @@ plotshape(shortConfirmed, "Short confirmation (not pivot)", shape.triangledown, 
 plotshape(longConfirmed, "Long confirmation (not pivot)", shape.triangleup, location.belowbar, color.green, size = size.tiny)
 var table statusTable = table.new(position.top_right, 1, 2)
 if barstate.islast
-    table.cell(statusTable, 0, 0, correctChart ? "UNQUALIFIED · confirmation-bar research" : "Wrong symbol, interval or chart type", text_color = color.white, bgcolor = correctChart ? color.new(color.blue, 25) : color.new(color.red, 15))
+    table.cell(statusTable, 0, 0, correctChart ? "UNQUALIFIED · confirmation-bar research" : "Use OANDA DE30EUR 5m or FXCM GER30 15m", text_color = color.white, bgcolor = correctChart ? color.new(color.blue, 25) : color.new(color.red, 15))
     table.cell(statusTable, 0, 1, correctChart ? lastDecision + " · chart fills only" : "No trades permitted", text_color = color.white, bgcolor = color.new(color.black, 20))

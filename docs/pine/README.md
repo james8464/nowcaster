@@ -69,13 +69,17 @@ being sent. See the [inspection note](reversal-pro-assessment.md).
 
 The [original causal reversal strategy](nowcaster-causal-reversal-chart-strategy.pine)
 is a separate, **unqualified** research hypothesis. It does not reproduce
-Reversal Pro's proprietary rules. It uses confirmed five-minute closes, a
-fixed two-ATR reversal threshold, and draws a marker on the *confirmation*
-bar only. It suppresses entries on the wrong instrument, nonstandard chart,
-detected intraday bar gap, or the final bar whose close reaches the session
-end. It requests its time exit on the current confirmed bar rather than
-carrying a pending market exit into the next session. Missing chart bars can
-still delay an exit, and its chart-emulator entries, stops, targets and
-costs are illustrative, not OANDA account bid/ask fills. It is not connected
+Reversal Pro's proprietary rules. It supports only standard OANDA:DE30EUR
+five-minute and FXCM FX:GER30 fifteen-minute charts. These are separate
+chart-research modes, not interchangeable broker execution feeds. It uses
+confirmed closes at the selected interval, a fixed two-ATR reversal threshold,
+and draws a marker on the *confirmation* bar only. It suppresses entries on
+other instruments or intervals, nonstandard charts, detected intraday bar
+gaps (checked against the selected interval), or the final bar whose close
+reaches the session end. It requests its time exit on the current confirmed
+bar rather than carrying a pending market exit into the next session. Missing
+chart bars can still delay an exit. Its chart-emulator entries, stops, targets,
+and costs are illustrative, not account bid/ask fills. FXCM chart results must not
+be compared directly with OANDA practice-account fills. It is not connected
 to Nowcaster's live paper ledger, and should not be copied as real-money
 advice. The frozen BTC/ETH and OANDA studies are unaffected.
