@@ -69,3 +69,11 @@ def test_live_capture_does_not_use_after_close_spread_or_count_as_tradeable():
     assert result.out_of_window_quote_count == 1
     assert result.invalid_quote_count == 0
     assert result.median_spread == Decimal("2")
+
+
+def test_closed_weekend_has_no_expected_quote_intervals():
+    saturday = datetime(2026, 10, 10, 7, tzinfo=UTC)
+    result = summarize_capture(INSTRUMENT, saturday, saturday + timedelta(hours=13), ())
+    assert result.expected_intervals == 0
+    assert result.covered_intervals == 0
+    assert result.coverage == Decimal("0")

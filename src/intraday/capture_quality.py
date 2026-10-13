@@ -50,7 +50,13 @@ def summarize_capture(
     ):
         raise ValueError("capture window must be chronological UTC")
     interval = timedelta(minutes=5)
-    expected = int((as_of - opened_at) // interval)
+    total_slots = int((as_of - opened_at) // interval)
+    # These CFD/FX observation windows are weekday sessions. A closed weekend
+    # is not a missing quote; true weekday gaps remain in the denominator.
+    scheduled_slots = {
+        slot for slot in range(total_slots) if (opened_at + slot * interval).weekday() < 5
+    }
+    expected = len(scheduled_slots)
     covered: set[int] = set()
     spreads: list[Decimal] = []
     received_times: list[datetime] = []
@@ -89,7 +95,7 @@ def summarize_capture(
         tradeable_count += 1
         spreads.append(ask - bid)
         slot = int((observed - opened_at) // interval)
-        if 0 <= slot < expected and received < opened_at + (slot + 1) * interval:
+        if slot in scheduled_slots and received < opened_at + (slot + 1) * interval:
             covered.add(slot)
     spreads.sort()
     times = sorted(set(received_times))
