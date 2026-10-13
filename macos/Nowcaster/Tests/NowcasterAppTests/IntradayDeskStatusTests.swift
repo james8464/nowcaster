@@ -91,6 +91,24 @@ import Testing
     #expect(!quality.isFresh(at: Date(timeIntervalSince1970: 1_900_000_000)))
 }
 
+@Test func zeroCompletedIntervalsAreNotShownAsZeroPercentCoverage() throws {
+    let data = Data("""
+    {"generated_at":"2026-10-10T20:00:00Z","round_id":"diagnostic-2026-10-10",
+     "price_scope":"account_stream_observation","paper_eligible":false,
+     "markets":[{"broker_symbol":"DE30_EUR","expected_intervals":0,
+       "covered_intervals":0,"quote_count":0,"tradeable_quote_count":0,
+       "invalid_quote_count":0,"coverage":"0","median_spread":null,
+       "p95_spread":null,"paper_eligible":false}]}
+    """.utf8)
+    let quality = try IntradayCaptureQuality.decode(data)
+    #expect(quality.markets[0].coverageLabel == "No completed intervals to assess")
+
+    let weekday = String(decoding: data, as: UTF8.self)
+        .replacingOccurrences(of: "2026-10-10T20:00:00Z", with: "2026-10-12T07:01:00Z")
+    let justOpened = try IntradayCaptureQuality.decode(Data(weekday.utf8))
+    #expect(justOpened.markets[0].coverageLabel == "No completed intervals to assess")
+}
+
 @Test func experimentalStatusCannotDecodeAsQualified() throws {
     let text = """
     {"schema_version":1,"paper_only":true,"qualification":"paper_eligible","round_id":"round-a",

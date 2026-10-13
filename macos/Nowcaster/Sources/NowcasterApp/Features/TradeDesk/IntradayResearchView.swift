@@ -118,6 +118,7 @@ struct IntradayCaptureQuality: Decodable {
         let paperEligible: Bool
 
         var coverageLabel: String {
+            guard expectedIntervals > 0 else { return "No completed intervals to assess" }
             let percent = NSDecimalNumber(decimal: (Decimal(string: coverage) ?? 0) * 100).intValue
             return "\(coveredIntervals)/\(expectedIntervals) observed intervals (\(percent)%)"
         }
